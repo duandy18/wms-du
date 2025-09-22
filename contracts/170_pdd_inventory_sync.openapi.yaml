@@ -1,0 +1,70 @@
+openapi: 3.0.3
+info:
+  title: WMS-DU PDD Inventory Sync API (Contract Draft)
+  version: 1.0.0
+  description: |
+    库存同步契约草案。WMS 定期或事件驱动，向平台同步仓库内 SKU 库存。
+    幂等键：sku + warehouse_id + version
+servers:
+  - url: https://mock.wms.local/api
+paths:
+  /pdd/inventory/sync:
+    post:
+      summary: 库存同步
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventorySyncRequest'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventorySyncResponse'
+        '400':
+          description: 参数错误
+        '409':
+          description: 幂等冲突（版本号落后或状态不一致）
+        '429':
+          description: 触发限频（建议退避 1s/4s/9s）
+        '500':
+          description: 平台或网关异常
+components:
+  schemas:
+    InventorySyncRequest:
+      type: object
+      required: [platform, shop_id, warehouse_id, items, version, sync_time]
+      properties:
+        platform: { type: string, enum: [pdd] }
+        shop_id: { type: string, description: 店铺ID }
+        warehouse_id: { type: string, description: 仓库ID }
+        version: { type: integer, format: int64, description: 库存版本号（乐观锁） }
+        sync_time: { type: string, format: date-time, description: 同步时间戳 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryItem'
+        ext:
+          type: object
+          additionalProperties: true
+          description: 平台特有扩展
+    InventoryItem:
+      type: object
+      required: [sku, qty]
+      properties:
+        sku: { type: string, description: 内部统一 SKU 编码 }
+        qty: { type: integer, description: 可用库存数量 }
+        uom: { type: string, default: EA }
+        batch_no: { type: string, nullable: true }
+        expire_date: { type: string, format: date, nullable: true }
+        ext: { type: object, additionalProperties: true }
+    InventorySyncResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        accepted_version: { type: integer, format: int64 }
+        message: { type: string, nullable: true }
