@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: ../../
+      dockerfile: ops/compose/Dockerfile.api
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports: ["8000:8000"]
+    volumes:
+      - ../../:/workspace
+    environment:
+      - DB_URL=mysql+pymysql://wms:wmspwd@db:3306/wms
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpwd
+      MYSQL_DATABASE: wms
+      MYSQL_USER: wms
+      MYSQL_PASSWORD: wmspwd
+    ports: ["3306:3306"]
+  adminer:
+    image: adminer
+    ports: ["8080:8080"]
