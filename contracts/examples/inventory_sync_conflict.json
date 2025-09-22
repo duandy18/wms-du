@@ -1,0 +1,19 @@
+{
+  "platform": "pdd",
+  "shop_id": "pdd_shop_001",
+  "warehouse_id": "WH001",
+  "version": 100,
+  "sync_time": "2025-09-22T05:00:00Z",
+  "items": [
+    {
+      "sku": "ML-MZZ-SP-SMY-2.5KG",
+      "qty": 80,
+      "uom": "EA",
+      "batch_no": "BATCH-20250922",
+      "expire_date": "2026-09-22"
+    }
+  ],
+  "ext": {
+    "note": "客户端版本落后，触发409冲突"
+  }
+}
