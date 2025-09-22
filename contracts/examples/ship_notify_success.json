@@ -1,0 +1,29 @@
+{
+  "platform": "pdd",
+  "shop_id": "pdd_shop_001",
+  "external_order_no": "230922-88990011",
+  "carrier_code": "yto",
+  "tracking_no": "YT123456789CN",
+  "ship_time": "2025-09-22T04:00:00Z",
+  "delivery_type": "platform_label",
+  "items": [
+    {
+      "line_no": 1,
+      "sku": "ML-MZZ-SP-SMY-2.5KG",
+      "qty": 2,
+      "platform_sku_id": "12345-888",
+      "ext": {}
+    }
+  ],
+  "address": {
+    "from_warehouse_id": "WH001",
+    "to_name": "张三",
+    "to_phone": "13800001111",
+    "to_province": "北京市",
+    "to_city": "北京市",
+    "to_district": "朝阳区",
+    "to_detail": "酒仙桥路 10 号 3 层"
+  },
+  "remark": "首次发货",
+  "ext": {}
+}
