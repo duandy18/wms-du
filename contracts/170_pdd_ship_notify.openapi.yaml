@@ -1,0 +1,94 @@
+openapi: 3.0.3
+info:
+  title: WMS-DU PDD Ship Notify API (Contract Draft)
+  version: 1.0.0
+  description: |
+    发货回传契约草案。WMS 完成出库后，向平台回传运单信息。
+    幂等建议：使用 Idempotency-Key（订单号+运单号）或请求体哈希。
+servers:
+  - url: https://mock.wms.local/api
+paths:
+  /pdd/shipments/notify:
+    post:
+      summary: 发货回传（订单级/包裹级）
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+          description: 幂等键（external_order_no + tracking_no 的拼接或哈希）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipNotifyRequest'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipNotifyResponse'
+        '400':
+          description: 参数错误
+        '409':
+          description: 幂等冲突（重复回传或状态不一致）
+        '429':
+          description: 触发限频（建议退避：1s/4s/9s，最多3次）
+        '500':
+          description: 平台或网关异常
+components:
+  schemas:
+    ShipNotifyRequest:
+      type: object
+      required: [platform, shop_id, external_order_no, carrier_code, tracking_no, ship_time, items]
+      properties:
+        platform: { type: string, enum: [pdd] }
+        shop_id: { type: string, description: 店铺ID（平台内标识） }
+        external_order_no: { type: string, description: 平台原始订单号（幂等键之一） }
+        carrier_code: { type: string, description: 承运商统一代码（如 yto,zto,sto,jd,sf） }
+        tracking_no: { type: string, description: 运单号（幂等键之一） }
+        ship_time: { type: string, format: date-time, description: 发货时间（ISO8601） }
+        delivery_type:
+          type: string
+          enum: [platform_label, carrier_api, self_pickup, manual]
+          default: platform_label
+        items:
+          type: array
+          description: 回传涉及的订单行（包裹维度可只包含部分行）
+          items:
+            $ref: '#/components/schemas/ShipItem'
+        address:
+          type: object
+          description: 寄件/收件补充信息（可空）
+          properties:
+            from_warehouse_id: { type: string }
+            to_name: { type: string }
+            to_phone: { type: string }
+            to_province: { type: string }
+            to_city: { type: string }
+            to_district: { type: string }
+            to_detail: { type: string }
+        remark: { type: string, description: 备注（如二次发货/改配） }
+        ext:
+          type: object
+          additionalProperties: true
+          description: 平台特有字段
+    ShipItem:
+      type: object
+      required: [sku, qty]
+      properties:
+        line_no: { type: integer, description: 对应统一模型的行号 }
+        sku: { type: string, description: 内部统一SKU编码 }
+        qty: { type: integer, minimum: 1 }
+        platform_sku_id: { type: string, nullable: true }
+        ext: { type: object, additionalProperties: true }
+    ShipNotifyResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, description: 是否接受 }
+        platform_ack_id: { type: string, nullable: true, description: 平台回执ID（若有） }
+        message: { type: string, nullable: true }
+

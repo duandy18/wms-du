@@ -1,0 +1,121 @@
+openapi: 3.0.3
+info:
+  title: WMS-DU PDD Pull Orders API (Contract Draft)
+  version: 1.0.0
+  description: |
+    拉单接口契约草案。支持时间窗口 + 游标分页；建议配合限频/幂等/重放防护。
+servers:
+  - url: https://mock.wms.local/api
+paths:
+  /pdd/orders/pull:
+    get:
+      summary: 拉取平台订单（按时间窗口 + 游标）
+      parameters:
+        - in: query
+          name: shop_id
+          required: true
+          schema: { type: string }
+          description: 店铺ID（平台内标识）
+        - in: query
+          name: start_time
+          required: true
+          schema: { type: string, format: date-time }
+          description: 开始时间（ISO8601）
+        - in: query
+          name: end_time
+          required: true
+          schema: { type: string, format: date-time }
+          description: 结束时间（ISO8601）
+        - in: query
+          name: cursor
+          required: false
+          schema: { type: string }
+          description: 下一页游标（首次为空）
+        - in: query
+          name: page_size
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: 每页大小
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  next_cursor:
+                    type: string
+                    nullable: true
+                  has_more:
+                    type: boolean
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+        '400':
+          description: 参数错误
+        '429':
+          description: 触发限频（请退避 1s/4s/9s，最多 3 次）
+        '500':
+          description: 平台或网关异常
+components:
+  schemas:
+    Order:
+      type: object
+      required: [order_id, platform, shop_id, external_order_no, status, amount_total, created_at]
+      properties:
+        order_id: { type: string, description: 统一订单ID }
+        platform: { type: string, enum: [pdd, taobao, jd, douyin, wx, manual] }
+        shop_id: { type: string }
+        external_order_no: { type: string }
+        status: { type: string, enum: [created, paid, allocated, shipped, closed, cancelled, refunded, partial_refund] }
+        pay_status: { type: string, enum: [unpaid, paid, refunding, refunded, partial_refund] }
+        currency: { type: string, default: CNY }
+        amount_goods: { type: number, format: double }
+        amount_shipping: { type: number, format: double }
+        amount_discount: { type: number, format: double }
+        amount_tax: { type: number, format: double }
+        amount_total: { type: number, format: double }
+        buyer_note: { type: string }
+        seller_note: { type: string }
+        created_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time, nullable: true }
+        allocated_at: { type: string, format: date-time, nullable: true }
+        shipped_at: { type: string, format: date-time, nullable: true }
+        warehouse_id: { type: string, nullable: true }
+        delivery_type: { type: string, enum: [platform_label, carrier_api, self_pickup, manual], default: platform_label }
+        carrier_code: { type: string, nullable: true }
+        tracking_no: { type: string, nullable: true }
+        address:
+          type: object
+          required: [name, phone, province, city, detail]
+          properties:
+            name: { type: string }
+            phone: { type: string }
+            country: { type: string, default: CN }
+            province: { type: string }
+            city: { type: string }
+            district: { type: string, nullable: true }
+            detail: { type: string }
+            postcode: { type: string, nullable: true }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        version: { type: integer, format: int64, default: 0 }
+        ext: { type: object, additionalProperties: true }
+    OrderItem:
+      type: object
+      required: [sku, qty, price, amount]
+      properties:
+        line_no: { type: integer }
+        platform_sku_id: { type: string, nullable: true }
+        sku: { type: string, description: 内部统一SKU }
+        qty: { type: integer, minimum: 1 }
+        uom: { type: string, default: EA }
+        price: { type: number, format: double }
+        discount: { type: number, format: double, default: 0 }
+        tax: { type: number, format: double, default: 0 }
+        amount: { type: number, format: double }
+        ext: { type: object, additionalProperties: true }
