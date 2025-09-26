@@ -18,3 +18,4 @@ uvicorn
 httpx
 pydantic[email]
 psycopg[binary]    # 如 CI 不连 PG，可删；我们用 SQLite 测试不需要它
+pydantic-settings

@@ -20,8 +20,9 @@ jobs:
           python -m pip install -U pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 保底：若前两步里没有 httpx，这里再装一次，避免 TestClient 崩
+          # 保底安装，避免清单遗漏导致 ImportError
           python -c "import httpx" || pip install httpx
+          python -c "import pydantic_settings" || pip install pydantic-settings
 
       - name: Pre-commit
         run: pre-commit run --all-files
