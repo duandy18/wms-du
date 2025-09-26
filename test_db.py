@@ -1,6 +1,7 @@
-from dotenv import load_dotenv
 import os
+
 import psycopg2
+from dotenv import load_dotenv
 
 # 1. 读取 .env 文件
 load_dotenv()
@@ -14,18 +15,14 @@ DB_PORT = os.getenv("DB_PORT")
 try:
     # 2. 建立数据库连接
     conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        host=DB_HOST,
-        port=DB_PORT
+        dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT
     )
 
     # 3. 创建游标并执行 SQL
     cur = conn.cursor()
     cur.execute("SELECT version();")
     version = cur.fetchone()
-    print("✅ 成功连接数据库，版本信息：", version[0])
+    print("✅ 成功连接数据库,版本信息:", version[0])
 
     # 4. 清理
     cur.close()
