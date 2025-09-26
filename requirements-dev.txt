@@ -1,0 +1,20 @@
+# test
+pytest
+pytest-cov
+
+# typing & lint
+mypy
+ruff
+black
+isort
+pre-commit
+detect-secrets
+
+# app runtime deps needed for tests
+fastapi
+starlette
+sqlalchemy
+uvicorn
+httpx
+pydantic[email]
+psycopg[binary]    # 如 CI 不连 PG，可删；我们用 SQLite 测试不需要它
