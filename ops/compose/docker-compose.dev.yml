@@ -1,23 +1,54 @@
-
+# 开发环境 Compose（无 version 字段，避免旧版提示）
 services:
-  api:
-    build:
-      context: ../../
-      dockerfile: ops/compose/Dockerfile.api
-    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
-    ports: ["8000:8000"]
-    volumes:
-      - ../../:/workspace
-    environment:
-      - DB_URL=mysql+pymysql://wms:wmspwd@db:3306/wms
   db:
     image: mysql:8.0
+    container_name: compose-db-1
     environment:
-      MYSQL_ROOT_PASSWORD: rootpwd
-      MYSQL_DATABASE: wms
-      MYSQL_USER: wms
-      MYSQL_PASSWORD: wmspwd
-    ports: ["3306:3306"]
+      MYSQL_ROOT_PASSWORD: rootpwd            # ← 根密码（按需修改）
+      MYSQL_DATABASE: wms                     # ← 初始化建库
+      MYSQL_USER: wms                         # ← 业务用户
+      MYSQL_PASSWORD: wmspwd                  # ← 业务用户密码（与 API 的 DB_URL 一致）
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "3306:3306"                           # 主机访问 MySQL；仅开发期需要
+    healthcheck:
+      # 双 $ 用于转义，让容器内实际得到 $MYSQL_ROOT_PASSWORD
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   adminer:
     image: adminer
-    ports: ["8080:8080"]
+    container_name: compose-adminer-1
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  api:
+    # 用你的开发镜像/本地构建
+    build:
+      context: ${PWD}
+      dockerfile: ${PWD}/ops/compose/Dockerfile.api
+    image: compose-api
+    container_name: compose-api-1
+    environment:
+      # 用 PyMySQL 驱动；host 用容器名 db；端口 3306；库名 wms
+      DATABASE_URL: "mysql+pymysql://wms:wmspwd@db:3306/wms"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy            # ← 关键：等 MySQL 就绪再启动
+    ports:
+      - "8000:8000"
+    # 如果你的 Dockerfile 已经声明 ENTRYPOINT/CMD 可不写；开发期想热重载可改为 --reload
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+volumes:
+  db_data:
