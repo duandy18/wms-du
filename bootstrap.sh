@@ -1,28 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 项目环境一键初始化脚本
-# 用法：./bootstrap.sh
+# ----------------------------------------
+# WMS-DU bootstrap script
+# 用于本地开发环境初始化
+# ----------------------------------------
 
-echo ">>> 创建虚拟环境 .venv"
-python3 -m venv .venv
+# 1. 创建虚拟环境
+if [ ! -d ".venv" ]; then
+  echo "📦 创建虚拟环境 .venv ..."
+  python3 -m venv .venv
+fi
+
+# 2. 激活虚拟环境
+echo "✅ 激活虚拟环境"
+# shellcheck disable=SC1091
 source .venv/bin/activate
 
-echo ">>> 升级 pip / 安装依赖"
-pip install --upgrade pip
-pip install -r requirements.txt
+# 3. 升级 pip
+echo "⬆️ 升级 pip..."
+pip install --upgrade pip setuptools wheel
 
-echo ">>> 安装 pre-commit 并启用钩子"
-pip install pre-commit
-pre-commit install
+# 4. 安装依赖
+if [ -f "requirements.txt" ]; then
+  echo "📥 安装 requirements.txt 依赖..."
+  pip install -r requirements.txt
+else
+  echo "⚠️ 未找到 requirements.txt，跳过依赖安装"
+fi
 
-echo ">>> 初始化数据库 (SQLite 示例)"
-mkdir -p db
-sqlite3 db/app.db < db/schema.sql || true
+# 5. 初始化 pre-commit
+if [ -f ".pre-commit-config.yaml" ]; then
+  echo "🔧 安装 pre-commit 钩子..."
+  pre-commit install
+fi
 
-echo ">>> 运行质量检查 (pre-commit + mypy + pytest)"
-pre-commit run --all-files || true
-mypy . || true
-pytest --cov=app --cov-report=term-missing --cov-fail-under=80 || true
-
-echo ">>> 开发环境初始化和测试完成！"
+echo "🎉 环境初始化完成，可以开始开发啦！"
