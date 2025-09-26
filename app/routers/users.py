@@ -1,5 +1,5 @@
 # app/routers/users.py
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -9,24 +9,27 @@ from app import models
 from app.db import get_db
 from app.schemas import UserCreate, UserOut, UserUpdate
 
+# Dependency-annotated DB session
 DB = Annotated[Session, Depends(get_db)]
-# 不在这里加 prefix;由 apps/api/main.py 统一挂载 prefix="/users"
+
+# If you prefer explicit model type annotations elsewhere:
+if TYPE_CHECKING:
+    UserT = models.User
+else:
+    UserT = models.User
+
+# Mounted in app.main with a prefix, e.g. prefix="/users"
 router = APIRouter()
 
 
-def _has_attr(model_cls: type, name: str) -> bool:
-    return hasattr(model_cls, name)
-
-
 @router.post(
-    "",
+    "/users",
     response_model=UserOut,
     status_code=status.HTTP_201_CREATED,
     response_model_exclude_none=True,
 )
-def create_user(payload: UserCreate, db: DB):
-    username: Any = payload.username
-    # 查重: 只查 username
+def create_user(payload: UserCreate, db: DB) -> UserOut:
+    username = payload.username
     exists = db.execute(
         select(models.User).where(models.User.username == username)
     ).scalar_one_or_none()
@@ -35,85 +38,55 @@ def create_user(payload: UserCreate, db: DB):
 
     user = models.User(username=username)
 
-    # 可选 email: 仅当模型有该列且 payload 提供时才设置
-    if _has_attr(models.User, "email"):
-        email_val: Any = getattr(payload, "email", None)
-        if email_val is not None:
-            user_any = cast(Any, user)
-            user_any.email = email_val  # 不直接写 user.email
+    # Optional fields
+    if getattr(payload, "email", None) is not None:
+        user_any = cast(Any, user)
+        user_any.email = payload.email
 
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    return UserOut.model_validate(user)
 
 
-@router.get(
-    "",
-    response_model=list[UserOut],
-    response_model_exclude_none=True,
-)
+@router.get("/users/{user_id}", response_model=UserOut)
+def get_user(user_id: int, db: DB) -> UserOut:
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return UserOut.model_validate(user)
+
+
+@router.get("/users", response_model=list[UserOut])
 def list_users(
     db: DB,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-):
-    return db.execute(select(models.User).offset(skip).limit(limit)).scalars().all()
+) -> list[UserOut]:
+    rows = db.execute(select(models.User).offset(skip).limit(limit)).scalars().all()
+    return [UserOut.model_validate(r) for r in rows]
 
 
-@router.get(
-    "/{user_id}",
-    response_model=UserOut,
-    response_model_exclude_none=True,
-)
-def get_user(user_id: int, db: DB):
+@router.put("/users/{user_id}", response_model=UserOut)
+def update_user(user_id: int, payload: UserUpdate, db: DB) -> UserOut:
     user = db.get(models.User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="user not found")
-    return user
-
-
-@router.put(
-    "/{user_id}",
-    response_model=UserOut,
-    response_model_exclude_none=True,
-)
-def update_user(user_id: int, payload: UserUpdate, db: DB):
-    user = db.get(models.User, user_id)
-    if not user:
+    if user is None:
         raise HTTPException(status_code=404, detail="user not found")
 
-    # 改用户名: 先查重
-    new_username: Any = getattr(payload, "username", None)
-    if new_username is not None and new_username != user.username:
-        dup = db.execute(
-            select(models.User).where(models.User.username == new_username)
-        ).scalar_one_or_none()
-        if dup:
-            raise HTTPException(status_code=409, detail="username already exists")
-        user.username = new_username
-
-    # 改邮箱: 仅当模型有该列且 payload 提供时
-    if _has_attr(models.User, "email"):
-        new_email: Any = getattr(payload, "email", None)
-        if new_email is not None:
-            user_any = cast(Any, user)
-            user_any.email = new_email  # 不直接写 user.email
+    if getattr(payload, "email", None) is not None:
+        user_any = cast(Any, user)
+        user_any.email = payload.email
 
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    return UserOut.model_validate(user)
 
 
-@router.delete(
-    "/{user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-def delete_user(user_id: int, db: DB):
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: DB) -> None:
     user = db.get(models.User, user_id)
-    if not user:
+    if user is None:
         raise HTTPException(status_code=404, detail="user not found")
     db.delete(user)
     db.commit()
-    # 204: no body

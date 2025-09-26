@@ -7,6 +7,10 @@ __pycache__/
 .venv/
 env/
 venv/
+openapi/_current.json
+*.db
+__pycache__/
+
 
 # Environment variables
 .env
