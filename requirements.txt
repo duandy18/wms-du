@@ -1,6 +1,24 @@
-fastapi
-uvicorn[standard]
-pydantic
-pymysql
-SQLAlchemy
-prometheus-client
+# Web 框架
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+
+# ORM / 数据库
+sqlalchemy>=2.0.30
+
+# 数据模型
+pydantic[email]>=2.8.2
+
+# 测试
+pytest>=8.2.0
+pytest-cov>=5.0.0
+
+# 质量工具
+pre-commit>=3.7.0
+ruff>=0.5.0
+black>=24.4.0
+isort>=5.13.0
+mypy>=1.10.0
+types-setuptools
+
+# 可选工具（SQLite CLI）
+aiosqlite>=0.20.0
