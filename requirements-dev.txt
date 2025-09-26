@@ -1,21 +1,8 @@
-# test
-pytest
-pytest-cov
-
-# typing & lint
-mypy
-ruff
-black
-isort
-pre-commit
-detect-secrets
-
-# app runtime deps needed for tests
-fastapi
-starlette
-sqlalchemy
-uvicorn
-httpx
-pydantic[email]
-psycopg[binary]    # 如 CI 不连 PG，可删；我们用 SQLite 测试不需要它
-pydantic-settings
+pre-commit>=3.7.0
+ruff>=0.5.0
+black>=24.4.0
+isort>=5.13.0
+mypy>=1.10.0
+pytest>=8.2.0
+pytest-cov>=5.0.0
+detect-secrets>=1.5.0
