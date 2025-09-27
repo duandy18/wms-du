@@ -1,17 +1,17 @@
 # app/main.py
 from fastapi import FastAPI
 
-app = FastAPI(title="WMS-DU API", version="v1")
+from app.routers import users  # 确保 app/routers/users.py 里有 'router = APIRouter()`
 
-# Optional: include routers if available
-try:
-    from . import routers as _routers
+app = FastAPI(
+    title="WMS-DU API",
+    version="v1",
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+)
 
-    if hasattr(_routers, "router"):
-        app.include_router(_routers.router)
-except Exception:
-    # Routers not ready yet; skip
-    pass
+# Mount routers after app creation
+app.include_router(users.router, prefix="/users", tags=["users"])
 
 
 @app.get("/ping")

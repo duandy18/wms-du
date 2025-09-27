@@ -1,0 +1,33 @@
+{
+  // File encoding & line endings
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+
+  // Auto cleanup
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+
+  // Python formatting & style
+  "python.formatting.provider": "black",
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "editor.rulers": [100]
+  },
+
+  // Ruff integration
+  "ruff.lint.args": ["--fix"],
+
+  // On save actions: imports + lint fixes
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": true,
+    "source.fixAll": true
+  },
+
+  // Unicode highlight: warn about full-width characters
+  "editor.unicodeHighlight.allowedCharacters": {},
+  "editor.unicodeHighlight.ambiguousCharacters": true
+}

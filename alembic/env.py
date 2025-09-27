@@ -1,23 +1,39 @@
+# --- ensure project root on sys.path ---
+from __future__ import annotations
+
+import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context  # type: ignore[attr-defined]
+from app.models import metadata as target_metadata
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# add repo root (…/wms-du) to sys.path so that `import app` works
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+# Alembic Config
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# inject DB URL from environment, overriding ini if present
+env_url = os.getenv("ALEMBIC_SQLITE_URL") or os.getenv("DATABASE_URL")
+if env_url:
+    config.set_main_option("sqlalchemy.url", env_url)
+
+# logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
+
+# DO NOT set `target_metadata = None` anywhere below!
+
 # target_metadata = mymodel.Base.metadata
-target_metadata = None
+
+# target_metadata = None
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -49,6 +65,9 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+print("ALEMBIC URL =>", context.config.get_main_option("sqlalchemy.url"))
+
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
@@ -63,8 +82,14 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,  # 需要看类型变化就开;不看可设 False
+            compare_server_default=False,  # 关闭默认值噪声
+            render_as_batch=True,  # SQLite 兼容
+            include_schemas=False,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

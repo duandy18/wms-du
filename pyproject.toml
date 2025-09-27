@@ -35,3 +35,8 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 fail_under = 70
+
+[[tool.mypy.overrides]]
+module = ["alembic", "alembic.*"]
+ignore_missing_imports = true
+ignore_errors = true

@@ -1,40 +1,44 @@
 #!/usr/bin/env bash
-# scripts/schema_check.sh
 set -euo pipefail
 
-# 颜色
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
+echo "==> Drift Gate #1: ORM 变更是否遗漏迁移（autogenerate 应为“空”）"
 
-echo -e "${YELLOW}==> Drift Gate #1: ORM 变更是否遗漏迁移（autogenerate 应为“空”）${NC}"
+# 1) 固定 Gate 使用的临时 SQLite，并确保在 head
+export ALEMBIC_SQLITE_URL="${ALEMBIC_SQLITE_URL:-sqlite:///gate_check.db}"
+unset DATABASE_URL  # 避免不小心连到 PG
+rm -f gate_check.db A.sql B.sql alembic/versions/*_autocheck_*.py 2>/dev/null || true
+alembic upgrade head >/dev/null 2>&1 || true
 
-# 临时生成一个带标记的迁移，如果生成了文件，就说明模型变更未提交迁移
-STAMP="autocheck_$(date +%s)"
-created=""
-set +e
-out=$(alembic revision --autogenerate -m "$STAMP" 2>&1)
-status=$?
-set -e
+# 2) 生成一次“自检迁移”
+stamp="autocheck_$(date +%s)"
+alembic revision --autogenerate -m "${stamp}" >/dev/null
 
-# 找出刚生成的迁移文件（如果有）
-if git ls-files --others --exclude-standard alembic/versions | grep -qi "$STAMP"; then
-  created=$(git ls-files --others --exclude-standard alembic/versions | grep -i "$STAMP" | head -n1)
+rev_file="$(ls -t alembic/versions/*_${stamp}.py 2>/dev/null | head -n1 || true)"
+# 兼容老脚本残留的 _autocheck_*.py
+[ -z "${rev_file}" ] && rev_file="$(ls -t alembic/versions/*_autocheck_*.py 2>/dev/null | head -n1 || true)"
+
+if [ -z "${rev_file}" ]; then
+  echo "✅ 没有遗漏迁移（未生成自检文件）"
+else
+  # 3) 判断是否“空变更”（无任何 op. 调用）
+  if ! grep -q "op\." "${rev_file}"; then
+    rm -f "${rev_file}"
+    echo "✅ 没有遗漏迁移（autogenerate 为空）"
+  else
+    echo "❌ 检测到模型改动但未提交迁移：${rev_file}"
+    exit 1
+  fi
 fi
 
-if [[ -n "${created}" ]]; then
-  echo -e "${RED}❌ 检测到模型改动但未提交迁移：${created}${NC}"
-  # 清理临时文件，避免污染工作区
-  rm -f "${created}"
-  exit 1
-else
-  echo -e "${GREEN}✅ 没有遗漏迁移（autogenerate 为空）${NC}"
-fi
+echo "==> Drift Gate #2: 迁移回放结构 VS ORM 元数据结构 快照对比"
 
-echo -e "${YELLOW}==> Drift Gate #2: 迁移回放结构 VS ORM 元数据结构 快照对比${NC}"
-python scripts/sql/schema_snapshot.py
+# 4) 用脚本里的 SQLite 回放迁移（A.sql）和 ORM 结构（B.sql），做结构 diff
+python3 scripts/sql/schema_snapshot.py >/dev/null
 
-if diff -u A.sql B.sql; then
-  echo -e "${GREEN}✅ 模型 / 迁移 / 数据库 结构一致${NC}"
+if diff -u A.sql B.sql >/dev/null; then
+  echo "✅ 结构快照一致（A.sql 与 B.sql 无差异）"
 else
-  echo -e "${RED}❌ 结构快照不一致：请检查 Alembic 迁移与 ORM 定义${NC}"
+  echo "❌ 结构快照不一致（见下方 diff）"
+  diff -u A.sql B.sql || true
   exit 1
 fi

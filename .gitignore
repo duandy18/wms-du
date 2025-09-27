@@ -37,7 +37,7 @@ var/
 *.log
 
 # IDE / Editor
-.vscode/
+#.vscode/
 .idea/
 
 # OS files
