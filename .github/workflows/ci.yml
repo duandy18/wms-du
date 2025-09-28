@@ -1,15 +1,157 @@
-name: CI / Build & Push
+name: app-ci
+
 on:
   push:
     branches: [dev, main]
-  pull_request:
+  pull_request:          # 所有 PR 都跑, 避免 "no jobs"
+  workflow_dispatch:
+
+concurrency:
+  group: app-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  lint-type:
+    name: lint-type
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          ruff . && ruff format --check . && black --check . && isort --check-only .
+          mypy .
+
+  migrate-check:
+    name: migrate-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wms"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+      PGDATABASE: wms
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          alembic upgrade head
+
+  tests-sqlite:
+    name: tests-sqlite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: sqlite:///test.db
+      SEED_PROFILE: minimal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pytest -q --maxfail=1 --disable-warnings
+
+  tests-mysql:
+    name: tests-mysql
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: wms
+          MYSQL_USER: wms
+          MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p${{ secrets.CI_MYSQL_ROOT_PASSWORD }} --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+      MYSQL_USER: wms
+      MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
+      MYSQL_DB: wms
+      SEED_PROFILE: minimal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          export DATABASE_URL="mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}?charset=utf8mb4"
+          pytest -q --maxfail=1 --disable-warnings
+
+  coverage-gate:
+    name: coverage-gate
+    needs: [tests-sqlite, tests-mysql]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: sqlite:///coverage.db   # 覆盖率阶段用 sqlite, 生成 coverage.xml
+      SEED_PROFILE: minimal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Run tests with coverage (>=70%)
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pytest --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml \
+                 --cov-fail-under=70 -q --maxfail=1 --disable-warnings
+      - name: Diff coverage vs main (PR only, >=85%)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          pip install diff-cover
+          git fetch origin main
+          diff-cover coverage.xml --compare-branch=origin/main --fail-under=85
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'      # 只在 push 时推镜像; PR 不推
     permissions:
       contents: read
-      packages: write   # 关键：允许写入 GHCR
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +160,6 @@ jobs:
         run: |
           echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
           echo "BRANCH=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          # 统一小写的镜像名，避免大小写导致的推送失败
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wms-du-api" >> $GITHUB_OUTPUT
 
       - uses: docker/setup-buildx-action@v3
@@ -40,3 +181,10 @@ jobs:
             ${{ steps.img.outputs.IMAGE }}:${{ steps.img.outputs.BRANCH }}
             ${{ steps.img.outputs.IMAGE }}:${{ github.sha }}
           provenance: false
+
+  all-checks:
+    name: all-checks
+    runs-on: ubuntu-latest
+    needs: [lint-type, migrate-check, tests-sqlite, tests-mysql, coverage-gate, build]
+    steps:
+      - run: echo "All checks passed ✅"
