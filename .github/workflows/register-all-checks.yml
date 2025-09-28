@@ -1,0 +1,14 @@
+name: app-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  all-checks:
+    name: all-checks
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "register app-ci / all-checks on main"
