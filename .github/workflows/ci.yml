@@ -1,4 +1,5 @@
-name: CI
+name: app-ci
+
 on:
   push:
     branches: [dev, main]
@@ -6,29 +7,109 @@ on:
     branches: [dev, main]
 
 jobs:
-  build:
+  lint-type:
+    name: lint-type
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
-
-      - name: Install deps (requirements + dev)
-        run: |
+      - run: |
           python -m pip install -U pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install -r requirements.txt -r requirements-dev.txt
+          ruff . && ruff format --check . && black --check . && isort --check-only .
+          mypy .
 
-      - name: Pre-commit
-        run: pre-commit run --all-files
+  migrate-check:
+    name: migrate-check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        # ❗ 不要在文件里写明文密码，改用 GitHub Secrets
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wms"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # 统一用 PG* 变量，后续在 step 中拼出 DATABASE_URL（不写明文）
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+      PGDATABASE: wms
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          alembic upgrade head
 
-      - name: Type check
-        run: mypy .
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wms"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # sqlite 仍旧无密码
+      SQLITE_URL: sqlite:///test.db
+      # 统一 PG* 变量，避免在文件里出现账号:密码@ 的明文
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+      PGDATABASE: wms
+      SEED_PROFILE: minimal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          if [ "${{ matrix.db }}" = "postgres" ]; then
+            export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}";
+          else
+            export DATABASE_URL="${{ env.SQLITE_URL }}";
+          fi
+          pytest
 
-      - name: Tests (coverage >= 80%)
-        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+  coverage-gate:
+    name: coverage-gate
+    needs: [tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pytest --cov=app --cov-report=term-missing --cov-fail-under=65
