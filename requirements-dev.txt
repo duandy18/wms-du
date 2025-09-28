@@ -26,3 +26,4 @@ types-PyYAML>=6.0.12.20240808
 # Docs（启用文档分叉规则#5时再用）
 mkdocs>=1.6.0
 mkdocs-material>=9.5.0
+diff-cover>=9.0.0

@@ -1,27 +1,30 @@
 # app/export_openapi.py
-import importlib
+from __future__ import annotations
+
 import json
+import sys
+from pathlib import Path
 
-# Dynamic import: try app.main first, then project-root main.py
-CANDIDATES = ["app.main", "main"]
+from fastapi.testclient import TestClient
 
-
-def _load_app():
-    for mod in CANDIDATES:
-        try:
-            m = importlib.import_module(mod)
-        except Exception:
-            continue
-        if hasattr(m, "app"):
-            return m.app
-    raise RuntimeError("FastAPI `app` not found in app.main or main; define `app = FastAPI()`.")
+from app.main import app
 
 
-def main():
-    app = _load_app()
-    schema = app.openapi()
-    print(json.dumps(schema, ensure_ascii=False, indent=2))
+def export_openapi(dst: str | Path = "openapi.json") -> Path:
+    """
+    导出当前 FastAPI 应用的 OpenAPI 文档到磁盘.
+    返回写入的路径,便于测试断言.
+    """
+    client = TestClient(app)
+    resp = client.get("/openapi.json")
+    resp.raise_for_status()
+    data = resp.json()
+
+    path = Path(dst)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
 
 
 if __name__ == "__main__":
-    main()
+    target = sys.argv[1] if len(sys.argv) > 1 else "openapi.json"
+    export_openapi(target)
