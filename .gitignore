@@ -47,3 +47,4 @@ Thumbs.db
 **/.coverage
 .coverage.*
 htmlcov/
+.env.ci
