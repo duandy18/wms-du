@@ -34,8 +34,8 @@ except ImportError:
 
 # ---------- import app code ----------
 from app import db as app_db  # contains get_db & SessionLocal
+from app import main  # FastAPI app module
 from app.models import Base
-from apps.api import main  # FastAPI app module
 
 # ---------- engine & session factory ----------
 DB_URL = os.environ["DATABASE_URL"]
@@ -109,7 +109,7 @@ def db() -> Generator:
 
     @event.listens_for(session, "after_transaction_end")
     def _restart_savepoint(sess, trans_):
-        # When an inner transaction ends and parent is not nested, open a new SAVEPOINT
+        # When an inner transaction ends and parent is not nested,open a new SAVEPOINT
         if trans_.nested and not getattr(trans_._parent, "nested", False):
             sess.begin_nested()
 
