@@ -23,12 +23,21 @@ os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SEED_PROFILE", "minimal")
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_unit.db")
 
+# top-level imports to avoid PLC0415
+import subprocess
+
+try:
+    # optional seed loader; if app.seed does not exist, skip silently
+    from app.seed import load_seed
+except ImportError:
+    load_seed = None
+
 # ---------- import app code ----------
 from app import db as app_db  # contains get_db & SessionLocal
 from app.models import Base
-from apps.api import main  # your FastAPI app module
+from apps.api import main  # FastAPI app module
 
-# Prefer the same URL as env, but build our own testing engine
+# ---------- engine & session factory ----------
 DB_URL = os.environ["DATABASE_URL"]
 IS_SQLITE = DB_URL.startswith("sqlite")
 
@@ -44,7 +53,7 @@ engine = create_engine(
 def _sqlite_file_from_url(url: str) -> pathlib.Path | None:
     if not url.startswith("sqlite:///"):
         return None
-    # sqlite:///./test_unit.db → path: /./test_unit.db
+    # sqlite:///./test_unit.db -> path: /./test_unit.db
     p = urlparse(url).path
     return (ROOT / pathlib.Path(p.lstrip("/"))).resolve()
 
@@ -53,34 +62,31 @@ def _sqlite_file_from_url(url: str) -> pathlib.Path | None:
 @pytest.fixture(scope="session", autouse=True)
 def _prepare_schema_and_seed() -> Iterator[None]:
     """
-    Prefer Alembic migrations; fall back to metadata.create_all for early bootstrap.
-    Then load minimal seeds if app.seed.load_seed exists.
+    Session-level prepare: try Alembic migrations first; fallback to create_all.
+    If app.seed.load_seed exists, load seeds according to SEED_PROFILE.
     """
-    # Try Alembic upgrade head (best-effort)
+    # migrations (best-effort)
     with contextlib.suppress(Exception):
-        import subprocess
-
         subprocess.run(["alembic", "upgrade", "head"], check=True, cwd=str(ROOT))
 
-    # Fallback: ensure tables exist for any engine
+    # fallback: ensure all tables exist for any engine
     with contextlib.suppress(Exception):
         Base.metadata.create_all(bind=engine)
 
-    # Optional seed loading (strict mode controlled by SEED_STRICT=1)
+    # seeds (optional; strict mode via SEED_STRICT=1)
     strict_seed = os.environ.get("SEED_STRICT", "0") == "1"
-    try:
-        from app.seed import load_seed
-
-        seeds_dir = ROOT / "seeds"
-        load_seed(db_url=DB_URL, profile=os.environ["SEED_PROFILE"], base_path=seeds_dir)
-    except Exception as exc:
-        if strict_seed:
-            raise
-        print(f"[seed] skipped or failed (non-strict): {exc}")
+    if load_seed is not None:
+        try:
+            seeds_dir = ROOT / "seeds"
+            load_seed(db_url=DB_URL, profile=os.environ["SEED_PROFILE"], base_path=seeds_dir)
+        except Exception as exc:
+            if strict_seed:
+                raise
+            print(f"[seed] skipped or failed (non-strict): {exc}")
 
     yield
 
-    # Teardown: clean up sqlite db file
+    # cleanup sqlite test db file
     if IS_SQLITE:
         with contextlib.suppress(Exception):
             f = _sqlite_file_from_url(DB_URL)
@@ -92,24 +98,22 @@ def _prepare_schema_and_seed() -> Iterator[None]:
 @pytest.fixture()
 def db() -> Generator:
     """
-    Start a SAVEPOINT transaction per test and roll it back afterwards.
-    Avoids inter-test interference without recreating schema.
+    Each test starts an outer transaction and uses a SAVEPOINT inside.
+    It rolls back at the end to isolate tests.
     """
     connection = engine.connect()
     trans = connection.begin()  # outer transaction
-    # Bind a session to the connection so all ORM ops share the same tx
+
     Session = sessionmaker(bind=connection, autocommit=False, autoflush=False, future=True)
     session = Session()
 
-    # Ensure nested transactions (savepoints) work with SQLAlchemy events
     @event.listens_for(session, "after_transaction_end")
-    def _restart_savepoint(sess, trans):
-        # Re-open a SAVEPOINT for subtransactions if needed
-        if trans.nested and not getattr(trans._parent, "nested", False):
+    def _restart_savepoint(sess, trans_):
+        # When an inner transaction ends and parent is not nested, open a new SAVEPOINT
+        if trans_.nested and not getattr(trans_._parent, "nested", False):
             sess.begin_nested()
 
     try:
-        # Start first SAVEPOINT so that flushes are isolated
         session.begin_nested()
         yield session
     finally:
