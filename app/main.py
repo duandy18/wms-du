@@ -1,7 +1,8 @@
 # app/main.py
 from fastapi import FastAPI
 
-from app.routers import users  # 确保 app/routers/users.py 里有 'router = APIRouter()`
+from app.routers import users
+from app.routers import diag  # 新增的演示路由
 
 app = FastAPI(
     title="WMS-DU API",
@@ -10,10 +11,11 @@ app = FastAPI(
     docs_url="/docs",
 )
 
-# Mount routers after app creation
+# ---- Mount routers ----
 app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(diag.router)  # /diag/secure
 
-
+# ---- Health check ----
 @app.get("/ping")
 def ping():
     return {"ok": True}
