@@ -24,13 +24,13 @@ jobs:
       - run: |
           python -m pip install -U pip
           pip install -r requirements.txt
-          
+
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           ruff . && ruff format --check . && black --check . && isort --check-only .
           # ASCII-only guard: blocks full-width/CJK in code (docs/ are exempt in script)
           python scripts/hooks/forbid_non_ascii.py $(git ls-files \
             'app/**' 'tests/**' 'alembic/**' 'config/**' '.github/**')
-          
+
           mypy .
 
   migrate-check:
@@ -100,8 +100,9 @@ jobs:
           MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
         ports: ["3306:3306"]
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p${{ secrets.CI_MYSQL_ROOT_PASSWORD }} --silent"
-          --health-interval=10s --health-timeout=5s --health-retries=20
+          options: >-
+            --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p$MYSQL_ROOT_PASSWORD --silent"
+            --health-interval=10s --health-timeout=5s --health-retries=20
     env:
       MYSQL_HOST: 127.0.0.1
       MYSQL_PORT: "3306"
