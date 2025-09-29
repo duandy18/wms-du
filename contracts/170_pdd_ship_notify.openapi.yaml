@@ -91,4 +91,3 @@ components:
         ok: { type: boolean, description: 是否接受 }
         platform_ack_id: { type: string, nullable: true, description: 平台回执ID（若有） }
         message: { type: string, nullable: true }
-
