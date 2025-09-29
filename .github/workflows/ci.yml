@@ -48,7 +48,7 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install psycopg2-binary PyMySQL**     # ← 新增：两个驱动都装上
+          pip install psycopg2-binary PyMySQL     # ← 新增：两个驱动都装上
           # mysql 需要驱动；sqlite 自带（但我们装了也不影响）
       - name: Prepare DB (alembic + seed)
         run: |
