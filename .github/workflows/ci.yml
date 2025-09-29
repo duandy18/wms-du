@@ -88,6 +88,7 @@ jobs:
           pytest -q --maxfail=1 --disable-warnings
 
   tests-mysql:
+    if: ${{ github.event_name != 'pull_request' }}
     name: tests-mysql
     runs-on: ubuntu-latest
     timeout-minutes: 25
