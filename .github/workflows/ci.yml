@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: |
+      - name: Lint & type check
+        run: |
           python -m pip install -U pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
@@ -64,16 +65,19 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: |
+      - name: Install deps
+        run: |
           python -m pip install -U pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Coverage
+        run: |
           alembic upgrade head
           python -m scripts.seed_rbac || true
           pytest --cov=app --cov-report=term-missing --cov-fail-under=65
 
   migrate-check:
-    # 只在 push 到 dev/main 时跑（feature 分支 / PR 全部跳过，不占红）
+    # 只在 push 到 dev/main 时跑（feature 分支和 PR 全部跳过）
     if: ${{ github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -100,9 +104,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: |
-        python -m pip install -U pip
-        pip install -r requirements.txt
-        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-        export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
-        alembic upgrade head
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Alembic migrate on Postgres
+        run: |
+          export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          alembic upgrade head
