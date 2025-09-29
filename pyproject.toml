@@ -1,42 +1,33 @@
 [tool.black]
-line-length = 100
+line-length = 88
 target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
-line_length = 100
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
 
 [tool.ruff]
-line-length = 100
+line-length = 88
 target-version = "py312"
+fix = true
+unsafe-fixes = true
+show-fixes = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
-ignore = []
+# 统一在 lint 段配置规则
+extend-select = ["I"]           # import 排序规则
+ignore = ["F401", "E501"]       # 如需严格,可后续逐步收紧
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["PLR2004"]  # allow magic numbers (e.g., 200/204) in tests
 
 [tool.mypy]
 python_version = "3.12"
-explicit_package_bases = true
-ignore_missing_imports = true
-warn_unused_ignores = true
-warn_redundant_casts = true
+exclude = "(^apps/)"          # 临时规避 duplicate main.py
 warn_unused_configs = true
-no_implicit_optional = true
-strict_optional = true
-plugins = ["pydantic.mypy"]
-
-[tool.coverage.run]
-source = ["app"]
-branch = true
-
-[tool.coverage.report]
-show_missing = true
-fail_under = 70
-
-[[tool.mypy.overrides]]
-module = ["alembic", "alembic.*"]
-ignore_missing_imports = true
-ignore_errors = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+pretty = true

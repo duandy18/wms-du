@@ -40,7 +40,10 @@ def get_orm_metadata() -> MetaData:
 
 
 def dump_sqlite_schema(engine: Engine, outfile: Path) -> None:
-    with closing(engine.raw_connection()) as conn, outfile.open("w", encoding="utf-8") as f:
+    with (
+        closing(engine.raw_connection()) as conn,
+        outfile.open("w", encoding="utf-8") as f,
+    ):
         for raw in conn.iterdump():
             text = str(raw).strip()
             if text:
@@ -68,7 +71,9 @@ def main() -> None:
     # 1) migrations -> A.sql
     env = {**os.environ, "PYTHONPATH": str(ROOT)}  # let alembic import app.*
     try:
-        subprocess.run(["alembic", "upgrade", "head"], check=True, cwd=str(ROOT), env=env)
+        subprocess.run(
+            ["alembic", "upgrade", "head"], check=True, cwd=str(ROOT), env=env
+        )
     except subprocess.CalledProcessError as exc:
         raise SystemExit(f"alembic upgrade failed: {exc}") from exc
     dump_sqlite_schema(a_engine, a_sql)
@@ -78,7 +83,9 @@ def main() -> None:
     orm_metadata.create_all(b_engine)
     dump_sqlite_schema(b_engine, b_sql)
 
-    print(f"Generated {a_sql.name} (from migrations) and {b_sql.name} (from ORM metadata).")
+    print(
+        f"Generated {a_sql.name} (from migrations) and {b_sql.name} (from ORM metadata)."
+    )
 
 
 if __name__ == "__main__":

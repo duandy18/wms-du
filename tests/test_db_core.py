@@ -1,36 +1,36 @@
 import os
+from typing import Any, Optional, Tuple
 
-import psycopg2
-from dotenv import load_dotenv
+import pytest
 
-# 1. 读取 .env 文件
-load_dotenv()
 
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_NAME = os.getenv("DB_NAME")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
+def test_psycopg2_connect_smoke() -> None:
+    """
+    Connect to Postgres only if a valid DATABASE_URL is provided.
+    This is a smoke test for local/dev; CI may skip if not configured.
+    """
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url.startswith("postgresql"):
+        pytest.skip("Not a Postgres URL; skipping psycopg2 smoke test")
 
-try:
-    # 2. 建立数据库连接
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
+    try:
+        import psycopg2
+    except ImportError:
+        pytest.skip("psycopg2 not installed in this environment")
 
-    # 3. 创建游标并执行 SQL
-    cur = conn.cursor()
-    cur.execute("SELECT version();")
-    version = cur.fetchone()
-    print("✅ Success: connected to database, version:", version[0])
+    # 1) Connect
+    conn = psycopg2.connect(db_url)
+    try:
+        # 2) Run trivial query
+        cur = conn.cursor()
+        cur.execute("SELECT version();")
+        version: Optional[Tuple[Any, ...]] = cur.fetchone()
 
-    # 4. 清理
-    cur.close()
-    conn.close()
-
-except Exception as e:
-    print("❌ Failed to connect to database:", e)
+        # 3) Assert we got a result
+        assert version is not None
+        first = (
+            version[0] if isinstance(version, tuple) and len(version) > 0 else "unknown"
+        )
+        print("OK Success: connected to database, version:", first)
+    finally:
+        conn.close()
