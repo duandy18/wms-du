@@ -1,7 +1,9 @@
 # app/main.py
 from fastapi import FastAPI
 
-from app.routers import users  # 确保 app/routers/users.py 里有 'router = APIRouter()`
+from app.routers import (
+    users,  # Ensure app/routers/users.py defines `router = APIRouter()``
+)
 
 app = FastAPI(
     title="WMS-DU API",

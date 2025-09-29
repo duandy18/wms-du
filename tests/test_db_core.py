@@ -1,36 +1,34 @@
 import os
+from typing import Any, Optional, Tuple
 
 import psycopg2
-from dotenv import load_dotenv
 
-# 1. 读取 .env 文件
-load_dotenv()
 
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_NAME = os.getenv("DB_NAME")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
+def test_psycopg2_connect_smoke() -> None:
+    """
+    Connect to Postgres only if a valid DATABASE_URL is provided.
+    This is a smoke test for local/dev; CI may skip if not configured.
+    """
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url.startswith("postgresql"):
+        # Not a Postgres URL; skip the smoke test gracefully
+        return
 
-try:
-    # 2. 建立数据库连接
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
+    # 1) Load connection from env and connect
+    conn = psycopg2.connect(db_url)
+    try:
+        # 2) Create cursor and run a trivial query
+        cur = conn.cursor()
+        cur.execute("SELECT version();")
+        version: Optional[Tuple[Any, ...]] = cur.fetchone()
 
-    # 3. 创建游标并执行 SQL
-    cur = conn.cursor()
-    cur.execute("SELECT version();")
-    version = cur.fetchone()
-    print("✅ Success: connected to database, version:", version[0])
+        # 3) Assert we got a result; print first token if present
+        assert version is not None
+        first = (
+            version[0] if isinstance(version, tuple) and len(version) > 0 else "unknown"
+        )
+        print("OK Success: connected to database, version:", first)
 
-    # 4. 清理
-    cur.close()
-    conn.close()
-
-except Exception as e:
-    print("❌ Failed to connect to database:", e)
+    finally:
+        # 4) Cleanup
+        conn.close()

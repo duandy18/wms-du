@@ -25,17 +25,32 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./test_unit.db")
 
 # top-level imports to avoid PLC0415
 import subprocess
+from typing import Any, Callable
 
+# Try import into a temp name to avoid redefinition issues with mypy
 try:
-    # optional seed loader; if app.seed does not exist, skip silently
-    from app.seed import load_seed
-except ImportError:
-    load_seed = None
+    from app.seed import load_seed as _load_seed  # type: ignore[import-not-found]
+except Exception:
+    _load_seed = None  # type: ignore[assignment]
+
+# Public name with a precise type: a callable that returns None
+load_seed: Callable[..., None]
+
+if _load_seed is None:
+
+    def load_seed(*_a: Any, **_kw: Any) -> None:
+        """No-op seed loader for tests; replace with real seeding later."""
+        return None
+
+else:
+    # If import succeeded, use it
+    load_seed = _load_seed
+
 
 # ---------- import app code ----------
+import main  # FastAPI app module
 from app import db as app_db  # contains get_db & SessionLocal
 from app.models import Base
-from apps.api import main  # FastAPI app module
 
 # ---------- engine & session factory ----------
 DB_URL = os.environ["DATABASE_URL"]
@@ -78,7 +93,9 @@ def _prepare_schema_and_seed() -> Iterator[None]:
     if load_seed is not None:
         try:
             seeds_dir = ROOT / "seeds"
-            load_seed(db_url=DB_URL, profile=os.environ["SEED_PROFILE"], base_path=seeds_dir)
+            load_seed(
+                db_url=DB_URL, profile=os.environ["SEED_PROFILE"], base_path=seeds_dir
+            )
         except Exception as exc:
             if strict_seed:
                 raise
@@ -104,7 +121,9 @@ def db() -> Generator:
     connection = engine.connect()
     trans = connection.begin()  # outer transaction
 
-    Session = sessionmaker(bind=connection, autocommit=False, autoflush=False, future=True)
+    Session = sessionmaker(
+        bind=connection, autocommit=False, autoflush=False, future=True
+    )
     session = Session()
 
     @event.listens_for(session, "after_transaction_end")
@@ -128,7 +147,7 @@ def client(db) -> Generator:
     def _override_get_db():
         yield db
 
-    main.app.dependency_overrides[app_db.get_db] = _override_get_db
+    main.app.dependency_overrides[app_db.get_db] = _override_get_db  # type: ignore[attr-defined]
     try:
         yield TestClient(main.app)
     finally:

@@ -14,7 +14,9 @@ def _load_app():
             continue
         if hasattr(m, "app"):
             return m.app
-    raise RuntimeError("FastAPI `app` not found in app.main or main; define `app = FastAPI()`.")
+    raise RuntimeError(
+        "FastAPI `app` not found in app.main or main; define `app = FastAPI()`."
+    )
 
 
 def main():

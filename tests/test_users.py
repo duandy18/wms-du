@@ -25,13 +25,17 @@ def test_user_crud_happy_path(client):
 
     _, user_id = _pick(created, POSSIBLE_ID_KEYS)
 
-    assert user_id is not None, f"create response missing id in {POSSIBLE_ID_KEYS}: {created}"
+    assert (
+        user_id is not None
+    ), f"create response missing id in {POSSIBLE_ID_KEYS}: {created}"
 
     # 2) get by id
     r_get = client.get(f"/users/{user_id}")
     assert r_get.status_code == 200
     body = r_get.json()
-    assert body.get("username") == username or body.get("username", "").startswith("alice_")
+    assert body.get("username") == username or body.get("username", "").startswith(
+        "alice_"
+    )
 
     # 3) list
     r_list = client.get("/users/")
@@ -46,7 +50,9 @@ def test_user_crud_happy_path(client):
 
     # 4) update: send full fields to avoid server rejecting partial updates
     new_email = f"alice_{unique}@newmail.com"
-    r_update = client.put(f"/users/{user_id}", json={"username": username, "email": new_email})
+    r_update = client.put(
+        f"/users/{user_id}", json={"username": username, "email": new_email}
+    )
     assert r_update.status_code in (200, 204)
 
     # 5) fetch again and assert best-effort (if model omits email, do not force)

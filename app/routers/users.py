@@ -73,7 +73,9 @@ def update_user(user_id: int, payload: UserUpdate, request: Request):
     if not u:
         raise HTTPException(status_code=404, detail="user not found")
     # username must be unique (excluding self)
-    if any(v["username"] == payload.username and k != user_id for k, v in users.items()):
+    if any(
+        v["username"] == payload.username and k != user_id for k, v in users.items()
+    ):
         raise HTTPException(status_code=409, detail="username already exists")
     u["username"] = payload.username
     u["email"] = str(payload.email)

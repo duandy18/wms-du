@@ -3,7 +3,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from apps.api import main
+import main
 
 client = TestClient(main.app)
 

@@ -30,6 +30,7 @@ repos:
         - "SQLAlchemy>=2"
         - alembic
         - pytest
+        - types-psycopg2
 
   - repo: local
     hooks:

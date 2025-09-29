@@ -192,4 +192,4 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-type, migrate-check, tests-sqlite, tests-mysql, coverage-gate, build]
     steps:
-      - run: echo "All checks passed ✅"
+      - run: echo "All checks passed "

@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import Integer, MetaData, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# --- 命名约定:保证 SQLite/PG 自动生成的约束/索引名字一致 ---
+# Naming convention: keep constraint/index names consistent across SQLite and Postgres
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_name)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
