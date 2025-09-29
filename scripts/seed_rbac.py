@@ -1,4 +1,6 @@
 # scripts/seed_rbac.py
+# ruff: noqa: RUF003
+
 """
 Seed RBAC roles & permissions into the database.
 
