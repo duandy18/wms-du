@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001, RUF003
 # scripts/seed_rbac.py
 # ruff: noqa: RUF003
 
@@ -11,7 +12,7 @@ Seed RBAC roles & permissions into the database.
 - Optionally grants the earliest user (min id) the admin role, using raw SQL
   to avoid ORM/column mismatch with existing users table.
 
-幂等：重复运行不会产生重复行。
+幂等:重复运行不会产生重复行.
 """
 from __future__ import annotations
 
@@ -57,21 +58,21 @@ def get_or_create(model, session: Session, defaults=None, **kwargs):
 
 def grant_admin_to_first_user(db: Session) -> None:
     """
-    尝试把最早的一个用户（最小 id）授予 admin 角色。
-    用原生 SQL 仅查询 id，避免 ORM 因列不匹配而报错。
+    尝试把最早的一个用户(最小 id)授予 admin 角色.
+    用原生 SQL 仅查询 id,避免 ORM 因列不匹配而报错.
     """
     try:
-        # 1) 拿到最小的用户 id（仅查 id，不触发 ORM 列选择）
+        # 1) 拿到最小的用户 id(仅查 id,不触发 ORM 列选择)
         row = db.execute(text("SELECT id FROM users ORDER BY id ASC LIMIT 1")).first()
         if not row:
-            print("ℹ️  未找到任何用户，跳过授予 admin。")
+            print("ℹ️  未找到任何用户,跳过授予 admin.")
             return
         user_id = row[0]
 
-        # 2) 查 admin 角色 id（用 ORM 查 Role 只涉及 roles 表，不会受 users 影响）
+        # 2) 查 admin 角色 id(用 ORM 查 Role 只涉及 roles 表,不会受 users 影响)
         admin_role = db.query(Role).filter_by(name="admin").one_or_none()
         if not admin_role:
-            print("⚠️  未找到 admin 角色，跳过授予。")
+            print("⚠️  未找到 admin 角色,跳过授予.")
             return
         role_id = admin_role.id
 
@@ -84,7 +85,7 @@ def grant_admin_to_first_user(db: Session) -> None:
         ).first()
 
         if exists:
-            print(f"ℹ️  用户 {user_id} 已经是 admin，跳过。")
+            print(f"ℹ️  用户 {user_id} 已经是 admin,跳过.")
             return
 
         # 4) 插入绑定
@@ -92,10 +93,10 @@ def grant_admin_to_first_user(db: Session) -> None:
             text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
             {"u": user_id, "r": role_id},
         )
-        print(f"✅ 已将用户 {user_id} 授予 admin。")
+        print(f"✅ 已将用户 {user_id} 授予 admin.")
     except Exception as e:
-        # 柔性失败：不阻断整个 seed 过程
-        print(f"⚠️  授予 admin 时发生错误，已跳过：{e}")
+        # 柔性失败:不阻断整个 seed 过程
+        print(f"⚠️  授予 admin 时发生错误,已跳过:{e}")
 
 
 def main():
@@ -108,13 +109,13 @@ def main():
             p, _ = get_or_create(Permission, db, code=code)
             perm_objs[code] = p
 
-        # 2) 角色存在并绑定权限（幂等）
+        # 2) 角色存在并绑定权限(幂等)
         for role_name, codes in ROLE_PERMS.items():
             r, _ = get_or_create(Role, db, name=role_name)
             r.permissions = [perm_objs[c] for c in sorted(set(codes))]
             db.add(r)
 
-        # 3) 可选：把最早用户授予 admin（用原生 SQL，只查 id）
+        # 3) 可选:把最早用户授予 admin(用原生 SQL,只查 id)
         grant_admin_to_first_user(db)
 
         db.commit()

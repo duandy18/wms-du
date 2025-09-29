@@ -105,7 +105,7 @@ class Permission(Base):
 # 让 User.roles 与 Role.users 成对出现（若未定义则补刀）
 # -----------------------------
 if not hasattr(User, "roles"):
-    User.roles = relationship(  # type: ignore[attr-defined]
+    User.roles = relationship(
         "Role", secondary=user_roles, back_populates="users"
     )
 
