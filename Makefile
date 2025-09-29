@@ -77,3 +77,20 @@ push-rbac:
 	@git add .
 	@git commit -m "chore: auto push from make push-rbac" || echo "⚠️ Nothing to commit"
 	@git push origin feat/rbac-lite
+# 一键拉取远端最新的 feat/rbac-lite
+pull-rbac:
+	@git fetch origin
+	@git checkout feat/rbac-lite
+	@git pull origin feat/rbac-lite
+# 一键启动开发环境
+dev:
+	@echo "🔎 清理端口 8000..."
+	@PIDS=$$(lsof -ti :8000 || true); \
+	if [ -n "$$PIDS" ]; then \
+		echo "⚡ 杀掉进程 $$PIDS"; \
+		kill -9 $$PIDS; \
+	fi
+	@echo "🚀 启动 uvicorn ..."
+	@uvicorn app.main:app --reload --port 8000 > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
+	@echo "✅ 已启动 (PID=$$(cat uvicorn.pid))，日志写入 uvicorn.log"
+	@tail -n 20 -f uvicorn.log
