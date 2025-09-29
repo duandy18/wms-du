@@ -1,74 +1,61 @@
-from __future__ import annotations
-import os, sys, asyncio
-from logging.config import fileConfig
+import contextlib
+import os
+import subprocess
+from typing import Optional
 
-from alembic import context
-from sqlalchemy import create_engine, pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import create_async_engine
+import pytest
 
-# 确保能 import 到 app.*
-sys.path.append(os.getcwd())
 
-config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# ---------- Base paths ----------
+# Find the nearest alembic.ini inside the repo.
+# Priority: repo root -> first-level subdir -> recursive search.
+def find_alembic_ini(start_path: str) -> Optional[str]:
+    """Search for alembic.ini starting from start_path."""
+    candidates = [
+        os.path.join(start_path, "alembic.ini"),
+        os.path.join(start_path, "app", "alembic.ini"),
+        os.path.join(start_path, "apps", "alembic.ini"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
 
-from app.db.base import Base  # noqa: E402
-from app.core.config import settings  # noqa: E402
+    for root, _dirs, files in os.walk(start_path):
+        if "alembic.ini" in files:
+            return os.path.join(root, "alembic.ini")
+    return None
 
-target_metadata = Base.metadata
 
-def get_url() -> str:
-    # 用刚才新增的“最终 URL”
-    return settings.resolved_database_url
-
-def run_migrations_offline() -> None:
-    url = get_url()
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        compare_type=True,
-        compare_server_default=True,
-        render_as_batch=True,
-        dialect_opts={"paramstyle": "named"},
+# ---------- Alembic migration guard ----------
+def run_alembic_upgrade(db_url: str) -> subprocess.CompletedProcess:
+    """Run alembic upgrade head with a given DATABASE_URL."""
+    env = os.environ.copy()
+    env["DATABASE_URL"] = db_url
+    return subprocess.run(
+        ["alembic", "upgrade", "head"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
     )
-    with context.begin_transaction():
-        context.run_migrations()
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-        compare_server_default=True,
-        render_as_batch=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
 
-def run_migrations_online() -> None:
-    url = get_url()
-    if url.startswith("sqlite"):
-        engine = create_engine(url, pool_pre_ping=True, poolclass=pool.NullPool)
-        with engine.connect() as connection:
-            do_run_migrations(connection)
-        engine.dispose()
-    elif url.startswith("postgresql+asyncpg"):
-        engine = create_async_engine(url, pool_pre_ping=True, poolclass=pool.NullPool)
-        async def _run():
-            async with engine.connect() as conn:
-                await conn.run_sync(do_run_migrations)
-            await engine.dispose()
-        asyncio.run(_run())
-    else:
-        engine = create_engine(url, pool_pre_ping=True, poolclass=pool.NullPool)
-        with engine.connect() as connection:
-            do_run_migrations(connection)
-        engine.dispose()
+# ---------- Tests ----------
+def test_alembic_ini_exists():
+    """Ensure alembic.ini is discoverable in repo."""
+    root = os.getcwd()
+    ini_path = find_alembic_ini(root)
+    assert ini_path is not None, "alembic.ini not found"
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+
+@pytest.mark.parametrize("db_url", ["sqlite:///test_unit.db"])
+def test_migrations_apply_cleanly(db_url: str):
+    """Ensure alembic migrations can be applied without errors."""
+    result = run_alembic_upgrade(db_url)
+    assert result.returncode == 0, f"Migration failed: {result.stderr}"
+
+
+def test_contextlib_usage_demo():
+    """Dummy test using contextlib just to silence import warnings."""
+    with contextlib.suppress(Exception):
+        pass
