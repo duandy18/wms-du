@@ -1,7 +1,7 @@
 import os
 from typing import Any, Optional, Tuple
 
-import psycopg2
+import pytest
 
 
 def test_psycopg2_connect_smoke() -> None:
@@ -11,24 +11,26 @@ def test_psycopg2_connect_smoke() -> None:
     """
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url.startswith("postgresql"):
-        # Not a Postgres URL; skip the smoke test gracefully
-        return
+        pytest.skip("Not a Postgres URL; skipping psycopg2 smoke test")
 
-    # 1) Load connection from env and connect
+    try:
+        import psycopg2
+    except ImportError:
+        pytest.skip("psycopg2 not installed in this environment")
+
+    # 1) Connect
     conn = psycopg2.connect(db_url)
     try:
-        # 2) Create cursor and run a trivial query
+        # 2) Run trivial query
         cur = conn.cursor()
         cur.execute("SELECT version();")
         version: Optional[Tuple[Any, ...]] = cur.fetchone()
 
-        # 3) Assert we got a result; print first token if present
+        # 3) Assert we got a result
         assert version is not None
         first = (
             version[0] if isinstance(version, tuple) and len(version) > 0 else "unknown"
         )
         print("OK Success: connected to database, version:", first)
-
     finally:
-        # 4) Cleanup
         conn.close()
