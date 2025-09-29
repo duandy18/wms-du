@@ -1,28 +1,20 @@
-# Test
+# 测试
 pytest>=8.2.0
 pytest-cov>=5.0.0
-pytest-xdist>=3.6.1
 
-# Typing & Lint
-mypy>=1.10.0
+# 质量工具
+pre-commit>=3.7.0
 ruff>=0.5.0
 black>=24.4.0
 isort>=5.13.0
-pre-commit>=3.7.0
-detect-secrets>=1.5.0
+mypy>=1.10.0
 
-# App runtime used in tests
-httpx>=0.27.0
-starlette>=0.37.2
-
-# DB Drivers for CI (可选 PG；你要跑 PG 就保留，否则可删掉这行)
-psycopg[binary]>=3.1.18
-
-# Migrations & Seeds
-alembic>=1.13.0
-PyYAML>=6.0.1
-types-PyYAML>=6.0.12.20240808
-
-# Docs（启用文档分叉规则#5时再用）
+# 文档（可选）
 mkdocs>=1.6.0
 mkdocs-material>=9.5.0
+
+# CI 额外驱动（仅用于 migrate-check 的 Postgres）
+psycopg[binary]>=3.1.18
+
+# 可选：SQLite CLI/异步，若本地用得到再保留
+aiosqlite>=0.20.0
