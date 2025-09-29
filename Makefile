@@ -72,3 +72,8 @@ all-tests:
 	@echo "======================[ 3/3 Postgres tests ]===================="
 	$(MAKE) test-pg
 	@echo "======================[   ALL PASSED   ]========================"
+# 一键提交并推送到 feat/rbac-lite 分支
+push-rbac:
+	@git add .
+	@git commit -m "chore: auto push from make push-rbac" || echo "⚠️ Nothing to commit"
+	@git push origin feat/rbac-lite
