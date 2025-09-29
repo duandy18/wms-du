@@ -25,9 +25,9 @@ def test_user_crud_happy_path(client):
 
     _, user_id = _pick(created, POSSIBLE_ID_KEYS)
 
-    assert user_id is not None, (
-        f"create response missing id in {POSSIBLE_ID_KEYS}: {created}"
-    )
+    assert (
+        user_id is not None
+    ), f"create response missing id in {POSSIBLE_ID_KEYS}: {created}"
 
     # 2) get by id
     r_get = client.get(f"/users/{user_id}")
