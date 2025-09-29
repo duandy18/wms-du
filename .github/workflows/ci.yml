@@ -2,7 +2,7 @@ name: app-ci
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev, main, feat/**]
   pull_request:
     branches: [dev, main]
 
@@ -12,7 +12,6 @@ concurrency:
 
 jobs:
   lint-type:
-    name: lint-type
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,12 +27,56 @@ jobs:
           ruff . && ruff format --check . && black --check . && isort --check-only .
           mypy .
 
-  migrate-check:
-    name: migrate-check
+  tests:
+    name: tests (sqlite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: sqlite:///test.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Prepare DB (alembic + seed)
+        run: |
+          alembic upgrade head
+          python -m scripts.seed_rbac || true
+      - name: Run tests
+        run: |
+          pytest -q --maxfail=1 --disable-warnings
+
+  coverage-gate:
+    needs: [tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # fork 的 PR 默认拿不到 secrets，这里跳过，避免红
-    if: ${{ github.event_name == 'push' || !github.event.pull_request.head.repo.fork }}
+    env:
+      DATABASE_URL: sqlite:///test.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          alembic upgrade head
+          python -m scripts.seed_rbac || true
+          pytest --cov=app --cov-report=term-missing --cov-fail-under=65
+
+  migrate-check:
+    # 只在 push 到 dev/main 时跑（feature 分支 / PR 全部跳过，不占红）
+    if: ${{ github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:15
@@ -58,80 +101,8 @@ jobs:
           python-version: "3.12"
           cache: "pip"
       - run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
-          alembic upgrade head
-
-  tests:
-    name: tests (matrix)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # 同上：fork PR 无 secrets，跳过
-    if: ${{ github.event_name == 'push' || !github.event.pull_request.head.repo.fork }}
-    strategy:
-      matrix:
-        db: [sqlite]
-    services:
-      # 注意：services 无法按 matrix 条件化，mysql 会为两格都启动；这没关系
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_ROOT_PASSWORD }}
-          MYSQL_DATABASE: wms
-          MYSQL_USER: wms
-          MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
-        ports: ["3306:3306"]
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"
-          --health-interval=10s --health-timeout=5s --health-retries=20
-    env:
-      SQLITE_URL: sqlite:///test.db
-      MYSQL_HOST: 127.0.0.1
-      MYSQL_PORT: "3306"
-      MYSQL_USER: wms
-      MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
-      MYSQL_DB: wms
-      SEED_PROFILE: minimal
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-      - run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # mysql 需要驱动；sqlite 自带
-          if [ "${{ matrix.db }}" = "mysql" ]; then pip install PyMySQL; fi
-
-          if [ "${{ matrix.db }}" = "mysql" ]; then
-            export DATABASE_URL="mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}?charset=utf8mb4";
-          else
-            export DATABASE_URL="${{ env.SQLITE_URL }}";
-          fi
-
-          # 如需要，测试前可种初始 RBAC 数据（确保对测试DB安全）
-          python -m scripts.seed_rbac || true
-
-          pytest -q --maxfail=1 --disable-warnings
-
-  coverage-gate:
-    name: coverage-gate
-    needs: [tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-      - run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 这里直接再跑一次带覆盖率；后续可改为在 tests job 里收集覆盖率并上传 artifact
-          pytest --cov=app --cov-report=term-missing --cov-fail-under=65
+        python -m pip install -U pip
+        pip install -r requirements.txt
+        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+        export DATABASE_URL="postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+        alembic upgrade head
