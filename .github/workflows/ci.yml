@@ -3,7 +3,7 @@ name: app-ci
 on:
   push:
     branches: [dev, main]
-  pull_request:          # 所有 PR 都跑, 避免 "no jobs"
+  pull_request:          # Run on all PR events to avoid "no jobs"
   workflow_dispatch:
 
 concurrency:
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      DATABASE_URL: sqlite:///coverage.db   # 覆盖率阶段用 sqlite, 生成 coverage.xml
+      DATABASE_URL: sqlite:///coverage.db   # Use sqlite during coverage stage to produce coverage.xml
       SEED_PROFILE: minimal
     steps:
       - uses: actions/checkout@v4
@@ -148,7 +148,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'      # 只在 push 时推镜像; PR 不推
+    if: github.event_name == 'push'      # Push images on branch pushes only; skip on PRs
     permissions:
       contents: read
       packages: write
