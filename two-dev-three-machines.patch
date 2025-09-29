@@ -1,0 +1,117 @@
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..1a2b3c4
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,38 @@
++.PHONY: bootstrap fix check type test ci
++
++# 第一次在一台新机上运行
++bootstrap:
++	python3 -m venv .venv
++	. .venv/bin/activate && pip install -U pip
++	- . .venv/bin/activate && pip install -r requirements.txt
++	. .venv/bin/activate && pip install -r requirements-dev.txt
++
++# 显式修复（本地执行，能修的都修）
++fix:
++	. .venv/bin/activate && ruff check --fix .
++	. .venv/bin/activate && ruff format .
++
++# 只检查（不改文件）
++check:
++	. .venv/bin/activate && ruff check .
++	. .venv/bin/activate && ruff format --check .
++
++# 可选：类型检查与测试（需要时再启用）
++type:
++	. .venv/bin/activate && mypy .
++
++test:
++	. .venv/bin/activate && pytest -q --maxfail=1 --disable-warnings
++
++# CI 入口（最小化：只跑 check）
++ci: check
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..5d6e7f8
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,22 @@
++[tool.ruff]
++target-version = "py312"
++line-length = 100
++extend-exclude = ["alembic/versions"]
++
++[tool.ruff.lint]
++select = ["E","F","I","UP","B"]
++# 如希望严格 80 列，删除下一行
++ignore = ["E501"]
++
++[tool.ruff.format]
++quote-style = "double"
++indent-style = "space"
++
++# 若未来加入 pytest/mypy 的项目级配置，可继续在此文件集中管理
+diff --git a/requirements-dev.txt b/requirements-dev.txt
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/requirements-dev.txt
+@@ -0,0 +1,6 @@
++# 开发工具版本固定（跨三台机一致）
++ruff==0.6.9
++# 如暂不启用，保留注释或删除以下三行
++mypy==1.11.2
++pytest==8.3.2
++pytest-cov==5.0.0
+diff --git a/.editorconfig b/.editorconfig
+new file mode 100644
+index 0000000..cafe123
+--- /dev/null
++++ b/.editorconfig
+@@ -0,0 +1,12 @@
++root = true
++
++[*]
++charset = utf-8
++end_of_line = lf
++insert_final_newline = true
++indent_style = space
++indent_size = 4
++
++[*.{yml,yaml}]
++indent_size = 2
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..bead567
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,36 @@
++name: ci
++
++on:
++  pull_request:
++  push:
++    branches: [ main, dev, "feat/**", "chore/**" ]
++
++jobs:
++  check:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++
++      - name: Install dev tools (pinned)
++        run: |
++          python -m pip install -U pip
++          pip install -r requirements-dev.txt || pip install ruff==0.6.9
++
++      - name: Ruff check (no writes)
++        run: |
++          ruff --version
++          ruff check .
++          ruff format --check .
