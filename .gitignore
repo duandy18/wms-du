@@ -64,3 +64,5 @@ B.sql
 A.sql
 B.sql
 .schema_snapshot_tmp/
+bootstrap
+*.patch
