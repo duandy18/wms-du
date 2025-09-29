@@ -88,21 +88,23 @@ jobs:
           pytest -q --maxfail=1 --disable-warnings
 
   tests-mysql:
-    name: tests-mysql
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_ROOT_PASSWORD }}
-          MYSQL_DATABASE: wms
-          MYSQL_USER: wms
-          MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
-        ports: ["3306:3306"]
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p$MYSQL_ROOT_PASSWORD --silent"
-          --health-interval=10s --health-timeout=5s --health-retries=20
+  name: tests-mysql
+  runs-on: ubuntu-latest
+  timeout-minutes: 25
+
+  services:
+    mysql:
+      image: mysql:8.0
+      env:
+        MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_ROOT_PASSWORD }}
+        MYSQL_DATABASE: wms
+        MYSQL_USER: wms
+        MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD }}
+      ports: ["3306:3306"]
+          # Healthcheck runs inside the container; $MYSQL_ROOT_PASSWORD is available there
+      options: >-
+        --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p$MYSQL_ROOT_PASSWORD --silent"
+        --health-interval=10s --health-timeout=5s --health-retries=20
 
     env:
       MYSQL_HOST: 127.0.0.1

@@ -18,3 +18,4 @@ psycopg[binary]>=3.1.18
 
 # 可选：SQLite CLI/异步，若本地用得到再保留
 aiosqlite>=0.20.0
+httpx>=0.27.0
