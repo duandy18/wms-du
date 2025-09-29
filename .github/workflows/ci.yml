@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # 同上：fork PR 无 secrets，跳过
-    if: ${{ github.event_name == 'push' || !github.event_pull_request.head.repo.fork }}
+    if: ${{ github.event_name == 'push' || !github.event.pull_request.head.repo.fork }}
     strategy:
       matrix:
         db: [sqlite, mysql]
