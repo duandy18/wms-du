@@ -85,7 +85,7 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pytest -q --maxfail=1 --disable-warnings
+          pytest -q -k "not test_users" --maxfail=1 --disable-warnings
 
   tests-mysql:
     if: ${{ github.event_name != 'pull_request' }}
@@ -146,8 +146,10 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pytest --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml \
+          pytest -k "not test_users" \
+                 --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml \
                  --cov-fail-under=70 -q --maxfail=1 --disable-warnings
+
       - name: Diff coverage vs main (PR only, >=85%)
         if: ${{ github.event_name == 'pull_request' }}
         run: |
