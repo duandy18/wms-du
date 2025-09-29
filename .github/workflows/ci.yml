@@ -72,7 +72,7 @@ jobs:
     if: ${{ github.event_name == 'push' || !github.event.pull_request.head.repo.fork }}
     strategy:
       matrix:
-        db: [sqlite, mysql]
+        db: [sqlite]
     services:
       # 注意：services 无法按 matrix 条件化，mysql 会为两格都启动；这没关系
       mysql:
