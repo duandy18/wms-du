@@ -1,0 +1,14 @@
+# Default commit message template
+#
+# Format: <type>(<scope>): <short summary>
+#
+# Types: feat, fix, chore, docs, style, refactor, test, ci, build
+#
+# Examples:
+#   feat(users): add user ORM and Alembic migration
+#   fix(auth): correct JWT expiration handling
+#   chore(ci): enforce English-only checks in pre-commit
+#   docs(readme): update setup instructions
+#
+# -------------------- Commit Message --------------------
+
