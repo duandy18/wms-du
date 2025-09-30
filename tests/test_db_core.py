@@ -2,8 +2,8 @@ import os
 import contextlib
 
 import psycopg2
-import pytest
 from dotenv import load_dotenv
+import pytest
 
 
 # A more declarative way to skip the whole module based on an environment variable.
@@ -43,27 +43,18 @@ class TestDatabaseCore:
                 host=db_config["host"],
                 port=db_config["port"],
             )
-            # Yield the connection to the tests.
             yield conn
         except psycopg2.OperationalError as e:
-            # If connection fails, fail the test immediately with a clear message.
             pytest.fail(f"Failed to connect to the database: {e}")
         finally:
-            # Ensure the connection is closed, but only if it was successfully opened.
             if conn:
-                # Use suppress to handle any potential errors during close, but
-                # in this case, a simple close() is often enough.
                 with contextlib.suppress(Exception):
                     conn.close()
-
-    # --- Tests ---
 
     def test_db_connection(self, db_connection):
         """
         Tests if a database connection can be established successfully.
         """
-        # The success of this test is implicitly verified by the fixture.
-        # If the fixture completes without calling pytest.fail(), the connection is valid.
         print("\n✅ Successfully connected to the database.")
 
     def test_db_version(self, db_connection):
@@ -74,7 +65,6 @@ class TestDatabaseCore:
             cur.execute("SELECT version();")
             row = cur.fetchone()
 
-        # Assert that a row was returned and contains a string.
         assert row is not None
         assert isinstance(row[0], str)
         assert "PostgreSQL" in row[0]
