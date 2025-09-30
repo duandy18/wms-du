@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      # 在 CI 中使用 SQLite 数据库, 除非配置覆盖
       DATABASE_URL: 'sqlite:///test.db'
       ENABLE_DIAG: '0'
       JWT_SECRET: 'test-ci-secret'
@@ -40,7 +41,7 @@ jobs:
           python -m pip install -U pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 修复：明确安装 psycopg2-binary，以确保数据库连接驱动在 CI 环境中可用。
+          # 确保安装 psycopg2-binary 以支持数据库测试
           pip install psycopg2-binary
 
       - name: Cache pytest
@@ -51,21 +52,20 @@ jobs:
 
       - name: Lint & Typecheck
         run: |
-          # 1. 运行 ruff Linter 检查，并忽略导入排序错误 I001 (isort 规则)。
+          # 忽略导入排序错误 I001, 解决 Ruff 过于严格的问题
           ruff check . --ignore I001
-
-          # 2. 使用 ruff 格式化（自动修复格式）。Ruff 现在同时处理格式和导入排序。
+          # 使用 ruff format 自动修复格式问题
           ruff format .
-
-          # 3. 运行类型检查
+          # isort 检查已通过 ruff 替代
           mypy .
 
       - name: Test (pytest)
         run: |
-          pytest \
+          # 添加 -v (verbose) 参数, 以显示每个测试函数的名称
+          pytest -v \
             --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml \
             --junitxml=pytest-junit.xml \
-            --cov-fail-under=65 -q --maxfail=1 --disable-warnings
+            --cov-fail-under=65 --maxfail=1 --disable-warnings
 
       - name: Upload test artifacts on failure
         if: failure()
