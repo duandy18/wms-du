@@ -74,7 +74,14 @@ class TestDatabaseCore:
         with contextlib.suppress(Exception):
             cur = db_connection.cursor()
             cur.execute(f"DROP TABLE IF EXISTS {table_name}")
-            cur.execute(f"CREATE TABLE {table_name} (id SERIAL PRIMARY KEY, value VARCHAR(50) NOT NULL)")
+            # 修正 E501 错误: 拆分 CREATE TABLE 语句
+            create_sql = (
+                f"CREATE TABLE {table_name} ("
+                "id SERIAL PRIMARY KEY, "
+                "value VARCHAR(50) NOT NULL"
+                ")"
+            )
+            cur.execute(create_sql)
 
             # --- 2. 插入数据 (INSERT/WRITE)
             cur.execute(
@@ -92,7 +99,9 @@ class TestDatabaseCore:
 
             # --- 4. 更新数据 (UPDATE)
             update_value = "data_updated"
-            cur.execute(f"UPDATE {table_name} SET value = %s WHERE id = %s", (update_value, inserted_id))
+            # 修正 E501 错误: 拆分 UPDATE 语句
+            update_sql = f"UPDATE {table_name} SET value = %s WHERE id = %s"
+            cur.execute(update_sql, (update_value, inserted_id))
             db_connection.commit()
 
             cur.execute(f"SELECT value FROM {table_name} WHERE id = %s", (inserted_id,))
