@@ -1,11 +1,11 @@
 import os
 import contextlib
+
 import psycopg2
 import pytest
 from dotenv import load_dotenv
 
 
-# --- Test Setup ---
 # A more declarative way to skip the whole module based on an environment variable.
 @pytest.mark.skipif(
     os.getenv("DATABASE_URL", "").startswith("sqlite"),
