@@ -1,12 +1,13 @@
-import os
 import contextlib
+import os
 
-import psycopg2
-from dotenv import load_dotenv
 import pytest
+from dotenv import load_dotenv
+import psycopg2
 
 
 # A more declarative way to skip the whole module based on an environment variable.
+# NOTE: The CI pipeline environment variable DATABASE_URL='sqlite:///test.db' will trigger the skip.
 @pytest.mark.skipif(
     os.getenv("DATABASE_URL", "").startswith("sqlite"),
     reason="Skip DB tests on SQLite CI"
@@ -43,10 +44,13 @@ class TestDatabaseCore:
                 host=db_config["host"],
                 port=db_config["port"],
             )
+            # Yield the connection to the tests.
             yield conn
         except psycopg2.OperationalError as e:
+            # If connection fails, fail the test immediately with a clear message.
             pytest.fail(f"Failed to connect to the database: {e}")
         finally:
+            # Ensure the connection is closed, but only if it was successfully opened.
             if conn:
                 with contextlib.suppress(Exception):
                     conn.close()
