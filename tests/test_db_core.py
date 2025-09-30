@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 class TestDatabaseCore:
     """
     针对 PostgreSQL 数据库核心功能的测试。
-    所有测试将使用一个连接，并在类测试完成后关闭。
+    所有测试将使用一个连接, 并在类测试完成后关闭。
     """
 
     # 确保 psycopg2 可用
@@ -35,7 +35,7 @@ class TestDatabaseCore:
     @pytest.fixture(scope="class")
     def db_connection(self, db_config):
         """
-        提供数据库连接，在类测试完成后关闭。
+        提供数据库连接, 在类测试完成后关闭。
         """
         conn = None
         try:
@@ -49,7 +49,7 @@ class TestDatabaseCore:
             )
             yield conn
         except psycopg2.OperationalError as e:
-            # 如果连接失败，测试立即失败
+            # 如果连接失败, 测试立即失败
             pytest.fail(f"Failed to connect to database: {e}")
         finally:
             # 确保连接被关闭
@@ -60,7 +60,7 @@ class TestDatabaseCore:
 
     def test_db_version(self, db_connection):
         """
-        测试执行一个简单的查询（获取数据库版本），确保连接正常工作。
+        测试执行一个简单的查询（获取数据库版本）, 确保连接正常工作。
         """
         # 使用游标作为上下文管理器以确保其被正确关闭
         with db_connection.cursor() as cur:
@@ -73,7 +73,7 @@ class TestDatabaseCore:
 
     def test_database_crud_operations(self, db_connection):
         """
-        测试数据库的创建、读取和删除操作（CRUD），
+        测试数据库的创建、读取和删除操作（CRUD）,
         以验证权限和事务是否正常工作。
         """
         table_name = "test_data_for_ci"
@@ -92,7 +92,10 @@ class TestDatabaseCore:
 
             # --- 2. 插入数据 (CREATE/WRITE) ---
             insert_value = "ci_test_data"
-            cur.execute(f"INSERT INTO {table_name} (value) VALUES (%s) RETURNING id;", (insert_value,))
+            cur.execute(
+                f"INSERT INTO {table_name} (value) VALUES (%s) RETURNING id;",
+                (insert_value,)
+            )  # 将长行拆分成两行
             inserted_id = cur.fetchone()[0]
 
             # --- 3. 查询数据 (READ) ---
@@ -114,5 +117,5 @@ class TestDatabaseCore:
             # --- 5. 清理 (Cleanup) ---
             cur.execute(f"DROP TABLE {table_name};")
 
-            # 提交所有更改，确保它们写入数据库
+            # 提交所有更改, 确保它们写入数据库
             db_connection.commit()
