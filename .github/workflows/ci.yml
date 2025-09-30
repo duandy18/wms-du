@@ -15,13 +15,15 @@ jobs:
   ci-main:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    # 固定、可解析的环境变量（无表达式陷阱）
     env:
-      DATABASE_URL: sqlite:///test.db
-      ENABLE_DIAG: "0"
-      JWT_SECRET: test-ci-secret
+      DATABASE_URL: 'sqlite:///test.db'
+      ENABLE_DIAG: '0'
+      JWT_SECRET: 'test-ci-secret'
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -41,6 +43,7 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
+      # 仅缓存 pytest 的运行缓存；pip 缓存已由 setup-python 管理
       - name: Cache pytest
         uses: actions/cache@v4
         with:
