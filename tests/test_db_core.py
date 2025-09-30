@@ -1,14 +1,14 @@
 import os
 import pytest
 
-# 如果 CI 下使用 SQLite（默认 DATABASE_URL=sqlite:///test.db），则跳过整个模块
+# If running in CI with SQLite (default DATABASE_URL=sqlite:///test.db), skip the whole module
 if os.getenv("DATABASE_URL", "").startswith("sqlite"):
     pytest.skip("skip db_core tests on SQLite CI", allow_module_level=True)
 
 import psycopg2
 from dotenv import load_dotenv
 
-# 1. 读取 .env 文件
+# 1. Load .env file
 load_dotenv()
 
 DB_USER = os.getenv("DB_USER")
@@ -18,7 +18,7 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 
 try:
-    # 2. 建立数据库连接
+    # 2. Connect to database
     conn = psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
@@ -27,13 +27,13 @@ try:
         port=DB_PORT,
     )
 
-    # 3. 创建游标并执行 SQL
+    # 3. Run simple SQL
     cur = conn.cursor()
     cur.execute("SELECT version();")
     version = cur.fetchone()
     print("✅ Success: connected to database, version:", version[0])
 
-    # 4. 清理
+    # 4. Cleanup
     cur.close()
     conn.close()
 
