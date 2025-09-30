@@ -5,6 +5,8 @@ target-version = ["py312"]
 [tool.isort]
 profile = "black"
 line_length = 100
+# 明确告诉 isort 哪些是本地应用包，确保导入顺序正确
+known_local_folder = ["app"]
 
 [tool.ruff]
 line-length = 100
@@ -12,10 +14,20 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
-ignore = []
+# 忽略一些常见的不适用的规则
+ignore = [
+    "E501",   # black 会处理行长问题
+    "FBT001", # 允许在函数参数中使用布尔默认值
+    "TD",     # 忽略待办事项 (TODO) 相关的警告
+    "B008",   # 忽略 FastAPI 的 Depends() 模式
+    "RUF001", # 忽略全角感叹号
+    "RUF002", # 忽略全角括号
+    "RUF003", # 忽略全角冒号和逗号
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["PLR2004"]  # allow magic numbers (e.g., 200/204) in tests
+# 允许在测试文件中忽略一些规则
+"tests/*.py" = ["PLR2004"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -40,3 +52,17 @@ fail_under = 70
 module = ["alembic", "alembic.*"]
 ignore_missing_imports = true
 ignore_errors = true
+
+# ==========================================================
+# 新增 Pytest 配置以解决 ModuleNotFoundError
+# ==========================================================
+[tool.pytest.ini_options]
+# 核心修复：将 pythonpath 格式改为字符串，以增强兼容性
+pythonpath = "."
+testpaths = ["tests"]
+addopts = "-q"
+# 在 pyproject.toml 中集中处理警告，与你 pyproject.toml 保持一致
+filterwarnings = [
+    "ignore:PydanticDeprecatedSince20:DeprecationWarning",
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+]

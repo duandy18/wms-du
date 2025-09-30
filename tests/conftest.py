@@ -35,7 +35,7 @@ except ImportError:
 # ---------- import app code ----------
 from app import db as app_db  # contains get_db & SessionLocal
 from app.models import Base
-from apps.api import main  # FastAPI app module
+from app.api import main  # FastAPI app module <-- 这里修正了原来的 apps.api 路径
 
 # ---------- engine & session factory ----------
 DB_URL = os.environ["DATABASE_URL"]
