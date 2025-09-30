@@ -66,3 +66,10 @@ B.sql
 .schema_snapshot_tmp/
 bootstrap
 *.patch
+# 2. 添加以下内容到 .gitignore
+# 忽略 Python 虚拟环境
+venv/
+venv.sh
+
+# 忽略运行时生成的进程ID文件
+*.pid
