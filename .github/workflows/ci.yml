@@ -49,8 +49,9 @@ jobs:
 
       - name: Lint & Typecheck
         run: |
-          # 忽略导入排序错误 ID001，允许测试通过
-          ruff check . --ignore ID001
+          # 忽略导入排序错误 I001（之前的 ID001 应该是笔误），允许测试通过
+          # 'I' 是 ruff 中 isort 规则的前缀。
+          ruff check . --ignore I001
           ruff format --check .
           black --check .
           # 移除 isort 检查，因为 ruff 已经执行了大部分格式化工作
