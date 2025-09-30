@@ -1,4 +1,9 @@
 import os
+import pytest
+
+# 如果 CI 下使用 SQLite（默认 DATABASE_URL=sqlite:///test.db），则跳过整个模块
+if os.getenv("DATABASE_URL", "").startswith("sqlite"):
+    pytest.skip("skip db_core tests on SQLite CI", allow_module_level=True)
 
 import psycopg2
 from dotenv import load_dotenv
