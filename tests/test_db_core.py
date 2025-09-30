@@ -111,20 +111,3 @@ class TestDatabaseCore:
         with contextlib.suppress(Exception):
             cur.execute(f"DROP TABLE IF EXISTS {table_name}")
             db_connection.commit()
-
-### **步骤二：提交并推送**
-
-现在，你的本地文件已经是最新版本了。请执行以下命令来强制 Git 识别这个修改并上传：
-
-```bash
-# 1. 检查状态 (这次应该显示 modified)
-git status
-
-# 2. 添加到暂存区
-git add tests/test_db_core.py
-
-# 3. 创建提交
-git commit -m "feat: Final commit of database CRUD tests"
-
-# 4. 推送至 GitHub
-git push
