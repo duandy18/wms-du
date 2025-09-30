@@ -1,12 +1,12 @@
 import os
+
 import pytest
+import psycopg2
+from dotenv import load_dotenv
 
 # If running in CI with SQLite (default DATABASE_URL=sqlite:///test.db), skip the whole module
 if os.getenv("DATABASE_URL", "").startswith("sqlite"):
     pytest.skip("skip db_core tests on SQLite CI", allow_module_level=True)
-
-import psycopg2
-from dotenv import load_dotenv
 
 # 1. Load .env file
 load_dotenv()
