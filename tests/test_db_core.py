@@ -60,7 +60,7 @@ class TestDatabaseCore:
 
     def test_db_version(self, db_connection):
         """
-        测试执行一个简单的查询（获取数据库版本）, 确保连接正常工作。
+        测试执行一个简单的查询(获取数据库版本), 确保连接正常工作。
         """
         # 使用游标作为上下文管理器以确保其被正确关闭
         with db_connection.cursor() as cur:
@@ -73,7 +73,7 @@ class TestDatabaseCore:
 
     def test_database_crud_operations(self, db_connection):
         """
-        测试数据库的创建、读取和删除操作（CRUD）,
+        测试数据库的创建、读取和删除操作(CRUD),
         以验证权限和事务是否正常工作。
         """
         table_name = "test_data_for_ci"
