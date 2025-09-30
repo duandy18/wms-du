@@ -1,7 +1,7 @@
 import os
 
-import pytest
 import psycopg2
+import pytest
 from dotenv import load_dotenv
 
 # If running in CI with SQLite (default DATABASE_URL=sqlite:///test.db), skip the whole module
