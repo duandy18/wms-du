@@ -1,37 +1,59 @@
 # app/api/inventory.py
+
+from collections import defaultdict
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.inventory import InventoryMovement
+from app.models.inventory import InventoryMovement, MovementType
 from app.models.items import Item
 from app.models.locations import Location
-from app.schemas.inventory import InventoryMovementCreate, InventoryMovementOut
+from app.schemas.inventory import (
+    InventoryMovementCreate,
+    InventoryMovementOut,
+    StockOnHandOut,
+)
 
 router = APIRouter()
 
 
+def get_stock_summary(db: Session) -> defaultdict[tuple[str, str], int]:
+    """
+    计算每个库位上每个物料的当前库存总量，并返回一个字典。
+    """
+    stock_summary = defaultdict(int)
+    movements = db.query(InventoryMovement).all()
+    for move in movements:
+        if move.movement_type == MovementType.RECEIPT:
+            stock_summary[(move.item_sku, move.to_location_id)] += move.quantity
+        elif move.movement_type == MovementType.SHIPMENT:
+            stock_summary[(move.item_sku, move.from_location_id)] -= move.quantity
+        elif move.movement_type == MovementType.TRANSFER:
+            stock_summary[(move.item_sku, move.from_location_id)] -= move.quantity
+            stock_summary[(move.item_sku, move.to_location_id)] += move.quantity
+    return stock_summary
+
+
 @router.post(
-    "/inventory/movements", response_model=InventoryMovementOut, status_code=status.HTTP_201_CREATED
+    "/inventory/movements",
+    response_model=InventoryMovementOut,
+    status_code=status.HTTP_201_CREATED,
 )
 def create_inventory_movement(movement_in: InventoryMovementCreate, db: Session = Depends(get_db)):
     """
     创建一个新的库存流水记录。
     """
-    # 验证物料 SKU 是否存在
     item = db.query(Item).filter(Item.sku == movement_in.item_sku).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # 验证来源库位是否存在 (如果提供了)
     if movement_in.from_location_id:
         from_loc = db.query(Location).filter(Location.id == movement_in.from_location_id).first()
         if not from_loc:
             raise HTTPException(status_code=404, detail="From location not found")
 
-    # 验证目标库位是否存在 (如果提供了)
     if movement_in.to_location_id:
         to_loc = db.query(Location).filter(Location.id == movement_in.to_location_id).first()
         if not to_loc:
@@ -59,3 +81,18 @@ def get_movements_by_item(item_sku: str, db: Session = Depends(get_db)):
     通过物料 SKU 获取其所有库存流水记录。
     """
     return db.query(InventoryMovement).filter(InventoryMovement.item_sku == item_sku).all()
+
+
+@router.get("/inventory/stock_on_hand", response_model=list[StockOnHandOut])
+def get_stock_on_hand(db: Session = Depends(get_db)):
+    """
+    获取每个库位上每个物料的当前库存总量。
+    """
+    stock_summary: defaultdict[tuple[str, str], int] = get_stock_summary(db)
+
+    result = []
+    for (sku, loc_id), qty in stock_summary.items():
+        if qty > 0:
+            result.append(StockOnHandOut(item_sku=sku, location_id=loc_id, quantity=qty))
+
+    return result

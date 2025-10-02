@@ -4,45 +4,33 @@ uvicorn[standard]>=0.30.0
 
 # ORM / 数据库
 sqlalchemy>=2.0.30
-pydantic[email]>=2.8.2
+pydantic>=2.8.2
 pydantic-settings>=2.4.0
-
-# 你的运行库是 MySQL（开发 Compose 也是 MySQL）
-# 如果生产也用 MySQL，请把驱动放到运行时依赖：
-pymysql>=1.1.0
-
-# 数据模型
-pydantic[email]>=2.8.2
-
-# 测试
-pytest>=8.2.0
-pytest-cov>=5.0.0
-
-# 质量工具
-pre-commit>=3.7.0
-ruff>=0.5.0
-black>=24.4.0
-isort>=5.13.0
-mypy>=1.10.0
-types-setuptools
-
-
-# 可选工具（SQLite CLI）
-aiosqlite>=0.20.0
-# Drivers
-pymysql>=1.1.0
-psycopg[binary]>=3.1.18   # 可选：仅当需要 Postgres 测试/CI
+psycopg2-binary>=2.9.9  # 新增：PostgreSQL 驱动
 
 # Migrations
 alembic>=1.13.0
 
+# 密码哈希
+passlib>=1.7.4
+bcrypt>=4.1.2
+argon2-cffi>=23.1.0
 
+# JWT
+python-jose[cryptography]>=3.3.0
 cryptography>=42.0.0
 
+# 类型检查
+mypy>=1.10.0
+types-setuptools
 
-# Seeds
+# 代码质量工具
+pre-commit>=3.7.0
+ruff>=0.5.0
+black>=24.4.0
+isort>=5.13.0
+
+# 其他
 PyYAML>=6.0.1
 
-# Docs (可选：若启用 docs-build CI)
-mkdocs>=1.6.0
-mkdocs-material>=9.5.0
+email-validator

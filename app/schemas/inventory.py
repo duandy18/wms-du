@@ -20,3 +20,14 @@ class InventoryMovementOut(InventoryMovementCreate):
 
     class Config:
         from_attributes = True
+
+
+# app/schemas/inventory.py
+
+# ... (保持文件顶部现有代码不变)
+
+
+class StockOnHandOut(BaseModel):
+    item_sku: str
+    location_id: str
+    quantity: float

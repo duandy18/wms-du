@@ -1,76 +1,56 @@
-# alembic/env.py
-from __future__ import annotations
-
 import os
 import sys
 from logging.config import fileConfig
-from pathlib import Path
 
-# ensure project root on sys.path (.../alembic -> project root)
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from sqlalchemy import engine_from_config, pool
 
-from sqlalchemy import engine_from_config, pool  # noqa: E402
+from alembic import context
 
-from alembic import context  # noqa: E402  # type: ignore[attr-defined]
-from app.models import metadata as target_metadata  # noqa: E402
+# 导入你的应用模型 (注意：这行必须在顶部)
+from app.db import Base
 
+# 将你的项目根目录添加到 Python 路径，确保可以导入 app 模块
+sys.path.insert(0, ".")
+sys.path.insert(0, "..")
+
+
+# Alembic Config
 config = context.config
 
-# prefer ALEMBIC_SQLITE_URL (for schema_snapshot), otherwise DATABASE_URL
-env_url = os.getenv("ALEMBIC_SQLITE_URL") or os.getenv("DATABASE_URL")
-if env_url:
-    config.set_main_option("sqlalchemy.url", env_url)
-
-# logging
+# 如果你的 alembic.ini 中有 logger 配置，可以加载
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# 这里是你的数据库连接 URL，从环境变量中获取
+config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL"))
 
-def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode (no Engine, just a URL)."""
+# 你的所有模型都注册在 Base.metadata 中
+target_metadata = Base.metadata
+
+
+def run_migrations_offline():
     url = config.get_main_option("sqlalchemy.url")
-    if not url:
-        raise RuntimeError("No sqlalchemy.url configured for offline migrations.")
-
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,
-        compare_server_default=False,
-        render_as_batch=True,
-        include_schemas=False,
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode (with Engine/Connection)."""
+def run_migrations_online():
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-            compare_server_default=False,
-            render_as_batch=True,
-            include_schemas=False,
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
 
-
-print("ALEMBIC URL =>", config.get_main_option("sqlalchemy.url"))
 
 if context.is_offline_mode():
     run_migrations_offline()

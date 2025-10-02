@@ -41,3 +41,16 @@ class OrderOut(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
+
+
+# app/schemas/orders.py
+
+# ... (保持文件顶部现有代码不变)
+
+
+class OrderUpdate(BaseModel):
+    order_number: str | None = None
+    order_type: OrderType | None = None
+    party_id: str | None = None
+    status: OrderStatus | None = None
+    order_lines: list[OrderLineCreate] | None = None
