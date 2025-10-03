@@ -23,7 +23,8 @@ def test_user_crud_happy_path(client):
     assert r_create.status_code in (200, 201)
     created = r_create.json()
 
-    id_key, user_id = _pick(created, POSSIBLE_ID_KEYS)
+    _, user_id = _pick(created, POSSIBLE_ID_KEYS)
+
     assert user_id is not None, f"create response missing id in {POSSIBLE_ID_KEYS}: {created}"
 
     # 2) get by id

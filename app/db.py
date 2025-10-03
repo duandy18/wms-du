@@ -1,37 +1,19 @@
-# app/db.py
-from functools import lru_cache
+import os
 
-from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
-class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+psycopg://wms:password@localhost:5432/wmsdb"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-
-
-@lru_cache
-def get_settings():
-    return Settings()
-
-
-settings = get_settings()
-
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-
-class Base(DeclarativeBase):
-    pass
+Base = declarative_base()
 
 
 def get_db():
-    db = SessionLocal()
     try:
+        db = SessionLocal()
         yield db
     finally:
         db.close()

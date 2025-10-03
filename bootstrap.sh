@@ -1,47 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "🚀 Bootstrapping WMS-DU development environment..."
+# ----------------------------------------
+# WMS-DU bootstrap script
+# 用于本地开发环境初始化
+# ----------------------------------------
 
-# 1) 创建虚拟环境（如果不存在）
+# 1. 创建虚拟环境
 if [ ! -d ".venv" ]; then
-  echo "📦 Creating virtual environment..."
+  echo "📦 创建虚拟环境 .venv ..."
   python3 -m venv .venv
 fi
 
-# 2) 激活虚拟环境
-echo "📂 Activating virtual environment..."
+# 2. 激活虚拟环境
+echo "✅ 激活虚拟环境"
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-# 3) 升级 pip
-echo "⬆️  Upgrading pip..."
-pip install --upgrade pip
+# 3. 升级 pip
+echo "⬆️ 升级 pip..."
+pip install --upgrade pip setuptools wheel
 
-# 4) 安装运行时依赖
+# 4. 安装依赖
 if [ -f "requirements.txt" ]; then
-  echo "📥 Installing runtime dependencies..."
+  echo "📥 安装 requirements.txt 依赖..."
   pip install -r requirements.txt
-fi
-
-# 5) 安装开发依赖
-if [ -f "requirements-dev.txt" ]; then
-  echo "🛠 Installing dev dependencies..."
-  pip install -r requirements-dev.txt
 else
-  echo "⚠️ No requirements-dev.txt found, skipping dev tools."
+  echo "⚠️ 未找到 requirements.txt，跳过依赖安装"
 fi
 
-# 6) 安装 pre-commit 钩子
-if command -v pre-commit &>/dev/null; then
-  echo "🔗 Installing pre-commit hooks..."
+# 5. 初始化 pre-commit
+if [ -f ".pre-commit-config.yaml" ]; then
+  echo "🔧 安装 pre-commit 钩子..."
   pre-commit install
-else
-  echo "⚠️ pre-commit not available, please install manually."
 fi
 
-# 7) 提示完成
-echo "✅ Bootstrap finished! You can now run:"
-echo "   pre-commit run --all-files"
-echo "   mypy ."
-echo "   pytest --cov=app --cov-report=term-missing --cov-fail-under=80"
+echo "🎉 环境初始化完成，可以开始开发啦！"

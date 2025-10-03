@@ -1,9 +1,8 @@
 # tests/test_users_extra.py
 import uuid
 
-from fastapi.testclient import TestClient
-
 from apps.api import main
+from fastapi.testclient import TestClient
 
 client = TestClient(main.app)
 
