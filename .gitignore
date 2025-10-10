@@ -19,3 +19,6 @@ htmlcov/
 *.sqlite
 tmp_upgrade.db
 .schema_snapshot_tmp/
+
+# patches
+*.patch
