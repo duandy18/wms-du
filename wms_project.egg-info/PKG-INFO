@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: wms-project
+Version: 0.1.0
+Summary: A simple WMS project
+Provides-Extra: pg
+Requires-Dist: asyncpg>=0.29; extra == "pg"
+Requires-Dist: psycopg[binary]>=3.2; extra == "pg"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: alembic; extra == "dev"
+Requires-Dist: httpx; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: isort; extra == "dev"
+Requires-Dist: mypy; extra == "dev"

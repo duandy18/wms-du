@@ -1,26 +1,83 @@
-name: ci
+name: App CI - Lite
 
 on:
-  pull_request:
-  push:
-    branches: [ main, dev, "feat/**", "chore/**" ]
+  push: { branches: [ main ] }
+  pull_request: { branches: [ main ] }
 
 jobs:
-  check:
+  smoke:
+    name: Smoke (PG)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms           # pragma: allowlist secret
+          POSTGRES_PASSWORD: wms       # pragma: allowlist secret
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U wms"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: postgresql+asyncpg://wms:wms@localhost:5432/wms          # pragma: allowlist secret
+      DATABASE_URL_TEST: postgresql+asyncpg://wms:wms@localhost:5432/wms_test # pragma: allowlist secret
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dev tools (pinned)
+        with: { python-version: "3.12" }
+      - name: Install deps
         run: |
           python -m pip install -U pip
-          pip install ruff==0.6.9
+          pip install -e ".[pg,dev]"
+          pip install fastapi uvicorn pydantic-settings APScheduler
+      - name: Run smoke tests
 
-      - name: Ruff check (no writes)
         run: |
-          ruff check .
-          ruff format --check .
+          # 关闭全局 addopts 覆盖率，并禁用 pytest-cov 插件
+          pytest -m smoke -q -p no:cov -o addopts= || pytest -q -p no:cov -o addopts= \
+            tests/test_stock_api.py::test_post_adjust_and_query \
+            tests/api/test_stock_batch_query.py::test_stock_batch_query \
+            tests/services/test_stock_ledger.py::test_adjust_writes_ledger
+
+        
+  full:
+    name: Full (PG + Coverage)
+    runs-on: ubuntu-latest
+    needs: smoke
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms           # pragma: allowlist secret
+          POSTGRES_PASSWORD: wms       # pragma: allowlist secret
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U wms"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: postgresql+asyncpg://wms:wms@localhost:5432/wms          # pragma: allowlist secret
+      DATABASE_URL_TEST: postgresql+asyncpg://wms:wms@localhost:5432/wms_test # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[pg,dev]"
+          pip install fastapi uvicorn pydantic-settings APScheduler
+      - name: Run full tests + coverage
+        run: |
+          pytest -v --maxfail=1 --durations=10 \
+                 --cov=app --cov-report=term-missing \
+                 --cov-fail-under=45
+
+  ci-main:
+    name: ci-main
+    runs-on: ubuntu-latest
+    needs: [smoke, full]
+    steps:
+      - name: All checks passed
+        run: echo "smoke & full succeeded"

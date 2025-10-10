@@ -1,0 +1,6 @@
+# app/schemas/__init__.py
+
+from . import batch  # 新增：导入 batch 模块
+from . import permission  # 新增
+from . import role  # 新增
+from . import auth, inventory, items, locations, orders, parties, stock, users
