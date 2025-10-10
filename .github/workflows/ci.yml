@@ -75,3 +75,5 @@ jobs:
     steps:
       - name: All checks passed
         run: echo "smoke & full succeeded"
+
+# ci: trigger 2025-10-11T07:56:16+08:00
