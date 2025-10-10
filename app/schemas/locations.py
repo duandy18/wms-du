@@ -1,6 +1,7 @@
 # app/schemas/locations.py
 
-from pydantic import BaseModel
+
+from pydantic import BaseModel, ConfigDict
 
 
 class WarehouseCreate(BaseModel):
@@ -8,11 +9,14 @@ class WarehouseCreate(BaseModel):
     address: str | None = None
 
 
+class WarehouseUpdate(WarehouseCreate):
+    name: str | None = None
+
+
 class WarehouseOut(WarehouseCreate):
     id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LocationCreate(BaseModel):
@@ -20,8 +24,12 @@ class LocationCreate(BaseModel):
     warehouse_id: str
 
 
+class LocationUpdate(LocationCreate):
+    name: str | None = None
+    warehouse_id: str | None = None
+
+
 class LocationOut(LocationCreate):
     id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

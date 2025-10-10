@@ -1,11 +1,12 @@
 # app/schemas/parties.py
 
-from pydantic import BaseModel
+
+from pydantic import BaseModel, ConfigDict
 
 from app.models.parties import PartyType
 
 
-class PartyCreate(BaseModel):
+class PartyBase(BaseModel):
     name: str
     party_type: PartyType
     contact_person: str | None = None
@@ -14,8 +15,16 @@ class PartyCreate(BaseModel):
     address: str | None = None
 
 
-class PartyOut(PartyCreate):
+class PartyCreate(PartyBase):
+    pass
+
+
+class PartyUpdate(PartyBase):
+    name: str | None = None
+    party_type: PartyType | None = None
+
+
+class PartyOut(PartyBase):
     id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
