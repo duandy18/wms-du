@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: wms-pg
+    restart: always
+    environment:
+      POSTGRES_USER: wms
+      POSTGRES_PASSWORD: wms
+      POSTGRES_DB: wms_du
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wms -d wms_du"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+      timeout: 3s

@@ -1,11 +1,21 @@
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage*
+htmlcov/
+pgdata/
+data/postgres/
 .env
-.vscode/
-.idea/
-.venv/
-dist/
-build/
-*.log
 .env.*
-.DS_Store
+
+# Coverage & cache
+.coverage
+tests/.coverage
+htmlcov/
+
+# Local/Temp DB
+*.db
+*.sqlite
+tmp_upgrade.db
+.schema_snapshot_tmp/
