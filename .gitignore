@@ -22,3 +22,6 @@ tmp_upgrade.db
 
 # patches
 *.patch
+
+# patches
+*.patch
