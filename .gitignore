@@ -8,3 +8,14 @@ pgdata/
 data/postgres/
 .env
 .env.*
+
+# Coverage & cache
+.coverage
+tests/.coverage
+htmlcov/
+
+# Local/Temp DB
+*.db
+*.sqlite
+tmp_upgrade.db
+.schema_snapshot_tmp/
