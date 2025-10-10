@@ -12,16 +12,16 @@ jobs:
       postgres:
         image: postgres:14-alpine
         env:
-          POSTGRES_USER: ${{ secrets.CI_PG_USER }}        # pragma: allowlist secret
-          POSTGRES_PASSWORD: ${{ secrets.CI_PG_PASS }}    # pragma: allowlist secret
+          POSTGRES_USER: wms           # pragma: allowlist secret
+          POSTGRES_PASSWORD: wms       # pragma: allowlist secret
           POSTGRES_DB: wms
         ports: ["5432:5432"]
         options: >-
-          --health-cmd="pg_isready -U ${{ secrets.CI_PG_USER }}"
+          --health-cmd="pg_isready -U wms"
           --health-interval=5s --health-timeout=5s --health-retries=20
     env:
-      DATABASE_URL: postgresql+asyncpg://${{ secrets.CI_PG_USER }}:${{ secrets.CI_PG_PASS }}@localhost:5432/wms          # pragma: allowlist secret
-      DATABASE_URL_TEST: postgresql+asyncpg://${{ secrets.CI_PG_USER }}:${{ secrets.CI_PG_PASS }}@localhost:5432/wms_test # pragma: allowlist secret
+      DATABASE_URL: postgresql+asyncpg://wms:wms@localhost:5432/wms          # pragma: allowlist secret
+      DATABASE_URL_TEST: postgresql+asyncpg://wms:wms@localhost:5432/wms_test # pragma: allowlist secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,16 +45,16 @@ jobs:
       postgres:
         image: postgres:14-alpine
         env:
-          POSTGRES_USER: ${{ secrets.CI_PG_USER }}        # pragma: allowlist secret
-          POSTGRES_PASSWORD: ${{ secrets.CI_PG_PASS }}    # pragma: allowlist secret
+          POSTGRES_USER: wms           # pragma: allowlist secret
+          POSTGRES_PASSWORD: wms       # pragma: allowlist secret
           POSTGRES_DB: wms
         ports: ["5432:5432"]
         options: >-
-          --health-cmd="pg_isready -U ${{ secrets.CI_PG_USER }}"
+          --health-cmd="pg_isready -U wms"
           --health-interval=5s --health-timeout=5s --health-retries=20
     env:
-      DATABASE_URL: postgresql+asyncpg://${{ secrets.CI_PG_USER }}:${{ secrets.CI_PG_PASS }}@localhost:5432/wms          # pragma: allowlist secret
-      DATABASE_URL_TEST: postgresql+asyncpg://${{ secrets.CI_PG_USER }}:${{ secrets.CI_PG_PASS }}@localhost:5432/wms_test # pragma: allowlist secret
+      DATABASE_URL: postgresql+asyncpg://wms:wms@localhost:5432/wms          # pragma: allowlist secret
+      DATABASE_URL_TEST: postgresql+asyncpg://wms:wms@localhost:5432/wms_test # pragma: allowlist secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
