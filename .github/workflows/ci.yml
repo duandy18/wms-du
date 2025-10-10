@@ -32,12 +32,15 @@ jobs:
           pip install -e ".[pg,dev]"
           pip install fastapi uvicorn pydantic-settings APScheduler
       - name: Run smoke tests
+              - name: Run smoke tests
         run: |
-          pytest -m smoke -q || pytest -q \
+          # 关闭全局 addopts 覆盖率，并禁用 pytest-cov 插件
+          pytest -m smoke -q -p no:cov -o addopts= || pytest -q -p no:cov -o addopts= \
             tests/test_stock_api.py::test_post_adjust_and_query \
             tests/api/test_stock_batch_query.py::test_stock_batch_query \
             tests/services/test_stock_ledger.py::test_adjust_writes_ledger
 
+        
   full:
     name: Full (PG + Coverage)
     runs-on: ubuntu-latest
