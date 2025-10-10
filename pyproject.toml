@@ -59,6 +59,8 @@ filterwarnings = [
     "ignore:PydanticDeprecatedSince20:DeprecationWarning",
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
 ]
+# 注：此 env 段在未安装对应插件时会产生 PytestConfigWarning，
+# 但功能不受影响；如需去除告警可改用环境导出/pytest-dotenv。
 env = [
     "DATABASE_URL=postgresql+asyncpg://wms:wms@127.0.0.1:5432/wms",
     "DATABASE_URL_TEST=postgresql+asyncpg://wms:wms@127.0.0.1:5432/wms_test",
@@ -77,16 +79,27 @@ build-backend = "setuptools.build_meta"
 name = "wms-project"
 version = "0.1.0"
 description = "A simple WMS project"
+requires-python = ">=3.12"
+
+# ★ 运行期依赖：本地/容器/CI 将统一安装这些包
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "pydantic-settings>=2.2",
+  "APScheduler>=3.10",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
 
 [project.optional-dependencies]
+# ★ PostgreSQL 驱动（异步+同步）
 pg = [
     "asyncpg>=0.29",
     "psycopg[binary]>=3.2",
 ]
+# ★ 开发/测试工具
 dev = [
     "pytest",
     "pytest-asyncio",

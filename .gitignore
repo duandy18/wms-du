@@ -39,3 +39,6 @@ _alembic_bak/
 # Backups & patches
 README.md.bak.*
 *.patch
+
+# build artifacts
+wms_project.egg-info/

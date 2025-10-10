@@ -1,37 +1,123 @@
+# 运行顺序：formatters -> fixers -> linters
+# Python 版本：3.12
+
+minimum_pre_commit_version: "3.5.0"
 repos:
+  # ---------- Ruff：格式化（等价于 ruff format） ----------
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
-      - id: ruff
-        args: [--fix]
       - id: ruff-format
+        args: ["--line-length", "100"]
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
 
+  # ---------- Black：与 ruff-format 一致的风格 ----------
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
+        args: ["--line-length", "100"]
+        language_version: python3.12
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
 
+  # ---------- isort：import 排序（black 兼容配置） ----------
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
+        args: ["--profile", "black", "--line-length", "100"]
+        language_version: python3.12
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
 
+  # ---------- 常用修复/规范 ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/|
+          \.(png|jpg|jpeg|gif|svg|ico|db|sqlite)$
+      - id: trailing-whitespace
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
+      - id: mixed-line-ending
+        args: ["-f", "lf"]
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/
+      - id: check-added-large-files
+        args: ["--maxkb=500"]  # 避免误把大二进制加入
+      - id: check-merge-conflict
+      - id: check-yaml
+
+  # ---------- Ruff：静态检查（lint） ----------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
+        # 若你在 pyproject.toml 已配置 ruff，保持这里精简即可。
+
+  # ---------- mypy：类型检查（使用 pyproject.toml 配置） ----------
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
       - id: mypy
-        additional_dependencies: ["pydantic"]
-        args: ["--install-types", "--non-interactive"]
+        additional_dependencies:
+          - types-setuptools
+          - pydantic==2.8.2
+          - pydantic-settings==2.3.3
+        files: ^app/  # 只检 app 目录，tests/ 与备份目录跳过
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/
 
+  # ---------- detect-secrets：凭据扫描（使用基线） ----------
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
+    rev: v1.4.0
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
+        exclude: |
+          (?x)
+          ^_alembic_bak/|
+          ^\.idea/|
+          ^wms_project\.egg-info/|
+          ^\.schema_snapshot_tmp/|
+          \.db$|\.sqlite$
 
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
-    hooks:
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
-      - id: mixed-line-ending
+default_language_version:
+  python: python3.12
