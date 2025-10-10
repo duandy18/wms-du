@@ -32,7 +32,7 @@ jobs:
           pip install -e ".[pg,dev]"
           pip install fastapi uvicorn pydantic-settings APScheduler
       - name: Run smoke tests
-              - name: Run smoke tests
+
         run: |
           # 关闭全局 addopts 覆盖率，并禁用 pytest-cov 插件
           pytest -m smoke -q -p no:cov -o addopts= || pytest -q -p no:cov -o addopts= \
