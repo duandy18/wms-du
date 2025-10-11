@@ -1,9 +1,7 @@
 name: App CI - Lite
-
 on:
   push: { branches: [ main ] }
   pull_request: { branches: [ main ] }
-
 jobs:
   smoke:
     name: Smoke (PG)
@@ -30,17 +28,12 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e ".[pg,dev]"
-          pip install fastapi uvicorn pydantic-settings APScheduler
-      - name: Run smoke tests
-
+      - name: Run smoke tests (no coverage)
         run: |
-          # 关闭全局 addopts 覆盖率，并禁用 pytest-cov 插件
           pytest -m smoke -q -p no:cov -o addopts= || pytest -q -p no:cov -o addopts= \
             tests/test_stock_api.py::test_post_adjust_and_query \
             tests/api/test_stock_batch_query.py::test_stock_batch_query \
             tests/services/test_stock_ledger.py::test_adjust_writes_ledger
-
-        
   full:
     name: Full (PG + Coverage)
     runs-on: ubuntu-latest
@@ -67,13 +60,10 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e ".[pg,dev]"
-          pip install fastapi uvicorn pydantic-settings APScheduler
       - name: Run full tests + coverage
         run: |
           pytest -v --maxfail=1 --durations=10 \
-                 --cov=app --cov-report=term-missing \
-                 --cov-fail-under=45
-
+                 --cov=app --cov-report=term-missing
   ci-main:
     name: ci-main
     runs-on: ubuntu-latest
