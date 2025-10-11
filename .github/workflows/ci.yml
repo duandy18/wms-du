@@ -1,62 +1,19 @@
-name: App CI - Lite
+name: App CI - Lite (lean)
 
 on:
-  pull_request:
-    branches: [ main ]
-  push:
-    branches: [ main ]
+  pull_request: { branches: [ main ] }
+  push:         { branches: [ main ] }
 
 concurrency:
   group: app-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  smoke:
-    name: Smoke (PG)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:14-alpine
-        env:
-          POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms  # pragma: allowlist secret
-          POSTGRES_DB: wms
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U wms -d wms"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install deps (editable + extras)
-        run: |
-          pip install -U pip
-          pip install -e ".[pg,dev]"
-      - name: Install runtime deps (temporary)
-        run: |
-          pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
-
-      - name: Smoke tests
-        env:
-          DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
-          JWT_SECRET: test-ci-secret  # pragma: allowlist secret
-          ENABLE_DIAG: "0"
-        run: |
-          pytest -q tests/smoke || true
-
   full:
-    name: Full (PG + coverage)
+    name: Full (PG + pytest only)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     services:
       postgres:
         image: postgres:14-alpine
@@ -64,41 +21,27 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms  # pragma: allowlist secret
           POSTGRES_DB: wms
-        ports: ['5432:5432']
+        ports: [ "5432:5432" ]
         options: >-
           --health-cmd "pg_isready -U wms -d wms"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
-      - name: Install deps (editable + extras)
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install deps (editable)
         run: |
-          pip install -U pip
+          python -m pip install -U pip
           pip install -e ".[pg,dev]"
-      - name: Install runtime deps (temporary)
-        run: |
-          pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
-
-      - name: Run tests with coverage
+      - name: Run tests
         env:
           DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
           JWT_SECRET: test-ci-secret  # pragma: allowlist secret
           ENABLE_DIAG: "0"
-        run: |
-          pytest --cov=app --cov-report=xml --cov-report=term-missing -q --maxfail=1 --disable-warnings
-
-  ci-main:
-    name: CI Main (aggregate)
-    runs-on: ubuntu-latest
-    needs: [smoke, full]
-    steps:
-      - name: All checks passed
-        run: echo "green"
+          ALEMBIC_SQLITE_URL: ""
+        run: pytest -q --maxfail=1 --disable-warnings
