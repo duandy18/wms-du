@@ -1,8 +1,9 @@
-name: App CI - Lite (lean)
+name: App CI - Bootstrap
 
 on:
   pull_request: { branches: [ main ] }
   push:         { branches: [ main ] }
+  workflow_dispatch: {}
 
 concurrency:
   group: app-ci-${{ github.ref }}
@@ -31,17 +32,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-      - name: Install deps (editable)
+        with: { python-version: "3.12", cache: "pip" }
+
+      # CI 运行期依赖（FastAPI 栈）
+      - name: Install runtime deps
         run: |
-          python -m pip install -U pip
-          pip install -e ".[pg,dev]"
-      - name: Run tests
+          python -m pip install -U pip wheel
+          pip install -r .github/ci/requirements-ci.txt
+
+      # 项目依赖（PG/DEV）
+      - name: Install project
+        run: pip install -e ".[pg,dev]"
+
+      # 调仓库脚本（CI 逻辑都在脚本里；PR 改脚本即可演进）
+      - name: Run project CI script
         env:
           DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
           JWT_SECRET: test-ci-secret  # pragma: allowlist secret
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
-        run: pytest -q --maxfail=1 --disable-warnings
+        run: bash .github/ci/run.sh
