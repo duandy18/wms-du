@@ -1,28 +1,52 @@
 """
-CI 兜底补丁：
-- 仅在 GitHub Actions 环境生效；
-- 全局替换 sqlalchemy.create_engine：
-  若目标是 sqlite/aiosqlite，则从 connect_args 中剥掉 server_settings。
+CI 兜底补丁（仅在 GitHub Actions 环境生效）：
+- 同步：替换 sqlalchemy.create_engine，若后端是 sqlite/aiosqlite，则剥掉 connect_args.server_settings；
+- 异步：替换 sqlalchemy.ext.asyncio.create_async_engine，同样逻辑；
+确保任何路径（包括导入时创建）都不会把 PG 的 server_settings 传给 sqlite。
 """
-
 import os
 if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
-    import sqlalchemy  # type: ignore
-    from sqlalchemy.engine import make_url  # type: ignore
+    try:
+        import sqlalchemy  # type: ignore
+        from sqlalchemy.engine import make_url  # type: ignore
+        from sqlalchemy.ext import asyncio as _sqla_async  # type: ignore
+    except Exception:
+        sqlalchemy = None
+        make_url = None
+        _sqla_async = None
 
-    _real_create_engine = sqlalchemy.create_engine
+    if sqlalchemy and make_url:
+        _real_create_engine = sqlalchemy.create_engine
 
-    def _safe_create_engine(url, *args, **kwargs):  # noqa: ANN001, D401
-        try:
-            backend = make_url(url).get_backend_name()
-        except Exception:
-            backend = ""
-        if backend.startswith("sqlite"):
-            ca = kwargs.get("connect_args")
-            if isinstance(ca, dict) and "server_settings" in ca:
-                ca = dict(ca)
-                ca.pop("server_settings", None)
-                kwargs["connect_args"] = ca
-        return _real_create_engine(url, *args, **kwargs)
+        def _safe_create_engine(url, *args, **kwargs):
+            try:
+                backend = make_url(url).get_backend_name()
+            except Exception:
+                backend = ""
+            if backend.startswith("sqlite"):
+                ca = kwargs.get("connect_args")
+                if isinstance(ca, dict) and "server_settings" in ca:
+                    ca = dict(ca)
+                    ca.pop("server_settings", None)
+                    kwargs["connect_args"] = ca
+            return _real_create_engine(url, *args, **kwargs)
 
-    sqlalchemy.create_engine = _safe_create_engine  # type: ignore[attr-defined]
+        sqlalchemy.create_engine = _safe_create_engine  # type: ignore[attr-defined]
+
+    if _sqla_async and make_url:
+        _real_create_async_engine = _sqla_async.create_async_engine
+
+        def _safe_create_async_engine(url, *args, **kwargs):
+            try:
+                backend = make_url(url).get_backend_name()
+            except Exception:
+                backend = ""
+            if backend.startswith("sqlite"):
+                ca = kwargs.get("connect_args")
+                if isinstance(ca, dict) and "server_settings" in ca:
+                    ca = dict(ca)
+                    ca.pop("server_settings", None)
+                    kwargs["connect_args"] = ca
+            return _real_create_async_engine(url, *args, **kwargs)
+
+        _sqla_async.create_async_engine = _safe_create_async_engine  # type: ignore[attr-defined]
