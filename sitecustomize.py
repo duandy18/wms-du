@@ -5,15 +5,16 @@ CI 兜底补丁（仅在 GitHub Actions 环境生效）：
 确保任何路径（包括导入时创建）都不会把 PG 的 server_settings 传给 sqlite。
 """
 import os
+
 if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
     try:
-        import sqlalchemy  # type: ignore
-        from sqlalchemy.engine import make_url  # type: ignore
-        from sqlalchemy.ext import asyncio as _sqla_async  # type: ignore
+        import sqlalchemy
+        from sqlalchemy.engine import make_url
+        from sqlalchemy.ext import asyncio as sqla_async
     except Exception:
         sqlalchemy = None
         make_url = None
-        _sqla_async = None
+        sqla_async = None
 
     if sqlalchemy and make_url:
         _real_create_engine = sqlalchemy.create_engine
@@ -31,10 +32,10 @@ if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
                     kwargs["connect_args"] = ca
             return _real_create_engine(url, *args, **kwargs)
 
-        sqlalchemy.create_engine = _safe_create_engine  # type: ignore[attr-defined]
+        sqlalchemy.create_engine = _safe_create_engine
 
-    if _sqla_async and make_url:
-        _real_create_async_engine = _sqla_async.create_async_engine
+    if sqla_async and make_url:
+        _real_create_async_engine = sqla_async.create_async_engine
 
         def _safe_create_async_engine(url, *args, **kwargs):
             try:
@@ -49,4 +50,4 @@ if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
                     kwargs["connect_args"] = ca
             return _real_create_async_engine(url, *args, **kwargs)
 
-        _sqla_async.create_async_engine = _safe_create_async_engine  # type: ignore[attr-defined]
+        sqla_async.create_async_engine = _safe_create_async_engine
