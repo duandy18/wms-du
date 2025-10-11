@@ -29,19 +29,57 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
-      - name: Install deps (editable)
+
+      - name: Install runtime deps (from requirements)
         run: |
-          python -m pip install -U pip
+          python -m pip install -U pip wheel
+          # 若你已有 .github/ci/requirements-ci.txt 就优先它；没有就直接装必要包
+          if [ -f .github/ci/requirements-ci.txt ]; then
+            pip install -r .github/ci/requirements-ci.txt
+          else
+            pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
+          fi
+
+      - name: Install project (editable)
+        run: |
           pip install -e ".[pg,dev]"
+
+      - name: Write CI-only pytest plugin (force PG & strip sqlite server_settings)
+        run: |
+          mkdir -p tests/plugins
+          cat > tests/plugins/ci_pg_monkeypatch.py <<'PY'
+          import os, sqlalchemy
+          from sqlalchemy.engine import make_url
+          def pytest_configure(config):
+              if os.getenv("GITHUB_ACTIONS","").lower() == "true":
+                  os.environ.setdefault("DATABASE_URL","postgresql+psycopg://wms:wms@localhost:5432/wms")
+                  _real = sqlalchemy.create_engine
+                  def _safe(url, *a, **kw):
+                      try:
+                          backend = make_url(url).get_backend_name()
+                      except Exception:
+                          backend = ""
+                      if backend.startswith("sqlite"):
+                          ca = kw.get("connect_args")
+                          if isinstance(ca, dict) and "server_settings" in ca:
+                              ca = dict(ca); ca.pop("server_settings", None); kw["connect_args"] = ca
+                      return _real(url, *a, **kw)
+                  sqlalchemy.create_engine = _safe
+          PY
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
           JWT_SECRET: test-ci-secret  # pragma: allowlist secret
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
+          PYTEST_ADDOPTS: "-p tests.plugins.ci_pg_monkeypatch"
         run: pytest -q --maxfail=1 --disable-warnings
