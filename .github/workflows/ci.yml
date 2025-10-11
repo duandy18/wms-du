@@ -45,3 +45,6 @@ jobs:
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
         run: pytest -q --maxfail=1 --disable-warnings
+      - name: Install runtime deps (temporary)
+        run: |
+          pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
