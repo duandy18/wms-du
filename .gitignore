@@ -1,30 +1,25 @@
+# Python / venv / cache
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .coverage*
 htmlcov/
-pgdata/
-data/postgres/
-.env
-.env.*
 
-# Coverage & cache
-.coverage
-tests/.coverage
-htmlcov/
-
-# Local/Temp DB
+# DB / 临时
 *.db
 *.sqlite
-tmp_upgrade.db
 .schema_snapshot_tmp/
+tmp_upgrade.db
 
-# patches
+# IDE & 构建产物
+.idea/
+wms_project.egg-info/
+
+# 备份/补丁/杂项
+README.md.bak.*
 *.patch
 
-# patches
-*.patch
-
-# patches
-*.patch
+# 数据卷（若存在）
+pgdata/
+data/postgres/
