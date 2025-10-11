@@ -49,5 +49,5 @@ jobs:
           JWT_SECRET: test-ci-secret                                      # pragma: allowlist secret
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
-          PYTEST_ARGS: "-q --maxfail=1 --disable-warnings -k 'not test_snapshot_run_for_date'"
+          PYTEST_ARGS: -q --maxfail=1 --disable-warnings -k not test_snapshot_run_for_date
         run: bash .github/ci/run.sh
