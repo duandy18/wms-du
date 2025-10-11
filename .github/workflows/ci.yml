@@ -43,7 +43,7 @@ jobs:
           pip install -e ".[pg,dev]"
       - name: Install runtime deps (temporary)
         run: |
-          pip install fastapi uvicorn pydantic-settings APScheduler
+          pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
 
       - name: Smoke tests
         env:
@@ -85,7 +85,7 @@ jobs:
           pip install -e ".[pg,dev]"
       - name: Install runtime deps (temporary)
         run: |
-          pip install fastapi uvicorn pydantic-settings APScheduler
+          pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
 
       - name: Run tests with coverage
         env:
