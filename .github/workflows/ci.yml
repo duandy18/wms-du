@@ -30,25 +30,51 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: "pip" }
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # CI 运行期依赖（FastAPI 栈）
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # 运行期依赖（FastAPI 栈）。如你已把依赖写进 pyproject，也可删掉本步。
       - name: Install runtime deps
         run: |
           python -m pip install -U pip wheel
-          pip install -r .github/ci/requirements-ci.txt
+          if [ -f .github/ci/requirements-ci.txt ]; then
+            pip install -r .github/ci/requirements-ci.txt
+          else
+            pip install fastapi uvicorn pydantic-settings APScheduler aiosqlite
+          fi
 
       # 项目依赖（PG/DEV）
-      - name: Install project
-        run: pip install -e ".[pg,dev]"
+      - name: Install project (editable)
+        run: |
+          pip install -e ".[pg,dev]"
 
-      # 调仓库脚本（CI 逻辑都在脚本里；PR 改脚本即可演进）
+      # 可选：验证 sitecustomize 能被自动导入（出现异常可定位问题）
+      - name: Verify sitecustomize hook
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - <<'PY'
+          import os, sqlalchemy
+          from sqlalchemy.engine import make_url
+          assert os.getenv("GITHUB_ACTIONS","").lower()=="true"
+          # 若未被猴补丁，这句会因 server_settings 报错；被补丁则正常通过
+          sqlalchemy.create_engine("sqlite+aiosqlite:///dummy.db",
+                                   connect_args={"server_settings":{"x":"y"}})
+          print("sitecustomize OK")
+          PY
+
+      # 调用仓库脚本：把 CI 逻辑放在 .github/ci/run.sh，PR 改脚本即可生效
       - name: Run project CI script
         env:
+          PYTHONPATH: ${{ github.workspace }}                            # 让 sitecustomize.py 自动导入
           DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
-          JWT_SECRET: test-ci-secret  # pragma: allowlist secret
+          JWT_SECRET: test-ci-secret                                     # pragma: allowlist secret
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
         run: bash .github/ci/run.sh
