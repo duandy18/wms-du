@@ -20,7 +20,7 @@ jobs:
         image: postgres:14-alpine
         env:
           POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms  # pragma: allowlist secret
+          POSTGRES_PASSWORD: wms    # pragma: allowlist secret
           POSTGRES_DB: wms
         ports: [ "5432:5432" ]
         options: >-
@@ -30,24 +30,26 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: "pip" }
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install runtime deps
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # 仅用项目声明的依赖（运行期依赖已收口到 pyproject.toml）
+      - name: Install project
         run: |
-          python -m pip install -U pip wheel
-          pip install -r .github/ci/requirements-ci.txt
-
-      - name: Install project (editable)
-        run: pip install -e ".[pg,dev]"
+          python -m pip install -U pip
+          pip install -e ".[pg,dev]"
 
       - name: Run project CI script
         env:
-          PYTHONPATH: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}                            # 让 sitecustomize.py 自动加载
           DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms  # pragma: allowlist secret
-          JWT_SECRET: test-ci-secret                                      # pragma: allowlist secret
+          JWT_SECRET: test-ci-secret                                     # pragma: allowlist secret
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
-          PYTEST_ARGS: -q --maxfail=1 --disable-warnings
         run: bash .github/ci/run.sh
