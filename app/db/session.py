@@ -1,51 +1,35 @@
 # app/db/session.py
-from __future__ import annotations
-
+# 统一的同步/异步会话工厂 + FastAPI 依赖（get_db / get_session）
 import os
-import re
-from collections.abc import AsyncGenerator, Generator
+from typing import Generator, AsyncGenerator
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine.url import make_url
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.engine import create_sync_engine, create_async_engine_safe
 
-def _to_async_url(url: str) -> str:
-    try:
-        u = make_url(url)
-    except Exception:
-        return url
+# CI 会设置 DATABASE_URL；本地回退到 sqlite+aiosqlite
+DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///dev.db")
 
-    drv = u.drivername
-    if drv.endswith("+aiosqlite") or drv.endswith("+asyncpg") or drv.endswith("+aiomysql"):
-        return url
+# 同步引擎 + Session
+engine = create_sync_engine(DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
 
-    if drv == "sqlite":
-        new = "sqlite+aiosqlite"
-    elif drv in ("postgresql", "postgres"):
-        new = "postgresql+asyncpg"
-    elif drv == "mysql":
-        new = "mysql+aiomysql"
-    else:
-        return url
-
-    return re.sub(r"^[a-zA-Z0-9_+-]+", new, url, count=1)
-
-
-# === 统一从环境读取数据库 URL（断开对 app.core.config 的依赖，避免循环导入） ===
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////home/andy-du/wms-du/dev.db")
-
-# === 同步引擎（兼容老路由） ===
-SYNC_ENGINE = create_engine(
-    DATABASE_URL,
-    future=True,
-    pool_pre_ping=True,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+# 异步引擎 + AsyncSession
+async_engine = create_async_engine_safe(DATABASE_URL, echo=False)
+AsyncSessionLocal = sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
 )
-SessionLocal = sessionmaker(bind=SYNC_ENGINE, class_=Session, expire_on_commit=False)
+
+# 为兼容历史引用（有的模块期望 async_session_maker）
+async_session_maker = AsyncSessionLocal  # type: ignore[assignment]
 
 
+# FastAPI 依赖注入（同步）
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
@@ -54,28 +38,11 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-# === 异步引擎（新路由 / 定时任务用） ===
-ASYNC_DATABASE_URL = _to_async_url(DATABASE_URL)
-ASYNC_ENGINE = create_async_engine(
-    ASYNC_DATABASE_URL,
-    future=True,
-    echo=False,
-    pool_pre_ping=True,
-)
-AsyncSessionLocal = async_sessionmaker(
-    bind=ASYNC_ENGINE, class_=AsyncSession, expire_on_commit=False
-)
-
-
+# FastAPI 依赖注入（异步）
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        yield session
-
-
-# 兼容外部调用的别名（scheduler / services）
-async_session_maker = AsyncSessionLocal
-
-
-# 兼容 Alembic 旧用法
-def get_database_url() -> str:
-    return DATABASE_URL
+        try:
+            yield session
+        finally:
+            # 会在 async with 退出时自动关闭，这里留空保障语义清晰
+            pass
