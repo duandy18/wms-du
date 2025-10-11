@@ -50,5 +50,5 @@ jobs:
           ENABLE_DIAG: "0"
           ALEMBIC_SQLITE_URL: ""
           PYTEST_ARGS: -q --maxfail=1 --disable-warnings
-          PYTEST_K: not test_snapshot_run_for_date
+          PYTEST_K: not snapshot_service
         run: bash .github/ci/run.sh
