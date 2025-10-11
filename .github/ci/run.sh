@@ -49,5 +49,9 @@ fi
 
 # 运行测试
 : "${PYTEST_ARGS:=-q --maxfail=1 --disable-warnings}"
-echo "== Pytest =="; echo "pytest ${PYTEST_ARGS}"
-pytest ${PYTEST_ARGS}
+ARGS="$PYTEST_ARGS"
+if [[ -n "${PYTEST_K:-}" ]]; then
+  ARGS="$ARGS -k ${PYTEST_K}"
+fi
+echo "== Pytest =="; echo "pytest $ARGS"
+pytest $ARGS
