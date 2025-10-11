@@ -47,11 +47,21 @@ else
   echo "== Alembic skipped =="
 fi
 
-# 运行测试
-: "${PYTEST_ARGS:=-q --maxfail=1 --disable-warnings}"
-ARGS="$PYTEST_ARGS"
-if [[ -n "${PYTEST_K:-}" ]]; then
-  ARGS="$ARGS -k ${PYTEST_K}"
+# ---------------------------------------------
+# 3) 运行测试（允许通过 PYTEST_ARGS/PYTEST_K 覆盖）
+# ---------------------------------------------
+ARGS=()
+# 基础参数
+if [[ -n "${PYTEST_ARGS:-}" ]]; then
+  # 以空格分割追加（例如 -q --maxfail=1 --disable-warnings）
+  read -r -a _base <<< "${PYTEST_ARGS}"
+  ARGS+=("${_base[@]}")
+else
+  ARGS+=(-q --maxfail=1 --disable-warnings)
 fi
-echo "== Pytest =="; echo "pytest $ARGS"
-pytest $ARGS
+# -k 表达式作为一个参数传入
+if [[ -n "${PYTEST_K:-}" ]]; then
+  ARGS+=(-k "${PYTEST_K}")
+fi
+echo "== Pytest =="; echo "pytest ${ARGS[*]}"
+pytest "${ARGS[@]}"
