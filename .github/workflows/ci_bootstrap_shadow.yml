@@ -1,0 +1,88 @@
+name: App CI - Bootstrap (Shadow)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: ""
+  pull_request:
+    branches:
+      - ci-shadow/**
+      - ci/**
+  push:
+    branches:
+      - ci-shadow/**
+      - ci/**
+
+concurrency:
+  group: app-ci-shadow-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    name: Full (PG + pytest only) [shadow]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms
+      ENABLE_DIAG: "0"
+      JWT_SECRET: "ci-default-secret"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pg,dev]"
+
+      - name: Show env
+        run: bash .github/ci/run.sh env
+
+      - name: Run CI (Smoke → Full, cov≥55)
+        run: bash .github/ci/run.sh test
+
+      - name: Upload coverage & reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports-shadow
+          path: |
+            coverage.xml
+            htmlcov/
+            junit.xml

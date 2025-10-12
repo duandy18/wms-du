@@ -13,15 +13,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
-ignore = [
-    "E501",
-    "FBT001",
-    "TD",
-    "B008",
-    "RUF001",
-    "RUF002",
-    "RUF003",
-]
+ignore = ["E501","FBT001","TD","B008","RUF001","RUF002","RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["PLR2004"]
@@ -46,7 +38,7 @@ ignore_errors = true
 source = ["app"]
 branch = true
 
-# 覆盖率报告（只保留这一处；阈值临时放宽为 45）
+# 说明：fail_under=45 仅用于 coverage 命令行；pytest-cov 的门槛由 run.sh 的 --cov-fail-under 接管。
 [tool.coverage.report]
 show_missing = true
 fail_under = 45
@@ -54,10 +46,16 @@ fail_under = 45
 [tool.pytest.ini_options]
 pythonpath = "."
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=term-missing --maxfail=1 -v"
+addopts = "-ra -q --maxfail=1"
+asyncio_mode = "auto"
 filterwarnings = [
     "ignore:PydanticDeprecatedSince20:DeprecationWarning",
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+]
+markers = [
+    "smoke: ultra-fast path tests (inbound core, barcode 400, expiry 422, negative stock, idempotency)",
+    "pg: tests requiring PostgreSQL-specific behavior",
+    "sqlite: tests requiring SQLite behavior",
 ]
 env = [
     "DATABASE_URL=postgresql+asyncpg://wms:wms@127.0.0.1:5432/wms",
@@ -66,9 +64,6 @@ env = [
     "JWT_SECRET=dev-temp-secret",
 ]
 
-# ==========================================================
-# 新增此部分，以显式地告诉 setuptools 你的包在哪里
-# ==========================================================
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
@@ -78,7 +73,6 @@ name = "wms-project"
 version = "0.1.0"
 description = "A simple WMS project"
 
-# ✅ 运行期依赖（正式收口到这里，CI 不再临时 pip 安装）
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -92,10 +86,7 @@ where = ["."]
 include = ["app*"]
 
 [project.optional-dependencies]
-pg = [
-    "asyncpg>=0.29",
-    "psycopg[binary]>=3.2",
-]
+pg = ["asyncpg>=0.29", "psycopg[binary]>=3.2"]
 dev = [
     "pytest",
     "pytest-asyncio",

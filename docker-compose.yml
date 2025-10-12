@@ -1,21 +1,22 @@
-version: '3.8'
-
+# docker-compose.yml
 services:
-  postgres:
+  db:
     image: postgres:14-alpine
-    container_name: wms-pg
-    restart: always
+    container_name: wms-du-db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: wms
       POSTGRES_PASSWORD: wms
-      POSTGRES_DB: wms_du
+      POSTGRES_DB: wms
     ports:
-      - "55432:5432"
+      - "5433:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wms -d wms_du"]
+      test: ["CMD-SHELL", "pg_isready -U wms -d wms"]
       interval: 5s
-      retries: 5
-      start_period: 5s
-      timeout: 3s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pg_data:

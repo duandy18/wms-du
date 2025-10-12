@@ -1,49 +1,94 @@
-# alembic/versions/20251006_add_constraints_to_stocks.py
+"""add/ensure constraints & indexes on stocks (safe if table missing)
+
+Revision ID: 20251006_add_constraints_to_stocks
+Revises: f995a82ac74e
+Create Date: 2025-10-06 10:00:00
+"""
+from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
 
-# ——— rev ids ———
-revision = "20251006_add_constraints_to_stocks"
-down_revision = "f995a82ac74e"
-branch_labels = None
-depends_on = None
-
-
-def upgrade():
-    """
-    SQLite 不支持在线添加约束，这里用 batch 重建表并添加：
-    - 唯一约束 uq_stocks_item_location(item_id, location_id)
-    - 检查约束 ck_stocks_non_negative(quantity >= 0)（若不需要可删除）
-    - 常用索引：ix_stocks_item, ix_stocks_location
-    """
-    # 用 batch_alter_table 触发 copy-and-move
-    with op.batch_alter_table("stocks", recreate="always") as batch_op:
-        # 唯一约束（同一 item+location 仅一行）
-        batch_op.create_unique_constraint("uq_stocks_item_location", ["item_id", "location_id"])
-        # 检查约束（允许你按需保留/删除）
-        try:
-            batch_op.create_check_constraint("ck_stocks_non_negative", "quantity >= 0")
-        except Exception:
-            # 一些方言/旧 SQLite 可能报不支持，忽略
-            pass
-
-    # 索引放在 batch 外创建（避免重复重建）
-    op.create_index("ix_stocks_item", "stocks", ["item_id"], unique=False)
-    op.create_index("ix_stocks_location", "stocks", ["location_id"], unique=False)
+# revision identifiers, used by Alembic.
+revision: str = "20251006_add_constraints_to_stocks"
+down_revision: Union[str, Sequence[str], None] = "f995a82ac74e"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
-def downgrade():
-    # 回滚：删索引→删检查/唯一约束（在 SQLite 上如果失败同样忽略）
-    op.drop_index("ix_stocks_location", table_name="stocks")
-    op.drop_index("ix_stocks_item", table_name="stocks")
+def _has_table(name: str) -> bool:
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    try:
+        return insp.has_table(name)  # 一些方言支持
+    except Exception:
+        return name in insp.get_table_names()
 
-    # 用 batch 去掉约束（重建表）
-    with op.batch_alter_table("stocks", recreate="always") as batch_op:
-        try:
-            batch_op.drop_constraint("ck_stocks_non_negative", type_="check")
-        except Exception:
-            pass
-        try:
-            batch_op.drop_constraint("uq_stocks_item_location", type_="unique")
-        except Exception:
-            pass
+
+def _index_names(table: str) -> set[str]:
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    try:
+        return {ix["name"] for ix in insp.get_indexes(table)}
+    except Exception:
+        return set()
+
+
+def _unique_names(table: str) -> set[str]:
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    try:
+        return {uc["name"] for uc in insp.get_unique_constraints(table)}
+    except Exception:
+        return set()
+
+
+def upgrade() -> None:
+    # 1) 若 stocks 不存在，先创建“最小可用”结构（PG/SQLite 通用）
+    if not _has_table("stocks"):
+        op.create_table(
+            "stocks",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("item_id", sa.Integer(), nullable=False),
+            sa.Column("location_id", sa.Integer(), nullable=False),
+            sa.Column("qty", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        )
+
+    # 2) 幂等补约束/索引
+    uqs = _unique_names("stocks")
+    idx = _index_names("stocks")
+
+    if "uq_stocks_item_location" not in uqs:
+        op.create_unique_constraint(
+            "uq_stocks_item_location",
+            "stocks",
+            ["item_id", "location_id"],
+        )
+
+    if "ix_stocks_item" not in idx:
+        op.create_index("ix_stocks_item", "stocks", ["item_id"], unique=False)
+
+    if "ix_stocks_location" not in idx:
+        op.create_index("ix_stocks_location", "stocks", ["location_id"], unique=False)
+
+    # 热点联合索引（查询 item+location）
+    if "ix_stock_item_loc" not in idx:
+        op.create_index("ix_stock_item_loc", "stocks", ["item_id", "location_id"], unique=False)
+
+
+def downgrade() -> None:
+    # 只撤销本迁移创建的对象；不删除表结构
+    idx = _index_names("stocks")
+    uqs = _unique_names("stocks")
+
+    if "ix_stock_item_loc" in idx:
+        op.drop_index("ix_stock_item_loc", table_name="stocks")
+
+    if "ix_stocks_location" in idx:
+        op.drop_index("ix_stocks_location", table_name="stocks")
+
+    if "ix_stocks_item" in idx:
+        op.drop_index("ix_stocks_item", table_name="stocks")
+
+    if "uq_stocks_item_location" in uqs:
+        op.drop_constraint("uq_stocks_item_location", "stocks", type_="unique")

@@ -10,6 +10,7 @@ app/api/router.py
 app/api/endpoints/__init__.py
 app/api/endpoints/batch.py
 app/api/endpoints/diag.py
+app/api/endpoints/inbound.py
 app/api/endpoints/inventory.py
 app/api/endpoints/items.py
 app/api/endpoints/orders.py
@@ -34,8 +35,11 @@ app/db/__init__.py
 app/db/_database_legacy.py
 app/db/base.py
 app/db/deps.py
+app/db/engine.py
 app/db/session.py
 app/db/uow.py
+app/db/migrations/versions/3b_add_warehouses_and_locations.py
+app/db/migrations/versions/7f_merge_cycle_fix.py
 app/models/__init__.py
 app/models/associations.py
 app/models/batch.py
@@ -57,6 +61,7 @@ app/models/warehouse.py
 app/schemas/__init__.py
 app/schemas/auth.py
 app/schemas/batch.py
+app/schemas/inbound.py
 app/schemas/inventory.py
 app/schemas/item.py
 app/schemas/locations.py
@@ -69,7 +74,9 @@ app/schemas/snapshot.py
 app/schemas/stock.py
 app/schemas/stock_ledger.py
 app/schemas/user.py
+app/services/barcode.py
 app/services/batch_service.py
+app/services/inbound_service.py
 app/services/order_service.py
 app/services/snapshot_service.py
 app/services/stock_service.py

@@ -1,16 +1,16 @@
-"""sqlite: inline INTEGER PRIMARY KEY for core tables
+"""tighten stocks constraints
 
-Revision ID: 1088800f816e
-Revises: 3a_fix_sqlite_inline_pks
-Create Date: 2025-10-06 23:45:53.728638
+Revision ID: 084ef2e5298a
+Revises: f995a82ac74e
+Create Date: 2025-10-06 15:46:53.732285
 
 """
 
 from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
-revision: str = "1088800f816e"
-down_revision: str | Sequence[str] | None = "3a_fix_sqlite_inline_pks"
+revision: str = "084ef2e5298a"
+down_revision: str | Sequence[str] | None = "f995a82ac74e"
 branch_labels = None
 depends_on: str | Sequence[str] | None = None
 

@@ -2,6 +2,11 @@ Metadata-Version: 2.4
 Name: wms-project
 Version: 0.1.0
 Summary: A simple WMS project
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.29
+Requires-Dist: pydantic-settings>=2.2
+Requires-Dist: APScheduler>=3.10
+Requires-Dist: aiosqlite>=0.20
 Provides-Extra: pg
 Requires-Dist: asyncpg>=0.29; extra == "pg"
 Requires-Dist: psycopg[binary]>=3.2; extra == "pg"

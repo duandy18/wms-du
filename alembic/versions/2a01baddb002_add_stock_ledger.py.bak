@@ -5,7 +5,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "2a01baddb002"  # ← 用 alembic 生成后的真实值替换
-down_revision = "2a01baddb001"
+down_revision = "2a01baddb001"  # ← 改成 `<rev1>_add_batches` 的真实 revision
 branch_labels = None
 depends_on = None
 
