@@ -1,60 +1,53 @@
 # app/models/batch.py
+from __future__ import annotations
+
 from sqlalchemy import (
-    CheckConstraint,
     Column,
     Date,
     ForeignKey,
-    Index,
     Integer,
     String,
     UniqueConstraint,
+    Index,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 
 from app.db.base import Base
 
 
 class Batch(Base):
     """
-    批次模型：在“item + location + batch_code”维度上唯一。
-    用途：追溯、退货、质检、保质期管理。
+    批次模型（与数据库结构对齐）：
+    仅包含 id / item_id / code / production_date / expiry_date。
+    - 物理列名统一为 'code'，并提供 Python 同义名 batch_code 兼容旧代码。
+    - 同一 item 下的 code 唯一。
     """
-
     __tablename__ = "batches"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)  # IDENTITY/serial，由数据库发号
+    item_id = Column(Integer, ForeignKey("items.id", ondelete="RESTRICT"), nullable=False, index=True)
 
-    # 业务批次码（人为/系统生成皆可）
-    batch_code = Column(String(64), nullable=False)
+    # 关键：数据库里就叫 'code'
+    code = Column("code", String(64), nullable=False)
+    # 兼容旧字段名 batch_code（应用层可继续使用）
+    batch_code = synonym("code")
 
-    # 关联维度：商品 / 库位 / 仓库
-    item_id = Column(Integer, ForeignKey("items.id", ondelete="RESTRICT"), nullable=False)
-    location_id = Column(Integer, ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False)
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False)
-
-    # 生产/到期（可空）
     production_date = Column(Date, nullable=True)
     expiry_date = Column(Date, nullable=True)
 
-    # 现势批次数量（非负）
-    qty = Column(Integer, nullable=False, default=0)
-
     __table_args__ = (
-        # 一个库位下，同一商品的同一批次码唯一
-        UniqueConstraint("item_id", "location_id", "batch_code", name="uq_batch_item_loc_code"),
-        # 不允许批次数量为负
-        CheckConstraint("qty >= 0", name="ck_batch_qty_nonneg"),
-        # 常用查询索引
-        Index("ix_batches_code", "batch_code"),
+        UniqueConstraint("item_id", "code", name="uq_batches_item_code"),
+        Index("ix_batches_item_code", "item_id", "code"),
         Index("ix_batches_expiry", "expiry_date"),
     )
 
-    # 关系
-    item = relationship("Item", back_populates="batches")
-    location = relationship("Location", back_populates="batches")
-    warehouse = relationship("Warehouse", back_populates="batches")
+    # 关系（按需保留；避免循环导入）
+    item = relationship("Item", back_populates="batches", lazy="joined", viewonly=False)
 
-    # 若你要在流水里记录 batch_id，可开启反向关系
+    # 如果你的 StockLedger 里有 batch_id 外键，可以保留这个反向关系
     ledgers = relationship(
-        "StockLedger", back_populates="batch", cascade="all, delete-orphan", passive_deletes=True
+        "StockLedger",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
