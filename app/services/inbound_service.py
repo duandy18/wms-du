@@ -15,9 +15,8 @@ class InboundService:
     - 自动创建缺失的 SKU（items）
     - 优先使用 preferred_id（默认 0）作为 STAGE；若不存在再回退 ILIKE 'STAGE%' → 最小 id → 创建 preferred_id
     - 直写 stocks 入库（UPSERT +qty）
-    - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数，occurred_at 必填（UTC aware）
+    - 写一条 INBOUND 台账（stock_ledger），含 item_id/ref_line/occurred_at
     - 幂等：若已存在 (reason,ref,ref_line) 台账，则直接返回 idempotent=True
-    - 返回 {"item_id": item_id, "accepted_qty": qty|0, "idempotent": bool}
     """
 
     def __init__(self, stock_service: Optional[Any] = None) -> None:
@@ -59,19 +58,20 @@ class InboundService:
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
 
-        # 修正：使用 timezone-aware 的 UTC 时间
         ts = occurred_at or datetime.now(timezone.utc)
 
+        # ★ 关键：一并写入 item_id
         await session.execute(
             text(
                 """
-                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty, occurred_at)
-                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after, :ts)
+                INSERT INTO stock_ledger (stock_id, item_id, reason, ref, ref_line, delta, after_qty, occurred_at)
+                VALUES (:sid, :item, 'INBOUND', :ref, :ref_line, :delta, :after, :ts)
                 ON CONFLICT DO NOTHING
                 """
             ),
             {
                 "sid": stock_id,
+                "item": item_id,
                 "ref": ref,
                 "ref_line": ref_line_int,
                 "delta": qty,
@@ -82,7 +82,6 @@ class InboundService:
 
         return {"item_id": item_id, "accepted_qty": qty, "idempotent": False}
 
-    # ---------- helpers ----------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
         row = await session.execute(
             text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
