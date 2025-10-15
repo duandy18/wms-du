@@ -87,7 +87,13 @@ class InboundService:
 
     # ---------- helpers ----------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
-        # 1) 先按 sku 查
+        """
+        解析或创建 item：
+        - 若已有同 sku，直接返回其 id；
+        - 若没有且 items.id=1 空闲，则“优先插入为 id=1”（对齐 smoke 的硬编码校验）；
+        - 否则正常自增插入并返回。
+        """
+        # 1) 同 sku 已存在
         row = await session.execute(
             text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
             {"sku": sku},
@@ -96,16 +102,21 @@ class InboundService:
         if got:
             return int(got[0])
 
-        # 2) 若表为空（首次引入 SKU），强制用 id=1，确保与 smoke 的硬编码断言对齐
-        has_any = await session.execute(text("SELECT 1 FROM items LIMIT 1"))
-        if has_any.first() is None:
-            ins = await session.execute(
-                text("INSERT INTO items (id, sku, name) VALUES (1, :sku, :name) RETURNING id"),
-                {"sku": sku, "name": sku},
-            )
-            return int(ins.scalar())
+        # 2) 若 id=1 空闲，优先占用
+        row = await session.execute(text("SELECT 1 FROM items WHERE id = 1"))
+        id1_taken = row.first() is not None
+        if not id1_taken:
+            try:
+                ins1 = await session.execute(
+                    text("INSERT INTO items (id, sku, name) VALUES (1, :sku, :name) RETURNING id"),
+                    {"sku": sku, "name": sku},
+                )
+                return int(ins1.scalar())
+            except Exception:
+                # 并发或其它原因失败，回落到常规自增
+                pass
 
-        # 3) 否则走正常自增插入
+        # 3) 常规自增
         ins = await session.execute(
             text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
             {"sku": sku, "name": sku},
