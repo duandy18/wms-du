@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # WMS-DU CI router: migrate → health → quick → smoke (PG on 5433)
-# Convention: CI Postgres service is exposed as 5433:5432; DATABASE_URL uses 5433.
 set -euo pipefail
 
-# force UTF-8 to avoid mojibake/heredoc surprises
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTHONIOENCODING=UTF-8
 
 log(){ printf "\n[%s] %s\n" "$(date +'%H:%M:%S')" "$*"; }
 
-# --- Human-friendly check names → internal task mapping ---
 normalize_task(){
   local pretty="${1:-ci:pg:all}"
   case "$pretty" in
@@ -23,7 +20,6 @@ normalize_task(){
   esac
 }
 
-# --- Wait for Postgres (defaults to 5433; can be overridden by PGHOST/PGPORT/DATABASE_URL) ---
 wait_pg(){
   local h="${PGHOST:-${1:-127.0.0.1}}"
   local p="${PGPORT:-${2:-5433}}"
@@ -47,10 +43,8 @@ wait_pg(){
   fi
 }
 
-# --- Defaults ---
 export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"
 
-# --- Tasks ---
 task_pg_migrate(){
   log "Alembic upgrade -> head"
   wait_pg || true
@@ -65,7 +59,6 @@ task_pg_health(){
   else
     echo "WARN: tools/pg_healthcheck.py missing; skipping strict checks"
   fi
-  # Invariant checks (tools/db_invariants.py)
   python3 tools/db_invariants.py
 }
 
@@ -74,32 +67,53 @@ task_quick(){
   pytest -q tests/quick -m "not slow" --maxfail=1 --durations=10
 }
 
-# --- hard reset DB before smoke to satisfy smoke's hard-coded checks (item_id=1, loc0/101) ---
+# --- DB hard reset using psql (preferred), fallback to async engine ---
 db_hard_reset(){
   log "Reset DB schema → clean baseline for Smoke"
-  python3 - <<'PY'
-import os
-from sqlalchemy import create_engine, text
+  if command -v psql >/dev/null 2>&1; then
+    PSQL_URL="${DATABASE_URL/+psycopg/}"  # convert to sync url for psql
+    # Extract components for psql: postgresql://user:pwd@host:port/db
+    python3 - <<'PY'
+import os, re, sys, urllib.parse as up
 url = os.environ.get("DATABASE_URL","").replace("+psycopg","")
-eng = create_engine(url)
-with eng.begin() as c:
-    c.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-    c.execute(text("CREATE SCHEMA public"))
-    # PG 默认搜索路径
-    c.execute(text("COMMENT ON SCHEMA public IS 'standard public schema'"))
+u = up.urlparse(url)
+user = u.username or "wms"
+pwd  = u.password or "wms"
+host = u.hostname or "127.0.0.1"
+port = u.port or 5433
+db   = u.path.lstrip("/") or "wms"
+cmd  = f'psql "postgresql://{user}:{pwd}@{host}:{port}/{db}" -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"'
+print(cmd)
+os.system(cmd)
 PY
+  else
+    # fallback: async engine via psycopg v3
+    python3 - <<'PY'
+import os, asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
+
+url = os.environ.get("DATABASE_URL","")
+if not url:
+    raise SystemExit("DATABASE_URL not set")
+engine = create_async_engine(url, future=True)
+
+async def main():
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+asyncio.run(main())
+PY
+  fi
   alembic upgrade head
 }
 
 task_smoke(){
-  # reset DB to clean state so smoke's seeds produce item_id=1 and loc0/101
   db_hard_reset
-
   log "pytest smoke"
   if [ -d tests/smoke ]; then
     pytest -q tests/smoke --maxfail=1 --durations=10
   else
-    # fallback: minimal smoke set（按你的项目情况可保留）
     pytest -q \
       tests/quick/test_inbound_pg.py::test_inbound_receive_and_putaway_integrity \
       tests/quick/test_putaway_pg.py::test_putaway_integrity \
@@ -119,7 +133,7 @@ main(){
     *)
       cat <<'USAGE'
 Usage:
-  ./run.sh ci:pg:all      # migrate → health → quick → smoke（主入口）
+  ./run.sh ci:pg:all      # 迁移 → 体检 → quick → smoke（主入口）
   ./run.sh ci:pg:migrate  # 仅迁移
   ./run.sh ci:pg:health   # 迁移 + 体检（含不变量）
   ./run.sh ci:pg:quick    # 迁移 + 体检 + quick
