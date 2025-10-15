@@ -11,14 +11,8 @@ from app.services.inbound_service import InboundService
 from app.services.putaway_service import PutawayService
 from app.schemas.inbound import ReceiveIn, ReceiveOut, PutawayIn
 
-# ✅ 统一路径的依赖符号：测试可用 app.dependency_overrides[inbound.get_session] 覆盖
-from app.db.session import get_session as _project_get_session
-
-async def get_session() -> AsyncSession:  # <-- 本模块导出的可覆盖依赖
-    # 桥接到项目原生 get_session，保持 Engine/会话一致
-    async for s in _project_get_session():
-        yield s
-
+# ✅ 直接使用项目原生依赖函数对象本身——便于 tests 覆盖同一对象
+from app.db.session import get_session  # tests 会用 app.db.session.get_session 做 override
 
 router = APIRouter(prefix="/inbound", tags=["inbound"])
 
