@@ -1,0 +1,27 @@
+{
+  "public.stocks": {
+    "unique": [
+      { "name": "uq_stocks_item_loc", "cols": ["item_id", "location_id"] }
+    ],
+    "indexes": [
+      { "name": "ix_stocks_item", "cols": ["item_id"], "unique": false },
+      { "name": "ix_stocks_location", "cols": ["location_id"], "unique": false }
+    ]
+  },
+  "public.batches": {
+    "unique": [
+      { "name": "uq_batches_item_batch", "cols": ["item_id", "batch_code"] }
+    ],
+    "indexes": [
+      { "name": "ix_batches_fefo", "cols": ["item_id", "expiry_date"], "unique": false }
+    ]
+  },
+  "public.stock_ledger": {
+    "unique": [
+      { "name": "uq_ledger_reason_ref_refline", "cols": ["reason", "ref", "ref_line"] }
+    ],
+    "indexes": [
+      { "name": "ix_ledger_stock_ts", "cols": ["stock_id", "occurred_at"], "unique": false }
+    ]
+  }
+}

@@ -1,35 +1,85 @@
 # app/db/session.py
-# 统一的同步/异步会话工厂 + FastAPI 依赖（get_db / get_session）
+# 统一的同步/异步会话工厂 + FastAPI 依赖（get_db / get_session / get_async_session）
+from __future__ import annotations
+
 import os
-from typing import Generator, AsyncGenerator
+import re
+from collections.abc import AsyncGenerator, Generator
 
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import create_engine as create_sync_engine_sa
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.engine import create_sync_engine, create_async_engine_safe
 
-# CI 会设置 DATABASE_URL；本地回退到 sqlite+aiosqlite
-DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///dev.db")
+# ---- DSN 归一：把 sync/async DSN 统一到 psycopg3 与 aiosqlite ----
+def _normalize_sync_dsn(url: str) -> str:
+    if not url:
+        return "postgresql+psycopg://wms:wms@localhost:5432/wms"
+    # postgres/postgresql(+*) → postgresql+psycopg
+    if url.startswith("postgresql+asyncpg://") or url.startswith("postgres+asyncpg://"):
+        return re.sub(r"^postgres(?:ql)?\+asyncpg://", "postgresql+psycopg://", url)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
 
-# 同步引擎 + Session
-engine = create_sync_engine(DATABASE_URL, echo=False)
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
 
-# 异步引擎 + AsyncSession
-async_engine = create_async_engine_safe(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(
+def _normalize_async_dsn(url: str) -> str:
+    if not url:
+        return "postgresql+psycopg://wms:wms@localhost:5432/wms"
+    # sqlite:/// → sqlite+aiosqlite:///
+    if url.startswith("sqlite:///"):
+        return "sqlite+aiosqlite://" + url[len("sqlite:///") - 1 :]
+    # postgres/postgresql(+*) → postgresql+psycopg
+    if url.startswith("postgresql+asyncpg://") or url.startswith("postgres+asyncpg://"):
+        return re.sub(r"^postgres(?:ql)?\+asyncpg://", "postgresql+psycopg://", url)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+RAW_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://wms:wms@localhost:5432/wms")
+SYNC_URL = _normalize_sync_dsn(RAW_URL)
+ASYNC_URL = _normalize_async_dsn(RAW_URL)
+
+# ---- 同步 Engine + Session（Alembic / 同步场景） ----
+engine = create_sync_engine_sa(SYNC_URL, future=True, pool_pre_ping=True)
+SessionLocal: sessionmaker[Session] = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+    class_=Session,
+)
+
+# ---- 异步 Engine + AsyncSession（FastAPI / 异步服务） ----
+# 关键修复：PG (psycopg3) 下不传 connect_args['server_settings']；统一空 dict
+_async_connect_args = {}
+async_engine: AsyncEngine = create_async_engine(
+    ASYNC_URL,
+    future=True,
+    pool_pre_ping=True,
+    connect_args=_async_connect_args,
+)
+
+AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=async_engine,
     class_=AsyncSession,
     expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
 )
 
-# 为兼容历史引用（有的模块期望 async_session_maker）
-async_session_maker = AsyncSessionLocal  # type: ignore[assignment]
+# 对外兼容的别名
+async_session_maker = AsyncSessionLocal  # 常见历史引用
 
 
-# FastAPI 依赖注入（同步）
+# ---- FastAPI 依赖 ----
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
@@ -38,11 +88,16 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-# FastAPI 依赖注入（异步）
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            # 会在 async with 退出时自动关闭，这里留空保障语义清晰
-            pass
+        yield session
+
+
+# 兼容历史命名
+get_async_session = get_session
+
+
+# ---- 关闭引擎（测试/生命周期） ----
+async def close_engines() -> None:
+    await async_engine.dispose()
+    engine.dispose()

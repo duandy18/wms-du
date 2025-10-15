@@ -5,7 +5,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "2a01baddb001"  # ← 生成后可用 alembic 自动给的值
-down_revision = "31fc28eac057"  # ← 改成你 v1 的 mergepoint 或上一版本号
+down_revision = "1f9e5c2b8a11"
 branch_labels = None
 depends_on = None
 

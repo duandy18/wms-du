@@ -9,7 +9,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "3a_fix_sqlite_inline_pks"
-down_revision = "2a01baddb002"
+down_revision = None
 branch_labels = None
 depends_on = None
 

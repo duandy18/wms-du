@@ -1,0 +1,50 @@
+# alembic/versions/2a01baddb001_add_batches.py
+import sqlalchemy as sa
+
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision = "2a01baddb001"  # ← 生成后可用 alembic 自动给的值
+down_revision = "1223487447f9"  # ← 改成你 v1 的 mergepoint 或上一版本号
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # 新建表：batches（与 stocks 并行，管理批次维度）
+    op.create_table(
+        "batches",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("batch_code", sa.String(length=64), nullable=False),
+        sa.Column(
+            "item_id", sa.Integer(), sa.ForeignKey("items.id", ondelete="RESTRICT"), nullable=False
+        ),
+        sa.Column(
+            "location_id",
+            sa.Integer(),
+            sa.ForeignKey("locations.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column(
+            "warehouse_id",
+            sa.Integer(),
+            sa.ForeignKey("warehouses.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column("production_date", sa.Date(), nullable=True),
+        sa.Column("expiry_date", sa.Date(), nullable=True),
+        # 现势批次数量（非负）；为兼容 SQLite，这里给出 server_default="0"
+        sa.Column("qty", sa.Integer(), nullable=False, server_default="0"),
+        sa.UniqueConstraint("item_id", "location_id", "batch_code", name="uq_batch_item_loc_code"),
+        sa.CheckConstraint("qty >= 0", name="ck_batch_qty_nonneg"),
+    )
+
+    # 常用查询索引
+    op.create_index("ix_batches_code", "batches", ["batch_code"])
+    op.create_index("ix_batches_expiry", "batches", ["expiry_date"])
+
+
+def downgrade():
+    op.drop_index("ix_batches_expiry", table_name="batches")
+    op.drop_index("ix_batches_code", table_name="batches")
+    op.drop_table("batches")
