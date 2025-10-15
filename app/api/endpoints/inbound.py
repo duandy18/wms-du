@@ -11,8 +11,14 @@ from app.services.inbound_service import InboundService
 from app.services.putaway_service import PutawayService
 from app.schemas.inbound import ReceiveIn, ReceiveOut, PutawayIn
 
-# ✅ 关键：统一走项目原生会话（与 tests/fixtures 同一 Engine）
-from app.db.session import get_session
+# ✅ 统一路径的依赖符号：测试可用 app.dependency_overrides[inbound.get_session] 覆盖
+from app.db.session import get_session as _project_get_session
+
+async def get_session() -> AsyncSession:  # <-- 本模块导出的可覆盖依赖
+    # 桥接到项目原生 get_session，保持 Engine/会话一致
+    async for s in _project_get_session():
+        yield s
+
 
 router = APIRouter(prefix="/inbound", tags=["inbound"])
 
@@ -42,7 +48,6 @@ async def inbound_receive(
         stage_location_id=0,  # smoke 用例固定验证 loc_id=0
     )
     await session.commit()
-    # ReceiveOut 需要 item_id / accepted_qty；保留 idempotent 便于 quick 断言
     return {
         "item_id": data["item_id"],
         "accepted_qty": data["accepted_qty"],
@@ -57,17 +62,13 @@ async def inbound_putaway(
 ) -> Dict[str, Any]:
     """
     由入库暂存位搬运到目标库位：
-    - 用 payload.sku 解析/创建 item_id（而非取不存在的 payload.item_id）
+    - 用 payload.sku 解析/创建 item_id
     - STAGE 解析优先 id=0（与 smoke 校验一致）
     - 调用 PutawayService，内部采用“右腿 +1”规则保证 (reason,ref,ref_line) 唯一
     """
-    # 1) 解析/创建 item_id
     item_id = await _ensure_item(session, payload.sku)
-
-    # 2) 解析 STAGE 库位（优先 id=0 → ILIKE 'STAGE%' → 最小 id → 创建 0）
     stage_id = await _resolve_stage_location(session, preferred_id=0)
 
-    # 3) 搬运（ref_line 稳定整数映射）
     res = await PutawayService.putaway(
         session=session,
         item_id=item_id,
