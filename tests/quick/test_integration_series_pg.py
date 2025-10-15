@@ -22,6 +22,7 @@ async def _ensure_item(session: AsyncSession, sku: str = "SKU-3001") -> int:
         text("INSERT INTO items (sku, name) VALUES (:s, :n)"),
         {"s": sku, "n": sku},
     )
+    # 不强制 commit，复用同一事务读取
     return int(await session.scalar(select(Item.id).where(Item.sku == sku)))
 
 
@@ -52,17 +53,17 @@ async def test_receive_then_putaway_and_replay(session: AsyncSession):
     stage = await _ensure_location(session, "STAGE", 0)
     rack = await _ensure_location(session, "RACK-B1", 201)
 
-    # 收货 10 到 STAGE
+    # 收货 10 到 STAGE（避免与外层/fixture 的事务冲突：不再使用 session.begin）
     svc = InboundService(StockService())
-    async with session.begin():
-        res1 = await svc.receive(
-            session=session,
-            sku=sku,
-            qty=10,
-            ref="PO-3001",
-            ref_line=1,
-            occurred_at=datetime.now(timezone.utc),
-        )
+    res1 = await svc.receive(
+        session=session,
+        sku=sku,
+        qty=10,
+        ref="PO-3001",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+    )
+    await session.commit()
     assert res1["idempotent"] is False
     assert await _stock_qty(session, item_id, stage) == 10
 
@@ -81,14 +82,14 @@ async def test_receive_then_putaway_and_replay(session: AsyncSession):
     assert (await _stock_qty(session, item_id, stage), await _stock_qty(session, item_id, rack)) == (4, 6)
 
     # 重放收货（应幂等）
-    async with session.begin():
-        res3 = await svc.receive(
-            session=session,
-            sku=sku,
-            qty=10,
-            ref="PO-3001",
-            ref_line=1,
-            occurred_at=datetime.now(timezone.utc),
-        )
+    res3 = await svc.receive(
+        session=session,
+        sku=sku,
+        qty=10,
+        ref="PO-3001",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+    )
+    await session.commit()
     assert res3["idempotent"] is True
     assert (await _stock_qty(session, item_id, stage), await _stock_qty(session, item_id, rack)) == (4, 6)
