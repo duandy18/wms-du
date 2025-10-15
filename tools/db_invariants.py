@@ -9,7 +9,7 @@ def main() -> None:
         return
 
     # SQLAlchemy 不需要 +psycopg 后缀，去掉以免方言识别问题
-    eng = create_engine(url.replace("+psycopg", ""))
+    eng = create_engine(url)
     errors: list[str] = []
 
     with eng.begin() as conn:
