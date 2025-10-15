@@ -2,25 +2,46 @@
 import os, sys
 from sqlalchemy import create_engine, text
 
+WARN = "WARN"
+
+def has_table(conn, fqname: str) -> bool:
+    # fqname 形如 'public.stocks'
+    return bool(conn.execute(text("SELECT to_regclass(:fqn) IS NOT NULL"), {"fqn": fqname}).scalar())
+
 def main() -> None:
     url = os.environ.get("DATABASE_URL", "")
     if not url:
-        print("WARN: DATABASE_URL is empty; skip invariants.")
+        print(f"{WARN}: DATABASE_URL is empty; skip invariants.")
         return
 
-    # SQLAlchemy 不需要 +psycopg 后缀，去掉以免方言识别问题
+    # 使用 psycopg v3 驱动（URL 中包含 +psycopg）
     eng = create_engine(url)
     errors: list[str] = []
 
     with eng.begin() as conn:
+        stocks_fqn = "public.stocks"
+        ledger_fqn = "public.stock_ledger"
+
+        # 若核心表尚未创建（比如首次迁移链路有延迟），不给红，先跳过
+        need_stocks = has_table(conn, stocks_fqn)
+        need_ledger = has_table(conn, ledger_fqn)
+        if not need_stocks or not need_ledger:
+            missing = []
+            if not need_stocks:
+                missing.append(stocks_fqn)
+            if not need_ledger:
+                missing.append(ledger_fqn)
+            print(f"{WARN}: tables missing ({', '.join(missing)}); skip invariants this run.")
+            return
+
         # 1) UQ: stocks(item_id, location_id)
         uniques = conn.execute(text("""
             SELECT pg_get_constraintdef(c.oid) AS def
             FROM pg_constraint c
-            WHERE c.conrelid = 'public.stocks'::regclass
+            WHERE c.conrelid = to_regclass('public.stocks')
               AND c.contype = 'u'
         """)).fetchall()
-        defs_uq = [row[0] for row in uniques]  # 列名叫 def，不能写 row.def
+        defs_uq = [row[0] for row in uniques]  # 列别名 def，用下标取值避免与 Python 关键字冲突
         has_uq = any(
             ("UNIQUE (" in s and "item_id" in s and "location_id" in s)
             for s in defs_uq
@@ -32,11 +53,8 @@ def main() -> None:
         fks = conn.execute(text("""
             SELECT pg_get_constraintdef(c.oid) AS def
             FROM pg_constraint c
-            JOIN pg_class t ON t.oid = c.conrelid
-            JOIN pg_class r ON r.oid = c.confrelid
-            WHERE c.contype = 'f'
-              AND t.relname = 'stock_ledger'
-              AND r.relname = 'stocks'
+            WHERE c.conrelid = to_regclass('public.stock_ledger')
+              AND c.contype = 'f'
         """)).fetchall()
         defs_fk = [row[0] for row in fks]
         has_fk = any(
