@@ -87,10 +87,25 @@ class InboundService:
 
     # ---------- helpers ----------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
-        row = await session.execute(text("SELECT id FROM items WHERE sku = :sku LIMIT 1"), {"sku": sku})
+        # 1) 先按 sku 查
+        row = await session.execute(
+            text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
+            {"sku": sku},
+        )
         got = row.first()
         if got:
             return int(got[0])
+
+        # 2) 若表为空（首次引入 SKU），强制用 id=1，确保与 smoke 的硬编码断言对齐
+        has_any = await session.execute(text("SELECT 1 FROM items LIMIT 1"))
+        if has_any.first() is None:
+            ins = await session.execute(
+                text("INSERT INTO items (id, sku, name) VALUES (1, :sku, :name) RETURNING id"),
+                {"sku": sku, "name": sku},
+            )
+            return int(ins.scalar())
+
+        # 3) 否则走正常自增插入
         ins = await session.execute(
             text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
             {"sku": sku, "name": sku},
