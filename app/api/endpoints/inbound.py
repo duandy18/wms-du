@@ -11,8 +11,19 @@ from app.services.inbound_service import InboundService
 from app.services.putaway_service import PutawayService
 from app.schemas.inbound import ReceiveIn, ReceiveOut, PutawayIn
 
-# ✅ 直接使用项目原生依赖函数对象本身——便于 tests 覆盖同一对象
-from app.db.session import get_session  # tests 会用 app.db.session.get_session 做 override
+# ✅ 关键点：定义“本模块导出的”会话依赖符号，测试可以覆盖这个符号
+from app.db.session import get_session as _project_get_session
+
+async def get_session() -> AsyncSession:
+    """
+    本模块导出的依赖符号。
+    默认桥接到项目原生 get_session；测试中可用
+        app.dependency_overrides[app.api.endpoints.inbound.get_session] = async_session_maker
+    覆盖到同一函数对象，确保 HTTP 与断言共用同一 Engine / 事务域。
+    """
+    async for s in _project_get_session():
+        yield s
+
 
 router = APIRouter(prefix="/inbound", tags=["inbound"])
 
@@ -23,7 +34,7 @@ async def inbound_receive(
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
     """
-    入库到 STAGE（优先使用 loc_id=0）：
+    入库到 STAGE（优先 loc_id=0）：
     - 自动建 SKU / STAGE
     - UPSERT stocks
     - 写 INBOUND 台账（幂等：若已有 (INBOUND, ref, ref_line) 则返回 idempotent=True）
@@ -132,5 +143,4 @@ def _to_ref_line_int(ref_line: Any) -> int:
     if isinstance(ref_line, int):
         return ref_line
     import zlib
-
     return int(zlib.crc32(str(ref_line).encode("utf-8")) & 0x7FFFFFFF)
