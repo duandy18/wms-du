@@ -1,41 +1,33 @@
 # app/api/endpoints/inbound.py
 from __future__ import annotations
 
-import os
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.inbound_service import InboundService
 from app.services.putaway_service import PutawayService
 from app.schemas.inbound import ReceiveIn, ReceiveOut, PutawayIn
 
-# ---------------- DB Session (绑定到同一 DATABASE_URL，确保与测试用夹具同库) ----------------
-# 说明：
-# - SQLAlchemy 2.x 的 psycopg v3 驱动支持异步，URL 形式仍是 postgresql+psycopg
-# - 若你的项目使用 asyncpg，也可把 URL 改为 postgresql+asyncpg
-_DB_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms")
-_engine = create_async_engine(_DB_URL, future=True)
-_SessionLocal = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-
-
-async def get_session() -> AsyncSession:
-    async with _SessionLocal() as s:
-        yield s
-
+# ✅ 关键：统一走项目原生会话（与 tests/fixtures 同一 Engine）
+from app.db.session import get_session
 
 router = APIRouter(prefix="/inbound", tags=["inbound"])
 
 
 @router.post("/receive", response_model=ReceiveOut)
-async def inbound_receive(payload: ReceiveIn, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
-    """入库到 STAGE（自动建 SKU / STAGE；UPSERT stocks；INBOUND 台账幂等）"""
+async def inbound_receive(
+    payload: ReceiveIn,
+    session: AsyncSession = Depends(get_session),
+) -> Dict[str, Any]:
+    """
+    入库到 STAGE（优先使用 loc_id=0）：
+    - 自动建 SKU / STAGE
+    - UPSERT stocks
+    - 写 INBOUND 台账（幂等：若已有 (INBOUND, ref, ref_line) 则返回 idempotent=True）
+    """
     svc = InboundService()
     data = await svc.receive(
         session=session,
@@ -50,20 +42,32 @@ async def inbound_receive(payload: ReceiveIn, session: AsyncSession = Depends(ge
         stage_location_id=0,  # smoke 用例固定验证 loc_id=0
     )
     await session.commit()
-    return {"item_id": data["item_id"], "accepted_qty": data["accepted_qty"], "idempotent": data.get("idempotent")}
+    # ReceiveOut 需要 item_id / accepted_qty；保留 idempotent 便于 quick 断言
+    return {
+        "item_id": data["item_id"],
+        "accepted_qty": data["accepted_qty"],
+        "idempotent": data.get("idempotent"),
+    }
 
 
 @router.post("/putaway")
-async def inbound_putaway(payload: PutawayIn, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
+async def inbound_putaway(
+    payload: PutawayIn,
+    session: AsyncSession = Depends(get_session),
+) -> Dict[str, Any]:
     """
     由入库暂存位搬运到目标库位：
-    - 用 payload.sku 解析/创建 item_id
+    - 用 payload.sku 解析/创建 item_id（而非取不存在的 payload.item_id）
     - STAGE 解析优先 id=0（与 smoke 校验一致）
-    - 右腿 +1（在 PutawayService 内部处理）
+    - 调用 PutawayService，内部采用“右腿 +1”规则保证 (reason,ref,ref_line) 唯一
     """
+    # 1) 解析/创建 item_id
     item_id = await _ensure_item(session, payload.sku)
+
+    # 2) 解析 STAGE 库位（优先 id=0 → ILIKE 'STAGE%' → 最小 id → 创建 0）
     stage_id = await _resolve_stage_location(session, preferred_id=0)
 
+    # 3) 搬运（ref_line 稳定整数映射）
     res = await PutawayService.putaway(
         session=session,
         item_id=item_id,
@@ -79,24 +83,34 @@ async def inbound_putaway(payload: PutawayIn, session: AsyncSession = Depends(ge
 
 # ---------- helpers（与 service 同步优先序：先 id=0，再 ILIKE，再最小 id） ----------
 async def _ensure_item(session: AsyncSession, sku: str) -> int:
-    row = await session.execute(text("SELECT id FROM items WHERE sku = :sku LIMIT 1"), {"sku": sku})
+    row = await session.execute(
+        text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
+        {"sku": sku},
+    )
     got = row.first()
     if got:
         return int(got[0])
-    ins = await session.execute(text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
-                                {"sku": sku, "name": sku})
+    ins = await session.execute(
+        text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
+        {"sku": sku, "name": sku},
+    )
     return int(ins.scalar())
 
 
 async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -> int:
-    # 1) 优先 loc_id=0
-    row = await session.execute(text("SELECT id FROM locations WHERE id = :i LIMIT 1"), {"i": preferred_id})
+    # 1) 优先 loc_id = preferred_id（默认 0）
+    row = await session.execute(
+        text("SELECT id FROM locations WHERE id = :i LIMIT 1"),
+        {"i": preferred_id},
+    )
     got = row.first()
     if got:
         return int(got[0])
 
     # 2) 名称 ILIKE 'STAGE%'
-    row = await session.execute(text("SELECT id FROM locations WHERE name ILIKE 'STAGE%' ORDER BY id ASC LIMIT 1"))
+    row = await session.execute(
+        text("SELECT id FROM locations WHERE name ILIKE 'STAGE%' ORDER BY id ASC LIMIT 1")
+    )
     got = row.first()
     if got:
         return int(got[0])
@@ -109,14 +123,19 @@ async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -
 
     # 4) 创建 preferred_id
     await session.execute(
-        text("INSERT INTO locations (id, name, warehouse_id) VALUES (:i, 'STAGE', 1) ON CONFLICT (id) DO NOTHING"),
+        text(
+            "INSERT INTO locations (id, name, warehouse_id) "
+            "VALUES (:i, 'STAGE', 1) ON CONFLICT (id) DO NOTHING"
+        ),
         {"i": preferred_id},
     )
     return int(preferred_id)
 
 
 def _to_ref_line_int(ref_line: Any) -> int:
+    """把任意类型 ref_line 映射为稳定正整数（int 直返，其他用 CRC32）。"""
     if isinstance(ref_line, int):
         return ref_line
     import zlib
+
     return int(zlib.crc32(str(ref_line).encode("utf-8")) & 0x7FFFFFFF)
