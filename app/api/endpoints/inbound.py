@@ -11,15 +11,15 @@ from app.services.inbound_service import InboundService
 from app.services.putaway_service import PutawayService
 from app.schemas.inbound import ReceiveIn, ReceiveOut, PutawayIn
 
-# ✅ 关键点：定义“本模块导出的”会话依赖符号，测试可以覆盖这个符号
+# 关键：导出本模块“同名依赖函数”以便 tests 覆盖
 from app.db.session import get_session as _project_get_session
 
 async def get_session() -> AsyncSession:
     """
     本模块导出的依赖符号。
-    默认桥接到项目原生 get_session；测试中可用
+    默认桥接到项目原生 get_session；tests 可用
         app.dependency_overrides[app.api.endpoints.inbound.get_session] = async_session_maker
-    覆盖到同一函数对象，确保 HTTP 与断言共用同一 Engine / 事务域。
+    覆盖到同一函数对象，从而与断言共享同一 Engine/事务域。
     """
     async for s in _project_get_session():
         yield s
@@ -33,12 +33,6 @@ async def inbound_receive(
     payload: ReceiveIn,
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
-    """
-    入库到 STAGE（优先 loc_id=0）：
-    - 自动建 SKU / STAGE
-    - UPSERT stocks
-    - 写 INBOUND 台账（幂等：若已有 (INBOUND, ref, ref_line) 则返回 idempotent=True）
-    """
     svc = InboundService()
     data = await svc.receive(
         session=session,
@@ -50,7 +44,7 @@ async def inbound_receive(
         production_date=getattr(payload, "production_date", None),
         expiry_date=getattr(payload, "expiry_date", None),
         occurred_at=getattr(payload, "occurred_at", None),
-        stage_location_id=0,  # smoke 用例固定验证 loc_id=0
+        stage_location_id=0,  # smoke 断言 loc_id=0
     )
     await session.commit()
     return {
@@ -65,13 +59,9 @@ async def inbound_putaway(
     payload: PutawayIn,
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
-    """
-    由入库暂存位搬运到目标库位：
-    - 用 payload.sku 解析/创建 item_id
-    - STAGE 解析优先 id=0（与 smoke 校验一致）
-    - 调用 PutawayService，内部采用“右腿 +1”规则保证 (reason,ref,ref_line) 唯一
-    """
+    # 解析/创建 item
     item_id = await _ensure_item(session, payload.sku)
+    # 优先使用 0 号 STAGE
     stage_id = await _resolve_stage_location(session, preferred_id=0)
 
     res = await PutawayService.putaway(
@@ -87,7 +77,7 @@ async def inbound_putaway(
     return {"status": res.get("status", "ok"), "moved": res.get("moved", payload.qty)}
 
 
-# ---------- helpers（与 service 同步优先序：先 id=0，再 ILIKE，再最小 id） ----------
+# ---------- helpers ----------
 async def _ensure_item(session: AsyncSession, sku: str) -> int:
     row = await session.execute(
         text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
@@ -104,7 +94,6 @@ async def _ensure_item(session: AsyncSession, sku: str) -> int:
 
 
 async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -> int:
-    # 1) 优先 loc_id = preferred_id（默认 0）
     row = await session.execute(
         text("SELECT id FROM locations WHERE id = :i LIMIT 1"),
         {"i": preferred_id},
@@ -113,7 +102,6 @@ async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -
     if got:
         return int(got[0])
 
-    # 2) 名称 ILIKE 'STAGE%'
     row = await session.execute(
         text("SELECT id FROM locations WHERE name ILIKE 'STAGE%' ORDER BY id ASC LIMIT 1")
     )
@@ -121,13 +109,11 @@ async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -
     if got:
         return int(got[0])
 
-    # 3) 任意现有库位（最小 id）
     row = await session.execute(text("SELECT id FROM locations ORDER BY id ASC LIMIT 1"))
     got = row.first()
     if got:
         return int(got[0])
 
-    # 4) 创建 preferred_id
     await session.execute(
         text(
             "INSERT INTO locations (id, name, warehouse_id) "
@@ -139,7 +125,6 @@ async def _resolve_stage_location(session: AsyncSession, *, preferred_id: int) -
 
 
 def _to_ref_line_int(ref_line: Any) -> int:
-    """把任意类型 ref_line 映射为稳定正整数（int 直返，其他用 CRC32）。"""
     if isinstance(ref_line, int):
         return ref_line
     import zlib

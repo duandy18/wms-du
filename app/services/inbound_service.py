@@ -1,7 +1,7 @@
 # app/services/inbound_service.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import zlib
@@ -66,7 +66,7 @@ class InboundService:
         stock_id, after_qty = int(stock_id), int(after_qty)
 
         # 2) 写 INBOUND 台账（含 occurred_at；并发下 DO NOTHING）
-        ts = occurred_at or datetime.utcnow()
+        ts = occurred_at or datetime.utcnow(timezone.utc)
         await session.execute(
             text(
                 """
