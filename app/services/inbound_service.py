@@ -15,7 +15,7 @@ class InboundService:
     - 自动创建缺失的 SKU（items）
     - 优先使用 preferred_id（默认 0）作为 STAGE；若不存在再回退 ILIKE 'STAGE%' → 最小 id → 创建 preferred_id
     - 直写 stocks 入库（UPSERT +qty）
-    - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数
+    - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数，occurred_at 必填
     - 幂等：若已存在 (reason,ref,ref_line) 台账，则直接返回 idempotent=True
     - 返回 {"item_id": item_id, "accepted_qty": qty|0, "idempotent": bool}
     """
@@ -34,7 +34,7 @@ class InboundService:
         batch_code: Optional[str] = None,
         production_date: Optional[datetime] = None,
         expiry_date: Optional[datetime] = None,
-        occurred_at: Optional[datetime] = None,  # 兼容签名（当前未写入 ledger；无 ts 列）
+        occurred_at: Optional[datetime] = None,  # 写入 ledger 的发生时间
         stage_location_id: int = 0,
     ) -> Dict[str, Any]:
         """
@@ -65,12 +65,13 @@ class InboundService:
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
 
-        # 2) 写 INBOUND 台账（无 ts 列；并发下 DO NOTHING）
+        # 2) 写 INBOUND 台账（含 occurred_at；并发下 DO NOTHING）
+        ts = occurred_at or datetime.utcnow()
         await session.execute(
             text(
                 """
-                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty)
-                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after)
+                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty, occurred_at)
+                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after, :ts)
                 ON CONFLICT DO NOTHING
                 """
             ),
@@ -80,6 +81,7 @@ class InboundService:
                 "ref_line": ref_line_int,
                 "delta": qty,
                 "after": after_qty,
+                "ts": ts,
             },
         )
 
