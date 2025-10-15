@@ -1,274 +1,135 @@
 # app/services/inbound_service.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from datetime import datetime
+from typing import Any, Dict, Optional
 
-from sqlalchemy import select, text, and_
-from sqlalchemy.exc import IntegrityError
+import zlib
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.stock import Stock
-from app.models.stock_ledger import StockLedger
-from app.models.item import Item
-from app.models.location import Location
-from app.models.warehouse import Warehouse
-
-REASON_INBOUND = "INBOUND"
 
 
 class InboundService:
-    def __init__(self, stock_service: "StockService"):
+    """
+    入库服务（HTTP 与测试共享）
+    - 自动创建缺失的 SKU（items）
+    - 自动创建 STAGE 库位（location_id=0）
+    - 直写 stocks 进行入库（UPSERT +qty）
+    - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数
+    - 返回 {"item_id":..., "accepted_qty":...}
+    """
+
+    def __init__(self, stock_service: Optional[Any] = None) -> None:
+        # 预留：目前直写 SQL，不依赖 StockService；保留注入位便于将来切换
         self.stock_service = stock_service
 
-    @staticmethod
-    def _col(model, name: str):
-        return getattr(model, name, None)
-
-    async def _resolve_item_id_by_sku(self, session: AsyncSession, sku: str) -> Optional[int]:
-        return await session.scalar(select(Item.id).where(Item.sku == sku))
-
-    async def _ensure_stage_location_id(self, session: AsyncSession) -> int:
-        """
-        确保存在可用“暂存(STAGE)”库位；若无则最小化创建。
-        关键：对没有 identity/serial 的历史表，显式给 id，避免 NOT NULL 触发。
-        规则：
-          - 默认仓 id=1，不存在则先插入
-          - 暂存位 id=0，避免与普通货位冲突，且容易识别
-          - 若库位已存在，直接返回最小 id
-        """
-        # 1) 若表里已有任何库位，直接返回一个（优先有 code='STAGE'，否则最小 id）
-        col_code = self._col(Location, "code")
-        if col_code is not None:
-            stage_id = await session.scalar(select(Location.id).where(col_code == "STAGE").limit(1))
-            if stage_id is not None:
-                return int(stage_id)
-
-        any_loc = await session.scalar(select(Location.id).order_by(Location.id.asc()).limit(1))
-        if any_loc is not None:
-            return int(any_loc)
-
-        # 2) 没有库位时，确保有默认仓（id=1）
-        wh_id = await session.scalar(select(Warehouse.id).where(Warehouse.id == 1).limit(1))
-        if wh_id is None:
-            # 显式 id 插入，避免需要自增
-            kw: Dict[str, Any] = {"id": 1}
-            if self._col(Warehouse, "code") is not None:
-                kw["code"] = "DEFAULT"
-            if self._col(Warehouse, "name") is not None:
-                kw["name"] = "Default Warehouse"
-            # 直接 raw SQL，绕开模型的 autoincrement 假设
-            cols = ", ".join(kw.keys())
-            vals = ", ".join(f":{k}" for k in kw.keys())
-            await session.execute(text(f"INSERT INTO warehouses ({cols}) VALUES ({vals}) ON CONFLICT (id) DO NOTHING"), kw)
-
-        # 3) 插入 STAGE 库位（id=0）
-        loc_kwargs: Dict[str, Any] = {"id": 0, "warehouse_id": 1}
-        # code/name 有就填；没有就只填 name
-        if self._col(Location, "code") is not None:
-            loc_kwargs["code"] = "STAGE"
-        if self._col(Location, "name") is not None:
-            loc_kwargs["name"] = "Inbound Stage"
-        # 直接 raw SQL，兼容最小字段集
-        cols = ", ".join(loc_kwargs.keys())
-        vals = ", ".join(f":{k}" for k in loc_kwargs.keys())
-        await session.execute(
-            text(f"INSERT INTO locations ({cols}) VALUES ({vals}) ON CONFLICT (id) DO NOTHING"),
-            loc_kwargs,
-        )
-        # 返回 id=0
-        return 0
-
-    async def _bump_and_get(
-        self,
-        session: AsyncSession,
-        *,
-        item_id: int,
-        location_id: int,
-        delta: int | float,
-        batch_code: Optional[str],
-        production_date: Optional[datetime],
-        expiry_date: Optional[datetime],
-    ) -> Stock:
-        """
-        统一调库存：优先调用 stock_service 的实现；若不存在则降级为内置方式。
-        """
-        if hasattr(self.stock_service, "_bump_stock_and_get"):
-            return await getattr(self.stock_service, "_bump_stock_and_get")(
-                session=session,
-                item_id=item_id,
-                location_id=location_id,
-                delta=delta,
-                batch_code=batch_code,
-                production_date=production_date,
-                expiry_date=expiry_date,
-            )
-        if hasattr(self.stock_service, "bump_stock_and_get"):
-            return await getattr(self.stock_service, "bump_stock_and_get")(
-                session=session,
-                item_id=item_id,
-                location_id=location_id,
-                delta=delta,
-                batch_code=batch_code,
-                production_date=production_date,
-                expiry_date=expiry_date,
-            )
-        # 最小实现（只维护 qty + 批次列）
-        stock = await session.scalar(
-            select(Stock).where(Stock.item_id == item_id, Stock.location_id == location_id).limit(1)
-        )
-        if stock is None:
-            stock = Stock(item_id=item_id, location_id=location_id, qty=0)
-            if hasattr(Stock, "batch_code") and batch_code is not None:
-                stock.batch_code = batch_code
-            if hasattr(Stock, "production_date"):
-                stock.production_date = production_date
-            if hasattr(Stock, "expiry_date"):
-                stock.expiry_date = expiry_date
-            session.add(stock)
-            await session.flush()
-        if hasattr(stock, "qty"):
-            stock.qty = (stock.qty or 0) + delta
-        await session.flush()
-        return stock
-
+    # ---------------- public API ----------------
     async def receive(
         self,
-        session: AsyncSession,
         *,
-        qty: int | float,
+        session: AsyncSession,
+        sku: str,
+        qty: int,
         ref: str,
-        ref_line: str,
-        sku: Optional[str] = None,
-        item_id: Optional[int] = None,
-        location_id: Optional[int] = None,
+        ref_line: Any,
         batch_code: Optional[str] = None,
         production_date: Optional[datetime] = None,
         expiry_date: Optional[datetime] = None,
         occurred_at: Optional[datetime] = None,
-        notes: Optional[str] = None,
-    ) -> dict:
+        stage_location_id: int = 0,
+    ) -> Dict[str, Any]:
         """
-        强约束版：
-        - 幂等键： (reason=INBOUND, ref, ref_line)
-        - 台账固定字段： stock_id, reason, after_qty, delta, occurred_at, ref, ref_line
-        - 仍保留 PG advisory_xact_lock + 保存点
+        接收入库到 STAGE（默认 location_id=0）。
+        - 若 items 中无 sku，自动创建；
+        - 若 locations 无 STAGE，自动创建；
+        - stocks 增加 qty，并写一条 INBOUND 台账（ref_line 稳定整数映射）；
         """
-        if qty <= 0:
-            raise ValueError("QTY_MUST_BE_POSITIVE")
+        item_id = await self._ensure_item(session, sku)
+        await self._ensure_stage_location(session, stage_location_id)
 
-        # 解析物料与库位
-        if item_id is None:
-            if not sku:
-                raise ValueError("SKU_OR_ITEM_ID_REQUIRED")
-            item_id = await self._resolve_item_id_by_sku(session, sku)
-            if not item_id:
-                raise ValueError("SKU_NOT_FOUND")
-        if location_id is None:
-            location_id = await self._ensure_stage_location_id(session)
+        ref_line_int = _to_ref_line_int(ref_line)
 
-        occurred_at = occurred_at or datetime.now(timezone.utc)
-
-        # PG：事务级 advisory 锁，按幂等键聚合
-        dialect = session.bind.dialect.name if session.bind is not None else ""
-        if dialect.startswith("postgres"):
-            key = f"{REASON_INBOUND}|{ref}|{ref_line}"
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
-
-        # 幂等：若已存在同键台账，直接返回
-        existing = await session.scalar(
-            select(StockLedger)
-            .where(
-                and_(
-                    StockLedger.reason == REASON_INBOUND,
-                    StockLedger.ref == ref,
-                    StockLedger.ref_line == ref_line,
-                )
-            )
-            .limit(1)
+        # 1) 增加 STAGE 库存（UPSERT）
+        upsert = await session.execute(
+            text(
+                """
+                INSERT INTO stocks (item_id, location_id, qty)
+                VALUES (:item_id, :loc_id, :q)
+                ON CONFLICT (item_id, location_id)
+                DO UPDATE SET qty = stocks.qty + EXCLUDED.qty
+                RETURNING id, qty
+                """
+            ),
+            {"item_id": item_id, "loc_id": stage_location_id, "q": qty},
         )
-        if existing:
-            stock_now = await session.get(Stock, existing.stock_id) if getattr(existing, "stock_id", None) else None
-            accepted_qty = getattr(existing, "delta", None) or qty
-            return {
-                "idempotent": True,
-                "item_id": item_id,
-                "accepted_qty": accepted_qty,
-                "ledger_id": existing.id,
-                "stock_id": getattr(existing, "stock_id", None),
-                "after_qty": getattr(existing, "after_qty", None),
-                "delta": getattr(existing, "delta", None),
-                "ref": getattr(existing, "ref", ref),
-                "ref_line": getattr(existing, "ref_line", ref_line),
-                "reason": REASON_INBOUND,
-                "stock_qty_now": (stock_now.qty if stock_now else None),
-            }
+        stock_id, after_qty = upsert.first()
+        stock_id, after_qty = int(stock_id), int(after_qty)
 
-        # 调整库存 & 获取最新数量
-        stock = await self._bump_and_get(
-            session=session,
-            item_id=item_id,
-            location_id=location_id,
-            delta=qty,
-            batch_code=batch_code,
-            production_date=production_date,
-            expiry_date=expiry_date,
-        )
-        after_qty = stock.qty
-
-        # 固定字段写入台账（保存点内）
-        try:
-            async with session.begin_nested():
-                ledger = StockLedger(
-                    stock_id=stock.id,
-                    reason=REASON_INBOUND,
-                    after_qty=after_qty,
-                    delta=qty,
-                    occurred_at=occurred_at,
-                    ref=ref,
-                    ref_line=ref_line,
-                )
-                session.add(ledger)
-                await session.flush()
-        except IntegrityError:
-            # 唯一键/并发冲突时，回读幂等记录
-            existing = await session.scalar(
-                select(StockLedger)
-                .where(
-                    and_(
-                        StockLedger.reason == REASON_INBOUND,
-                        StockLedger.ref == ref,
-                        StockLedger.ref_line == ref_line,
-                    )
-                )
-                .limit(1)
-            )
-            stock_now = await session.get(Stock, existing.stock_id) if existing and existing.stock_id else None
-            return {
-                "idempotent": True,
-                "item_id": item_id,
-                "accepted_qty": qty,
-                "ledger_id": existing.id if existing else None,
-                "stock_id": existing.stock_id if existing else None,
-                "after_qty": existing.after_qty if existing else None,
-                "delta": existing.delta if existing else None,
+        # 2) 写 INBOUND 台账（ref_line 非空，幂等键 (reason,ref,ref_line)）
+        await session.execute(
+            text(
+                """
+                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty, ts)
+                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after, :ts)
+                ON CONFLICT DO NOTHING
+                """
+            ),
+            {
+                "sid": stock_id,
                 "ref": ref,
-                "ref_line": ref_line,
-                "reason": REASON_INBOUND,
-                "stock_qty_now": (stock_now.qty if stock_now else None),
-            }
+                "ref_line": ref_line_int,
+                "delta": qty,
+                "after": after_qty,
+                "ts": (occurred_at or datetime.utcnow()),
+            },
+        )
 
-        # 正常返回
-        return {
-            "idempotent": False,
-            "item_id": item_id,
-            "accepted_qty": qty,
-            "ledger_id": ledger.id,  # type: ignore[name-defined]
-            "stock_id": stock.id,
-            "after_qty": after_qty,
-            "delta": qty,
-            "ref": ref,
-            "ref_line": ref_line,
-            "reason": REASON_INBOUND,
-            "stock_qty_now": stock.qty,
-        }
+        return {"item_id": item_id, "accepted_qty": qty}
+
+    # ---------------- helpers ----------------
+    async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
+        # 先查
+        row = await session.execute(
+            text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
+            {"sku": sku},
+        )
+        got = row.first()
+        if got:
+            return int(got[0])
+
+        # 无则建（name 同 sku）
+        ins = await session.execute(
+            text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
+            {"sku": sku, "name": sku},
+        )
+        return int(ins.scalar())
+
+    async def _ensure_stage_location(self, session: AsyncSession, loc_id: int) -> None:
+        row = await session.execute(
+            text("SELECT 1 FROM locations WHERE id = :i LIMIT 1"), {"i": loc_id}
+        )
+        if row.first():
+            return
+        await session.execute(
+            text(
+                """
+                INSERT INTO locations (id, name, warehouse_id)
+                VALUES (:i, :name, 1)
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            {"i": loc_id, "name": "STAGE"},
+        )
+
+
+# ---------- utils ----------
+def _to_ref_line_int(ref_line: Any) -> int:
+    """
+    把 ref_line（可能是 str/int/其它）转换为稳定的正整数：
+    - int 直接返回；
+    - 其他类型（含 str）使用 CRC32，保证同值同结果。
+    """
+    if isinstance(ref_line, int):
+        return ref_line
+    s = str(ref_line)
+    return int(zlib.crc32(s.encode("utf-8")) & 0x7FFFFFFF)
