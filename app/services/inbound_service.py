@@ -16,7 +16,7 @@ class InboundService:
     - 自动创建 STAGE 库位（location_id=0）
     - 直写 stocks 进行入库（UPSERT +qty）
     - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数
-    - 返回 {"item_id":..., "accepted_qty":...}
+    - 返回 {"item_id": item_id, "accepted_qty": qty}
     """
 
     def __init__(self, stock_service: Optional[Any] = None) -> None:
@@ -35,14 +35,14 @@ class InboundService:
         batch_code: Optional[str] = None,
         production_date: Optional[datetime] = None,
         expiry_date: Optional[datetime] = None,
-        occurred_at: Optional[datetime] = None,
+        occurred_at: Optional[datetime] = None,  # 兼容签名，当前未入库到 ledger（无 ts 列）
         stage_location_id: int = 0,
     ) -> Dict[str, Any]:
         """
         接收入库到 STAGE（默认 location_id=0）。
         - 若 items 中无 sku，自动创建；
         - 若 locations 无 STAGE，自动创建；
-        - stocks 增加 qty，并写一条 INBOUND 台账（ref_line 稳定整数映射）；
+        - stocks 增加 qty，并写一条 INBOUND 台账（ref_line 稳定整数映射，ON CONFLICT DO NOTHING 保证幂等）。
         """
         item_id = await self._ensure_item(session, sku)
         await self._ensure_stage_location(session, stage_location_id)
@@ -65,12 +65,12 @@ class InboundService:
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
 
-        # 2) 写 INBOUND 台账（ref_line 非空，幂等键 (reason,ref,ref_line)）
+        # 2) 写 INBOUND 台账（无 ts 列；幂等用 (reason,ref,ref_line)）
         await session.execute(
             text(
                 """
-                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty, ts)
-                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after, :ts)
+                INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, after_qty)
+                VALUES (:sid, 'INBOUND', :ref, :ref_line, :delta, :after)
                 ON CONFLICT DO NOTHING
                 """
             ),
@@ -80,7 +80,6 @@ class InboundService:
                 "ref_line": ref_line_int,
                 "delta": qty,
                 "after": after_qty,
-                "ts": (occurred_at or datetime.utcnow()),
             },
         )
 
@@ -88,7 +87,7 @@ class InboundService:
 
     # ---------------- helpers ----------------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
-        # 先查
+        # 已有则直接返回
         row = await session.execute(
             text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
             {"sku": sku},
