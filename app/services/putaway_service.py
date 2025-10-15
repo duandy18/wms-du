@@ -1,7 +1,7 @@
 # app/services/putaway_service.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Any, Optional, Tuple
+from typing import Callable, Dict, Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,8 @@ class PutawayService:
     """
     上架 / 搬运服务（避开 FEFO 与 adjust 的 ref_line 限制）：
     - 直接基于 stocks 扣减/增加；
-    - 显式写入 stock_ledger，并包含 NOT NULL 的 ref_line 字段；
+    - 显式写入 stock_ledger，并包含 NOT NULL 的 ref_line；
+    - “右腿 +1”规则：入库腿 ref_line = 出库腿 ref_line + 1；
     - 并发批量采用 FOR UPDATE SKIP LOCKED，每处理一行后提交释放锁。
     """
 
@@ -25,11 +26,11 @@ class PutawayService:
         to_location_id: int,
         qty: int,
         ref: str,
-        ref_line: int = 1,
+        ref_line: int = 1,  # 出库腿的 ref_line；入库腿将使用 ref_line+1
     ) -> Dict[str, Any]:
         """
         把 qty 从 from_location 搬到 to_location。
-        直接走 SQL 路径（不依赖批次），写两条台账（必须含 ref_line）。
+        直接走 SQL 路径（不依赖批次），写两条台账（必须含 ref_line；入库腿 +1）。
         """
         await PutawayService._move_via_sql(
             session=session,
@@ -57,7 +58,7 @@ class PutawayService:
         从暂存位 stage_location_id 批量搬运库存到目标库位（按 item_id 由 target_locator_fn 决定）。
         - 并发安全：FOR UPDATE SKIP LOCKED 锁定单行 stocks；
         - 每处理一行后 commit 释放锁，避免长事务；
-        - ref 使用 BULK-<worker_id>，ref_line 使用该行 stock_id（稳定且可幂等）。
+        - ref 使用 BULK-<worker_id>，ref_line 使用该行 stock_id（入库腿 +1）。
         """
         moved = 0
 
@@ -91,7 +92,7 @@ class PutawayService:
 
             to_location_id = int(target_locator_fn(item_id))
             ref = f"BULK-{worker_id}"
-            ref_line = stock_id  # 用行 id 作为 ref_line，稳定幂等键
+            ref_line = stock_id  # 出库腿用 stock_id，入库腿用 stock_id+1
 
             await PutawayService._move_via_sql(
                 session=session,
@@ -109,7 +110,7 @@ class PutawayService:
 
         return {"status": "ok" if moved > 0 else "idle", "moved": moved}
 
-    # ---------- 内部：直写 stocks + ledger（必须写 ref_line） ----------
+    # ---------- 内部：直写 stocks + ledger（必须写 ref_line；右腿 +1） ----------
     @staticmethod
     async def _move_via_sql(
         session: AsyncSession,
@@ -120,14 +121,15 @@ class PutawayService:
         qty: int,
         reason: str,
         ref: str,
-        ref_line: int,
+        ref_line: int,  # 出库腿 ref_line；入库腿将使用 ref_line+1
     ) -> None:
         """
         直接在 stocks 扣减/增加，并写两条 ledger。
         依赖约束：
           - stocks(item_id, location_id) 唯一；
           - stock_ledger(stock_id) → stocks(id) 外键；
-          - stock_ledger.ref_line NOT NULL（本函数会显式赋值）。
+          - stock_ledger.ref_line NOT NULL；
+          - stock_ledger(reason, ref, ref_line) 唯一（因此入库腿使用 ref_line+1）。
         """
         # 1) 扣来源位（余额判断）
         from_row = (
@@ -178,7 +180,7 @@ class PutawayService:
 
         from_stock_id, from_after = int(from_row[0]), int(from_row[1])
 
-        # 2) 记来源位 ledger（必须包含 ref_line）
+        # 2) 记来源位 ledger（出库腿，使用 ref_line）
         await session.execute(
             text(
                 """
@@ -190,7 +192,7 @@ class PutawayService:
                 "sid": from_stock_id,
                 "reason": reason,
                 "ref": ref,
-                "ref_line": ref_line,
+                "ref_line": ref_line,          # ← 出库腿 ref_line
                 "delta": -qty,
                 "after": from_after,
             },
@@ -214,7 +216,7 @@ class PutawayService:
 
         to_stock_id, to_after = int(to_row[0]), int(to_row[1])
 
-        # 4) 记目标位 ledger（必须包含 ref_line）
+        # 4) 记目标位 ledger（入库腿，使用 ref_line+1 —— “右腿 +1”）
         await session.execute(
             text(
                 """
@@ -226,7 +228,7 @@ class PutawayService:
                 "sid": to_stock_id,
                 "reason": reason,
                 "ref": ref,
-                "ref_line": ref_line,
+                "ref_line": ref_line + 1,      # ← 入库腿 ref_line+1，避免 UQ 冲突
                 "delta": qty,
                 "after": to_after,
             },
