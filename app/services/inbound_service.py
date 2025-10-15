@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import zlib
-from sqlalchemy import text, select
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -13,8 +13,8 @@ class InboundService:
     """
     入库服务（HTTP 与测试共享）
     - 自动创建缺失的 SKU（items）
-    - 自动创建 STAGE 库位（location_id=0）
-    - 直写 stocks 进行入库（UPSERT +qty）
+    - 优先复用已存在的 STAGE 库位（按名称查找）；不存在则创建（默认 id=0，可被参数覆盖）
+    - 直写 stocks 入库（UPSERT +qty）
     - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数
     - 返回 {"item_id": item_id, "accepted_qty": qty}
     """
@@ -35,17 +35,17 @@ class InboundService:
         batch_code: Optional[str] = None,
         production_date: Optional[datetime] = None,
         expiry_date: Optional[datetime] = None,
-        occurred_at: Optional[datetime] = None,  # 兼容签名，当前未入库到 ledger（无 ts 列）
+        occurred_at: Optional[datetime] = None,  # 兼容签名，目前未写入 ledger（无 ts 列）
         stage_location_id: int = 0,
     ) -> Dict[str, Any]:
         """
-        接收入库到 STAGE（默认 location_id=0）。
+        接收入库到 STAGE 库位。
         - 若 items 中无 sku，自动创建；
-        - 若 locations 无 STAGE，自动创建；
+        - 若已存在名称为 'STAGE' 的库位，优先使用其 id；否则按 stage_location_id 创建（默认 0）；
         - stocks 增加 qty，并写一条 INBOUND 台账（ref_line 稳定整数映射，ON CONFLICT DO NOTHING 保证幂等）。
         """
         item_id = await self._ensure_item(session, sku)
-        await self._ensure_stage_location(session, stage_location_id)
+        stage_id = await self._ensure_stage_location(session, preferred_id=stage_location_id)
 
         ref_line_int = _to_ref_line_int(ref_line)
 
@@ -60,7 +60,7 @@ class InboundService:
                 RETURNING id, qty
                 """
             ),
-            {"item_id": item_id, "loc_id": stage_location_id, "q": qty},
+            {"item_id": item_id, "loc_id": stage_id, "q": qty},
         )
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
@@ -87,7 +87,6 @@ class InboundService:
 
     # ---------------- helpers ----------------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
-        # 已有则直接返回
         row = await session.execute(
             text("SELECT id FROM items WHERE sku = :sku LIMIT 1"),
             {"sku": sku},
@@ -96,29 +95,46 @@ class InboundService:
         if got:
             return int(got[0])
 
-        # 无则建（name 同 sku）
         ins = await session.execute(
             text("INSERT INTO items (sku, name) VALUES (:sku, :name) RETURNING id"),
             {"sku": sku, "name": sku},
         )
         return int(ins.scalar())
 
-    async def _ensure_stage_location(self, session: AsyncSession, loc_id: int) -> None:
+    async def _ensure_stage_location(self, session: AsyncSession, *, preferred_id: int) -> int:
+        """
+        优先使用名称为 'STAGE' 的现有库位；如果不存在则创建 preferred_id（默认 0）。
+        返回最终使用的库位 id。
+        """
+        # 先按名称找已有 STAGE
         row = await session.execute(
-            text("SELECT 1 FROM locations WHERE id = :i LIMIT 1"), {"i": loc_id}
+            text("SELECT id FROM locations WHERE name = 'STAGE' ORDER BY id LIMIT 1")
         )
-        if row.first():
-            return
+        got = row.first()
+        if got:
+            return int(got[0])
+
+        # 再按 id 查（测试场景可能先造了 id 非 0 的 STAGE）
+        row = await session.execute(
+            text("SELECT id FROM locations WHERE id = :i LIMIT 1"),
+            {"i": preferred_id},
+        )
+        got = row.first()
+        if got:
+            return int(got[0])
+
+        # 都没有就创建 preferred_id
         await session.execute(
             text(
                 """
                 INSERT INTO locations (id, name, warehouse_id)
-                VALUES (:i, :name, 1)
+                VALUES (:i, 'STAGE', 1)
                 ON CONFLICT (id) DO NOTHING
                 """
             ),
-            {"i": loc_id, "name": "STAGE"},
+            {"i": preferred_id},
         )
+        return int(preferred_id)
 
 
 # ---------- utils ----------
