@@ -58,9 +58,11 @@ class PutawayService:
         从暂存位 stage_location_id 批量搬运库存到目标库位（按 item_id 由 target_locator_fn 决定）。
         - 并发安全：FOR UPDATE SKIP LOCKED 锁定单行 stocks；
         - 每处理一行后 commit 释放锁，避免长事务；
-        - ref 使用 BULK-<worker_id>，ref_line 使用该行 stock_id（入库腿 +1）。
+        - ref 使用 BULK-<worker_id>，ref_line 使用该行 stock_id（入库腿 +1）；
+        - 返回：status / claimed（处理行数）/ moved（搬运总量）。
         """
         moved = 0
+        claimed = 0
 
         while moved < batch_size:
             row = (
@@ -87,6 +89,8 @@ class PutawayService:
                 await session.commit()
                 continue
 
+            claimed += 1  # 认领了一行
+
             quota = batch_size - moved
             move_qty = min(qty_available, quota)
 
@@ -108,7 +112,7 @@ class PutawayService:
             moved += move_qty
             await session.commit()  # 释放当前行的锁
 
-        return {"status": "ok" if moved > 0 else "idle", "moved": moved}
+        return {"status": "ok" if moved > 0 else "idle", "claimed": claimed, "moved": moved}
 
     # ---------- 内部：直写 stocks + ledger（必须写 ref_line；右腿 +1） ----------
     @staticmethod
