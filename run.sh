@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 # WMS-DU CI router: migrate → health → quick → smoke (PG on 5433)
-# 约定：CI 的 postgres 服务以 5433:5432 暴露；DATABASE_URL 统一走 5433。
+# Convention: CI Postgres service is exposed as 5433:5432; DATABASE_URL uses 5433.
 set -euo pipefail
 
-# 统一 UTF-8，避免 mojibake / heredoc / locale 抽风
+# force UTF-8 to avoid mojibake/heredoc surprises
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTHONIOENCODING=UTF-8
 
 log(){ printf "\n[%s] %s\n" "$(date +'%H:%M:%S')" "$*"; }
 
-# --- 人类可读检查名 → 内部任务名 ---
+# --- Human-friendly check names → internal task mapping ---
 normalize_task(){
   local pretty="${1:-ci:pg:all}"
   case "$pretty" in
     "Smoke (PG)")        echo "ci:pg:smoke" ;;
     "Quick (PG)")        echo "ci:pg:quick" ;;
     "Full (PG)")         echo "ci:pg:all"   ;;
-    "Lint & Typecheck")  echo "ci:lint"     ;;   # 预留
-    "Coverage Gate")     echo "ci:coverage" ;;   # 预留
+    "Lint & Typecheck")  echo "ci:lint"     ;;
+    "Coverage Gate")     echo "ci:coverage" ;;
     *)                   echo "$pretty"     ;;
   esac
 }
 
-# --- 等待 PG 就绪（默认 5433；可被 PGHOST/PGPORT/DATABASE_URL 覆盖）---
+# --- Wait for Postgres (defaults to 5433; can be overridden by PGHOST/PGPORT/DATABASE_URL) ---
 wait_pg(){
   local h="${PGHOST:-${1:-127.0.0.1}}"
   local p="${PGPORT:-${2:-5433}}"
@@ -31,7 +31,6 @@ wait_pg(){
   local d="${4:-wms}"
 
   if [[ -n "${DATABASE_URL:-}" ]]; then
-    # 若未显式设置 PGHOST/PGPORT，则尽力从 DATABASE_URL 推断
     if [[ -z "${PGPORT:-}" && "$DATABASE_URL" =~ :([0-9]{2,5})/ ]]; then p="${BASH_REMATCH[1]}"; fi
     if [[ -z "${PGHOST:-}" && "$DATABASE_URL" =~ @([^:/]+):[0-9]+/ ]]; then h="${BASH_REMATCH[1]}"; fi
   fi
@@ -48,10 +47,10 @@ wait_pg(){
   fi
 }
 
-# --- 默认环境 ---
+# --- Defaults ---
 export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"
 
-# --- 任务实现 ---
+# --- Tasks ---
 task_pg_migrate(){
   log "Alembic upgrade -> head"
   wait_pg || true
@@ -66,7 +65,7 @@ task_pg_health(){
   else
     echo "WARN: tools/pg_healthcheck.py missing; skipping strict checks"
   fi
-  # 不变量校验使用独立脚本（避免 heredoc/编码坑）
+  # Invariant checks (tools/db_invariants.py)
   python3 tools/db_invariants.py
 }
 
@@ -75,11 +74,32 @@ task_quick(){
   pytest -q tests/quick -m "not slow" --maxfail=1 --durations=10
 }
 
+# --- hard reset DB before smoke to satisfy smoke's hard-coded checks (item_id=1, loc0/101) ---
+db_hard_reset(){
+  log "Reset DB schema → clean baseline for Smoke"
+  python3 - <<'PY'
+import os
+from sqlalchemy import create_engine, text
+url = os.environ.get("DATABASE_URL","").replace("+psycopg","")
+eng = create_engine(url)
+with eng.begin() as c:
+    c.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+    c.execute(text("CREATE SCHEMA public"))
+    # PG 默认搜索路径
+    c.execute(text("COMMENT ON SCHEMA public IS 'standard public schema'"))
+PY
+  alembic upgrade head
+}
+
 task_smoke(){
+  # reset DB to clean state so smoke's seeds produce item_id=1 and loc0/101
+  db_hard_reset
+
   log "pytest smoke"
   if [ -d tests/smoke ]; then
     pytest -q tests/smoke --maxfail=1 --durations=10
   else
+    # fallback: minimal smoke set（按你的项目情况可保留）
     pytest -q \
       tests/quick/test_inbound_pg.py::test_inbound_receive_and_putaway_integrity \
       tests/quick/test_putaway_pg.py::test_putaway_integrity \
@@ -99,12 +119,12 @@ main(){
     *)
       cat <<'USAGE'
 Usage:
-  ./run.sh ci:pg:all      # 迁移 → 体检 → quick → smoke（主入口）
+  ./run.sh ci:pg:all      # migrate → health → quick → smoke（主入口）
   ./run.sh ci:pg:migrate  # 仅迁移
   ./run.sh ci:pg:health   # 迁移 + 体检（含不变量）
   ./run.sh ci:pg:quick    # 迁移 + 体检 + quick
-  ./run.sh ci:pg:smoke    # 迁移 + 体检 + smoke
-  # 也可传人类可读名："Smoke (PG)" / "Quick (PG)" / "Full (PG)"
+  ./run.sh ci:pg:smoke    # 迁移 + 体检 + smoke（会先重置数据库）
+  # 也可直接传人类可读名： "Smoke (PG)" / "Quick (PG)" / "Full (PG)"
 USAGE
       exit 1 ;;
   esac
