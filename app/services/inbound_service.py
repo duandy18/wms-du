@@ -1,283 +1,274 @@
 # app/services/inbound_service.py
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
-from app.models.batch import Batch
 from app.models.stock import Stock
 from app.models.stock_ledger import StockLedger
+from app.models.item import Item
+from app.models.location import Location
+from app.models.warehouse import Warehouse
+
+REASON_INBOUND = "INBOUND"
 
 
 class InboundService:
-    # ---------------- helpers: model capability probes ----------------
+    def __init__(self, stock_service: "StockService"):
+        self.stock_service = stock_service
 
     @staticmethod
-    def _batch_code_attr():
-        """Return the SA column attr for batch code, supporting Batch.code / Batch.batch_code."""
-        code_attr = getattr(Batch, "code", None) or getattr(Batch, "batch_code", None)
-        if code_attr is None:
-            raise AssertionError("Batch model must define `code` or `batch_code` column")
-        return code_attr
+    def _col(model, name: str):
+        return getattr(model, name, None)
 
-    @staticmethod
-    def _stocks_support_batch() -> bool:
-        """Does Stock have a batch_id column?"""
-        return hasattr(Stock, "batch_id")
+    async def _resolve_item_id_by_sku(self, session: AsyncSession, sku: str) -> Optional[int]:
+        return await session.scalar(select(Item.id).where(Item.sku == sku))
 
-    @staticmethod
-    def _ledger_attr_map() -> Dict[str, str]:
+    async def _ensure_stage_location_id(self, session: AsyncSession) -> int:
         """
-        Map logical ledger fields -> actual attribute names that exist on StockLedger.
-        We try several common variants and pick the first that exists.
-        NOTE: we intentionally DO NOT support 'stock_id' to avoid mismatches with DB schema.
+        确保存在可用“暂存(STAGE)”库位；若无则最小化创建。
+        关键：对没有 identity/serial 的历史表，显式给 id，避免 NOT NULL 触发。
+        规则：
+          - 默认仓 id=1，不存在则先插入
+          - 暂存位 id=0，避免与普通货位冲突，且容易识别
+          - 若库位已存在，直接返回最小 id
         """
-        def pick(*names: str) -> Optional[str]:
-            for n in names:
-                if hasattr(StockLedger, n):
-                    return n
-            return None
+        # 1) 若表里已有任何库位，直接返回一个（优先有 code='STAGE'，否则最小 id）
+        col_code = self._col(Location, "code")
+        if col_code is not None:
+            stage_id = await session.scalar(select(Location.id).where(col_code == "STAGE").limit(1))
+            if stage_id is not None:
+                return int(stage_id)
 
-        return {
-            "op":        pick("op", "operation", "action", "reason"),   # 操作/事由字段
-            "item_id":   "item_id" if hasattr(StockLedger, "item_id") else None,
-            "location_id": "location_id" if hasattr(StockLedger, "location_id") else None,
-            "batch_id":  "batch_id" if hasattr(StockLedger, "batch_id") else None,
-            # 不再写入 stock_id —— 即使 ORM 里有也忽略
-            "delta":     "delta" if hasattr(StockLedger, "delta") else None,
-            "ref":       "ref" if hasattr(StockLedger, "ref") else None,
-            "ref_line":  ("ref_line" if hasattr(StockLedger, "ref_line")
-                          else ("refline" if hasattr(StockLedger, "refline")
-                                else ("line" if hasattr(StockLedger, "line") else None))),
-            "after_qty": "after_qty" if hasattr(StockLedger, "after_qty") else None,
-        }
+        any_loc = await session.scalar(select(Location.id).order_by(Location.id.asc()).limit(1))
+        if any_loc is not None:
+            return int(any_loc)
 
-    @staticmethod
-    def _make_ledger(**logical_fields: Any) -> StockLedger:
-        """
-        Create a StockLedger instance by mapping logical field names to actual model attributes.
-        Unknown / missing attributes are ignored safely.
-        """
-        attrmap = InboundService._ledger_attr_map()
-        obj = StockLedger()
-        for k, v in logical_fields.items():
-            real = attrmap.get(k)
-            if real is not None and hasattr(obj, real):
-                setattr(obj, real, v)
-        return obj
+        # 2) 没有库位时，确保有默认仓（id=1）
+        wh_id = await session.scalar(select(Warehouse.id).where(Warehouse.id == 1).limit(1))
+        if wh_id is None:
+            # 显式 id 插入，避免需要自增
+            kw: Dict[str, Any] = {"id": 1}
+            if self._col(Warehouse, "code") is not None:
+                kw["code"] = "DEFAULT"
+            if self._col(Warehouse, "name") is not None:
+                kw["name"] = "Default Warehouse"
+            # 直接 raw SQL，绕开模型的 autoincrement 假设
+            cols = ", ".join(kw.keys())
+            vals = ", ".join(f":{k}" for k in kw.keys())
+            await session.execute(text(f"INSERT INTO warehouses ({cols}) VALUES ({vals}) ON CONFLICT (id) DO NOTHING"), kw)
 
-    # ---------------- helpers: stocks upsert ----------------
-
-    async def _select_stock_row(
-        self,
-        session: AsyncSession,
-        *,
-        item_id: int,
-        location_id: int,
-        batch_id: Optional[int],
-    ) -> Optional[Stock]:
-        q = select(Stock).where(
-            Stock.item_id == item_id,
-            Stock.location_id == location_id,
+        # 3) 插入 STAGE 库位（id=0）
+        loc_kwargs: Dict[str, Any] = {"id": 0, "warehouse_id": 1}
+        # code/name 有就填；没有就只填 name
+        if self._col(Location, "code") is not None:
+            loc_kwargs["code"] = "STAGE"
+        if self._col(Location, "name") is not None:
+            loc_kwargs["name"] = "Inbound Stage"
+        # 直接 raw SQL，兼容最小字段集
+        cols = ", ".join(loc_kwargs.keys())
+        vals = ", ".join(f":{k}" for k in loc_kwargs.keys())
+        await session.execute(
+            text(f"INSERT INTO locations ({cols}) VALUES ({vals}) ON CONFLICT (id) DO NOTHING"),
+            loc_kwargs,
         )
-        if self._stocks_support_batch():
-            q = q.where(Stock.batch_id == batch_id)
+        # 返回 id=0
+        return 0
 
-        q = q.with_for_update()
-        res = await session.execute(q)
-        return res.scalar_one_or_none()
-
-    async def _upsert_stock_delta(
+    async def _bump_and_get(
         self,
         session: AsyncSession,
         *,
         item_id: int,
         location_id: int,
-        batch_id: Optional[int],
-        delta: int,
+        delta: int | float,
+        batch_code: Optional[str],
+        production_date: Optional[datetime],
+        expiry_date: Optional[datetime],
     ) -> Stock:
-        s = await self._select_stock_row(
-            session, item_id=item_id, location_id=location_id, batch_id=batch_id
+        """
+        统一调库存：优先调用 stock_service 的实现；若不存在则降级为内置方式。
+        """
+        if hasattr(self.stock_service, "_bump_stock_and_get"):
+            return await getattr(self.stock_service, "_bump_stock_and_get")(
+                session=session,
+                item_id=item_id,
+                location_id=location_id,
+                delta=delta,
+                batch_code=batch_code,
+                production_date=production_date,
+                expiry_date=expiry_date,
+            )
+        if hasattr(self.stock_service, "bump_stock_and_get"):
+            return await getattr(self.stock_service, "bump_stock_and_get")(
+                session=session,
+                item_id=item_id,
+                location_id=location_id,
+                delta=delta,
+                batch_code=batch_code,
+                production_date=production_date,
+                expiry_date=expiry_date,
+            )
+        # 最小实现（只维护 qty + 批次列）
+        stock = await session.scalar(
+            select(Stock).where(Stock.item_id == item_id, Stock.location_id == location_id).limit(1)
         )
-
-        if s is None:
-            kwargs = dict(item_id=item_id, location_id=location_id, qty=0)
-            if self._stocks_support_batch():
-                kwargs["batch_id"] = batch_id
-            s = Stock(**kwargs)  # type: ignore[arg-type]
-            session.add(s)
+        if stock is None:
+            stock = Stock(item_id=item_id, location_id=location_id, qty=0)
+            if hasattr(Stock, "batch_code") and batch_code is not None:
+                stock.batch_code = batch_code
+            if hasattr(Stock, "production_date"):
+                stock.production_date = production_date
+            if hasattr(Stock, "expiry_date"):
+                stock.expiry_date = expiry_date
+            session.add(stock)
             await session.flush()
-
-        s.qty = s.qty + delta
-        if s.qty < 0:
-            raise ValueError("NEGATIVE_STOCK")
+        if hasattr(stock, "qty"):
+            stock.qty = (stock.qty or 0) + delta
         await session.flush()
-        return s
-
-    # ---------------- domain: batch ----------------
-
-    async def ensure_batch(
-        self,
-        session: AsyncSession,
-        *,
-        item_id: int,
-        code: str,
-        production_date: Optional[date],
-        expiry_date: Optional[date],
-    ) -> Batch:
-        code_attr = self._batch_code_attr()
-
-        res = await session.execute(
-            select(Batch).where(Batch.item_id == item_id, code_attr == code)
-        )
-        b = res.scalar_one_or_none()
-        if b:
-            # 校验日期一致性（如你不需要可删）
-            if (
-                (expiry_date and b.expiry_date and expiry_date != b.expiry_date)
-                or (production_date and b.production_date and production_date != b.production_date)
-            ):
-                raise ValueError("BATCH_EXPIRY_CONFLICT")
-            return b
-
-        b = Batch(item_id=item_id, production_date=production_date, expiry_date=expiry_date)
-        setattr(b, code_attr.key, code)
-        session.add(b)
-        await session.flush()
-        return b
-
-    # ---------------- domain: inbound ----------------
+        return stock
 
     async def receive(
         self,
         session: AsyncSession,
         *,
-        sku: str,
-        qty: int,
-        batch_code: str,
-        production_date: Optional[date],
-        expiry_date: Optional[date],
+        qty: int | float,
         ref: str,
         ref_line: str,
-    ):
-        # 1) item
-        res = await session.execute(select(Item).where(Item.sku == sku))
-        item = res.scalar_one_or_none()
-        if not item:
-            raise ValueError("SKU_NOT_FOUND")
+        sku: Optional[str] = None,
+        item_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+        batch_code: Optional[str] = None,
+        production_date: Optional[datetime] = None,
+        expiry_date: Optional[datetime] = None,
+        occurred_at: Optional[datetime] = None,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """
+        强约束版：
+        - 幂等键： (reason=INBOUND, ref, ref_line)
+        - 台账固定字段： stock_id, reason, after_qty, delta, occurred_at, ref, ref_line
+        - 仍保留 PG advisory_xact_lock + 保存点
+        """
+        if qty <= 0:
+            raise ValueError("QTY_MUST_BE_POSITIVE")
 
-        # 2) batch
-        batch = await self.ensure_batch(
-            session,
-            item_id=item.id,
-            code=batch_code,
+        # 解析物料与库位
+        if item_id is None:
+            if not sku:
+                raise ValueError("SKU_OR_ITEM_ID_REQUIRED")
+            item_id = await self._resolve_item_id_by_sku(session, sku)
+            if not item_id:
+                raise ValueError("SKU_NOT_FOUND")
+        if location_id is None:
+            location_id = await self._ensure_stage_location_id(session)
+
+        occurred_at = occurred_at or datetime.now(timezone.utc)
+
+        # PG：事务级 advisory 锁，按幂等键聚合
+        dialect = session.bind.dialect.name if session.bind is not None else ""
+        if dialect.startswith("postgres"):
+            key = f"{REASON_INBOUND}|{ref}|{ref_line}"
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
+
+        # 幂等：若已存在同键台账，直接返回
+        existing = await session.scalar(
+            select(StockLedger)
+            .where(
+                and_(
+                    StockLedger.reason == REASON_INBOUND,
+                    StockLedger.ref == ref,
+                    StockLedger.ref_line == ref_line,
+                )
+            )
+            .limit(1)
+        )
+        if existing:
+            stock_now = await session.get(Stock, existing.stock_id) if getattr(existing, "stock_id", None) else None
+            accepted_qty = getattr(existing, "delta", None) or qty
+            return {
+                "idempotent": True,
+                "item_id": item_id,
+                "accepted_qty": accepted_qty,
+                "ledger_id": existing.id,
+                "stock_id": getattr(existing, "stock_id", None),
+                "after_qty": getattr(existing, "after_qty", None),
+                "delta": getattr(existing, "delta", None),
+                "ref": getattr(existing, "ref", ref),
+                "ref_line": getattr(existing, "ref_line", ref_line),
+                "reason": REASON_INBOUND,
+                "stock_qty_now": (stock_now.qty if stock_now else None),
+            }
+
+        # 调整库存 & 获取最新数量
+        stock = await self._bump_and_get(
+            session=session,
+            item_id=item_id,
+            location_id=location_id,
+            delta=qty,
+            batch_code=batch_code,
             production_date=production_date,
             expiry_date=expiry_date,
         )
+        after_qty = stock.qty
 
-        # 3) 暂存区入账
-        tmp_location = 0
-        s = await self._upsert_stock_delta(
-            session,
-            item_id=item.id,
-            location_id=tmp_location,
-            batch_id=getattr(batch, "id", None),
-            delta=qty,
-        )
+        # 固定字段写入台账（保存点内）
+        try:
+            async with session.begin_nested():
+                ledger = StockLedger(
+                    stock_id=stock.id,
+                    reason=REASON_INBOUND,
+                    after_qty=after_qty,
+                    delta=qty,
+                    occurred_at=occurred_at,
+                    ref=ref,
+                    ref_line=ref_line,
+                )
+                session.add(ledger)
+                await session.flush()
+        except IntegrityError:
+            # 唯一键/并发冲突时，回读幂等记录
+            existing = await session.scalar(
+                select(StockLedger)
+                .where(
+                    and_(
+                        StockLedger.reason == REASON_INBOUND,
+                        StockLedger.ref == ref,
+                        StockLedger.ref_line == ref_line,
+                    )
+                )
+                .limit(1)
+            )
+            stock_now = await session.get(Stock, existing.stock_id) if existing and existing.stock_id else None
+            return {
+                "idempotent": True,
+                "item_id": item_id,
+                "accepted_qty": qty,
+                "ledger_id": existing.id if existing else None,
+                "stock_id": existing.stock_id if existing else None,
+                "after_qty": existing.after_qty if existing else None,
+                "delta": existing.delta if existing else None,
+                "ref": ref,
+                "ref_line": ref_line,
+                "reason": REASON_INBOUND,
+                "stock_qty_now": (stock_now.qty if stock_now else None),
+            }
 
-        # 4) 记账（仅设置存在的字段；不写 stock_id）
-        ledger = self._make_ledger(
-            op="INBOUND",
-            item_id=item.id,
-            location_id=tmp_location,
-            batch_id=getattr(batch, "id", None),
-            delta=qty,
-            ref=ref,
-            ref_line=ref_line,
-            after_qty=getattr(s, "qty", None),
-        )
-        session.add(ledger)
-        await session.flush()
-
-        return {"item_id": item.id, "batch_id": batch.id, "accepted_qty": qty}
-
-    async def putaway(
-        self,
-        session: AsyncSession,
-        *,
-        sku: str,
-        batch_code: str,
-        qty: int,
-        to_location_id: int,
-        ref: str,
-        ref_line: str,
-    ):
-        # 1) item
-        res = await session.execute(select(Item).where(Item.sku == sku))
-        item = res.scalar_one_or_none()
-        if not item:
-            raise ValueError("SKU_NOT_FOUND")
-
-        # 2) batch
-        code_attr = self._batch_code_attr()
-        res = await session.execute(
-            select(Batch).where(Batch.item_id == item.id, code_attr == batch_code)
-        )
-        batch = res.scalar_one_or_none()
-        if not batch:
-            raise ValueError("BATCH_NOT_FOUND")
-
-        tmp_location = 0
-
-        # 3) 扣暂存
-        s_out = await self._upsert_stock_delta(
-            session,
-            item_id=item.id,
-            location_id=tmp_location,
-            batch_id=getattr(batch, "id", None),
-            delta=-qty,
-        )
-        # 4) 加到目标位
-        s_in = await self._upsert_stock_delta(
-            session,
-            item_id=item.id,
-            location_id=to_location_id,
-            batch_id=getattr(batch, "id", None),
-            delta=qty,
-        )
-
-        # 5) 记两条流水（不写 stock_id）
-        ledger_out = self._make_ledger(
-            op="PUTAWAY",
-            item_id=item.id,
-            location_id=tmp_location,
-            batch_id=getattr(batch, "id", None),
-            delta=-qty,
-            ref=ref,
-            ref_line=f"{ref_line}-out",
-            after_qty=getattr(s_out, "qty", None),
-        )
-        ledger_in = self._make_ledger(
-            op="PUTAWAY",
-            item_id=item.id,
-            location_id=to_location_id,
-            batch_id=getattr(batch, "id", None),
-            delta=qty,
-            ref=ref,
-            ref_line=f"{ref_line}-in",
-            after_qty=getattr(s_in, "qty", None),
-        )
-        session.add(ledger_out)
-        session.add(ledger_in)
-        await session.flush()
-
+        # 正常返回
         return {
-            "item_id": item.id,
-            "batch_id": batch.id,
-            "to_location_id": to_location_id,
-            "moved_qty": qty,
+            "idempotent": False,
+            "item_id": item_id,
+            "accepted_qty": qty,
+            "ledger_id": ledger.id,  # type: ignore[name-defined]
+            "stock_id": stock.id,
+            "after_qty": after_qty,
+            "delta": qty,
+            "ref": ref,
+            "ref_line": ref_line,
+            "reason": REASON_INBOUND,
+            "stock_qty_now": stock.qty,
         }

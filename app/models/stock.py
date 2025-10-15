@@ -19,7 +19,7 @@ class Stock(Base):
     汇总库存（与数据库结构对齐）：
     - 维度：item_id + location_id
     - 数量列：qty（非负）
-    - 不与 stock_ledger 声明关系（当前表无可用外键）
+    - 与 stock_ledger 通过 FK 关联（stock_ledger.stock_id → stocks.id）
     """
     __tablename__ = "stocks"
 
@@ -50,5 +50,11 @@ class Stock(Base):
     item = relationship("Item", back_populates="stocks")
     location = relationship("Location", back_populates="stocks")
 
-    # 重要：当前数据库没有从 stock_ledger 指向 stocks 的外键，下面这句不要加
-    # ledgers = relationship("StockLedger", back_populates="stock")
+    # 新增：与台账的一对多（StockLedger.stock_id 外键）
+    ledgers = relationship(
+        "StockLedger",
+        back_populates="stock",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

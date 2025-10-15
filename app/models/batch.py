@@ -4,50 +4,46 @@ from __future__ import annotations
 from sqlalchemy import (
     Column,
     Date,
-    ForeignKey,
     Integer,
     String,
     UniqueConstraint,
     Index,
+    CheckConstraint,
 )
-from sqlalchemy.orm import relationship, synonym
+from sqlalchemy.orm import synonym
 
 from app.db.base import Base
 
 
 class Batch(Base):
     """
-    批次模型（与数据库结构对齐）：
-    仅包含 id / item_id / code / production_date / expiry_date。
-    - 物理列名统一为 'code'，并提供 Python 同义名 batch_code 兼容旧代码。
-    - 同一 item 下的 code 唯一。
+    与办公室库的 batches 表结构对齐：
+    - 物理列：id / item_id / batch_code / location_id / warehouse_id / production_date / expiry_date / qty
+    - 不声明到 Warehouse/Location/Item/StockLedger 的关系（当前库无相应外键；声明会触发 NoForeignKeysError）
+    - 提供 code = synonym('batch_code') 兼容旧代码
     """
     __tablename__ = "batches"
 
-    id = Column(Integer, primary_key=True)  # IDENTITY/serial，由数据库发号
-    item_id = Column(Integer, ForeignKey("items.id", ondelete="RESTRICT"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
 
-    # 关键：数据库里就叫 'code'
-    code = Column("code", String(64), nullable=False)
-    # 兼容旧字段名 batch_code（应用层可继续使用）
-    batch_code = synonym("code")
+    item_id = Column(Integer, nullable=False)
+
+    # 关键：物理列名是 batch_code
+    batch_code = Column(String(64), nullable=False)
+    # 兼容：旧代码里用过 Batch.code
+    code = synonym("batch_code")
+
+    location_id = Column(Integer, nullable=False)
+    warehouse_id = Column(Integer, nullable=False)
 
     production_date = Column(Date, nullable=True)
     expiry_date = Column(Date, nullable=True)
 
+    qty = Column(Integer, nullable=False, default=0)
+
     __table_args__ = (
-        UniqueConstraint("item_id", "code", name="uq_batches_item_code"),
-        Index("ix_batches_item_code", "item_id", "code"),
+        UniqueConstraint("item_id", "location_id", "batch_code", name="uq_batch_item_loc_code"),
+        CheckConstraint("qty >= 0", name="ck_batch_qty_nonneg"),
+        Index("ix_batches_code", "batch_code"),
         Index("ix_batches_expiry", "expiry_date"),
-    )
-
-    # 关系（按需保留；避免循环导入）
-    item = relationship("Item", back_populates="batches", lazy="joined", viewonly=False)
-
-    # 如果你的 StockLedger 里有 batch_id 外键，可以保留这个反向关系
-    ledgers = relationship(
-        "StockLedger",
-        back_populates="batch",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )

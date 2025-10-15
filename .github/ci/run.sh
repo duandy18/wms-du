@@ -1,67 +1,17 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+# CI 转发器：固定入口，不承载任何业务逻辑，仅把 CI 的调用转发到仓库根 run.sh
+# 这样以后你只维护根 run.sh，ci.yml 永久稳定不用动。
+set -euo pipefail
 
-echo "== Python & Pip =="; python -V; pip --version; echo
-echo "== Key env =="; echo "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}"; echo "DATABASE_URL=${DATABASE_URL:-<unset>}"; echo
+# 兼容旧用法：不传参数时默认跑四件套（老路由主入口）
+CMD="${1:-ci:pg:all}"
 
-# CI 未显式设 DB，则强制走 PG
-if [[ "${GITHUB_ACTIONS:-}" == "true" && -z "${DATABASE_URL:-}" ]]; then
-  export DATABASE_URL="postgresql+psycopg://wms:wms@localhost:5432/wms"  # pragma: allowlist secret
-  echo "DATABASE_URL -> $DATABASE_URL"
-fi
+# 计算仓库根路径（本文件位于 .github/ci/）
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# 二次保险：同步+异步都剥掉 sqlite 的 server_settings
-if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-python - <<'PY'
-import sqlalchemy
-from sqlalchemy.engine import make_url
-from sqlalchemy.ext import asyncio as _sqla_async
-_real_sync = sqlalchemy.create_engine
-def _safe_sync(url,*a,**kw):
-    try: backend = make_url(url).get_backend_name()
-    except Exception: backend = ""
-    if backend.startswith("sqlite"):
-        ca = kw.get("connect_args")
-        if isinstance(ca, dict) and "server_settings" in ca:
-            ca = dict(ca); ca.pop("server_settings", None); kw["connect_args"] = ca
-    return _real_sync(url,*a,**kw)
-sqlalchemy.create_engine = _safe_sync
-_real_async = _sqla_async.create_async_engine
-def _safe_async(url,*a,**kw):
-    try: backend = make_url(url).get_backend_name()
-    except Exception: backend = ""
-    if backend.startswith("sqlite"):
-        ca = kw.get("connect_args")
-        if isinstance(ca, dict) and "server_settings" in ca:
-            ca = dict(ca); ca.pop("server_settings", None); kw["connect_args"] = ca
-    return _real_async(url,*a,**kw)
-_sqla_async.create_async_engine = _safe_async
-print("[ci/run.sh] sqlite guard active (sync+async).")
-PY
-fi
-
-# 可选迁移（失败不致命）
-if [[ -f "alembic.ini" && -d "alembic/versions" ]]; then
-  echo "== Alembic upgrade head =="; alembic upgrade head || echo "!! Alembic failed (non-fatal)"; echo
+if [[ -x "${ROOT}/run.sh" ]]; then
+  exec "${ROOT}/run.sh" "$CMD" "${@:2}"
 else
-  echo "== Alembic skipped =="
+  echo "ERROR: ${ROOT}/run.sh not found or not executable." >&2
+  exit 127
 fi
-
-# ---------------------------------------------
-# 3) 运行测试（允许通过 PYTEST_ARGS/PYTEST_K 覆盖）
-# ---------------------------------------------
-ARGS=()
-# 基础参数
-if [[ -n "${PYTEST_ARGS:-}" ]]; then
-  # 以空格分割追加（例如 -q --maxfail=1 --disable-warnings）
-  read -r -a _base <<< "${PYTEST_ARGS}"
-  ARGS+=("${_base[@]}")
-else
-  ARGS+=(-q --maxfail=1 --disable-warnings)
-fi
-# -k 表达式作为一个参数传入
-if [[ -n "${PYTEST_K:-}" ]]; then
-  ARGS+=(-k "${PYTEST_K}")
-fi
-echo "== Pytest =="; echo "pytest ${ARGS[*]}"
-pytest "${ARGS[@]}"
