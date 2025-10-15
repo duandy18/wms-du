@@ -12,9 +12,9 @@ class PutawayService:
     上架 / 搬运服务
 
     设计要点：
-    - 单次 putaway：通过 StockService.adjust() 记两条台账（-qty / +qty），保持“右腿 +1”幂等键（reason, ref, ref_line, stock_id）。
+    - 单次 putaway：通过 StockService.adjust() 记两条台账（-qty / +qty）。
     - 批量 bulk_putaway：从暂存位(location_id=stage)按行锁定 SKIP LOCKED 抽取一条，搬到目标位；
-      每次循环只搬一条（<= batch_size），保证在多 worker 下无阻塞竞争。
+      每轮处理后提交释放锁，支持多 worker 并发。
     """
 
     # ---------- 单次搬运 ----------
@@ -27,7 +27,7 @@ class PutawayService:
         to_location_id: int,
         qty: int,
         ref: str,
-        ref_line: int,
+        ref_line: int | None = None,  # 兼容旧签名，但不会传给 StockService.adjust
     ) -> Dict[str, Any]:
         """
         把 qty 从 from_location 搬到 to_location。
@@ -38,7 +38,7 @@ class PutawayService:
 
         svc = StockService()
 
-        # 先扣来源位，再加目标位（同一 ref/ref_line，依靠 stock_id 区分唯一）
+        # 先扣来源位，再加目标位（幂等依赖 StockService 内部的唯一键策略）
         await svc.adjust(
             session=session,
             item_id=item_id,
@@ -46,7 +46,6 @@ class PutawayService:
             delta=-qty,
             reason="PUTAWAY",
             ref=ref,
-            ref_line=ref_line,
         )
         await svc.adjust(
             session=session,
@@ -55,7 +54,6 @@ class PutawayService:
             delta=qty,
             reason="PUTAWAY",
             ref=ref,
-            ref_line=ref_line,
         )
 
         return {"status": "ok", "moved": qty}
@@ -72,14 +70,10 @@ class PutawayService:
     ) -> Dict[str, Any]:
         """
         从暂存位 stage_location_id 批量搬运库存到目标库位（按 item_id 由 target_locator_fn 决定）。
-        - 并发安全：用 FOR UPDATE SKIP LOCKED 锁一行 stocks 进行处理；
+        - 并发安全：FOR UPDATE SKIP LOCKED 锁一行 stocks 进行处理；
         - 最小侵入：仍然调用 StockService.adjust() 记账；
         - 退出条件：没有可搬条目或达到 batch_size；
         - 返回：moved 总数与状态。
-
-        备注：
-        - 该实现每轮锁一行（id 升序），将其可用 qty 全量（或切片到 batch_size 剩余额度）搬运。
-        - 适合 CI/Quick 并发用例；若要产线更高吞吐，可再做批量 SELECT + 批处理。
         """
         from app.services.stock_service import StockService
 
@@ -123,9 +117,8 @@ class PutawayService:
             to_location_id = int(target_locator_fn(item_id))
 
             # 3) 记账（-stage / +target）
-            #    ref 采用 BULK-<worker_id>，ref_line 采用 stock_id，确保“同一库存行重复处理”能幂等
+            #    ref 使用 BULK-<worker_id>，不传 ref_line（StockService.adjust 当前不支持）
             ref = f"BULK-{worker_id}"
-            ref_line = stock_id
 
             await svc.adjust(
                 session=session,
@@ -134,7 +127,6 @@ class PutawayService:
                 delta=-move_qty,
                 reason="PUTAWAY",
                 ref=ref,
-                ref_line=ref_line,
             )
             await svc.adjust(
                 session=session,
@@ -143,7 +135,6 @@ class PutawayService:
                 delta=move_qty,
                 reason="PUTAWAY",
                 ref=ref,
-                ref_line=ref_line,
             )
 
             moved += move_qty
