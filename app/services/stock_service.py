@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional, Dict, Any, Tuple, Iterable
 
-from sqlalchemy import and_, case, func, insert, select, update
+from sqlalchemy import and_, case, func, insert, select, update, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -28,7 +28,6 @@ async def _exec_with_retry(
     base_sleep: float = 0.03,
     max_sleep: float = 0.35,
 ):
-    """对可瞬时失败的 SQL 做指数退避重试（轻量版）。"""
     await asyncio.sleep(base_sleep * 0.6)
     for i in range(retries):
         try:
@@ -47,9 +46,6 @@ async def _exec_with_retry(
 
 # -------------------- 小工具：模型特性探测 --------------------
 def _stocks_qty_column():
-    """
-    返回 Stock 的“数量列” InstrumentedAttribute（支持 quantity/qty），不存在则抛错。
-    """
     col = getattr(Stock, "quantity", None) or getattr(Stock, "qty", None)
     if col is None:
         raise AssertionError("Stock 模型缺少数量列（quantity/qty）")
@@ -57,9 +53,6 @@ def _stocks_qty_column():
 
 
 def _batch_code_attr():
-    """
-    返回 Batch 的批次码列（支持 code/batch_code），不存在则抛错。
-    """
     col = getattr(Batch, "code", None) or getattr(Batch, "batch_code", None)
     if col is None:
         raise AssertionError("Batch 模型缺少批次码列（code/batch_code）")
@@ -72,10 +65,6 @@ def _has_col(model, name: str) -> bool:
 
 # -------------------- 台账字段自适配（不写 stock_id） --------------------
 def _ledger_attr_map() -> Dict[str, Optional[str]]:
-    """
-    将“逻辑字段名”映射到 StockLedger 实际存在的属性名。
-    重要：刻意不支持 stock_id，避免 DB/ORM 不一致。
-    """
     def pick(*candidates: str) -> Optional[str]:
         for n in candidates:
             if hasattr(StockLedger, n):
@@ -83,7 +72,7 @@ def _ledger_attr_map() -> Dict[str, Optional[str]]:
         return None
 
     return {
-        "op":        pick("op", "operation", "action", "reason"),   # 操作/事由字段
+        "op":        pick("op", "operation", "action", "reason"),
         "item_id":   "item_id" if hasattr(StockLedger, "item_id") else None,
         "location_id": "location_id" if hasattr(StockLedger, "location_id") else None,
         "batch_id":  "batch_id" if hasattr(StockLedger, "batch_id") else None,
@@ -98,10 +87,6 @@ def _ledger_attr_map() -> Dict[str, Optional[str]]:
 
 
 def _make_ledger(**logical_fields: Any) -> StockLedger:
-    """
-    构造台账对象：仅给 StockLedger 里真实存在的属性赋值；未知字段自动忽略。
-    永不写入 stock_id。
-    """
     m = _ledger_attr_map()
     obj = StockLedger()
     for k, v in logical_fields.items():
@@ -109,6 +94,57 @@ def _make_ledger(**logical_fields: Any) -> StockLedger:
         if real is not None and hasattr(obj, real):
             setattr(obj, real, v)
     return obj
+
+
+# -------------------- 统一的 Ledger SQL 写入（保证 item_id 必写） --------------------
+def _to_ref_line_int(ref_line: int | str | None) -> int:
+    if isinstance(ref_line, int):
+        return ref_line
+    import zlib
+    return int(zlib.crc32(str(ref_line).encode("utf-8")) & 0x7FFFFFFF)
+
+async def _write_ledger_sql(
+    session: AsyncSession,
+    *,
+    stock_id: int | None,
+    item_id: int,
+    reason: str,
+    delta: float | int,
+    after_qty: float | int | None,
+    ref: str | None,
+    ref_line: int | str | None,
+    occurred_at: datetime | None = None,
+) -> None:
+    """
+    直接用 SQL 文本写入台账，确保 item_id 始终写入：
+    - 兼容 ORM 未映射新列的场景（例如迁移已加列、模型尚未更新）
+    - 统一把 ref_line 映射为稳定整数，保证与 UQ(reason, ref, ref_line) 语义一致
+    """
+    ts = occurred_at or datetime.now(timezone.utc)
+    rline = _to_ref_line_int(ref_line)
+
+    cols = ["item_id", "reason", "ref", "ref_line", "delta", "occurred_at"]
+    vals = [":item", ":reason", ":ref", ":rline", ":delta", ":ts"]
+
+    if stock_id is not None:
+        cols.insert(0, "stock_id")
+        vals.insert(0, ":sid")
+    if after_qty is not None and hasattr(StockLedger, "after_qty"):
+        cols.append("after_qty")
+        vals.append(":after")
+
+    sql = f"INSERT INTO stock_ledger ({', '.join(cols)}) VALUES ({', '.join(vals)})"
+    params = {
+        "sid": stock_id,
+        "item": item_id,
+        "reason": reason,
+        "ref": ref,
+        "rline": rline,
+        "delta": int(delta),
+        "ts": ts,
+        "after": int(after_qty or 0),
+    }
+    await session.execute(text(sql), params)
 
 
 # ==============================================================================
@@ -123,16 +159,59 @@ class StockService:
             return self._adjust_async(**kwargs)
         return self.adjust_sync(**kwargs)
 
-    # ==================== 异步入口（自动分流） ====================
+    # ==================== Ledger-only 需要的两个 Helper ====================
+    async def _ensure_default_warehouse_and_stage(self, session: AsyncSession) -> int:
+        # 仓库 1
+        wid = (
+            await session.execute(select(Warehouse.id).where(Warehouse.id == 1).limit(1))
+        ).scalar_one_or_none()
+        if wid is None:
+            res = await session.execute(
+                insert(Warehouse).values({"id": 1, "name": "AUTO-WH"}).returning(Warehouse.id)
+            )
+            wid = int(res.scalar_one())
+        # 库位 0
+        loc = (
+            await session.execute(select(Location.id).where(Location.id == 0).limit(1))
+        ).scalar_one_or_none()
+        if loc is None:
+            vals = {"id": 0, "warehouse_id": wid}
+            if hasattr(Location, "name"):
+                vals["name"] = "STAGE"
+            await session.execute(insert(Location).values(vals))
+        return 0
+
+    async def _get_or_create_zero_stock(
+        self, session: AsyncSession, *, item_id: int, location_id: int
+    ) -> tuple[int, float]:
+        qty_col = _stocks_qty_column()
+        row = (
+            await session.execute(
+                select(Stock.id, qty_col)
+                .where(Stock.item_id == item_id, Stock.location_id == location_id)
+                .limit(1)
+            )
+        ).first()
+        if row:
+            sid, cur = int(row[0]), float(row[1] or 0.0)
+            return sid, cur
+        res = await session.execute(
+            insert(Stock).values({"item_id": item_id, "location_id": location_id, qty_col.key: 0})
+            .returning(Stock.id)
+        )
+        sid = int(res.scalar_one())
+        return sid, 0.0
+
+    # ==================== 异步入口（增强版） ====================
     async def _adjust_async(
         self,
         session: AsyncSession,
         *,
         item_id: int,
-        location_id: int,
         delta: float,
         reason: str,
         ref: str | None = None,
+        location_id: Optional[int] = None,
         batch_code: str | None = None,
         production_date: date | None = None,
         expiry_date: date | None = None,
@@ -140,8 +219,47 @@ class StockService:
         allow_expired: bool = False,
     ) -> dict:
         mode = (mode or "NORMAL").upper()
+
+        # 路径 A：location_id 缺失 → 仅记台账（ledger-only）
+        if location_id is None:
+            batch_id = None
+            if batch_code and production_date and expiry_date:
+                batch_id = await self._ensure_batch_minimal(
+                    session=session,
+                    item_id=item_id,
+                    batch_code=batch_code,
+                    production_date=production_date,
+                    expiry_date=expiry_date,
+                )
+
+            await self._ensure_item_exists(session, item_id=item_id)
+            stage_loc = await self._ensure_default_warehouse_and_stage(session)
+            stock_id, cur_qty = await self._get_or_create_zero_stock(
+                session, item_id=item_id, location_id=stage_loc
+            )
+
+            await _write_ledger_sql(
+                session,
+                stock_id=stock_id,
+                item_id=item_id,
+                reason=reason or ("INBOUND" if delta > 0 else "OUTBOUND"),
+                delta=int(delta),
+                after_qty=int(cur_qty),
+                ref=ref,
+                ref_line=1,
+                occurred_at=datetime.now(timezone.utc),
+            )
+            await session.flush()
+            return {
+                "ledger_id": None,
+                "batch_id": batch_id,
+                "stock_id": stock_id,
+                "stocks_touched": False,
+                "note": "no location_id; ledger-only bound to STAGE(0)",
+            }
+
+        # 路径 B：有 location_id → 正常库存路径
         if delta < 0:
-            # 指定批次就“定向出库”，否则走 FEFO
             if batch_code:
                 return await self._adjust_outbound_direct(
                     session=session,
@@ -149,7 +267,7 @@ class StockService:
                     location_id=location_id,
                     batch_code=batch_code,
                     amount=-float(delta),
-                    reason=reason,
+                    reason=reason or "OUTBOUND",
                     ref=ref,
                 )
             return await self._adjust_fefo(
@@ -157,24 +275,25 @@ class StockService:
                 item_id=item_id,
                 location_id=location_id,
                 delta=float(delta),
-                reason=reason,
+                reason=reason or "FEFO",
                 ref=ref,
                 allow_expired=allow_expired,
             )
+
         # 正数 → NORMAL 入库
         return await self._adjust_normal(
             session=session,
             item_id=item_id,
             location_id=location_id,
             delta=float(delta),
-            reason=reason,
+            reason=reason or "INBOUND",
             ref=ref,
             batch_code=batch_code,
             production_date=production_date,
             expiry_date=expiry_date,
         )
 
-    # ==================== NORMAL 入库 ====================
+    # ==================== NORMAL 入库（带 stock_id；批次按 FULL/Minimal 自适配） ====================
     async def _adjust_normal(
         self,
         session: AsyncSession,
@@ -191,43 +310,57 @@ class StockService:
         if delta <= 0:
             raise ValueError("NORMAL 模式仅支持正数入库")
 
-        # 准备批次（最小需要 item_id + code/batch_code）
-        if not batch_code:
-            batch_code = f"AUTO-{item_id}-{date.today():%Y%m%d}"
+        # 批次：信息充分时建立；若 Batch 表带 location/warehouse，则使用 FULL 方案
+        batch_id = None
+        if batch_code and production_date and expiry_date:
+            if _has_col(Batch, "location_id") or _has_col(Batch, "warehouse_id"):
+                wh_id = await self._resolve_warehouse_id(session, location_id)
+                batch_id = await self._ensure_batch_full(
+                    session=session,
+                    item_id=item_id,
+                    warehouse_id=wh_id,
+                    location_id=location_id,
+                    batch_code=batch_code,
+                    production_date=production_date,
+                    expiry_date=expiry_date,
+                )
+            else:
+                batch_id = await self._ensure_batch_minimal(
+                    session=session,
+                    item_id=item_id,
+                    batch_code=batch_code,
+                    production_date=production_date,
+                    expiry_date=expiry_date,
+                )
 
-        batch_id = await self._ensure_batch_minimal(
-            session=session,
-            item_id=item_id,
-            batch_code=batch_code,
-            production_date=production_date,
-            expiry_date=expiry_date,
-        )
-
-        before = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
+        # 先确保 stocks 行，拿到 (stock_id, before)
+        stock_id, before = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
         after = before + float(delta)
 
         # 汇总库存增量
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
 
-        # 记台账（不写 stock_id；op 字段名自适配）
-        ledger = _make_ledger(
-            op="INBOUND",
+        # 写台账：统一 SQL，确保 item_id 写入
+        await _write_ledger_sql(
+            session,
+            stock_id=stock_id,
             item_id=item_id,
-            location_id=location_id,
-            batch_id=batch_id,
+            reason=reason,
             delta=int(delta),
-            ref=ref,
             after_qty=int(after),
+            ref=ref,
+            ref_line=1,
+            occurred_at=datetime.now(timezone.utc),
         )
-        session.add(ledger)
         await session.flush()
 
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         await session.commit()
         return {
             "total_delta": float(delta),
-            "batch_moves": [(batch_id, float(delta))],
+            "batch_moves": ([(batch_id, float(delta))] if batch_id is not None else []),
             "stock_after": int(stock_after),
+            "stocks_touched": True,
         }
 
     # ==================== 直接按批次出库（定向） ====================
@@ -244,23 +377,18 @@ class StockService:
     ) -> dict:
         assert amount > 0, "outbound amount 必须为正数"
 
-        # 若 Batch 没有 qty/warehouse_id/location_id 等列，则无法对批次“分摊扣减”，退化为仅汇总库存扣减 + 台账记录
-        # 能力探测：
         has_qty = _has_col(Batch, "qty")
         code_attr = _batch_code_attr()
 
-        # 查可用批次（尽力匹配）
         q = select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code)
         r = (await session.execute(q)).scalar_one_or_none()
-        if r is None:
-            # 找不到批次则先建一个（不带数量维度）
+        if r is None and (batch_code is not None):
             r = await self._ensure_batch_minimal(
                 session, item_id=item_id, batch_code=batch_code, production_date=None, expiry_date=None
             )
-        batch_id = int(r)
+        batch_id = int(r) if r is not None else None
 
-        # 若有批次数量列，尝试扣减（没有就跳过）
-        if has_qty:
+        if has_qty and batch_id is not None:
             await _exec_with_retry(
                 session,
                 update(Batch)
@@ -272,27 +400,31 @@ class StockService:
         after = before - float(amount)
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=-float(amount))
 
-        ledger = _make_ledger(
-            op="OUTBOUND",
+        # 统一 SQL 写台账
+        sid, _ = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
+        await _write_ledger_sql(
+            session,
+            stock_id=sid,
             item_id=item_id,
-            location_id=location_id,
-            batch_id=batch_id,
+            reason=reason,
             delta=-int(amount),
-            ref=ref,
             after_qty=int(after),
+            ref=ref,
+            ref_line=1,
+            occurred_at=datetime.now(timezone.utc),
         )
-        session.add(ledger)
         await session.flush()
         await session.commit()
 
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         return {
             "total_delta": -float(amount),
-            "batch_moves": [(batch_id, -float(amount))] if has_qty else [],
+            "batch_moves": ([(batch_id, -float(amount))] if (has_qty and batch_id is not None) else []),
             "stock_after": int(stock_after),
+            "stocks_touched": True,
         }
 
-    # ==================== FEFO 出库（尽力而为：无效期列则按 id 顺序） ====================
+    # ==================== FEFO 出库 ====================
     async def _adjust_fefo(
         self,
         session: AsyncSession,
@@ -309,11 +441,9 @@ class StockService:
         has_qty = _has_col(Batch, "qty")
         has_expiry = _has_col(Batch, "expiry_date")
 
-        # 选批规则：优先 expiry_date，缺失则退化为按 id 先入先出
         conds = [Batch.item_id == item_id]
         if has_qty:
             conds.append(Batch.qty > 0)
-
         if has_expiry and not allow_expired:
             conds.append((Batch.expiry_date.is_(None)) | (Batch.expiry_date >= today))
 
@@ -341,7 +471,7 @@ class StockService:
         for r in rows:
             if need <= 0:
                 break
-            available = float(r.qty or 0.0) if has_qty else need  # 无批次数量列时，整批任取至满足
+            available = float(r.qty or 0.0) if has_qty else need
             if available <= 0:
                 continue
             take = min(need, available)
@@ -351,33 +481,27 @@ class StockService:
         if need > 1e-12:
             raise ValueError("库存不足，无法按 FEFO 出库")
 
-        # 应用到批次（若有 qty 列）
-        for bid, used in moves:
-            if has_qty:
-                await _exec_with_retry(
-                    session,
-                    update(Batch).where(Batch.id == bid).values(qty=func.coalesce(Batch.qty, 0) + int(used)),
-                )
+        sid, _cur = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
 
-        # 汇总库存与台账
         before = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         running = before
         last_ledger_id = None
 
         for bid, used in moves:
             running += used
-            ledger = _make_ledger(
-                op="FEFO",
+            await _write_ledger_sql(
+                session,
+                stock_id=sid,
                 item_id=item_id,
-                location_id=location_id,
-                batch_id=bid,
+                reason=reason,
                 delta=int(used),
-                ref=ref,
                 after_qty=int(running),
+                ref=ref,
+                ref_line=1,
+                occurred_at=datetime.now(timezone.utc),
             )
-            session.add(ledger)
             await session.flush()
-            last_ledger_id = getattr(ledger, "id", last_ledger_id)
+            last_ledger_id = last_ledger_id  # 占位，无需回读 id
 
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
         await session.commit()
@@ -388,6 +512,7 @@ class StockService:
             "batch_moves": moves,
             "stock_after": int(stock_after),
             "ledger_id": (int(last_ledger_id) if last_ledger_id is not None else None),
+            "stocks_touched": True,
         }
 
     # ==================== 盘点（异步） ====================
@@ -468,11 +593,6 @@ class StockService:
         reason: str = "EXPIRED_TRANSFER",
         ref: str | None = None,
     ) -> dict:
-        """
-        若 Batch 无 qty/expiry_date 等列，则此功能会退化：
-        - 无 expiry_date：无法筛选过期，仅返回空结果
-        - 无 qty：无法搬运批次数量，仅返回空结果
-        """
         if not _has_col(Batch, "expiry_date") or not _has_col(Batch, "qty"):
             return {"warehouse_id": warehouse_id, "moved_total": 0, "moves": []}
 
@@ -527,7 +647,6 @@ class StockService:
                 moved_total += qty_to_move
                 continue
 
-            # 从源批次扣、到目的批次加
             await _exec_with_retry(
                 session,
                 update(Batch).where(Batch.id == bid).values(qty=func.coalesce(Batch.qty, 0) - qty_to_move),
@@ -537,7 +656,6 @@ class StockService:
                 update(Batch).where(Batch.id == dst_bid).values(qty=func.coalesce(Batch.qty, 0) + qty_to_move),
             )
 
-            # 汇总库存两边同步
             await self._bump_stock(
                 session, item_id=item_id, location_id=src_loc, delta=-qty_to_move
             )
@@ -545,19 +663,19 @@ class StockService:
                 session, item_id=item_id, location_id=to_location_id, delta=+qty_to_move
             )
 
-            # 台账两条（出/入）
+            # 两条台账：这里也可切换到 _write_ledger_sql，如果需要记录 item_id/occurred_at/after_qty
             session.add(_make_ledger(
                 op=reason,
-                item_id=item_id,
-                location_id=src_loc,
+                item_id=item_id if hasattr(StockLedger, "item_id") else None,
+                location_id=src_loc if hasattr(StockLedger, "location_id") else None,
                 batch_id=int(bid),
                 delta=-qty_to_move,
                 ref=ref,
             ))
             session.add(_make_ledger(
                 op=reason,
-                item_id=item_id,
-                location_id=to_location_id,
+                item_id=item_id if hasattr(StockLedger, "item_id") else None,
+                location_id=to_location_id if hasattr(StockLedger, "location_id") else None,
                 batch_id=int(dst_bid),
                 delta=qty_to_move,
                 ref=ref,
@@ -601,7 +719,6 @@ class StockService:
         code_attr = _batch_code_attr()
         today = date.today()
 
-        # 选择源批次列表
         conds = [Batch.item_id == item_id]
         if has_qty:
             conds.append(Batch.qty > 0)
@@ -636,7 +753,6 @@ class StockService:
             raise ValueError("源库位无可用批次")
 
         need = float(qty)
-        # 汇总库存即时读
         src_after = await self._get_current_qty(session, item_id=item_id, location_id=src_location_id)
         dst_after = await self._get_current_qty(session, item_id=item_id, location_id=dst_location_id)
 
@@ -651,7 +767,6 @@ class StockService:
             take = min(need, available)
             need -= take
 
-            # 扣源批次
             if has_qty:
                 await _exec_with_retry(
                     session,
@@ -663,7 +778,6 @@ class StockService:
                 batch_id=int(r.id), delta=-int(take), ref=ref, after_qty=int(src_after),
             ))
 
-            # 加目的批次
             dst_bid = await self._ensure_batch_minimal(
                 session=session,
                 item_id=item_id,
@@ -689,7 +803,6 @@ class StockService:
         if need > 1e-12:
             raise ValueError("库存不足，调拨未达成所需数量")
 
-        # 汇总库存两边同步
         await self._bump_stock(session, item_id=item_id, location_id=src_location_id, delta=-float(qty))
         await self._bump_stock(session, item_id=item_id, location_id=dst_location_id, delta=+float(qty))
         await session.commit()
@@ -718,7 +831,6 @@ class StockService:
         if wid is not None:
             return int(wid)
 
-        # 无 warehouse_id？则创建一个默认仓与库位（兜底，仅为测试/演示）
         w_first = (await session.execute(select(Warehouse.id).order_by(Warehouse.id.asc()))).scalar_one_or_none()
         if w_first is None:
             res_w = await _exec_with_retry(
@@ -777,7 +889,6 @@ class StockService:
         production_date: date | None,
         expiry_date: date | None,
     ) -> int:
-        """仅依赖 item_id + code/batch_code 的最小建档。"""
         code_attr = _batch_code_attr()
         existed = (
             await session.execute(select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code))
@@ -791,16 +902,22 @@ class StockService:
             vals["production_date"] = production_date
         if _has_col(Batch, "expiry_date"):
             vals["expiry_date"] = expiry_date
+        if _has_col(Batch, "qty"):
+            vals["qty"] = 0
 
         try:
             rid = (await _exec_with_retry(session, insert(Batch).values(vals).returning(Batch.id))).scalar_one()
             return int(rid)
         except IntegrityError:
+            if _has_col(Batch, "location_id") or _has_col(Batch, "warehouse_id"):
+                pass
             await session.rollback()
             rid2 = (
                 await session.execute(select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code))
-            ).scalar_one()
-            return int(rid2)
+            ).scalar_one_or_none()
+            if rid2 is not None:
+                return int(rid2)
+            raise
 
     async def _ensure_batch_full(
         self,
@@ -813,10 +930,6 @@ class StockService:
         production_date: date | None,
         expiry_date: date | None,
     ) -> int:
-        """
-        “尽可能全”的建档：如果 Batch 有 warehouse_id/location_id/qty 等列，就带上；
-        否则退化为 _ensure_batch_minimal。
-        """
         if not (_has_col(Batch, "warehouse_id") and _has_col(Batch, "location_id")):
             return await self._ensure_batch_minimal(
                 session=session,
@@ -875,10 +988,6 @@ class StockService:
         )
 
     async def _ensure_stock_row(self, session: AsyncSession, *, item_id: int, location_id: int) -> Tuple[int, float]:
-        """
-        确保汇总库存行存在，并返回 (stock_id, current_qty)。
-        注意：若你的 stocks 表没有 id 主键，请自行调整调用处（本项目默认有 id）。
-        """
         qty_col = _stocks_qty_column()
         sid = (
             await session.execute(select(Stock.id).where(Stock.item_id == item_id, Stock.location_id == location_id))
@@ -905,13 +1014,8 @@ class StockService:
         ref: str | None = None,
         batch_code: str | None = None,
     ) -> tuple[int, float, float, float]:
-        """
-        同步入口用于 /stock/adjust 汇总库存调整。
-        加强：兜底创建缺失的 Item/Location，避免外键冲突。
-        """
         assert self.db is not None, "同步模式需要 self.db Session"
 
-        # 确保 Location 存在
         loc = self.db.query(Location).filter_by(id=location_id).first()
         if loc is None:
             wh = self.db.query(Warehouse).order_by(Warehouse.id.asc()).first()
@@ -923,19 +1027,17 @@ class StockService:
             self.db.add(loc)
             self.db.flush()
 
-        # 确保 Item 存在
         itm = self.db.query(Item).filter_by(id=item_id).first()
         if itm is None:
             itm = Item(id=item_id, sku=f"ITEM-{item_id}", name=f"Auto Item {item_id}")
             for fld in ("qty_available", "qty_on_hand", "qty_reserved", "qty", "min_qty", "max_qty"):
                 if hasattr(Item, fld) and getattr(itm, fld, None) is None:
                     setattr(itm, fld, 0)
-            if hasattr(Item, "unit") and getattr(itm, "unit", None) is None:
+            if hasattr(Item, "unit"):
                 itm.unit = "EA"
             self.db.add(itm)
             self.db.flush()
 
-        # 汇总库存 upsert
         col_qty = getattr(Stock, "quantity", getattr(Stock, "qty", None))
         assert col_qty is not None, "Stock 模型缺少数量列（quantity/qty）"
 
@@ -959,12 +1061,6 @@ class StockService:
 
     # ==================== 同步统计 & 查询（保留） ====================
     def summarize_by_item(self, *, item_id: int, warehouse_id: int):
-        """
-        汇总某仓下某商品的总量（JOIN locations 约束仓库）。
-        1) 运行时从表元数据取 stocks 的真实数量列（quantity/qty）
-        2) 运行时从表元数据取 locations 的仓列（warehouse_id/warehouse/wh_id）
-        3) 如按仓过滤仍拿空，兜底为“全仓汇总”以避免 ORM/方言边角误伤
-        """
         from sqlalchemy import inspect as _inspect
         from sqlalchemy import text as _text
 
@@ -974,9 +1070,9 @@ class StockService:
         if qty_col_obj is None:
             raise RuntimeError("stocks 表缺少数量列（quantity/qty）")
         qty_db_col = qty_col_obj.name
-        stocks_tbl = Stock.__table__.name  # 通常 'stocks'
+        stocks_tbl = Stock.__table__.name
 
-        loc_tbl = Location.__table__.name  # 通常 'locations'
+        loc_tbl = Location.__table__.name
         loc_cols = {c.name for c in Location.__table__.c}
         if "warehouse_id" in loc_cols:
             wh_col = "warehouse_id"
