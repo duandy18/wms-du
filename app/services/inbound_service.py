@@ -13,10 +13,11 @@ class InboundService:
     """
     入库服务（HTTP 与测试共享）
     - 自动创建缺失的 SKU（items）
-    - 优先复用已有 STAGE 库位（名称以 STAGE 开头，或回退到现有最小 id），否则创建 preferred_id
+    - 优先复用已有 STAGE 库位（名称以 STAGE 开头，或回退到现有最小 id），否则创建 preferred_id（默认 0）
     - 直写 stocks 入库（UPSERT +qty）
     - 写一条 INBOUND 台账（stock_ledger），ref_line 为稳定整数
-    - 返回 {"item_id": item_id, "accepted_qty": qty}
+    - 幂等：若已存在 (reason,ref,ref_line) 台账，则直接返回 idempotent=True
+    - 返回 {"item_id": item_id, "accepted_qty": qty|0, "idempotent": bool}
     """
 
     def __init__(self, stock_service: Optional[Any] = None) -> None:
@@ -38,11 +39,15 @@ class InboundService:
     ) -> Dict[str, Any]:
         """
         接收入库到 STAGE 库位（见 _resolve_stage_location 解析策略）。
-        幂等：依赖 (reason,ref,ref_line) 的 ON CONFLICT DO NOTHING。
+        幂等：依赖 (reason,ref,ref_line) 的预检；若已存在则不再入库，返回 accepted_qty=0, idempotent=True。
         """
         item_id = await self._ensure_item(session, sku)
         stage_id = await self._resolve_stage_location(session, preferred_id=stage_location_id)
         ref_line_int = _to_ref_line_int(ref_line)
+
+        # 幂等预检：若已有该入库台账，直接返回
+        if await self._inbound_ledger_exists(session, ref=ref, ref_line=ref_line_int):
+            return {"item_id": item_id, "accepted_qty": 0, "idempotent": True}
 
         # 1) 增加 STAGE 库存（UPSERT）
         upsert = await session.execute(
@@ -60,7 +65,7 @@ class InboundService:
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
 
-        # 2) 写 INBOUND 台账（无 ts 列）
+        # 2) 写 INBOUND 台账（无 ts 列；若并发重复插入，ON CONFLICT DO NOTHING 保底）
         await session.execute(
             text(
                 """
@@ -78,7 +83,7 @@ class InboundService:
             },
         )
 
-        return {"item_id": item_id, "accepted_qty": qty}
+        return {"item_id": item_id, "accepted_qty": qty, "idempotent": False}
 
     # ---------- helpers ----------
     async def _ensure_item(self, session: AsyncSession, sku: str) -> int:
@@ -107,13 +112,13 @@ class InboundService:
         if got:
             return int(got[0])
 
-        # 2) 任意现有库位（最小 id）
+        # 2) 现有最小 id
         row = await session.execute(text("SELECT id FROM locations ORDER BY id ASC LIMIT 1"))
         got = row.first()
         if got:
             return int(got[0])
 
-        # 3) 创建 preferred_id 作为 STAGE
+        # 3) 创建 preferred_id
         await session.execute(
             text(
                 """
@@ -125,6 +130,22 @@ class InboundService:
             {"i": preferred_id},
         )
         return int(preferred_id)
+
+    async def _inbound_ledger_exists(self, session: AsyncSession, *, ref: str, ref_line: int) -> bool:
+        r = await session.execute(
+            text(
+                """
+                SELECT 1
+                  FROM stock_ledger
+                 WHERE reason = 'INBOUND'
+                   AND ref    = :ref
+                   AND ref_line = :line
+                 LIMIT 1
+                """
+            ),
+            {"ref": ref, "line": ref_line},
+        )
+        return r.first() is not None
 
 
 # ---------- utils ----------
