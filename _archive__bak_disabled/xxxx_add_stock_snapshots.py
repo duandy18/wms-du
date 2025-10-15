@@ -4,16 +4,18 @@ Revision ID: 1f9e5c2b8a11
 Revises: 3a_fix_sqlite_inline_pks
 Create Date: 2025-10-06 18:00:00
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "1f9e5c2b8a11"
 down_revision = "1088800f816e"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # ------------ helpers ------------
@@ -59,7 +61,9 @@ def upgrade() -> None:
     if not _has_table("stock_snapshots"):
         op.create_table(
             "stock_snapshots",
-            sa.Column("id", sa.BigInteger().with_variant(sa.BigInteger(), "postgresql"), primary_key=True),
+            sa.Column(
+                "id", sa.BigInteger().with_variant(sa.BigInteger(), "postgresql"), primary_key=True
+            ),
             sa.Column("snapshot_date", sa.Date(), nullable=False),
             sa.Column("warehouse_id", sa.Integer(), nullable=False),
             sa.Column("location_id", sa.Integer(), nullable=False),
@@ -85,11 +89,19 @@ def upgrade() -> None:
     # 3) 条件地补外键：依赖表存在才创建 FK，避免 UndefinedTable
     fk_existing = _fk_names("stock_snapshots")
 
-    def _maybe_fk(name: str, cols: list[str], ref_table: str, ref_cols: list[str] = ["id"], ondelete: str | None = None):
+    def _maybe_fk(
+        name: str,
+        cols: list[str],
+        ref_table: str,
+        ref_cols: list[str] = ["id"],
+        ondelete: str | None = None,
+    ):
         if name in fk_existing:
             return
         if _has_table(ref_table):
-            op.create_foreign_key(name, "stock_snapshots", ref_table, cols, ref_cols, ondelete=ondelete)
+            op.create_foreign_key(
+                name, "stock_snapshots", ref_table, cols, ref_cols, ondelete=ondelete
+            )
 
     _maybe_fk("fk_ss_warehouse", ["warehouse_id"], "warehouses")
     _maybe_fk("fk_ss_location", ["location_id"], "locations")
@@ -99,9 +111,13 @@ def upgrade() -> None:
     # 4) 热点索引（可选幂等补）
     idx = _index_names("stock_snapshots")
     if "ix_ss_date_item" not in idx:
-        op.create_index("ix_ss_date_item", "stock_snapshots", ["snapshot_date", "item_id"], unique=False)
+        op.create_index(
+            "ix_ss_date_item", "stock_snapshots", ["snapshot_date", "item_id"], unique=False
+        )
     if "ix_ss_loc" not in idx:
-        op.create_index("ix_ss_loc", "stock_snapshots", ["warehouse_id", "location_id"], unique=False)
+        op.create_index(
+            "ix_ss_loc", "stock_snapshots", ["warehouse_id", "location_id"], unique=False
+        )
 
 
 def downgrade() -> None:

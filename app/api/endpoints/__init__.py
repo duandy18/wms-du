@@ -1,7 +1,7 @@
 # app/api/endpoints/__init__.py
 from fastapi import APIRouter
 
-from . import snapshot, stock, inbound  # 你已有的
+from . import inbound, snapshot, stock  # 你已有的
 
 # 明确把子路由模块导入为命名空间，便于 include_router 调用
 from app.api.endpoints import stock_batch  # ← 关键：导入它

@@ -4,6 +4,7 @@ Revision ID: 20251015_create_batches_if_missing
 Revises: 20251015_widen_alembic_version_len
 Create Date: 2025-10-15
 """
+
 from alembic import op
 
 revision = "20251015_create_batches_if_missing"

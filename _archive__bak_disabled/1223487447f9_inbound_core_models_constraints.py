@@ -4,16 +4,18 @@ Revision ID: 1223487447f9
 Revises: 1f9e5c2b8a11
 Create Date: 2025-10-12 11:25:39.520735
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "1223487447f9"
 down_revision = "2a01baddb002"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _table_columns(table_name: str) -> set[str]:
@@ -39,9 +41,7 @@ def upgrade() -> None:
     if {"item_id", "code"}.issubset(_table_columns("batches")):
         uqs = _unique_constraints("batches")
         if "uq_batch_item_code" not in uqs:
-            op.create_unique_constraint(
-                "uq_batch_item_code", "batches", ["item_id", "code"]
-            )
+            op.create_unique_constraint("uq_batch_item_code", "batches", ["item_id", "code"])
 
     if "expiry_date" in _table_columns("batches"):
         idx = _index_names("batches")
@@ -62,14 +62,13 @@ def upgrade() -> None:
                     "stocks",
                     ["item_id", "location_id", "batch_id"],
                 )
-        else:
-            # 无 batch_id 的场景：唯一约束为 (item_id, location_id)
-            if "uq_stocks_item_location" not in stock_uqs:
-                op.create_unique_constraint(
-                    "uq_stocks_item_location",
-                    "stocks",
-                    ["item_id", "location_id"],
-                )
+        # 无 batch_id 的场景：唯一约束为 (item_id, location_id)
+        elif "uq_stocks_item_location" not in stock_uqs:
+            op.create_unique_constraint(
+                "uq_stocks_item_location",
+                "stocks",
+                ["item_id", "location_id"],
+            )
 
         # 热点联合索引 (item_id, location_id)
         if "ix_stock_item_loc" not in stock_idx:
@@ -87,16 +86,12 @@ def upgrade() -> None:
     # (item_id, ts) 检索
     if {"item_id", "ts"}.issubset(ledger_cols):
         if "ix_ledger_item_ts" not in ledger_idx:
-            op.create_index(
-                "ix_ledger_item_ts", "stock_ledger", ["item_id", "ts"], unique=False
-            )
+            op.create_index("ix_ledger_item_ts", "stock_ledger", ["item_id", "ts"], unique=False)
 
     # (ref, ref_line) 幂等唯一
     if {"ref", "ref_line"}.issubset(ledger_cols):
         if "ix_ledger_ref" not in ledger_idx:
-            op.create_index(
-                "ix_ledger_ref", "stock_ledger", ["ref", "ref_line"], unique=True
-            )
+            op.create_index("ix_ledger_ref", "stock_ledger", ["ref", "ref_line"], unique=True)
 
 
 def downgrade() -> None:

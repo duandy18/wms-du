@@ -40,4 +40,4 @@ class Item(Base):
         cascade="all, delete-orphan",
     )
     # ✅ 新增：到批次（与 Batch.item = relationship(..., back_populates="item") 对应）
-    batches = relationship("Batch", back_populates="item")
+    # batches = relationship("Batch", back_populates="item")

@@ -40,6 +40,8 @@ app/db/session.py
 app/db/uow.py
 app/db/migrations/versions/3b_add_warehouses_and_locations.py
 app/db/migrations/versions/7f_merge_cycle_fix.py
+app/infra/sql_tap.py
+app/jobs/snapshot.py
 app/models/__init__.py
 app/models/associations.py
 app/models/batch.py
@@ -77,7 +79,9 @@ app/schemas/user.py
 app/services/barcode.py
 app/services/batch_service.py
 app/services/inbound_service.py
+app/services/inventory_ops.py
 app/services/order_service.py
+app/services/putaway_service.py
 app/services/snapshot_service.py
 app/services/stock_service.py
 app/services/uow.py

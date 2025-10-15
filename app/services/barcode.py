@@ -1,7 +1,5 @@
-from typing import Optional
-
 class BarcodeResolver:
-    def resolve(self, code: str) -> Optional[str]:
+    def resolve(self, code: str) -> str | None:
         code = code.strip()
         if not code or len(code) < 4:
             return None

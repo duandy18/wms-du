@@ -4,16 +4,18 @@ Revision ID: f995a82ac74e
 Revises:
 Create Date: 2025-10-06 09:00:00
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f995a82ac74e"
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # ------------ helpers ------------
@@ -36,8 +38,18 @@ def _create_items_if_missing() -> None:
         sa.Column("name", sa.String(128), nullable=False),
         # 与模型字段对齐：给出最小必需列，避免后续 ORM 查询缺列
         sa.Column("qty_available", sa.Integer, nullable=False, server_default=sa.text("0")),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
     )
 
 
@@ -59,7 +71,9 @@ def _create_locations_if_missing() -> None:
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("warehouse_id", sa.Integer, nullable=False),
-        sa.ForeignKeyConstraint(["warehouse_id"], ["warehouses.id"], name="fk_locations_warehouse", ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["warehouse_id"], ["warehouses.id"], name="fk_locations_warehouse", ondelete="RESTRICT"
+        ),
         sa.UniqueConstraint("warehouse_id", "name", name="uq_locations_wh_name"),
     )
 

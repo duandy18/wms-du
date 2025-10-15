@@ -1,14 +1,7 @@
 # app/models/stock.py
 from __future__ import annotations
 
-from sqlalchemy import (
-    Column,
-    ForeignKey,
-    Integer,
-    UniqueConstraint,
-    Index,
-    CheckConstraint,
-)
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Index, Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -21,6 +14,7 @@ class Stock(Base):
     - 数量列：qty（非负）
     - 与 stock_ledger 通过 FK 关联（stock_ledger.stock_id → stocks.id）
     """
+
     __tablename__ = "stocks"
 
     id = Column(Integer, primary_key=True)

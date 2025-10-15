@@ -1,15 +1,7 @@
 # app/models/batch.py
 from __future__ import annotations
 
-from sqlalchemy import (
-    Column,
-    Date,
-    Integer,
-    String,
-    UniqueConstraint,
-    Index,
-    CheckConstraint,
-)
+from sqlalchemy import CheckConstraint, Column, Date, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import synonym
 
 from app.db.base import Base
@@ -22,6 +14,7 @@ class Batch(Base):
     - 不声明到 Warehouse/Location/Item/StockLedger 的关系（当前库无相应外键；声明会触发 NoForeignKeysError）
     - 提供 code = synonym('batch_code') 兼容旧代码
     """
+
     __tablename__ = "batches"
 
     id = Column(Integer, primary_key=True)

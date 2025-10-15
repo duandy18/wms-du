@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 把 Alembic 中这几条 revision 强制线性化，剪掉 cycle。
 改动仅限于各文件的 `down_revision` 一行，并为每个文件生成 .bak 备份。
 """
-import os, io, re, glob, shutil, sys
+
+import glob
+import os
+import re
+import shutil
+import sys
 
 VERS_DIR = "app/db/migrations/versions"
 
@@ -20,19 +24,21 @@ WANT = {
     # 如果你的 31fc28eac057 是 merge 节点，通常它自己有 down_revision=(..., ...)，保持不动
 }
 
-REV_RE  = re.compile(r'^\s*revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
-DOWN_RE = re.compile(r'^\s*down_revision\s*[:=]\s*(.+)$', re.M)
+REV_RE = re.compile(r'^\s*revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
+DOWN_RE = re.compile(r"^\s*down_revision\s*[:=]\s*(.+)$", re.M)
+
 
 def rewrite(path: str, new_parent: str) -> bool:
-    txt = io.open(path, "r", encoding="utf-8", errors="ignore").read()
+    txt = open(path, encoding="utf-8", errors="ignore").read()
     if not DOWN_RE.search(txt):
         return False
     new_txt = DOWN_RE.sub(f'down_revision = "{new_parent}"', txt, count=1)
     if new_txt != txt:
         shutil.copyfile(path, path + ".bak")
-        io.open(path, "w", encoding="utf-8").write(new_txt)
+        open(path, "w", encoding="utf-8").write(new_txt)
         return True
     return False
+
 
 def main():
     if not os.path.isdir(VERS_DIR):
@@ -43,7 +49,7 @@ def main():
     rev2path = {}
     for p in glob.glob(os.path.join(VERS_DIR, "*.py")):
         try:
-            txt = io.open(p, "r", encoding="utf-8", errors="ignore").read()
+            txt = open(p, encoding="utf-8", errors="ignore").read()
         except Exception:
             continue
         m = REV_RE.search(txt)
@@ -75,6 +81,7 @@ def main():
     print("  2) 如仍有多个 head，用 `alembic revision --merge ...` 把它们合并为一个")
     print("  3) 确保 `3b_add_warehouses_and_locations.py` 的 down_revision 指向最终 head")
     print("  4) alembic upgrade head && pytest -q -m smoke")
+
 
 if __name__ == "__main__":
     main()

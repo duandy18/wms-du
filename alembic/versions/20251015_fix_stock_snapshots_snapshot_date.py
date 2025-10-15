@@ -4,6 +4,7 @@ Revision ID: 20251015_fix_stock_snapshots_snapshot_date
 Revises: 20251015_items_id_identity
 Create Date: 2025-10-15
 """
+
 from alembic import op
 
 revision = "20251015_fix_stock_snapshots_snapshot_date"

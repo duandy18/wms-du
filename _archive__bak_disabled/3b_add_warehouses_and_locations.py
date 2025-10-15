@@ -4,15 +4,18 @@ Revision ID: 3b_add_warehouses_locations
 Revises: 7f_merge_cycle_fix
 Create Date: 2025-10-12 20:21:00
 """
-from typing import Sequence, Union
-from alembic import op
+
+from collections.abc import Sequence
+
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "3b_add_warehouses_locations"
 down_revision = "1223487447f9"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _has_table(name: str) -> bool:
@@ -68,8 +71,10 @@ def upgrade() -> None:
             sa.Column("name", sa.String(length=100), nullable=False),
             sa.Column("warehouse_id", sa.Integer(), nullable=False),
             sa.ForeignKeyConstraint(
-                ["warehouse_id"], ["warehouses.id"],
-                name="fk_locations_warehouse", ondelete="RESTRICT",
+                ["warehouse_id"],
+                ["warehouses.id"],
+                name="fk_locations_warehouse",
+                ondelete="RESTRICT",
             ),
         )
 

@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import text
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "3b1f9c2e1a5b"
@@ -53,9 +54,7 @@ FK_NAME = "fk_stock_ledger_stock_id_stocks"
 
 # ---------- helpers (纯 SQL，避免依赖未注入的对象) ----------
 def _has_table(bind, table: str) -> bool:
-    return bool(
-        bind.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": table}).scalar()
-    )
+    return bool(bind.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": table}).scalar())
 
 
 def _col_exists(bind, table: str, col: str) -> bool:

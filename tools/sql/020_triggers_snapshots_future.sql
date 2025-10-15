@@ -1,0 +1,3 @@
+-- tools/sql/020_triggers_snapshots_future.sql
+-- 占位：未来将基于 stock_ledger 的写入，做增量快照回填/滚动聚合。
+-- 当前留空，待 Snapshot 方案定稿（频率、幂等、回补策略、并发策略）。

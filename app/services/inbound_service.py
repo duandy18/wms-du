@@ -1,10 +1,10 @@
 # app/services/inbound_service.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-
 import zlib
+from datetime import UTC, datetime
+from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ class InboundService:
     - 幂等：若已存在 (reason,ref,ref_line) 台账，则直接返回 idempotent=True
     """
 
-    def __init__(self, stock_service: Optional[Any] = None) -> None:
+    def __init__(self, stock_service: Any | None = None) -> None:
         self.stock_service = stock_service
 
     async def receive(
@@ -30,12 +30,12 @@ class InboundService:
         qty: int,
         ref: str,
         ref_line: Any,
-        batch_code: Optional[str] = None,
-        production_date: Optional[datetime] = None,
-        expiry_date: Optional[datetime] = None,
-        occurred_at: Optional[datetime] = None,
+        batch_code: str | None = None,
+        production_date: datetime | None = None,
+        expiry_date: datetime | None = None,
+        occurred_at: datetime | None = None,
         stage_location_id: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         item_id = await self._ensure_item(session, sku)
         stage_id = await self._resolve_stage_location(session, preferred_id=stage_location_id)
         ref_line_int = _to_ref_line_int(ref_line)
@@ -58,7 +58,7 @@ class InboundService:
         stock_id, after_qty = upsert.first()
         stock_id, after_qty = int(stock_id), int(after_qty)
 
-        ts = occurred_at or datetime.now(timezone.utc)
+        ts = occurred_at or datetime.now(UTC)
 
         # ★ 关键：一并写入 item_id
         await session.execute(
@@ -110,7 +110,9 @@ class InboundService:
         return int(ins.scalar())
 
     async def _resolve_stage_location(self, session: AsyncSession, *, preferred_id: int) -> int:
-        row = await session.execute(text("SELECT id FROM locations WHERE id = :i LIMIT 1"), {"i": preferred_id})
+        row = await session.execute(
+            text("SELECT id FROM locations WHERE id = :i LIMIT 1"), {"i": preferred_id}
+        )
         got = row.first()
         if got:
             return int(got[0])
@@ -136,7 +138,9 @@ class InboundService:
         )
         return int(preferred_id)
 
-    async def _inbound_ledger_exists(self, session: AsyncSession, *, ref: str, ref_line: int) -> bool:
+    async def _inbound_ledger_exists(
+        self, session: AsyncSession, *, ref: str, ref_line: int
+    ) -> bool:
         r = await session.execute(
             text(
                 """

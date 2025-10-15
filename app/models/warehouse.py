@@ -10,11 +10,18 @@ from app.db.base import Base
 class Warehouse(Base):
     __tablename__ = "warehouses"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
 
-    # 到库位
-    locations = relationship("Location", back_populates="warehouse")
+    # 只保留“有外键”的关系：
+    # locations.warehouse_id -> warehouses.id
+    locations = relationship(
+        "Location",
+        back_populates="warehouse",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
-    # ✅ 新增：到批次（与 Batch.warehouse = relationship(..., back_populates="warehouse") 对应）
-    batches = relationship("Batch", back_populates="warehouse")
+    # 注意：batches 表当前没有 warehouse_id 外键，
+    # 所以不要声明下面这个关系，否则会触发 NoForeignKeysError。
+    # batches = relationship("Batch", back_populates="warehouse")  # ❌ 禁用

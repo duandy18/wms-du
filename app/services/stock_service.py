@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import date, datetime, timezone
-from typing import Optional, Dict, Any, Tuple, Iterable
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
+from typing import Any
 
-from sqlalchemy import and_, case, func, insert, select, update, text
+from sqlalchemy import and_, case, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -64,23 +65,29 @@ def _has_col(model, name: str) -> bool:
 
 
 # -------------------- 台账字段自适配（不写 stock_id） --------------------
-def _ledger_attr_map() -> Dict[str, Optional[str]]:
-    def pick(*candidates: str) -> Optional[str]:
+def _ledger_attr_map() -> dict[str, str | None]:
+    def pick(*candidates: str) -> str | None:
         for n in candidates:
             if hasattr(StockLedger, n):
                 return n
         return None
 
     return {
-        "op":        pick("op", "operation", "action", "reason"),
-        "item_id":   "item_id" if hasattr(StockLedger, "item_id") else None,
+        "op": pick("op", "operation", "action", "reason"),
+        "item_id": "item_id" if hasattr(StockLedger, "item_id") else None,
         "location_id": "location_id" if hasattr(StockLedger, "location_id") else None,
-        "batch_id":  "batch_id" if hasattr(StockLedger, "batch_id") else None,
-        "delta":     "delta" if hasattr(StockLedger, "delta") else None,
-        "ref":       "ref" if hasattr(StockLedger, "ref") else None,
-        "ref_line":  ("ref_line" if hasattr(StockLedger, "ref_line")
-                      else ("refline" if hasattr(StockLedger, "refline")
-                            else ("line" if hasattr(StockLedger, "line") else None))),
+        "batch_id": "batch_id" if hasattr(StockLedger, "batch_id") else None,
+        "delta": "delta" if hasattr(StockLedger, "delta") else None,
+        "ref": "ref" if hasattr(StockLedger, "ref") else None,
+        "ref_line": (
+            "ref_line"
+            if hasattr(StockLedger, "ref_line")
+            else (
+                "refline"
+                if hasattr(StockLedger, "refline")
+                else ("line" if hasattr(StockLedger, "line") else None)
+            )
+        ),
         "after_qty": "after_qty" if hasattr(StockLedger, "after_qty") else None,
         "created_at": "created_at" if hasattr(StockLedger, "created_at") else None,
     }
@@ -101,7 +108,9 @@ def _to_ref_line_int(ref_line: int | str | None) -> int:
     if isinstance(ref_line, int):
         return ref_line
     import zlib
+
     return int(zlib.crc32(str(ref_line).encode("utf-8")) & 0x7FFFFFFF)
+
 
 async def _write_ledger_sql(
     session: AsyncSession,
@@ -120,7 +129,7 @@ async def _write_ledger_sql(
     - 兼容 ORM 未映射新列的场景（例如迁移已加列、模型尚未更新）
     - 统一把 ref_line 映射为稳定整数，保证与 UQ(reason, ref, ref_line) 语义一致
     """
-    ts = occurred_at or datetime.now(timezone.utc)
+    ts = occurred_at or datetime.now(UTC)
     rline = _to_ref_line_int(ref_line)
 
     cols = ["item_id", "reason", "ref", "ref_line", "delta", "occurred_at"]
@@ -148,6 +157,7 @@ async def _write_ledger_sql(
 
 
 # ==============================================================================
+
 
 class StockService:
     def __init__(self, db: Session | None = None):
@@ -196,7 +206,8 @@ class StockService:
             sid, cur = int(row[0]), float(row[1] or 0.0)
             return sid, cur
         res = await session.execute(
-            insert(Stock).values({"item_id": item_id, "location_id": location_id, qty_col.key: 0})
+            insert(Stock)
+            .values({"item_id": item_id, "location_id": location_id, qty_col.key: 0})
             .returning(Stock.id)
         )
         sid = int(res.scalar_one())
@@ -211,7 +222,7 @@ class StockService:
         delta: float,
         reason: str,
         ref: str | None = None,
-        location_id: Optional[int] = None,
+        location_id: int | None = None,
         batch_code: str | None = None,
         production_date: date | None = None,
         expiry_date: date | None = None,
@@ -247,7 +258,7 @@ class StockService:
                 after_qty=int(cur_qty),
                 ref=ref,
                 ref_line=1,
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=datetime.now(UTC),
             )
             await session.flush()
             return {
@@ -334,11 +345,15 @@ class StockService:
                 )
 
         # 先确保 stocks 行，拿到 (stock_id, before)
-        stock_id, before = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
+        stock_id, before = await self._ensure_stock_row(
+            session, item_id=item_id, location_id=location_id
+        )
         after = before + float(delta)
 
         # 汇总库存增量
-        await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
+        await self._bump_stock(
+            session, item_id=item_id, location_id=location_id, delta=float(delta)
+        )
 
         # 写台账：统一 SQL，确保 item_id 写入
         await _write_ledger_sql(
@@ -350,7 +365,7 @@ class StockService:
             after_qty=int(after),
             ref=ref,
             ref_line=1,
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         )
         await session.flush()
 
@@ -384,7 +399,11 @@ class StockService:
         r = (await session.execute(q)).scalar_one_or_none()
         if r is None and (batch_code is not None):
             r = await self._ensure_batch_minimal(
-                session, item_id=item_id, batch_code=batch_code, production_date=None, expiry_date=None
+                session,
+                item_id=item_id,
+                batch_code=batch_code,
+                production_date=None,
+                expiry_date=None,
             )
         batch_id = int(r) if r is not None else None
 
@@ -398,7 +417,9 @@ class StockService:
 
         before = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         after = before - float(amount)
-        await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=-float(amount))
+        await self._bump_stock(
+            session, item_id=item_id, location_id=location_id, delta=-float(amount)
+        )
 
         # 统一 SQL 写台账
         sid, _ = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
@@ -411,7 +432,7 @@ class StockService:
             after_qty=int(after),
             ref=ref,
             ref_line=1,
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         )
         await session.flush()
         await session.commit()
@@ -419,7 +440,9 @@ class StockService:
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         return {
             "total_delta": -float(amount),
-            "batch_moves": ([(batch_id, -float(amount))] if (has_qty and batch_id is not None) else []),
+            "batch_moves": (
+                [(batch_id, -float(amount))] if (has_qty and batch_id is not None) else []
+            ),
             "stock_after": int(stock_after),
             "stocks_touched": True,
         }
@@ -459,8 +482,11 @@ class StockService:
 
         rows = (
             await session.execute(
-                select(Batch.id, Batch.expiry_date if has_expiry else Batch.id.label("expiry_date"),
-                       Batch.qty if has_qty else func.null())
+                select(
+                    Batch.id,
+                    Batch.expiry_date if has_expiry else Batch.id.label("expiry_date"),
+                    Batch.qty if has_qty else func.null(),
+                )
                 .where(and_(*conds))
                 .order_by(*order_cols)
             )
@@ -498,12 +524,14 @@ class StockService:
                 after_qty=int(running),
                 ref=ref,
                 ref_line=1,
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=datetime.now(UTC),
             )
             await session.flush()
             last_ledger_id = last_ledger_id  # 占位，无需回读 id
 
-        await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
+        await self._bump_stock(
+            session, item_id=item_id, location_id=location_id, delta=float(delta)
+        )
         await session.commit()
 
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
@@ -607,7 +635,11 @@ class StockService:
         rows = (
             await session.execute(
                 select(
-                    Batch.id, Batch.item_id, Batch.location_id, _batch_code_attr().label("code"), Batch.qty
+                    Batch.id,
+                    Batch.item_id,
+                    Batch.location_id,
+                    _batch_code_attr().label("code"),
+                    Batch.qty,
                 ).where(and_(*conds))
             )
         ).all()
@@ -649,11 +681,15 @@ class StockService:
 
             await _exec_with_retry(
                 session,
-                update(Batch).where(Batch.id == bid).values(qty=func.coalesce(Batch.qty, 0) - qty_to_move),
+                update(Batch)
+                .where(Batch.id == bid)
+                .values(qty=func.coalesce(Batch.qty, 0) - qty_to_move),
             )
             await _exec_with_retry(
                 session,
-                update(Batch).where(Batch.id == dst_bid).values(qty=func.coalesce(Batch.qty, 0) + qty_to_move),
+                update(Batch)
+                .where(Batch.id == dst_bid)
+                .values(qty=func.coalesce(Batch.qty, 0) + qty_to_move),
             )
 
             await self._bump_stock(
@@ -664,22 +700,26 @@ class StockService:
             )
 
             # 两条台账：这里也可切换到 _write_ledger_sql，如果需要记录 item_id/occurred_at/after_qty
-            session.add(_make_ledger(
-                op=reason,
-                item_id=item_id if hasattr(StockLedger, "item_id") else None,
-                location_id=src_loc if hasattr(StockLedger, "location_id") else None,
-                batch_id=int(bid),
-                delta=-qty_to_move,
-                ref=ref,
-            ))
-            session.add(_make_ledger(
-                op=reason,
-                item_id=item_id if hasattr(StockLedger, "item_id") else None,
-                location_id=to_location_id if hasattr(StockLedger, "location_id") else None,
-                batch_id=int(dst_bid),
-                delta=qty_to_move,
-                ref=ref,
-            ))
+            session.add(
+                _make_ledger(
+                    op=reason,
+                    item_id=item_id if hasattr(StockLedger, "item_id") else None,
+                    location_id=src_loc if hasattr(StockLedger, "location_id") else None,
+                    batch_id=int(bid),
+                    delta=-qty_to_move,
+                    ref=ref,
+                )
+            )
+            session.add(
+                _make_ledger(
+                    op=reason,
+                    item_id=item_id if hasattr(StockLedger, "item_id") else None,
+                    location_id=to_location_id if hasattr(StockLedger, "location_id") else None,
+                    batch_id=int(dst_bid),
+                    delta=qty_to_move,
+                    ref=ref,
+                )
+            )
 
             moves.append(
                 dict(
@@ -753,8 +793,12 @@ class StockService:
             raise ValueError("源库位无可用批次")
 
         need = float(qty)
-        src_after = await self._get_current_qty(session, item_id=item_id, location_id=src_location_id)
-        dst_after = await self._get_current_qty(session, item_id=item_id, location_id=dst_location_id)
+        src_after = await self._get_current_qty(
+            session, item_id=item_id, location_id=src_location_id
+        )
+        dst_after = await self._get_current_qty(
+            session, item_id=item_id, location_id=dst_location_id
+        )
 
         moves: list[dict] = []
 
@@ -770,13 +814,22 @@ class StockService:
             if has_qty:
                 await _exec_with_retry(
                     session,
-                    update(Batch).where(Batch.id == r.id).values(qty=func.coalesce(Batch.qty, 0) - int(take)),
+                    update(Batch)
+                    .where(Batch.id == r.id)
+                    .values(qty=func.coalesce(Batch.qty, 0) - int(take)),
                 )
             src_after -= take
-            session.add(_make_ledger(
-                op=reason, item_id=item_id, location_id=src_location_id,
-                batch_id=int(r.id), delta=-int(take), ref=ref, after_qty=int(src_after),
-            ))
+            session.add(
+                _make_ledger(
+                    op=reason,
+                    item_id=item_id,
+                    location_id=src_location_id,
+                    batch_id=int(r.id),
+                    delta=-int(take),
+                    ref=ref,
+                    after_qty=int(src_after),
+                )
+            )
 
             dst_bid = await self._ensure_batch_minimal(
                 session=session,
@@ -788,23 +841,41 @@ class StockService:
             if has_qty:
                 await _exec_with_retry(
                     session,
-                    update(Batch).where(Batch.id == dst_bid).values(qty=func.coalesce(Batch.qty, 0) + int(take)),
+                    update(Batch)
+                    .where(Batch.id == dst_bid)
+                    .values(qty=func.coalesce(Batch.qty, 0) + int(take)),
                 )
             dst_after += take
-            session.add(_make_ledger(
-                op=reason, item_id=item_id, location_id=dst_location_id,
-                batch_id=int(dst_bid), delta=int(take), ref=ref, after_qty=int(dst_after),
-            ))
+            session.add(
+                _make_ledger(
+                    op=reason,
+                    item_id=item_id,
+                    location_id=dst_location_id,
+                    batch_id=int(dst_bid),
+                    delta=int(take),
+                    ref=ref,
+                    after_qty=int(dst_after),
+                )
+            )
 
             moves.append(
-                dict(src_batch_id=int(r.id), dst_batch_id=int(dst_bid), batch_code=r.code, qty=int(take))
+                dict(
+                    src_batch_id=int(r.id),
+                    dst_batch_id=int(dst_bid),
+                    batch_code=r.code,
+                    qty=int(take),
+                )
             )
 
         if need > 1e-12:
             raise ValueError("库存不足，调拨未达成所需数量")
 
-        await self._bump_stock(session, item_id=item_id, location_id=src_location_id, delta=-float(qty))
-        await self._bump_stock(session, item_id=item_id, location_id=dst_location_id, delta=+float(qty))
+        await self._bump_stock(
+            session, item_id=item_id, location_id=src_location_id, delta=-float(qty)
+        )
+        await self._bump_stock(
+            session, item_id=item_id, location_id=dst_location_id, delta=+float(qty)
+        )
         await session.commit()
 
         return {
@@ -831,7 +902,9 @@ class StockService:
         if wid is not None:
             return int(wid)
 
-        w_first = (await session.execute(select(Warehouse.id).order_by(Warehouse.id.asc()))).scalar_one_or_none()
+        w_first = (
+            await session.execute(select(Warehouse.id).order_by(Warehouse.id.asc()))
+        ).scalar_one_or_none()
         if w_first is None:
             res_w = await _exec_with_retry(
                 session, insert(Warehouse).values({"name": "AUTO-WH"}).returning(Warehouse.id)
@@ -855,18 +928,25 @@ class StockService:
     async def _ensure_location(self, session: AsyncSession, warehouse_id: int, name: str) -> int:
         r = (
             await session.execute(
-                select(Location.id).where(Location.warehouse_id == warehouse_id, Location.name == name)
+                select(Location.id).where(
+                    Location.warehouse_id == warehouse_id, Location.name == name
+                )
             )
         ).scalar_one_or_none()
         if r:
             return int(r)
         res = await _exec_with_retry(
-            session, insert(Location).values({"warehouse_id": warehouse_id, "name": name}).returning(Location.id)
+            session,
+            insert(Location)
+            .values({"warehouse_id": warehouse_id, "name": name})
+            .returning(Location.id),
         )
         return int(res.scalar_one())
 
     async def _ensure_item_exists(self, session: AsyncSession, *, item_id: int) -> None:
-        exists = (await session.execute(select(Item.id).where(Item.id == item_id))).scalar_one_or_none()
+        exists = (
+            await session.execute(select(Item.id).where(Item.id == item_id))
+        ).scalar_one_or_none()
         if exists is not None:
             return
         vals: dict = {"id": item_id, "sku": f"ITEM-{item_id}", "name": f"Auto Item {item_id}"}
@@ -891,7 +971,9 @@ class StockService:
     ) -> int:
         code_attr = _batch_code_attr()
         existed = (
-            await session.execute(select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code))
+            await session.execute(
+                select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code)
+            )
         ).scalar_one_or_none()
         if existed:
             return int(existed)
@@ -906,14 +988,18 @@ class StockService:
             vals["qty"] = 0
 
         try:
-            rid = (await _exec_with_retry(session, insert(Batch).values(vals).returning(Batch.id))).scalar_one()
+            rid = (
+                await _exec_with_retry(session, insert(Batch).values(vals).returning(Batch.id))
+            ).scalar_one()
             return int(rid)
         except IntegrityError:
             if _has_col(Batch, "location_id") or _has_col(Batch, "warehouse_id"):
                 pass
             await session.rollback()
             rid2 = (
-                await session.execute(select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code))
+                await session.execute(
+                    select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code)
+                )
             ).scalar_one_or_none()
             if rid2 is not None:
                 return int(rid2)
@@ -964,17 +1050,23 @@ class StockService:
             vals["expiry_date"] = expiry_date
 
         try:
-            rid = (await _exec_with_retry(session, insert(Batch).values(vals).returning(Batch.id))).scalar_one()
+            rid = (
+                await _exec_with_retry(session, insert(Batch).values(vals).returning(Batch.id))
+            ).scalar_one()
             return int(rid)
         except IntegrityError:
             await session.rollback()
             rid2 = (await session.execute(select(Batch.id).where(and_(*conds)))).scalar_one()
             return int(rid2)
 
-    async def _bump_stock(self, session: AsyncSession, *, item_id: int, location_id: int, delta: float) -> None:
+    async def _bump_stock(
+        self, session: AsyncSession, *, item_id: int, location_id: int, delta: float
+    ) -> None:
         qty_col = _stocks_qty_column()
         cur = (
-            await session.execute(select(qty_col).where(Stock.item_id == item_id, Stock.location_id == location_id))
+            await session.execute(
+                select(qty_col).where(Stock.item_id == item_id, Stock.location_id == location_id)
+            )
         ).scalar_one_or_none()
         if cur is None:
             vals = {"item_id": item_id, "location_id": location_id, qty_col.key: float(delta)}
@@ -987,14 +1079,20 @@ class StockService:
             .values({qty_col.key: func.coalesce(qty_col, 0) + float(delta)}),
         )
 
-    async def _ensure_stock_row(self, session: AsyncSession, *, item_id: int, location_id: int) -> Tuple[int, float]:
+    async def _ensure_stock_row(
+        self, session: AsyncSession, *, item_id: int, location_id: int
+    ) -> tuple[int, float]:
         qty_col = _stocks_qty_column()
         sid = (
-            await session.execute(select(Stock.id).where(Stock.item_id == item_id, Stock.location_id == location_id))
+            await session.execute(
+                select(Stock.id).where(Stock.item_id == item_id, Stock.location_id == location_id)
+            )
         ).scalar_one_or_none()
         if sid is None:
             vals = {"item_id": item_id, "location_id": location_id, qty_col.key: 0.0}
-            sid = (await _exec_with_retry(session, insert(Stock).values(vals).returning(Stock.id))).scalar_one()
+            sid = (
+                await _exec_with_retry(session, insert(Stock).values(vals).returning(Stock.id))
+            ).scalar_one()
             cur = 0.0
         else:
             cur = (
@@ -1030,7 +1128,14 @@ class StockService:
         itm = self.db.query(Item).filter_by(id=item_id).first()
         if itm is None:
             itm = Item(id=item_id, sku=f"ITEM-{item_id}", name=f"Auto Item {item_id}")
-            for fld in ("qty_available", "qty_on_hand", "qty_reserved", "qty", "min_qty", "max_qty"):
+            for fld in (
+                "qty_available",
+                "qty_on_hand",
+                "qty_reserved",
+                "qty",
+                "min_qty",
+                "max_qty",
+            ):
                 if hasattr(Item, fld) and getattr(itm, fld, None) is None:
                     setattr(itm, fld, 0)
             if hasattr(Item, "unit"):
@@ -1042,7 +1147,10 @@ class StockService:
         assert col_qty is not None, "Stock 模型缺少数量列（quantity/qty）"
 
         before = (
-            self.db.query(col_qty).filter(Stock.item_id == item_id, Stock.location_id == location_id).scalar() or 0.0
+            self.db.query(col_qty)
+            .filter(Stock.item_id == item_id, Stock.location_id == location_id)
+            .scalar()
+            or 0.0
         )
         new_qty = float(before) + float(delta)
         if new_qty < 0 and not allow_negative:
@@ -1066,7 +1174,9 @@ class StockService:
 
         assert self.db is not None, "同步模式需要 self.db Session"
 
-        qty_col_obj = getattr(Stock.__table__.c, "quantity", None) or getattr(Stock.__table__.c, "qty", None)
+        qty_col_obj = getattr(Stock.__table__.c, "quantity", None) or getattr(
+            Stock.__table__.c, "qty", None
+        )
         if qty_col_obj is None:
             raise RuntimeError("stocks 表缺少数量列（quantity/qty）")
         qty_db_col = qty_col_obj.name
@@ -1086,7 +1196,11 @@ class StockService:
                 db_cols = {c["name"] for c in insp.get_columns(loc_tbl)}
             except Exception:
                 db_cols = set()
-            wh_col = "warehouse_id" if "warehouse_id" in db_cols else ("warehouse" if "warehouse" in db_cols else None)
+            wh_col = (
+                "warehouse_id"
+                if "warehouse_id" in db_cols
+                else ("warehouse" if "warehouse" in db_cols else None)
+            )
 
         if wh_col:
             sql_with_wh = f"""
@@ -1096,7 +1210,9 @@ class StockService:
                 WHERE s.item_id = :item_id AND l.{wh_col} = :wh
                 GROUP BY s.item_id
             """
-            rows = self.db.execute(_text(sql_with_wh), {"item_id": item_id, "wh": warehouse_id}).all()
+            rows = self.db.execute(
+                _text(sql_with_wh), {"item_id": item_id, "wh": warehouse_id}
+            ).all()
         else:
             rows = []
 

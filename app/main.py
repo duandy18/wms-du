@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI
 
 from app.api.endpoints import api_router
@@ -17,6 +18,16 @@ def create_app() -> FastAPI:
 
     # ✅ 初始化快照定时任务（按环境变量 ENABLE_SNAPSHOT_SCHEDULER 控制）
     init_scheduler()
+
+    # ✅（可选）安装慢 SQL 监听；若相关模块不存在，会自动跳过，不影响运行
+    try:
+        from app.db.session import async_engine  # 假设项目使用 AsyncEngine
+        from app.infra.sql_tap import install as install_sql_tap
+
+        install_sql_tap(async_engine.sync_engine)
+    except Exception:
+        # 静默跳过，避免对现有部署产生硬依赖
+        pass
 
     return app
 

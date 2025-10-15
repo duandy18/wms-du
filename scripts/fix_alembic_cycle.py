@@ -1,5 +1,9 @@
 # scripts/fix_alembic_cycle.py
-import io, os, re, shutil, glob, sys
+import glob
+import os
+import re
+import shutil
+import sys
 
 VERS_DIR = "app/db/migrations/versions"
 
@@ -9,37 +13,40 @@ FIXES = {
     "1088800f816e": "3a_fix_sqlite_inline_pks",
 }
 
+
 def parse_heads():
     # 粗略解析所有文件头部，返回 {revision: (path, down_revision_raw)}
     ret = {}
     for p in glob.glob(os.path.join(VERS_DIR, "*.py")):
-        with io.open(p, "r", encoding="utf-8", errors="ignore") as f:
+        with open(p, encoding="utf-8", errors="ignore") as f:
             txt = f.read()
         m_rev = re.search(r'^\s*revision\s*=\s*["\']([^"\']+)["\']\s*$', txt, re.M)
         if not m_rev:
             continue
         rev = m_rev.group(1)
-        m_down = re.search(r'^\s*down_revision\s*=\s*(.+)$', txt, re.M)
+        m_down = re.search(r"^\s*down_revision\s*=\s*(.+)$", txt, re.M)
         down = m_down.group(1).strip() if m_down else None
         ret[rev] = (p, down)
     return ret
 
+
 def replace_down_revision(path, new_value):
-    with io.open(path, "r", encoding="utf-8", errors="ignore") as f:
+    with open(path, encoding="utf-8", errors="ignore") as f:
         txt = f.read()
     # 兼容两种写法：down_revision = ... / down_revision: Union[...] = ...
     new_txt = re.sub(
-        r'^\s*down_revision\s*[:=]\s*.*$',
+        r"^\s*down_revision\s*[:=]\s*.*$",
         f'down_revision = "{new_value}"',
         txt,
         flags=re.M,
     )
     if new_txt != txt:
         shutil.copyfile(path, path + ".bak")
-        with io.open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(new_txt)
         return True
     return False
+
 
 def main():
     if not os.path.isdir(VERS_DIR):
@@ -70,9 +77,10 @@ def main():
 
     print("\nNext steps:")
     print("  1) alembic heads -v   # 现在应该能列出真实 heads")
-    print("  2) alembic revision --merge -m \"merge parallel heads\" <HEAD_A> <HEAD_B>")
+    print('  2) alembic revision --merge -m "merge parallel heads" <HEAD_A> <HEAD_B>')
     print("  3) 把 warehouses/locations 迁移的 down_revision 指向上一步生成的 merge 修订号")
     print("  4) alembic upgrade head && pytest -q -m smoke")
+
 
 if __name__ == "__main__":
     main()

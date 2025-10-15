@@ -14,9 +14,11 @@ Also adds:
 """
 
 from __future__ import annotations
-from alembic import op
+
 import sqlalchemy as sa
 from sqlalchemy import text
+
+from alembic import op
 
 # keep short revision id to avoid VARCHAR(32) limits on vanilla setups
 revision = "40a7b8b5e6d1"
@@ -25,6 +27,7 @@ branch_labels = None
 depends_on = None
 
 TABLE = "stock_ledger"
+
 
 def upgrade() -> None:
     bind = op.get_bind()
@@ -63,6 +66,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_stock_ledger_stock_id", TABLE, ["stock_id"])
     op.create_index("ix_stock_ledger_occurred_at", TABLE, ["occurred_at"])
+
 
 def downgrade() -> None:
     # 仅在本迁移创建的表存在时回滚

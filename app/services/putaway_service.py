@@ -1,8 +1,9 @@
 # app/services/putaway_service.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Any, Optional
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,8 +29,8 @@ class PutawayService:
         qty: int,
         ref: str,
         ref_line: int = 1,
-        occurred_at: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
+        occurred_at: datetime | None = None,
+    ) -> dict[str, Any]:
         if await PutawayService._ledger_pair_exists(
             session, reason="PUTAWAY", ref=ref, ref_line=ref_line
         ):
@@ -55,8 +56,8 @@ class PutawayService:
         target_locator_fn: Callable[[int], int],
         batch_size: int = 100,
         worker_id: str = "W1",
-        occurred_at: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
+        occurred_at: datetime | None = None,
+    ) -> dict[str, Any]:
         moved = 0
         claimed = 0
         while moved < batch_size:
@@ -115,7 +116,9 @@ class PutawayService:
         return {"status": "ok" if moved > 0 else "idle", "claimed": claimed, "moved": moved}
 
     @staticmethod
-    async def _ledger_pair_exists(session: AsyncSession, *, reason: str, ref: str, ref_line: int) -> bool:
+    async def _ledger_pair_exists(
+        session: AsyncSession, *, reason: str, ref: str, ref_line: int
+    ) -> bool:
         r = await session.execute(
             text(
                 """
@@ -141,9 +144,9 @@ class PutawayService:
         reason: str,
         ref: str,
         ref_line: int,
-        occurred_at: Optional[datetime] = None,
+        occurred_at: datetime | None = None,
     ) -> None:
-        ts = occurred_at or datetime.now(timezone.utc)
+        ts = occurred_at or datetime.now(UTC)
 
         # 1) 扣来源位
         from_row = (

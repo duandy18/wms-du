@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 全仓扫描 **/versions/*.py，按指定拓扑线性化 down_revision，剪掉 Alembic 环。
 为每个改动文件生成 .bak 备份；仅改 `down_revision` 一行，DDL 不动。
 """
-import os, re, io, glob, shutil, ast, sys
-from typing import Dict, List, Optional
+
+import ast
+import glob
+import re
+import shutil
+import sys
 
 # 需要线性化的 7 个 revision（子 -> 父）
 WANT = {
@@ -18,17 +21,18 @@ WANT = {
     "bdc33e80391a": "1223487447f9",
 }
 
-REV_RE  = re.compile(r'^\s*revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
-DOWN_RE = re.compile(r'^\s*down_revision\s*[:=]\s*(.+)$', re.M)
+REV_RE = re.compile(r'^\s*revision\s*[:=]\s*[\'"]([^\'"]+)[\'"]\s*$', re.M)
+DOWN_RE = re.compile(r"^\s*down_revision\s*[:=]\s*(.+)$", re.M)
 
-def parse_down_expr(expr: str) -> List[str]:
+
+def parse_down_expr(expr: str) -> list[str]:
     expr = expr.strip()
     try:
         node = ast.parse(expr, mode="eval").body
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return [node.value]
         if isinstance(node, (ast.Tuple, ast.List)):
-            out=[]
+            out = []
             for e in node.elts:
                 if isinstance(e, ast.Constant) and isinstance(e.value, str):
                     out.append(e.value)
@@ -37,34 +41,41 @@ def parse_down_expr(expr: str) -> List[str]:
         pass
     return re.findall(r'["\']([^"\']+)["\']', expr)
 
-def find_version_files() -> List[str]:
+
+def find_version_files() -> list[str]:
     files = []
     for pat in ("**/versions/*.py",):
         files.extend(glob.glob(pat, recursive=True))
     return sorted(set(files))
 
-def read(path: str) -> Optional[str]:
+
+def read(path: str) -> str | None:
     try:
-        return io.open(path, "r", encoding="utf-8", errors="ignore").read()
+        return open(path, encoding="utf-8", errors="ignore").read()
     except Exception:
         return None
 
+
 def write_with_backup(path: str, text: str):
     shutil.copyfile(path, path + ".bak")
-    io.open(path, "w", encoding="utf-8").write(text)
+    open(path, "w", encoding="utf-8").write(text)
+
 
 def main():
     files = find_version_files()
     if not files:
-        print("❌ 未找到任何迁移文件（**/versions/*.py）"); sys.exit(2)
+        print("❌ 未找到任何迁移文件（**/versions/*.py）")
+        sys.exit(2)
 
-    rev2file: Dict[str, str] = {}
-    file2text: Dict[str, str] = {}
+    rev2file: dict[str, str] = {}
+    file2text: dict[str, str] = {}
     for p in files:
         txt = read(p)
-        if txt is None: continue
+        if txt is None:
+            continue
         m = REV_RE.search(txt)
-        if not m: continue
+        if not m:
+            continue
         rev = m.group(1).strip()
         rev2file[rev] = p
         file2text[p] = txt
@@ -74,7 +85,8 @@ def main():
     for child, parent in WANT.items():
         p = rev2file.get(child)
         if not p:
-            missing.append(child); continue
+            missing.append(child)
+            continue
         txt = file2text[p]
         if not DOWN_RE.search(txt):
             # 如果没有 down_revision 行，直接追加一行
@@ -88,7 +100,7 @@ def main():
 
     if changed:
         print("✅ 已线性化以下迁移（已生成 .bak 备份）：")
-        for c,pth,fp in changed:
+        for c, pth, fp in changed:
             print(f" - {c} -> {pth}   ({fp})")
     else:
         print("ℹ️ 没有改动（可能已经线性化）")
@@ -98,9 +110,10 @@ def main():
 
     print("\n下一步：")
     print("  1) alembic heads -v")
-    print("  2) 若仍有多个 head：alembic revision --merge -m \"merge heads\" <HEAD_A> <HEAD_B>")
+    print('  2) 若仍有多个 head：alembic revision --merge -m "merge heads" <HEAD_A> <HEAD_B>')
     print("  3) 确保 warehouses/locations 迁移的 down_revision 指向唯一 head 或 merge 修订")
     print("  4) alembic upgrade head && pytest -q -m smoke")
+
 
 if __name__ == "__main__":
     main()

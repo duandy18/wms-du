@@ -3,7 +3,9 @@
 from alembic import op
 
 revision = "20251015_add_item_id_to_stock_ledger"
-down_revision = "20251015_snapshots_as_of_default"  # 如果你的当前 head 不同，请用 `alembic heads -v` 的结果替换
+down_revision = (
+    "20251015_snapshots_as_of_default"  # 如你的当前 head 不同，请用 `alembic heads -v` 的结果替换
+)
 branch_labels = None
 depends_on = None
 
@@ -48,5 +50,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    -- 我们不回收该列；如需回退，可按需 DROP COLUMN item_id
+    # 我们不回收该列；如需回退，可按需 DROP COLUMN item_id
     pass

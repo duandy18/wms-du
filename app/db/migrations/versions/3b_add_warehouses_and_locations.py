@@ -4,16 +4,18 @@ Revision ID: 3b_add_warehouses_locations
 Revises: 7f_merge_cycle_fix
 Create Date: 2025-10-12 20:21:00
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "3b_add_warehouses_locations"
-down_revision: Union[str, Sequence[str], None] = "7f_merge_cycle_fix"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "7f_merge_cycle_fix"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _has_table(name: str) -> bool:

@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import os
 import re
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
 
 from sqlalchemy import create_engine as create_sync_engine_sa
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import Session, sessionmaker
+
 
 # ---- DSN 归一：把 sync/async DSN 统一到 psycopg3 与 aiosqlite ----
 def _normalize_sync_dsn(url: str) -> str:
@@ -22,6 +28,7 @@ def _normalize_sync_dsn(url: str) -> str:
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
+
 
 def _normalize_async_dsn(url: str) -> str:
     if not url:
@@ -37,6 +44,7 @@ def _normalize_async_dsn(url: str) -> str:
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
+
 
 RAW_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://wms:wms@localhost:5432/wms")
 SYNC_URL = _normalize_sync_dsn(RAW_URL)
@@ -70,6 +78,7 @@ AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 # 对外兼容的别名
 async_session_maker = AsyncSessionLocal  # 常见历史引用
 
+
 # ---- FastAPI 依赖 ----
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -78,12 +87,15 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
+
 # 兼容历史命名
 get_async_session = get_session
+
 
 # ---- 关闭引擎（测试/生命周期） ----
 async def close_engines() -> None:

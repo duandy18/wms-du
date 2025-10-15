@@ -1,15 +1,16 @@
 # tests/quick/test_integration_series_pg.py
-import pytest
-from sqlalchemy import text, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from app.services.inbound_service import InboundService
-from app.services.stock_service import StockService
-from app.services.putaway_service import PutawayService
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.item import Item
 from app.models.location import Location
 from app.models.stock import Stock
+from app.services.inbound_service import InboundService
+from app.services.putaway_service import PutawayService
+from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 
@@ -61,7 +62,7 @@ async def test_receive_then_putaway_and_replay(session: AsyncSession):
         qty=10,
         ref="PO-3001",
         ref_line=1,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     await session.commit()
     assert res1["idempotent"] is False
@@ -79,7 +80,10 @@ async def test_receive_then_putaway_and_replay(session: AsyncSession):
     )
     await session.commit()
     assert res2["status"] in ("ok", "idempotent")
-    assert (await _stock_qty(session, item_id, stage), await _stock_qty(session, item_id, rack)) == (4, 6)
+    assert (
+        await _stock_qty(session, item_id, stage),
+        await _stock_qty(session, item_id, rack),
+    ) == (4, 6)
 
     # 重放收货（应幂等）
     res3 = await svc.receive(
@@ -88,8 +92,11 @@ async def test_receive_then_putaway_and_replay(session: AsyncSession):
         qty=10,
         ref="PO-3001",
         ref_line=1,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     await session.commit()
     assert res3["idempotent"] is True
-    assert (await _stock_qty(session, item_id, stage), await _stock_qty(session, item_id, rack)) == (4, 6)
+    assert (
+        await _stock_qty(session, item_id, stage),
+        await _stock_qty(session, item_id, rack),
+    ) == (4, 6)

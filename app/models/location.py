@@ -1,7 +1,7 @@
 # app/models/location.py
 from __future__ import annotations
 
-from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint, Index
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -13,6 +13,7 @@ class Location(Base):
     - 必须隶属于某个仓库：warehouse_id → warehouses.id
     - 不与 batches / stock_ledger 直接声明关系（当前无可用外键推断）
     """
+
     __tablename__ = "locations"
 
     id = Column(Integer, primary_key=True)

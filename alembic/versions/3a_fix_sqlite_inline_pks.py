@@ -9,7 +9,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "3a_fix_sqlite_inline_pks"
-down_revision = "20251006_add_constraints_to_stocks"
+down_revision = None
 branch_labels = None
 depends_on = None
 
