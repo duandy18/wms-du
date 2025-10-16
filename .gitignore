@@ -19,3 +19,14 @@ htmlcov/
 *.sqlite
 tmp_upgrade.db
 .schema_snapshot_tmp/
+# --- wms-fe (vite+react) ---
+node_modules/
+dist/
+.vite/
+*.log
+.env*
+coverage/
+*.local
+pnpm-lock.yaml
+# VSCode workspace
+.vscode/

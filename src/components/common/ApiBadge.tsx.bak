@@ -1,0 +1,15 @@
+import React from 'react'
+
+export default function ApiBadge() {
+  const api = import.meta.env.VITE_API_URL || '—'
+  const msw = (window as any).__MSW_ENABLED__ === true
+  return (
+    <div className="inline-flex items-center gap-2 rounded-2xl px-3 py-1 text-sm shadow bg-neutral-100">
+      <span className="font-medium">API:</span>
+      <code>{api}</code>
+      <span className={"ml-2 rounded-full px-2 py-0.5 text-xs " + (msw ? 'bg-emerald-200' : 'bg-amber-200') }>
+        {msw ? 'MSW: on' : 'MSW: off'}
+      </span>
+    </div>
+  )
+}

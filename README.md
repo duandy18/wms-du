@@ -1001,3 +1001,14 @@ wms-du
 └─ wms-du
 
 ```
+
+---
+
+## Frontend (wms-fe)
+
+本仓库包含前端子工程（Vite + React + MSW）：
+- 开发启动：`pnpm dev`
+- Mock：MSW（`public/mockServiceWorker.js`），开发环境置 `VITE_USE_MSW=1`
+- 入口：`/src/router.tsx`，首页“库存快照 + 三大任务页（Inbound/Putaway/Outbound）+ 工具（Stock/Ledger）”
+- Phase2：`/tasks /batches /moves` 壳子与 handlers
+
