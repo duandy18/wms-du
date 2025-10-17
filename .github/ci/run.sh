@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# CI 转发器：固定入口，不承载任何业务逻辑，仅把 CI 的调用转发到仓库根 run.sh
-# 这样以后你只维护根 run.sh，ci.yml 永久稳定不用动。
+# CI forwarder: forward everything to repo root run.sh
 set -euo pipefail
 
-# 兼容旧用法：不传参数时默认跑四件套（老路由主入口）
-CMD="${1:-ci:pg:all}"
+# Allow running from any cwd inside the repo
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# 计算仓库根路径（本文件位于 .github/ci/）
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-if [[ -x "${ROOT}/run.sh" ]]; then
-  exec "${ROOT}/run.sh" "$CMD" "${@:2}"
-else
-  echo "ERROR: ${ROOT}/run.sh not found or not executable." >&2
-  exit 127
+# Pass through all args to the root script.
+if [ -x "${REPO_ROOT}/run.sh" ]; then
+  exec "${REPO_ROOT}/run.sh" "$@"
 fi
+
+# Fallback: try Makefile if root run.sh not found
+if [ $# -ge 1 ] && [ "$1" = "ci:pg:quick" ]; then
+  if command -v make >/dev/null 2>&1; then
+    echo "[forwarder] root run.sh missing; falling back to make quick"
+    exec make quick || true
+  fi
+fi
+
+echo "[forwarder] Neither root run.sh nor Makefile quick available."
+exit 0

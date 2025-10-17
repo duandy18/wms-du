@@ -21,18 +21,32 @@ from app.db.base import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
-# ---- 允许通过环境变量覆盖 sqlalchemy.url ----
-# 优先取环境里的 DATABASE_URL（推荐形如 postgresql+psycopg://user:pass@host:port/db）
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
 
-# 也允许在 alembic.ini 里事先配置 sqlalchemy.url
-sqlalchemy_url = config.get_main_option("sqlalchemy.url")
+def _resolve_sqlalchemy_url() -> str:
+    """
+    统一解析数据库 URL：
+    1) 优先环境变量 DATABASE_URL
+    2) 其次 alembic.ini 中的 sqlalchemy.url
+    3) 都没有则给出清晰报错
+    """
+    env_url = (os.getenv("DATABASE_URL") or "").strip()
+    if env_url:
+        return env_url
+
+    ini_url = (config.get_main_option("sqlalchemy.url") or "").strip()
+    if ini_url:
+        return ini_url
+
+    raise RuntimeError(
+        "Alembic: missing DB URL.\n"
+        "请设置环境变量 DATABASE_URL（例如：postgresql+psycopg://wms:wms@127.0.0.1:5433/wms），"  # pragma: allowlist secret
+        "或在 alembic.ini 的 [alembic] 区块中配置 sqlalchemy.url。"
+    )
 
 
 def run_migrations_offline() -> None:
     """Offline 模式：不连数据库，直接渲染 SQL。"""
+    url = _resolve_sqlalchemy_url()
     context.configure(
         url=sqlalchemy_url,
         target_metadata=target_metadata,
@@ -48,8 +62,15 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Online 模式：连接数据库并执行迁移。"""
+    url = _resolve_sqlalchemy_url()
+
+    # 确保传给 engine_from_config 的 dict 内含 'sqlalchemy.url'
+    section = config.get_section(config.config_ini_section) or {}
+    section = dict(section)  # 复制，避免影响全局 config
+    section["sqlalchemy.url"] = url
+
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section) or {},
+        configuration=section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
         future=True,

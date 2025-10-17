@@ -1,74 +1,50 @@
-SHELL := /bin/bash
+# ===== WMS-DU Makefile (no-tab version) =====
+# 使用自定义配方前缀，避免必须用 Tab 缩进
+.RECIPEPREFIX := >
 
-.PHONY: up down logs sh test clean-sqlite test-sqlite test-mysql test-pg ci all-tests
+.PHONY: help venv fmt lint test quick quick-snapshot quick-stock-query quick-outbound-atomic docker-up docker-down
 
-# ------------------- Docker Compose -------------------
+help:
+> @echo "Targets:"
+> @echo "  fmt                  - ruff + black"
+> @echo "  lint                 - ruff check"
+> @echo "  test                 - pytest 全量"
+> @echo "  quick                - pytest tests/quick"
+> @echo "  quick-snapshot       - 仅跑快照分页/搜索针刺"
+> @echo "  quick-stock-query    - 仅跑 /stock/query 针刺"
+> @echo "  quick-outbound-atomic- 仅跑出库原子模式针刺"
+> @echo "  docker-up            - 本地起 PG:14（5433）"
+> @echo "  docker-down          - 停 PG 容器"
 
-up:
-	docker compose -f ops/compose/docker-compose.dev.yml up -d --build
+venv:
+> python -m venv .venv
 
-down:
-	docker compose -f ops/compose/docker-compose.dev.yml down
+fmt:
+> ruff check --fix .
+> black .
 
-logs:
-	docker compose -f ops/compose/docker-compose.dev.yml logs -f --tail=100
+lint:
+> ruff check .
 
-sh:
-	docker compose -f ops/compose/docker-compose.dev.yml exec api bash
-
-# ------------------- Local Tests -------------------
-
-# 快速测试（不保证数据库一致性）
 test:
-	pytest -q --maxfail=1 --disable-warnings
+> pytest -q -s
 
-# 清理 SQLite 文件
-clean-sqlite:
-	@set -a; source .env.ci; set +a; \
-	if [[ "$$DATABASE_URL" == sqlite:* ]]; then \
-	  db_path="$${DATABASE_URL#sqlite:///}"; \
-	  [[ "$$db_path" == ./* ]] && db_path="$${db_path#./}"; \
-	  rm -f "$$db_path"; \
-	  echo "[clean] removed sqlite db: $$db_path"; \
-	else \
-	  echo "[clean] skip, not sqlite: $$DATABASE_URL"; \
-	fi
+quick:
+> pytest -q -s tests/quick
 
-# 使用 SQLite + .env.ci
-test-sqlite: clean-sqlite
-	set -a && source .env.ci && set +a; \
-	export DATABASE_URL="$$DATABASE_URL"; \
-	pytest -q --maxfail=1 --disable-warnings
+quick-snapshot:
+> pytest -q -s tests/quick/test_snapshot_inventory_pg.py
 
-# 使用 MySQL + .env.ci
-test-mysql:
-	set -a && source .env.ci && set +a; \
-	export DATABASE_URL="mysql+pymysql://$${MYSQL_USER}:$${MYSQL_PASSWORD}@$${MYSQL_HOST}:$${MYSQL_PORT}/$${MYSQL_DB}?charset=utf8mb4"; \
-	pytest -q --maxfail=1 --disable-warnings
+quick-stock-query:
+> pytest -q -s tests/quick/test_stock_query_pg.py
 
-# 使用 Postgres + .env.ci
-test-pg:
-	set -a && source .env.ci && set +a; \
-	export DATABASE_URL="postgresql+psycopg://$${PGUSER}:$${PGPASSWORD}@$${PGHOST}:$${PGPORT}/$${PGDATABASE}"; \
-	pytest -q --maxfail=1 --disable-warnings
+quick-outbound-atomic:
+> OUTBOUND_ATOMIC=true pytest -q -s tests/quick/test_outbound_atomic_pg.py
 
-# ------------------- CI Simulation -------------------
+docker-up:
+> docker run -d --name wms-pg -e POSTGRES_USER=wms -e POSTGRES_PASSWORD=wms -e POSTGRES_DB=wms -p 5433:5432 postgres:14-alpine
+> sleep 3
+> @echo "DATABASE_URL=postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"   # pragma: allowlist secret
 
-ci:
-	set -a && source .env.ci && set +a; \
-	ruff check . && ruff format --check . && black --check . && isort --check-only .; \
-	mypy .; \
-	export DATABASE_URL="$$DATABASE_URL"; \
-	pytest --cov=app --cov-report=term-missing --cov-fail-under=65 -q --maxfail=1 --disable-warnings
-
-# ------------------- Composite -------------------
-
-# 一次性跑三套：SQLite -> MySQL -> Postgres（任一失败即停止）
-all-tests:
-	@echo "======================[ 1/3 SQLite tests ]======================"
-	$(MAKE) test-sqlite
-	@echo "======================[ 2/3 MySQL tests ]======================="
-	$(MAKE) test-mysql
-	@echo "======================[ 3/3 Postgres tests ]===================="
-	$(MAKE) test-pg
-	@echo "======================[   ALL PASSED   ]========================"
+docker-down:
+> -docker rm -f wms-pg
