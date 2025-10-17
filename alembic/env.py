@@ -48,7 +48,7 @@ def run_migrations_offline() -> None:
     """Offline 模式：不连数据库，直接渲染 SQL。"""
     url = _resolve_sqlalchemy_url()
     context.configure(
-        url=url,
+        url=sqlalchemy_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

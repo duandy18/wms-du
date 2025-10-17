@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 
 from app.api.endpoints import api_router
 
@@ -28,6 +29,17 @@ async def _unhandled_exc(_req: Request, exc: Exception):
 
 
 app.include_router(api_router)
+    # ✅（可选）安装慢 SQL 监听；若相关模块不存在，会自动跳过，不影响运行
+    try:
+        from app.db.session import async_engine  # 假设项目使用 AsyncEngine
+        from app.infra.sql_tap import install as install_sql_tap
+
+        install_sql_tap(async_engine.sync_engine)
+    except Exception:
+        # 静默跳过，避免对现有部署产生硬依赖
+        pass
+
+    return app
 
 
 @app.get("/ping")
