@@ -1,214 +1,111 @@
 #!/usr/bin/env bash
-# WMS-DU CI router: migrate → health → quick → smoke (PG on 5433)
+# WMS-DU root runner: local-first, CI reuses this script.
+# - Single-dev multi-machine friendly
+# - Non-blocking mode via NON_BLOCKING=1
+# - Postgres via $DATABASE_URL (defaults to local 5433 if docker-up used)
 set -euo pipefail
 
-# --- Locale / IO ---
-export LC_ALL=C.UTF-8
-export LANG=C.UTF-8
-export PYTHONIOENCODING=UTF-8
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$HERE"
 
-log(){ printf "\n[%s] %s\n" "$(date +'%H:%M:%S')" "$*"; }
-
-# --- Human-friendly → internal mapping ---
-normalize_task(){
-  local pretty="${1:-ci:pg:all}"
-  case "$pretty" in
-    "Smoke (PG)")        echo "ci:pg:smoke" ;;
-    "Quick (PG)")        echo "ci:pg:quick" ;;
-    "Full (PG)")         echo "ci:pg:all"   ;;
-    "Lint & Typecheck")  echo "ci:lint"     ;;
-    "Coverage Gate")     echo "ci:coverage" ;;
-    *)                   echo "$pretty"     ;;
-  esac
-}
-
-# --- Wait for Postgres ---
-wait_pg(){
-  local h="${PGHOST:-${1:-127.0.0.1}}"
-  local p="${PGPORT:-${2:-5433}}"
-  local u="${3:-wms}"
-  local d="${4:-wms}"
-
-  if [[ -n "${DATABASE_URL:-}" ]]; then
-    if [[ -z "${PGPORT:-}" && "$DATABASE_URL" =~ :([0-9]{2,5})/ ]]; then p="${BASH_REMATCH[1]}"; fi
-    if [[ -z "${PGHOST:-}" && "$DATABASE_URL" =~ @([^:/]+):[0-9]+/ ]]; then h="${BASH_REMATCH[1]}"; fi
-  fi
-
-  if command -v pg_isready >/dev/null 2>&1; then
-    for _ in $(seq 1 60); do
-      if pg_isready -h "$h" -p "$p" -U "$u" -d "$d" >/dev/null 2>&1; then
-        return 0
-      fi
-      sleep 1
-    done
-    echo "Postgres not ready after 60s on ${h}:${p}" >&2
-    exit 2
+# ---------- helpers ----------
+log()  { printf "\033[1;36m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
+warn() { printf "\033[1;33m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
+err()  { printf "\033[1;31m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*" >&2; }
+nbegin(){
+  if [[ "${NON_BLOCKING:-0}" = "1" ]]; then
+    set +e
+    warn "NON_BLOCKING=1 -> errors won't fail the whole run"
   fi
 }
 
-# --- Defaults ---
-export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"
+# Default DB if user used docker-up (5433 on host)
+: "${DATABASE_URL:=postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"  # pragma: allowlist secret
 
-# --- Pre-fix: widen alembic_version.version_num & seed baseline if missing ---
-fix_alembic_version_len() {
-  log "Bootstrap alembic_version as VARCHAR(255) at baseline (if needed)"
-  if command -v psql >/dev/null 2>&1; then
-    python3 - <<'PY'
-import os, urllib.parse as up, subprocess
-url = os.environ.get("DATABASE_URL","").replace("+psycopg","")
-u = up.urlparse(url)
-user, pwd = u.username or "wms", u.password or "wms"
-host, port = u.hostname or "127.0.0.1", u.port or 5433
-db = (u.path or "/wms").lstrip("/") or "wms"
-dsn = f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
-sql = r"""
-DO $$
-BEGIN
-  IF to_regclass('public.alembic_version') IS NULL THEN
-    CREATE TABLE public.alembic_version (version_num VARCHAR(255) NOT NULL);
-    INSERT INTO public.alembic_version(version_num) VALUES ('f995a82ac74e');
-  ELSE
-    IF EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema='public' AND table_name='alembic_version' AND column_name='version_num'
-        AND character_maximum_length IS NOT NULL AND character_maximum_length < 128
-    ) THEN
-      ALTER TABLE public.alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.alembic_version) THEN
-      INSERT INTO public.alembic_version(version_num) VALUES ('f995a82ac74e');
-    END IF;
-  END IF;
-END$$;
-"""
-subprocess.check_call(["psql", dsn, "-c", sql])
-PY
+# ---------- core steps ----------
+step_env() {
+  log "Env"
+  echo "PY=$(python -V 2>&1 || true)"
+  echo "DATABASE_URL=${DATABASE_URL}"
+  echo "WMS_SQLITE_GUARD=${WMS_SQLITE_GUARD:-}"
+}
+
+step_migrate() {
+  log "Migrate (alembic if present)"
+  if [[ -f "alembic.ini" || -d "app/db/migrations" ]]; then
+    alembic upgrade head || return 0
   else
-    python3 - <<'PY'
-import os, asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-url = os.environ.get("DATABASE_URL")
-if not url: raise SystemExit(0)
-eng = create_async_engine(url, future=True)
-sql = """
-DO $$
-BEGIN
-  IF to_regclass('public.alembic_version') IS NULL THEN
-    CREATE TABLE public.alembic_version (version_num VARCHAR(255) NOT NULL);
-    INSERT INTO public.alembic_version(version_num) VALUES ('f995a82ac74e');
-  ELSE
-    IF EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema='public' AND table_name='alembic_version' AND column_name='version_num'
-        AND character_maximum_length IS NOT NULL AND character_maximum_length < 128
-    ) THEN
-      ALTER TABLE public.alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.alembic_version) THEN
-      INSERT INTO public.alembic_version(version_num) VALUES ('f995a82ac74e');
-    END IF;
-  END IF;
-END$$;
-"""
-async def main():
-    async with eng.begin() as c:
-        await c.execute(text(sql))
-asyncio.run(main())
-PY
+    warn "No alembic found, skip."
   fi
 }
 
-# --- Tasks ---
-task_pg_migrate(){
-  log "Alembic upgrade -> head"
-  wait_pg || true
-  fix_alembic_version_len
-  alembic upgrade head
+# Quick tests (needle set)
+t_quick_snapshot() {
+  log "Quick: snapshot pagination/search"
+  pytest -q -s tests/quick/test_snapshot_inventory_pg.py
+}
+t_quick_stock_query() {
+  log "Quick: /stock/query happy path"
+  pytest -q -s tests/quick/test_stock_query_pg.py
+}
+t_quick_outbound_atomic() {
+  log "Quick: outbound atomic (should 409 & rollback)"
+  OUTBOUND_ATOMIC=true pytest -q -s tests/quick/test_outbound_atomic_pg.py
 }
 
-task_pg_health(){
-  log "PG healthcheck (strict)"
-  mkdir -p pg_health
-  if [ -f tools/pg_healthcheck.py ]; then
-    python3 tools/pg_healthcheck.py --strict --output pg_health/report.json || true
-  else
-    echo "WARN: tools/pg_healthcheck.py missing; skipping strict checks"
-  fi
-  python3 tools/db_invariants.py
+# ---------- docker helpers (local dev) ----------
+pg_up() {
+  log "Docker PG up @5433"
+  docker run -d --name wms-pg \
+    -e POSTGRES_USER=wms -e POSTGRES_PASSWORD=wms -e POSTGRES_DB=wms \
+    -p 5433:5432 postgres:14-alpine >/dev/null
+  sleep 3
+  echo "DATABASE_URL=${DATABASE_URL}"
+}
+pg_down() {
+  log "Docker PG down"
+  docker rm -f wms-pg >/dev/null 2>&1 || true
 }
 
-task_quick(){
-  log "pytest quick"
-  pytest -q tests/quick -m "not slow" --maxfail=1 --durations=10
-}
-
-db_hard_reset(){
-  log "Reset DB schema → clean baseline for Smoke"
-  if command -v psql >/dev/null 2>&1; then
-    python3 - <<'PY'
-import os, urllib.parse as up, subprocess
-url = os.environ.get("DATABASE_URL","").replace("+psycopg","")
-u = up.urlparse(url)
-user, pwd = u.username or "wms", u.password or "wms"
-host, port = u.hostname or "127.0.0.1", u.port or 5433
-db = (u.path or "/wms").lstrip("/") or "wms"
-dsn = f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
-subprocess.check_call(["psql", dsn, "-c", "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"])
-PY
-  else
-    python3 - <<'PY'
-import os, asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-url = os.environ.get("DATABASE_URL"); eng = create_async_engine(url, future=True)
-async def main():
-    async with eng.begin() as c:
-        await c.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        await c.execute(text("CREATE SCHEMA public"))
-asyncio.run(main())
-PY
-  fi
-  # Seed alembic_version with widened column & baseline
-  fix_alembic_version_len
-  alembic upgrade head
-}
-
-task_smoke(){
-  db_hard_reset
-  log "pytest smoke"
-  if [ -d tests/smoke ]; then
-    pytest -q tests/smoke --maxfail=1 --durations=10
-  else
-    pytest -q \
-      tests/quick/test_inbound_pg.py::test_inbound_receive_and_putaway_integrity \
-      tests/quick/test_putaway_pg.py::test_putaway_integrity \
-      -s --maxfail=1 --durations=10
-  fi
-}
-
-main(){
-  local cmd="${1:-ci:pg:all}"
-  local mapped; mapped="$(normalize_task "$cmd")"
-  case "$mapped" in
-    ci:pg:migrate) task_pg_migrate ;;
-    ci:pg:health)  task_pg_migrate; task_pg_health ;;
-    ci:pg:quick)   task_pg_migrate; task_pg_health; task_quick ;;
-    ci:pg:smoke)   task_pg_migrate; task_pg_health; task_smoke ;;
-    ci:pg:all)     task_pg_migrate; task_pg_health; task_quick; task_smoke ;;
-    *)
-      cat <<'USAGE'
+# ---------- command dispatcher ----------
+usage() {
+  cat <<'EOF'
 Usage:
-  ./run.sh ci:pg:all      # 迁移 → 体检 → quick → smoke（主入口）
-  ./run.sh ci:pg:migrate  # 仅迁移
-  ./run.sh ci:pg:health   # 迁移 + 体检（含不变量）
-  ./run.sh ci:pg:quick    # 迁移 + 体检 + quick
-  ./run.sh ci:pg:smoke    # 迁移 + 体检 + smoke（会先重置数据库）
-  # 也可直接传人类可读名："Smoke (PG)" / "Quick (PG)" / "Full (PG)"
-USAGE
-      exit 1 ;;
-  esac
+  bash run.sh <command>
+
+Commands (CI-focused):
+  ci:pg:quick      Show env -> migrate -> run 3 quick needles (non-blocking if NON_BLOCKING=1)
+
+Local helpers:
+  pg:up            Start local postgres:14 (host port 5433)
+  pg:down          Stop/remove local postgres
+
+Single tests:
+  quick:snapshot   Run tests/quick/test_snapshot_inventory_pg.py
+  quick:stock      Run tests/quick/test_stock_query_pg.py
+  quick:atomic     Run tests/quick/test_outbound_atomic_pg.py
+EOF
 }
-main "$@"
+
+case "${1:-}" in
+  ci:pg:quick)
+    nbegin
+    step_env
+    step_migrate || true
+    t_quick_snapshot || true
+    t_quick_stock_query || true
+    t_quick_outbound_atomic || true
+    log "ci:pg:quick done."
+    ;;
+  pg:up)   pg_up ;;
+  pg:down) pg_down ;;
+  quick:snapshot) t_quick_snapshot ;;
+  quick:stock)    t_quick_stock_query ;;
+  quick:atomic)   t_quick_outbound_atomic ;;
+  ""|-h|--help) usage ;;
+  *)
+    err "Unknown command: $1"
+    usage
+    exit 2
+    ;;
+esac

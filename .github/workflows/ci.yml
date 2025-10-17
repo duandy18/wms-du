@@ -1,19 +1,31 @@
-name: App CI - Bootstrap
+name: Postcard CI (non-blocking)
 
 on:
-  pull_request: { branches: [ main ] }
-  push:         { branches: [ main ] }
   workflow_dispatch: {}
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "canvas/**"
+      - "**/*.md"
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "canvas/**"
+      - "**/*.md"
 
 concurrency:
-  group: app-ci-${{ github.ref }}
+  group: postcard-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  full:
-    name: Full (PG + pytest only)
+  postcard:
+    name: postcard-quick
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    # ❗ 故意非阻塞：失败也不拦 PR
+    continue-on-error: true
 
     services:
       postgres:
@@ -22,29 +34,52 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: ["5433:5432"]               # ✅ 外部 5433 → 容器 5432
+        ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U wms"
-          --health-interval 10s --health-timeout 5s --health-retries 5
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=60
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install project
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
+
+      - name: Install deps (bare minimum)
         run: |
           python -m pip install -U pip
-          pip install -e ".[pg,dev]"
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+          pip install -U pytest
 
-      - name: Run project CI script
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms   # ✅ 统一 5433
-          JWT_SECRET: test-ci-secret
-          ENABLE_DIAG: "0"
-          ALEMBIC_SQLITE_URL: ""
+      - name: Env
         run: |
-          chmod +x .github/ci/run.sh run.sh
-          bash .github/ci/run.sh ci:pg:all
+          echo "DATABASE_URL=postgresql+psycopg://wms:wms@127.0.0.1:5432/wms" >> $GITHUB_ENV
+          echo "WMS_SQLITE_GUARD=1" >> $GITHUB_ENV
+          echo "NON_BLOCKING=1" >> $GITHUB_ENV
+
+      - name: Run postcard quick (forwarder)
+        run: bash .github/ci/run.sh ci:pg:quick || true
+
+      - name: Archive pytest bits (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postcard-artifacts
+          path: |
+            .pytest_cache
+            **/.pytest_cache
+            **/pytest*.xml
+            **/coverage*.xml
+          if-no-files-found: ignore

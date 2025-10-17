@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SnapshotRunResult(BaseModel):
@@ -23,8 +23,8 @@ class StockSnapshotRead(BaseModel):
     age_days: int | None = None
     created_at: datetime | None = None
 
-    class Config:
-        from_attributes = True
+    # ✅ Pydantic v2 写法，替代旧的 class Config
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TrendPoint(BaseModel):
