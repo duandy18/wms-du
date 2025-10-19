@@ -1,7 +1,7 @@
 from datetime import date
 
-from httpx import ASGITransport, AsyncClient
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from app.db.session import async_session_maker

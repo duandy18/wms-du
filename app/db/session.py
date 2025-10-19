@@ -2,9 +2,9 @@
 # 统一的同步/异步会话工厂 + FastAPI 依赖（get_db / get_session / get_async_session）
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Generator
 import os
 import re
+from collections.abc import AsyncGenerator, Generator
 
 from sqlalchemy import create_engine as create_sync_engine_sa
 from sqlalchemy.ext.asyncio import (

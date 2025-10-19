@@ -1,9 +1,9 @@
 # app/services/inbound_service.py
 from __future__ import annotations
 
+import zlib
 from datetime import UTC, datetime
 from typing import Any
-import zlib
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession

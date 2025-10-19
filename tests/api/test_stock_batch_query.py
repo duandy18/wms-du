@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
-from httpx import AsyncClient
 import pytest
+from httpx import AsyncClient
 
 
 @pytest.mark.asyncio

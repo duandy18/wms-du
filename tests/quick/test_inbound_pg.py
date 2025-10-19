@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 from uuid import uuid4
 
-from httpx import ASGITransport, AsyncClient
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from app.db.session import async_session_maker

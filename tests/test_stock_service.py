@@ -1,5 +1,6 @@
 # tests/test_stock_service.py
 import pytest
+
 from tests.factories import make_item, make_location
 
 from app.services.stock_service import StockService

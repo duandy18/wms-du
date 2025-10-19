@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
-import random
 from typing import Any
 
 from sqlalchemy import and_, case, func, insert, select, text, update
@@ -1197,7 +1197,8 @@ class StockService:
 
     # ==================== 同步统计 & 查询（保留） ====================
     def summarize_by_item(self, *, item_id: int, warehouse_id: int):
-        from sqlalchemy import inspect as _inspect, text as _text
+        from sqlalchemy import inspect as _inspect
+        from sqlalchemy import text as _text
 
         assert self.db is not None, "同步模式需要 self.db Session"
 
