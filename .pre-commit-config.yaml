@@ -31,7 +31,7 @@ repos:
       - id: trailing-whitespace
       - id: mixed-line-ending
 
-  # ---------- 可选：tests 半角化（手动触发） ----------
+  # ---------- 可选：tests 半角化（手动触发即可） ----------
   - repo: local
     hooks:
       - id: normalize-punct-tests
@@ -56,7 +56,7 @@ repos:
         pass_filenames: false
         stages: [manual]
 
-  # ---------- mypy（pre-push；只扫 app/；安装必要依赖） ----------
+  # ---------- mypy（pre-push；仅 app/；补 pydantic 依赖） ----------
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.0
     hooks:
