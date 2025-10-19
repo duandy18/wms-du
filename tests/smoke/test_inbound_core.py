@@ -120,7 +120,10 @@ async def test_inbound_receive_and_putaway_integrity():
         loc_qty = (
             await s.execute(text("select qty from stocks where item_id=1 and location_id=101"))
         ).scalar() or 0
-        assert (tmp_qty, loc_qty) == (3, 7), f"stocks mismatch: tmp={tmp_qty}, loc101={loc_qty}"
+        assert (tmp_qty, loc_qty) == (
+            3,
+            7,
+        ), f"stocks mismatch: tmp={tmp_qty}, loc101={loc_qty}"
 
         # Σdelta：INBOUND(+10) + PUTAWAY(-7/+7) => 总和应为 10
         sum_delta = (
@@ -164,7 +167,10 @@ async def test_invalid_barcode_400():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.post("/inbound/scan", json={"barcode": "xyz"})
         assert r.status_code == 400, f"expected 400, got {r.status_code}: {r.text}"
-        assert r.json().get("detail") in {"INVALID_BARCODE", "INVALID_BARCODE_FORMAT"}, r.text
+        assert r.json().get("detail") in {
+            "INVALID_BARCODE",
+            "INVALID_BARCODE_FORMAT",
+        }, r.text
 
 
 @pytest.mark.asyncio
@@ -199,7 +205,10 @@ async def test_expiry_conflict_422():
             },
         )
         assert r2.status_code == 422, f"expected 422, got {r2.status_code}: {r2.text}"
-        assert r2.json()["detail"] in {"BATCH_EXPIRY_CONFLICT", "BATCH_CONFLICT"}, r2.text
+        assert r2.json()["detail"] in {
+            "BATCH_EXPIRY_CONFLICT",
+            "BATCH_CONFLICT",
+        }, r2.text
 
 
 @pytest.mark.asyncio
@@ -229,7 +238,10 @@ async def test_putaway_negative_409():
                 "ref_line": "L1",
             },
         )
-        assert r2.status_code in (409, 422), f"expected 409/422, got {r2.status_code}: {r2.text}"
+        assert r2.status_code in (
+            409,
+            422,
+        ), f"expected 409/422, got {r2.status_code}: {r2.text}"
 
 
 @pytest.mark.asyncio
@@ -248,4 +260,7 @@ async def test_idempotent_409_on_duplicate_refline():
 
         r2 = await ac.post("/inbound/receive", json=body)
         # 你实现成 409 最清晰；如果是“Already Reported”也接受 208
-        assert r2.status_code in (409, 208), f"expected 409/208, got {r2.status_code}: {r2.text}"
+        assert r2.status_code in (
+            409,
+            208,
+        ), f"expected 409/208, got {r2.status_code}: {r2.text}"

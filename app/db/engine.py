@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-__all__ = ["create_sync_engine", "create_async_engine_safe"]
+__all__ = ["create_async_engine_safe", "create_sync_engine"]
 
 
 def _connect_args_for(url_str: str) -> dict[str, Any]:

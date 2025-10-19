@@ -113,7 +113,11 @@ class PutawayService:
             moved += move_qty
             await session.commit()
 
-        return {"status": "ok" if moved > 0 else "idle", "claimed": claimed, "moved": moved}
+        return {
+            "status": "ok" if moved > 0 else "idle",
+            "claimed": claimed,
+            "moved": moved,
+        }
 
     @staticmethod
     async def _ledger_pair_exists(
@@ -129,7 +133,12 @@ class PutawayService:
                 LIMIT 1
                 """
             ),
-            {"reason": reason, "ref": ref, "out_line": ref_line, "in_line": ref_line + 1},
+            {
+                "reason": reason,
+                "ref": ref,
+                "out_line": ref_line,
+                "in_line": ref_line + 1,
+            },
         )
         return r.first() is not None
 

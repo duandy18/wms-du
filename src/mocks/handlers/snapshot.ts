@@ -12,7 +12,7 @@ const tiles = [
     { item_id: 10, name: '鸡肝罐头',     spec: '170g×12', qty_total: 22,  top_locations:[{location:'G2',qty:16},{location:'B1',qty:6}],  main_batch:'CAN202508',earliest_expiry:'2026-01-02', flags:{ near_expiry:true } },
     { item_id: 11, name: '化毛膏',       spec: '120g',    qty_total: 48,  top_locations:[{location:'H1',qty:20},{location:'A4',qty:28}], main_batch:'P202510', earliest_expiry:'2026-06-30', flags:{} },
     { item_id: 12, name: '营养膏',       spec: '100g',    qty_total: 35,  top_locations:[{location:'H2',qty:20},{location:'H3',qty:15}], main_batch:'N202510', earliest_expiry:'2026-06-05', flags:{} }
-  
+
 ]
 export const snapshotHandlers = [
   http.get('*/snapshot/inventory', () => HttpResponse.json(tiles)),

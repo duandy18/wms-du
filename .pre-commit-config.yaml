@@ -1,37 +1,60 @@
+# .pre-commit-config.yaml — WMS-DU unified hooks (stable)
+
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+  # ---------- Python style ----------
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.6.5
     hooks:
+      - id: ruff-format
+        files: ^(app|tests)/.*\.py$
       - id: ruff
         args: [--fix]
-      - id: ruff-format
+        files: ^(app|tests)/.*\.py$
 
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
+        files: ^(app|tests)/.*\.py$
 
-  - repo: https://github.com/pycqa/isort
+  - repo: https://github.com/PyCQA/isort
     rev: 5.13.2
     hooks:
       - id: isort
+        files: ^(app|tests)/.*\.py$
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
-    hooks:
-      - id: mypy
-        additional_dependencies: ["pydantic"]
-        args: ["--install-types", "--non-interactive"]
-
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
-    hooks:
-      - id: detect-secrets
-        args: ["--baseline", ".secrets.baseline"]
-
+  # ---------- 基础卫生（全仓库） ----------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v4.6.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: mixed-line-ending
+
+  # ---------- detect-secrets：手动/CI 跑（避免 pre-commit 环境路径/缓存问题） ----------
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets (manual/CI)
+        args:
+          - --baseline
+          - .secrets.baseline
+          - --exclude-files
+          - '(alembic/versions\.bak/|docs/canvas/|.*\.md$|.*\.bak$)'
+        pass_filenames: false
+        stages: [manual]    # ← pre-commit 默认不跑；CI 或手工触发
+
+  # ---------- mypy：可选改为 pre-push；或仍在 commit，但只扫 app/ ----------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        stages: [pre-push]   # ← 若想在提交时仍跑，改为 [commit]
+        files: ^app/.*\.py$
+        args:
+          - --ignore-missing-imports
+        additional_dependencies:
+          - pydantic>=2
+          - pydantic-core>=2
+          - pydantic-settings>=2

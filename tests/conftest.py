@@ -84,7 +84,11 @@ def apply_migrations():
                     insp = inspect(sync_eng)
                     has_version = insp.has_table("alembic_version")
                     existing = set(insp.get_table_names())
-                    if (not has_version) and {"items", "warehouses", "locations"} & existing:
+                    if (not has_version) and {
+                        "items",
+                        "warehouses",
+                        "locations",
+                    } & existing:
                         command.stamp(cfg, "f995a82ac74e")
                 finally:
                     sync_eng.dispose()
@@ -96,7 +100,9 @@ def apply_migrations():
                 os.environ.pop("DATABASE_URL", None)
     if ALEMBIC_SYNC_URL.startswith("sqlite"):
         sync_eng = create_engine(
-            ALEMBIC_SYNC_URL, future=True, connect_args={"check_same_thread": False, "timeout": 60}
+            ALEMBIC_SYNC_URL,
+            future=True,
+            connect_args={"check_same_thread": False, "timeout": 60},
         )
         try:
             Base.metadata.create_all(sync_eng)
@@ -322,7 +328,11 @@ def db_url():
 async def engine(db_url):
     connect_args = {} if IS_PG else {"timeout": 10}
     eng = create_async_engine(
-        db_url, future=True, pool_pre_ping=True, poolclass=NullPool, connect_args=connect_args
+        db_url,
+        future=True,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args=connect_args,
     )
     try:
         yield eng

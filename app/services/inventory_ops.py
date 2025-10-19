@@ -95,7 +95,8 @@ async def apply_delta_idempotent(
 
     # 2) UPSERT stocks
     res_stocks = await session.execute(
-        STOCKS_UPSERT_SQL, dict(item_id=item_id, location_id=location_id, delta=eff_delta)
+        STOCKS_UPSERT_SQL,
+        dict(item_id=item_id, location_id=location_id, delta=eff_delta),
     )
     stocks_row = res_stocks.first()
     new_qty = stocks_row[1] if stocks_row else None
@@ -104,4 +105,9 @@ async def apply_delta_idempotent(
     if touch_batch_available and batch_id:
         await session.execute(BATCH_ALLOC_SQL, dict(delta=eff_delta, batch_id=batch_id))
 
-    return {"inserted": True, "ledger_id": ledger_id, "new_qty": new_qty, "delta": eff_delta}
+    return {
+        "inserted": True,
+        "ledger_id": ledger_id,
+        "new_qty": new_qty,
+        "delta": eff_delta,
+    }

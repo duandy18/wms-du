@@ -123,13 +123,15 @@ def main():
     with closing(eng.connect()) as conn:
         # 0) table existence
         exists = conn.execute(
-            text("SELECT to_regclass(:q) IS NOT NULL"), {"q": f"{args.schema}.{args.table}"}
+            text("SELECT to_regclass(:q) IS NOT NULL"),
+            {"q": f"{args.schema}.{args.table}"},
         ).scalar()
         if not exists:
             fail(f"table {args.schema}.{args.table} does not exist")
 
         stocks_exist = conn.execute(
-            text("SELECT to_regclass(:q) IS NOT NULL"), {"q": f"{args.schema}.{args.stocks}"}
+            text("SELECT to_regclass(:q) IS NOT NULL"),
+            {"q": f"{args.schema}.{args.stocks}"},
         ).scalar()
         if not stocks_exist:
             fail(f"referenced table {args.schema}.{args.stocks} does not exist")
@@ -139,7 +141,8 @@ def main():
             "stock_id": ColSpec("stock_id", ("integer", "bigint")),
             "reason": ColSpec("reason", ("character varying", "text")),
             "after_qty": ColSpec(
-                "after_qty", ("numeric", "integer", "bigint", "double precision", "real")
+                "after_qty",
+                ("numeric", "integer", "bigint", "double precision", "real"),
             ),
             "delta": ColSpec("delta", ("numeric", "integer", "bigint", "double precision", "real")),
             "occurred_at": ColSpec("occurred_at", ("timestamp with time zone",)),

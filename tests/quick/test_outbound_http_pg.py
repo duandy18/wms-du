@@ -55,7 +55,10 @@ async def test_http_outbound_idempotent(session: AsyncSession):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        body = {"ref": ref, "lines": [{"item_id": item_id, "location_id": loc_id, "qty": 3}]}
+        body = {
+            "ref": ref,
+            "lines": [{"item_id": item_id, "location_id": loc_id, "qty": 3}],
+        }
         r1 = await c.post("/outbound/commit", json=body)
         assert r1.status_code == 200, r1.text
         r2 = await c.post("/outbound/commit", json=body)
@@ -84,7 +87,10 @@ async def test_http_outbound_concurrency_idempotent(session: AsyncSession):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", timeout=10.0) as c:
-        body = {"ref": ref, "lines": [{"item_id": item_id, "location_id": loc_id, "qty": 5}]}
+        body = {
+            "ref": ref,
+            "lines": [{"item_id": item_id, "location_id": loc_id, "qty": 5}],
+        }
         r1, r2 = await asyncio.gather(
             c.post("/outbound/commit", json=body),
             c.post("/outbound/commit", json=body),

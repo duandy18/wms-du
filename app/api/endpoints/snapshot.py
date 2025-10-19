@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +41,7 @@ async def run_snapshot_range(
 
 
 @router.get("", response_model=list[StockSnapshotRead])
-async def list_snapshots(  # noqa: PLR0913
+async def list_snapshots(
     d: date | None = Query(None, alias="date", description="不填则为所有日期"),
     item_id: int | None = Query(None, description="按商品过滤"),
     warehouse_id: int | None = Query(None, description="按仓库过滤"),

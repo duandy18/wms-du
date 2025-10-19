@@ -86,7 +86,11 @@ def assert_core_schema(conn: Connection) -> list[CheckResult]:
                 uq_ok = True
                 break
         out.append(
-            CheckResult("constraint:uq_stocks_item_location", uq_ok, "ok" if uq_ok else "missing")
+            CheckResult(
+                "constraint:uq_stocks_item_location",
+                uq_ok,
+                "ok" if uq_ok else "missing",
+            )
         )
     except Exception as e:
         out.append(CheckResult("constraint:uq_stocks_item_location", False, f"error: {e}"))
@@ -189,7 +193,9 @@ def main():
     )
     parser.add_argument("--check", action="store_true", help="only assert, non-zero on mismatch")
     parser.add_argument(
-        "--fix", action="store_true", help="self-heal (create/replace triggers) then re-assert"
+        "--fix",
+        action="store_true",
+        help="self-heal (create/replace triggers) then re-assert",
     )
     parser.add_argument("--sql-dir", default=os.path.join(os.path.dirname(__file__), "sql"))
     args = parser.parse_args()
