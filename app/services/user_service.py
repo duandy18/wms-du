@@ -4,10 +4,16 @@
 from sqlalchemy import exc
 from sqlalchemy.orm import Session
 
-from .security import create_access_token, decode_access_token, hash_password, verify_password
 from app.models.permission import Permission
 from app.models.role import Role
 from app.models.user import User
+
+from .security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
 
 
 # --- 自定义异常 ---

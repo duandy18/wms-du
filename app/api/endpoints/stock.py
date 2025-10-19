@@ -62,4 +62,7 @@ def stock_query(
             }
         )
 
-    return {"rows": out_rows, "summary": [{"item_id": item_id or 0, "on_hand": on_hand}]}
+    return {
+        "rows": out_rows,
+        "summary": [{"item_id": item_id or 0, "on_hand": on_hand}],
+    }

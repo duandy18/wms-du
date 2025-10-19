@@ -1,5 +1,5 @@
-import os
 from contextlib import contextmanager
+import os
 
 import pytest
 from sqlalchemy import text
@@ -88,8 +88,18 @@ async def test_outbound_atomic_rollback(ac, async_session_maker):
             json={
                 "ref": "SO-AT-1",
                 "lines": [
-                    {"item_id": item_id, "location_id": location_id, "qty": 3, "ref_line": "1"},
-                    {"item_id": item_id, "location_id": location_id, "qty": 3, "ref_line": "2"},
+                    {
+                        "item_id": item_id,
+                        "location_id": location_id,
+                        "qty": 3,
+                        "ref_line": "1",
+                    },
+                    {
+                        "item_id": item_id,
+                        "location_id": location_id,
+                        "qty": 3,
+                        "ref_line": "2",
+                    },
                 ],
             },
         )

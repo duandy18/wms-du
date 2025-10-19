@@ -267,7 +267,9 @@ def compare(spec: Spec, actual: Spec, strict: bool = False) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--dsn", default=None, help="PostgreSQL DSN; falls back to env DATABASE_URL if omitted"
+        "--dsn",
+        default=None,
+        help="PostgreSQL DSN; falls back to env DATABASE_URL if omitted",
     )
     ap.add_argument("--spec", default=None, help="Path to JSON spec (omit when using --dump)")
     ap.add_argument("--strict", action="store_true", help="Require no extra indexes/uniques in DB")

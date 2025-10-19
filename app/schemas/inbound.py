@@ -57,4 +57,4 @@ class PutawayIn(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="ignore")
 
 
-__all__ = ["ReceiveIn", "ReceiveOut", "PutawayIn"]
+__all__ = ["PutawayIn", "ReceiveIn", "ReceiveOut"]

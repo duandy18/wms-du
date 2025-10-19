@@ -1,7 +1,15 @@
 # app/models/batch.py
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Column, Date, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Date,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import synonym
 
 from app.db.base import Base

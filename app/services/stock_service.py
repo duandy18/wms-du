@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
+import random
 from typing import Any
 
 from sqlalchemy import and_, case, func, insert, select, text, update
@@ -628,7 +628,11 @@ class StockService:
         if to_location_id is None:
             to_location_id = await self._ensure_location(session, warehouse_id, to_location_name)
 
-        conds = [Batch.warehouse_id == warehouse_id, Batch.qty > 0, Batch.expiry_date < today]
+        conds = [
+            Batch.warehouse_id == warehouse_id,
+            Batch.qty > 0,
+            Batch.expiry_date < today,
+        ]
         if item_ids:
             conds.append(Batch.item_id.in_(item_ids))
 
@@ -736,7 +740,11 @@ class StockService:
         if not dry_run:
             await session.commit()
 
-        return {"warehouse_id": warehouse_id, "moved_total": moved_total, "moves": moves}
+        return {
+            "warehouse_id": warehouse_id,
+            "moved_total": moved_total,
+            "moves": moves,
+        }
 
     # ==================== 调拨（异步） ====================
     async def transfer(
@@ -907,7 +915,8 @@ class StockService:
         ).scalar_one_or_none()
         if w_first is None:
             res_w = await _exec_with_retry(
-                session, insert(Warehouse).values({"name": "AUTO-WH"}).returning(Warehouse.id)
+                session,
+                insert(Warehouse).values({"name": "AUTO-WH"}).returning(Warehouse.id),
             )
             wid_new = int(res_w.scalar_one())
         else:
@@ -917,7 +926,11 @@ class StockService:
             await _exec_with_retry(
                 session,
                 insert(Location).values(
-                    {"id": location_id, "name": f"AUTO-LOC-{location_id}", "warehouse_id": wid_new}
+                    {
+                        "id": location_id,
+                        "name": f"AUTO-LOC-{location_id}",
+                        "warehouse_id": wid_new,
+                    }
                 ),
             )
         except IntegrityError:
@@ -949,8 +962,19 @@ class StockService:
         ).scalar_one_or_none()
         if exists is not None:
             return
-        vals: dict = {"id": item_id, "sku": f"ITEM-{item_id}", "name": f"Auto Item {item_id}"}
-        for fld in ("qty_available", "qty_on_hand", "qty_reserved", "qty", "min_qty", "max_qty"):
+        vals: dict = {
+            "id": item_id,
+            "sku": f"ITEM-{item_id}",
+            "name": f"Auto Item {item_id}",
+        }
+        for fld in (
+            "qty_available",
+            "qty_on_hand",
+            "qty_reserved",
+            "qty",
+            "min_qty",
+            "max_qty",
+        ):
             if hasattr(Item, fld):
                 vals.setdefault(fld, 0)
         if hasattr(Item, "unit"):
@@ -1069,7 +1093,11 @@ class StockService:
             )
         ).scalar_one_or_none()
         if cur is None:
-            vals = {"item_id": item_id, "location_id": location_id, qty_col.key: float(delta)}
+            vals = {
+                "item_id": item_id,
+                "location_id": location_id,
+                qty_col.key: float(delta),
+            }
             await _exec_with_retry(session, insert(Stock).values(vals))
             return
         await _exec_with_retry(
@@ -1169,8 +1197,7 @@ class StockService:
 
     # ==================== 同步统计 & 查询（保留） ====================
     def summarize_by_item(self, *, item_id: int, warehouse_id: int):
-        from sqlalchemy import inspect as _inspect
-        from sqlalchemy import text as _text
+        from sqlalchemy import inspect as _inspect, text as _text
 
         assert self.db is not None, "同步模式需要 self.db Session"
 

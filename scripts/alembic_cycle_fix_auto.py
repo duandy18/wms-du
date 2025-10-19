@@ -154,7 +154,9 @@ def rewrite_down(meta: dict[str, dict], rev: str, new_downs: list[str]) -> bool:
     return False
 
 
-def fix_cycles(meta: dict[str, dict]) -> list[tuple[list[str], list[tuple[str, list[str]]]]]:
+def fix_cycles(
+    meta: dict[str, dict],
+) -> list[tuple[list[str], list[tuple[str, list[str]]]]]:
     """按创建时间规则剪环；返回 [(cycle_nodes, [(rev, new_downs), ...])...]"""
     changes = []
     while True:

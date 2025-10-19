@@ -1,5 +1,6 @@
 # app/api/endpoints/permission.py
 
+# 假设存在一个 PermissionService
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -10,8 +11,6 @@ from app.db.deps import get_db
 
 # 导入 Pydantic 模型
 from app.schemas.permission import PermissionCreate, PermissionOut
-
-# 假设存在一个 PermissionService
 from app.services.permission_service import PermissionService
 from app.services.user_service import AuthorizationError, UserService
 

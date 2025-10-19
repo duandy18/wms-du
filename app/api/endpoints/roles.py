@@ -1,5 +1,6 @@
 # app/api/endpoints/role.py
 
+# 假设存在一个 RoleService
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -10,8 +11,6 @@ from app.db.deps import get_db
 
 # 导入 Pydantic 模型
 from app.schemas.role import RoleCreate, RoleOut
-
-# 假设存在一个 RoleService
 from app.services.role_service import RoleService
 from app.services.user_service import AuthorizationError, UserService
 

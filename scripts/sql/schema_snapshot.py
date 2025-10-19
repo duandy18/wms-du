@@ -42,7 +42,10 @@ def get_orm_metadata() -> MetaData:
 
 
 def dump_sqlite_schema(engine: Engine, outfile: Path) -> None:
-    with closing(engine.raw_connection()) as conn, outfile.open("w", encoding="utf-8") as f:
+    with (
+        closing(engine.raw_connection()) as conn,
+        outfile.open("w", encoding="utf-8") as f,
+    ):
         for raw in conn.iterdump():
             text = str(raw).strip()
             if text:

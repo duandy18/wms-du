@@ -31,7 +31,10 @@ def seed_database():
                 address="供应商地址",
             )
             party_customer = Party(
-                id=str(uuid4()), name="客户 B", party_type=PartyType.CUSTOMER, address="客户地址"
+                id=str(uuid4()),
+                name="客户 B",
+                party_type=PartyType.CUSTOMER,
+                address="客户地址",
             )
             db.add_all([party_supplier, party_customer])
 
@@ -43,7 +46,10 @@ def seed_database():
 
             # 创建物料
             item_a = Item(
-                id=str(uuid4()), sku="WL-CATFOOD-001", name="顽皮双拼猫粮", unit_of_measure="KG"
+                id=str(uuid4()),
+                sku="WL-CATFOOD-001",
+                name="顽皮双拼猫粮",
+                unit_of_measure="KG",
             )
             item_b = Item(id=str(uuid4()), sku="ITEM-002", name="螺母", unit_of_measure="PCS")
             db.add_all([item_a, item_b])

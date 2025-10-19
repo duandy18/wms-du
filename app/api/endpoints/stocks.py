@@ -9,8 +9,7 @@ from app.api.deps import get_current_user
 from app.db.deps import get_db
 
 # 导入 Pydantic 模型
-from app.schemas.stock import Stock as StockSchema
-from app.schemas.stock import StockCreate, StockUpdate
+from app.schemas.stock import Stock as StockSchema, StockCreate, StockUpdate
 from app.services.stock_service import StockService
 from app.services.user_service import AuthorizationError, UserService
 

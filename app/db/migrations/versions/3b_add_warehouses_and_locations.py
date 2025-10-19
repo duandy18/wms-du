@@ -7,9 +7,8 @@ Create Date: 2025-10-12 20:21:00
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
-
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "3b_add_warehouses_locations"

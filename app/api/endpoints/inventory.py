@@ -10,7 +10,11 @@ from app.api.deps import get_current_user
 from app.db.deps import get_db
 
 # 导入 Pydantic 模型
-from app.schemas.inventory import InventoryMovementCreate, InventoryMovementOut, StockOnHandOut
+from app.schemas.inventory import (
+    InventoryMovementCreate,
+    InventoryMovementOut,
+    StockOnHandOut,
+)
 from app.services.inventory_service import InventoryService
 from app.services.user_service import AuthorizationError, UserService
 

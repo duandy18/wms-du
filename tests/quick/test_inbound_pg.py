@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 from uuid import uuid4
 
-import pytest
 from httpx import ASGITransport, AsyncClient
+import pytest
 from sqlalchemy import text
 
 from app.db.session import async_session_maker
@@ -16,11 +16,10 @@ async def _reset_db():
     """
     只截断存在的表，避免缺表时的 UndefinedTable。
     """
-    async with async_session_maker() as s:
-        async with s.begin():
-            await s.execute(
-                text(
-                    """
+    async with async_session_maker() as s, s.begin():
+        await s.execute(
+            text(
+                """
             DO $$
             DECLARE
               t TEXT;
@@ -40,8 +39,8 @@ async def _reset_db():
               END LOOP;
             END$$;
             """
-                )
             )
+        )
     yield
 
 
@@ -51,50 +50,47 @@ async def _seed_basic():
     返回 item_id。
     注意：items.id 可能没有自增默认值 -> 显式给 id。
     """
-    async with async_session_maker() as s:
-        async with s.begin():
-            # warehouse（显式 id）
-            await s.execute(
-                text(
-                    """
+    async with async_session_maker() as s, s.begin():
+        # warehouse（显式 id）
+        await s.execute(
+            text(
+                """
                 INSERT INTO warehouses (id, name)
                 VALUES (1, 'WH-TEST')
                 ON CONFLICT (id) DO NOTHING
             """
-                )
             )
+        )
 
-            # item：若存在则取其 id；否则用 MAX(id)+1 生成 id 再插入
-            row = (
-                await s.execute(text("SELECT id FROM items WHERE sku='SKU-001' LIMIT 1"))
-            ).first()
-            if row:
-                item_id = int(row[0])
-            else:
-                new_id = (await s.execute(text("SELECT COALESCE(MAX(id),0)+1 FROM items"))).scalar()
-                item_id = int(new_id or 1)
-                await s.execute(
-                    text(
-                        """
+        # item：若存在则取其 id；否则用 MAX(id)+1 生成 id 再插入
+        row = (await s.execute(text("SELECT id FROM items WHERE sku='SKU-001' LIMIT 1"))).first()
+        if row:
+            item_id = int(row[0])
+        else:
+            new_id = (await s.execute(text("SELECT COALESCE(MAX(id),0)+1 FROM items"))).scalar()
+            item_id = int(new_id or 1)
+            await s.execute(
+                text(
+                    """
                     INSERT INTO items (id, sku, name, unit)
                     VALUES (:id, 'SKU-001','X猫粮','EA')
                 """
-                    ),
-                    {"id": item_id},
-                )
+                ),
+                {"id": item_id},
+            )
 
-            # locations（显式 id；0 作为 STAGE，101 作为目标货位）
-            for loc_id, loc_name in [(0, "STAGE"), (101, "RACK-101")]:
-                await s.execute(
-                    text(
-                        """
+        # locations（显式 id；0 作为 STAGE，101 作为目标货位）
+        for loc_id, loc_name in [(0, "STAGE"), (101, "RACK-101")]:
+            await s.execute(
+                text(
+                    """
                     INSERT INTO locations (id, name, warehouse_id)
                     VALUES (:i, :n, 1)
                     ON CONFLICT (id) DO NOTHING
                 """
-                    ),
-                    {"i": loc_id, "n": loc_name},
-                )
+                ),
+                {"i": loc_id, "n": loc_name},
+            )
 
     return item_id
 
@@ -338,7 +334,10 @@ async def test_inbound_receive_and_putaway_integrity():
     tmp_qty = await _get_qty(item_id, 0)
     loc_qty = await _get_qty(item_id, 101)
     print("stocks:", tmp_qty, loc_qty)
-    assert (tmp_qty, loc_qty) == (3, 7), f"stocks mismatch: tmp={tmp_qty}, loc101={loc_qty}"
+    assert (tmp_qty, loc_qty) == (
+        3,
+        7,
+    ), f"stocks mismatch: tmp={tmp_qty}, loc101={loc_qty}"
 
     sum_delta = await _sum_ledger_delta(item_id)
     print("sum_delta:", sum_delta)

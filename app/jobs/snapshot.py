@@ -150,7 +150,8 @@ def main():
     ap.add_argument("--grain", choices=["day"], default="day")
     ap.add_argument("--at", help="cut time (ISO8601); default now() aligned to 00:00Z")
     ap.add_argument(
-        "--prev", help="override previous cut end (ISO8601); default None (uses cut_start)"
+        "--prev",
+        help="override previous cut end (ISO8601); default None (uses cut_start)",
     )
     args = ap.parse_args()
 

@@ -1,0 +1,45 @@
+# .ruff.toml — WMS-DU unified lint config
+
+target-version = "py312"
+line-length = 88
+indent-width = 4
+
+# 仅分析主代码与测试目录
+src = ["app", "tests"]
+
+# 忽略的路径（备份、迁移、文档、前端、临时输出）
+exclude = [
+    ".venv","venv","__pycache__",".mypy_cache",".pytest_cache",".ruff_cache",
+    "_alembic_bak","alembic/versions.bak","alembic_versions_clean",
+    "docs/","scripts/","tools/","tests/__pycache__","node_modules",
+    "dist","build","*.bak","*.md","*.ipynb"
+]
+
+# 规则选择与忽略
+lint.select = ["E","F","I","UP","B","C4","SIM","PLE","PLW","PLR"]
+lint.ignore = [
+    "E501",      # 行宽由 Black 统一
+    "PLR0913",   # 参数过多
+    "PLR0912",   # 分支过多
+    "PLR2004",   # 魔法数字
+    "PLW0603",   # global
+    "B008",      # 依赖注入默认值（用模块级 Depends 符号处理）
+    "SIM117",    # 嵌套 with（异步场景常见）
+    "B007",      # 未使用循环变量（占位）
+]
+
+# 自动修复
+fix = true
+unsafe-fixes = false
+
+[lint.isort]
+combine-as-imports = true
+known-first-party = ["app"]
+force-sort-within-sections = true
+order-by-type = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 from collections import defaultdict
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
