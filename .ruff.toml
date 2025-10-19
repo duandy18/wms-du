@@ -1,45 +1,67 @@
-# .ruff.toml — WMS-DU unified lint config
+# .ruff.toml — WMS-DU stable & backward-compatible config
+# =======================================================
+# 与 Makefile / pre-commit 配合使用，支持旧版 Ruff（0.5.x~0.6.x）。
 
+# Python 版本
 target-version = "py312"
-line-length = 88
+line-length = 100
 indent-width = 4
 
-# 仅分析主代码与测试目录
-src = ["app", "tests"]
+# 扫描路径
+src = ["app", "tests", "scripts", "tools"]
 
-# 忽略的路径（备份、迁移、文档、前端、临时输出）
-exclude = [
-    ".venv","venv","__pycache__",".mypy_cache",".pytest_cache",".ruff_cache",
-    "_alembic_bak","alembic/versions.bak","alembic_versions_clean",
-    "docs/","scripts/","tools/","tests/__pycache__","node_modules",
-    "dist","build","*.bak","*.md","*.ipynb"
+# =======================================================
+# 🔍 主规则集
+# =======================================================
+[lint]
+select = [
+  "E",   # pycodestyle
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "SIM", # flake8-simplify
+  "PL",  # pylint-like
+  "RUF", # ruff 自身规则
 ]
 
-# 规则选择与忽略
-lint.select = ["E","F","I","UP","B","C4","SIM","PLE","PLW","PLR"]
-lint.ignore = [
-    "E501",      # 行宽由 Black 统一
-    "PLR0913",   # 参数过多
-    "PLR0912",   # 分支过多
-    "PLR2004",   # 魔法数字
-    "PLW0603",   # global
-    "B008",      # 依赖注入默认值（用模块级 Depends 符号处理）
-    "SIM117",    # 嵌套 with（异步场景常见）
-    "B007",      # 未使用循环变量（占位）
+# 忽略项（可逐步收紧）
+ignore = [
+  "E501",     # 行过长交给 black
+  "PLR0912",  # 分支过多
+  "PLR0913",  # 参数过多
+  "PLR2004",  # Magic numbers
+  "PLW0603",  # global
+  "B008",     # FastAPI Depends 默认参数
+  "B007",     # 未使用循环变量
+  "SIM117",   # 嵌套 with
+  "SIM118",   # “Rewrite using dict()”
 ]
 
-# 自动修复
-fix = true
-unsafe-fixes = false
+# =======================================================
+# 📁 按目录豁免
+# =======================================================
+# - tests：忽略中文标点（RUF001/2/3）和长行（E501）
+# - alembic/versions：忽略复杂分支和 contextlib 提示
+per-file-ignores = {
+  "tests/**/*.py" = ["RUF001", "RUF002", "RUF003", "E501"],
+  "alembic/**/*.py" = ["PLR0912", "SIM105"],
+}
 
+# =======================================================
+# ⚙️ isort 设置（旧版 Ruff 兼容字段）
+# =======================================================
 [lint.isort]
 combine-as-imports = true
-known-first-party = ["app"]
 force-sort-within-sections = true
-order-by-type = true
+order-by-type = false
+known-first-party = ["app"]
+lines-after-imports = 2
+from-first = false
+case-sensitive = false
 
-[format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
+# =======================================================
+# 🧩 其他选项（可选）
+# =======================================================
+# 若有 false-positive，可加：
+# ignore-init-module-imports = true
+# extend-exclude = ["_archive__", "_alembic_bak"]

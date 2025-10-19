@@ -1,4 +1,4 @@
-# .pre-commit-config.yaml — WMS-DU unified hooks (stable)
+# .pre-commit-config.yaml — WMS-DU stable hooks
 
 repos:
   # ---------- Python style ----------
@@ -6,22 +6,22 @@ repos:
     rev: v0.6.5
     hooks:
       - id: ruff-format
-        files: ^(app|tests)/.*\.py$
+        files: ^(app|tests|scripts|tools)/.*\.py$
       - id: ruff
         args: [--fix]
-        files: ^(app|tests)/.*\.py$
+        files: ^(app|tests|scripts|tools)/.*\.py$
 
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
-        files: ^(app|tests)/.*\.py$
+        files: ^(app|tests|scripts|tools)/.*\.py$
 
   - repo: https://github.com/PyCQA/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        files: ^(app|tests)/.*\.py$
+        files: ^(app|tests|scripts|tools)/.*\.py$
 
   # ---------- 基础卫生（全仓库） ----------
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -31,26 +31,37 @@ repos:
       - id: trailing-whitespace
       - id: mixed-line-ending
 
-  # ---------- detect-secrets：手动/CI 跑（避免 pre-commit 环境路径/缓存问题） ----------
+  # ---------- 可选：tests 半角化（手动触发） ----------
+  - repo: local
+    hooks:
+      - id: normalize-punct-tests
+        name: Normalize fullwidth punctuation (tests)
+        language: system
+        entry: bash -lc 'python tools/normalize_punct.py tests'
+        files: ^tests/.*\.py$
+        pass_filenames: false
+        stages: [manual]
+
+  # ---------- detect-secrets（手动/CI 执行，不阻断提交） ----------
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        name: detect-secrets (manual/CI)
+        name: detect-secrets (baseline)
         args:
           - --baseline
           - .secrets.baseline
           - --exclude-files
           - '(alembic/versions\.bak/|docs/canvas/|.*\.md$|.*\.bak$)'
         pass_filenames: false
-        stages: [manual]    # ← pre-commit 默认不跑；CI 或手工触发
+        stages: [manual]
 
-  # ---------- mypy：可选改为 pre-push；或仍在 commit，但只扫 app/ ----------
+  # ---------- mypy（pre-push；只扫 app/；安装必要依赖） ----------
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.0
     hooks:
       - id: mypy
-        stages: [pre-push]   # ← 若想在提交时仍跑，改为 [commit]
+        stages: [pre-push]
         files: ^app/.*\.py$
         args:
           - --ignore-missing-imports
