@@ -30,3 +30,6 @@ coverage/
 pnpm-lock.yaml
 # VSCode workspace
 .vscode/
+
+# local downloads
+micro-linux-amd64.tar.gz
