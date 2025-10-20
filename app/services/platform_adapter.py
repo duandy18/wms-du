@@ -7,58 +7,38 @@ RawEvent = Dict[str, Any]
 
 
 class PlatformAdapter(ABC):
-    """统一平台事件适配接口：将不同平台的原始事件 → 标准事件结构。"""
-
     platform: str
 
     @abstractmethod
     async def parse_event(self, raw_event: RawEvent) -> StandardEvent:
-        """解析平台原始事件为标准结构。"""
+        """解析平台原始事件为标准结构（order_id/status/lines/raw）。"""
         ...
 
     @abstractmethod
     async def to_outbound_task(self, parsed: StandardEvent) -> Dict[str, Any]:
-        """把标准事件映射为系统的出库任务输入结构。"""
+        """映射为业务入口任务（platform/ref/state/lines/payload）。"""
         ...
 
 
 def _base_to_task(parsed: StandardEvent) -> Dict[str, Any]:
-    """通用映射：透传 lines（若调用方在 raw 中提供），并保留原始 payload。"""
+    """统一输出结构：ref=order_id，透传 lines 与原始 payload。"""
     return {
         "platform": parsed["platform"],
-        "ref": parsed["order_id"],
-        "state": parsed["status"],
-        "lines": parsed.get("lines"),           # ← 透传
+        "ref": parsed.get("order_id") or "",
+        "state": parsed.get("status") or "",
+        "lines": parsed.get("lines"),
         "payload": parsed.get("raw"),
     }
 
 
-# == PDD ==
 class PDDAdapter(PlatformAdapter):
     platform = "pdd"
 
     async def parse_event(self, raw_event: RawEvent) -> StandardEvent:
         return {
             "platform": self.platform,
-            "order_id": raw_event.get("order_sn"),
-            "status": raw_event.get("status"),
-            "lines": raw_event.get("lines"),    # ← 透传
-            "raw": raw_event,
-        }
-
-    async def to_outbound_task(self, parsed: StandardEvent) -> Dict[str, Any]:
-        return _base_to_task(parsed)
-
-
-# == TAOBAO ==
-class TaobaoAdapter(PlatformAdapter):
-    platform = "taobao"
-
-    async def parse_event(self, raw_event: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw_event.get("tid"),
-            "status": raw_event.get("trade_status"),
+            "order_id": raw_event.get("order_sn") or raw_event.get("order_id") or "",
+            "status": raw_event.get("status") or "",
             "lines": raw_event.get("lines"),
             "raw": raw_event,
         }
@@ -67,15 +47,32 @@ class TaobaoAdapter(PlatformAdapter):
         return _base_to_task(parsed)
 
 
-# == JD ==
+class TaobaoAdapter(PlatformAdapter):
+    platform = "taobao"
+
+    async def parse_event(self, raw_event: RawEvent) -> StandardEvent:
+        # 常见字段：tid（订单号）、trade_status（状态）
+        return {
+            "platform": self.platform,
+            "order_id": raw_event.get("tid") or raw_event.get("order_id") or "",
+            "status": raw_event.get("trade_status") or raw_event.get("status") or "",
+            "lines": raw_event.get("lines"),
+            "raw": raw_event,
+        }
+
+    async def to_outbound_task(self, parsed: StandardEvent) -> Dict[str, Any]:
+        return _base_to_task(parsed)
+
+
 class JDAdapter(PlatformAdapter):
     platform = "jd"
 
     async def parse_event(self, raw_event: RawEvent) -> StandardEvent:
+        # 常见字段：orderId（订单号）、orderStatus（状态）
         return {
             "platform": self.platform,
-            "order_id": raw_event.get("orderId"),
-            "status": raw_event.get("orderStatus"),
+            "order_id": raw_event.get("orderId") or raw_event.get("order_id") or "",
+            "status": raw_event.get("orderStatus") or raw_event.get("status") or "",
             "lines": raw_event.get("lines"),
             "raw": raw_event,
         }
