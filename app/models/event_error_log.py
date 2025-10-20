@@ -1,11 +1,8 @@
-from sqlalchemy import JSON, Column, DateTime, Integer, String, func
-
+from __future__ import annotations
+from sqlalchemy import Column, Integer, String, DateTime, JSON, func
 from app.db import Base
 
-
 class EventErrorLog(Base):
-    """记录平台事件处理中的异常信息。"""
-
     __tablename__ = "event_error_log"
 
     id = Column(Integer, primary_key=True)
