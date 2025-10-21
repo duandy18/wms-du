@@ -7,17 +7,17 @@ on:
     branches: [ "main" ]
 
 env:
-  PYTHONUNUSED: "1"
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # Map container 5432 → host 5433
-  DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+  # 在 CI 中我们统一使用 host 5432（service 暴露 5432:5432）
+  DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
 
 jobs:
   quick:
-    name: WMS-DU CI / Quick (PG)
+    name: Quick (PG)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     services:
       postgres:
         image: postgres:14-alpine
@@ -25,55 +25,56 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports:
-          - 5433:5432
+        ports: [ "5432:5432" ]
         options: >-
-          --health-cmd="pg_isready -U wms"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
-      - name: ⬇️ Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: 📦 Install deps
+      - name: Install system deps (psql)
         run: |
-          python -m pip install -U pip
-          if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.zip; fi || true
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client ca-certificates
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: ✅ Make runner exec
-        run: |
-          chmod +x run.sh .github/ci/run.sh
-          ./run.sh ci:env
+      - name: Make runner executable
+        run: chmod +x run.sh
 
-      - name: ⏳ Ensure Postgres is ready
+      - name: Pre-wait for PostgreSQL (explicit)
+        env: { PGPASSWORD: wms }
         run: |
-          echo "Waiting for Postgres on 127.0.0.1:5433 ..."
+          echo "Waiting for Postgres on 127.0.0.1:5432 ..."
           for i in {1..40}; do
-            if pg_isready -h 127.0.0.1 -p 5433 >/dev/null 2>&1; then
-              echo "Postgres ready"; break
-            fi
+            pg_isready -h 127.0.0.1 -p 5432 && break
+            psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
             sleep 2
           done
 
-      - name: 🗃  Migrate DB
+      - name: Migrate
         run: ./run.sh ci:pg:prepare
 
-      - name: 🚦 Run QUICK suites
+      - name: Run QUICK
         run: ./run.sh ci:test:quick
 
   smoke:
-    name: WMS-DU CI / Smoke (PG E2E)
+    name: Smoke (PG E2E)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [ quick ]
+
     services:
       postgres:
         image: postgres:14-alpine
@@ -81,46 +82,46 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports:
-          - 5433: 5432
+        ports: [ "5432:5432" ]
         options: >-
-          --health-cmd="pg_isready -U wms"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
-      - name: ⬇️ Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python 3.12
-        use github/comme: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          sword: "3.12"
+          python-version: "3.12"
 
-      - name: 📦 Install deps
+      - name: Install system deps (psql)
         run: |
-          python -m pip install -U pip
-          if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client ca-certificates
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: ✅ Make runner exec
-        run: |
-          chmod +x run.sh .github/ci/run.sh
-          ./run.sh ci:env
+      - name: Make runner executable
+        run: chmod +x run.sh
 
-      - name: ⏳ Ensure Postgres is ready
+      - name: Pre-wait for PostgreSQL (explicit)
+        env: { PGPASSWORD: wms }
         run: |
-          echo "Waiting for Postgres on 127.0.0.1:5433 ..."
+          echo "Waiting for Postgres on 127.0.0.1:5432 ..."
           for i in {1..40}; do
-            if pg_isready -h 127.0.0.1 -p 5433 >/dev/null 2>&1; then
-              echo "Postgres ready"; break
-            fi
+            pg_isready -h 127.0.0.1 -p 5432 && break
+            psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
             sleep 2
           done
 
-      - name: 🗃  Migrate DB
+      - name: Migrate
         run: ./run.sh ci:pg:prepare
 
-      - name: ✅ Run SMOKE suites
+      - name: Run SMOKE
         run: ./run.sh ci:test:smoke
