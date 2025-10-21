@@ -1,4 +1,4 @@
-name: WMS-DU CI (no-runsh)
+name: WMS-DU CI (workflow-only)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # Service 暴露 5432:5432，统一这里的连接串
+  # Service 暴露 5432:5432；统一使用 5432
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
 
 jobs:
@@ -17,6 +17,7 @@ jobs:
     name: Quick (PG)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     services:
       postgres:
         image: postgres:14-alpine
@@ -38,7 +39,78 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system deps (psql)
+      - name: Install system deps (psql client)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client ca-certificates
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          # SQLAlchemy 2.x 驱动入口为 postgresql+psycopg://，需显式安装 psycopg
+          pip install psycopg[binary]
+
+      - name: Pre-wait for PostgreSQL (explicit)
+        env: { PGPASSWORD: wms }
+        run: |
+          echo "Waiting for Postgres on 127.0.0.1:5432 ..."
+          for i in {1..60}; do
+            pg_isready -h 127.0.0.1 -p 5432 && break
+            psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+      - name: Alembic migrate (ensure version_num long enough)
+        env: { PGPASSWORD: wms }
+        run: |
+          # 1) 确保 alembic_version 存在（对空库幂等）
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
+            "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
+
+          # 2) 把列类型扩到 255（如果已是 255，此操作无害）
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
+            "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
+
+          # 3) 执行完整迁移
+          alembic upgrade head
+
+      - name: Run QUICK suites
+        run: |
+          pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
+          pytest -q tests/quick/test_outbound_concurrency_pg.py -s
+          pytest -q tests/quick/test_new_platforms_pg.py -s
+          pytest -q tests/quick/test_platform_multi_shop_pg.py -s
+
+  smoke:
+    name: Smoke (PG E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [ quick ]
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (psql client)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client ca-certificates
@@ -60,66 +132,13 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate
-        run: |
-          alembic upgrade head
-
-      - name: Run QUICK suites
-        run: |
-          pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
-          pytest -q tests/quick/test_outbound_concurrency_pg.py -s
-          pytest -q tests/quick/test_new_platforms_pg.py -s
-          pytest -q tests/quick/test_platform_multi_shop_pg.py -s
-
-  smoke:
-    name: Smoke (PG E2E)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    needs: [ quick ]
-    services:
-      postgres:
-        image: postgres:14-alpine
-        env:
-          POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms
-        ports: [ "5432:5432" ]
-        options: >-
-          --health-cmd "pg_isready -U wms"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install system deps (psql)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-client ca-certificates
-
-      - name: Install Python deps
-        run: |
-          python -m pip install -U pip wheel setuptools
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-
-      - name: Pre-wait for PostgreSQL (explicit)
+      - name: Alembic migrate (ensure version_num long enough)
         env: { PGPASSWORD: wms }
         run: |
-          echo "Waiting for Postgres on 127.0.0.1:5432 ..."
-          for i in {1..60}; do
-            pg_isready -h 127.0.0.1 -p 5432 && break
-            psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
-            sleep 2
-          done
-
-      - name: Alembic migrate
-        run: |
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
+            "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
+            "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
           alembic upgrade head
 
       - name: Run SMOKE suites
