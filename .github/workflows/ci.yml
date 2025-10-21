@@ -1,31 +1,23 @@
-name: Postcard CI (non-blocking)
+name: WMS-DU CI
 
 on:
-  workflow_dispatch: {}
   push:
-    branches: [ main ]
-    paths-ignore:
-      - "docs/**"
-      - "canvas/**"
-      - "**/*.md"
+    branches: [ "main", "feat/**" ]
   pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - "docs/**"
-      - "canvas/**"
-      - "**/*.md"
+    branches: [ "main" ]
 
-concurrency:
-  group: postcard-${{ github.ref }}
-  cancel-in-progress: true
+# CI 内的统一环境（根 run.sh 本地默认 5433；CI 统一 5432）
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTUSEPYTHONHOME: "1"
+  PYTHONPATH: "."
+  DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
 jobs:
-  postcard:
-    name: postcard-quick
+  quick:
+    name: WMS-DU CI / Quick (PG)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # ❗ 故意非阻塞：失败也不拦 PR
-    continue-on-error: true
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -34,52 +26,139 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: ["5432:5432"]
+        ports: [ "5433:5432" ] # map container 5432 -> host 5433
         options: >-
-          --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=60
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache.pointer@v1
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Install deps (bare minimum)
+      - name: Install system deps (psql, headers)
         run: |
-          python -m pip install -U pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e .; fi
-          pip install -U pytest
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
+            postgresql-client postgresql-client-common build-essential
 
-      - name: Env
+      - name: Install Python deps
         run: |
-          echo "DATABASE_URL=postgresql+psycopg://wms:wms@127.0.0.1:5432/wms" >> $GITHUB_ENV
-          echo "WMS_SQLITE_GUARD=1" >> $GITHUB_ENV
-          echo "NON_BLOCKING=1" >> $GITHUB_ENV
+            python -m pip install -U pip wheel setuptools
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Run postcard quick (forwarder)
-        run: bash .github/ci/run.sh ci:pg:quick || true
+      - name: Make runners executable
+        run: |
+          chmod +x run.sh || true
+          chmod +x .github/ci/run.sh || true
 
-      - name: Archive pytest bits (always)
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Wait for PostgreSQL service (explicit pre-check)
+        env:
+          PGPASSWORD: wms
+        run: |
+          echo "Waiting for Postgres on 127.0.0.1:5433 ..."
+          for i in {1..40}; do
+            if command -v pg_isready >/dev/null 2>&1; then
+              pg_isready -h 127.0.0.1 -p 5433 && break
+            else
+              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
+            fi
+            sleep 2
+          done
+
+      - name: Wait PG + migrate
+        run: .github/ci/run.sh ci:pg:prepare
+
+      - name: Run QUICK suites
+        run: .github/ci/run.sh ci:test:quick
+
+  smoke:
+    name: WMS-DU CI / Smoke (PG E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [ quick ]
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          PRISMA_HIDE_UPDATE_MESSAGE: "true"
+          POSTGRES_DB: wms
+        ports: [ "5433:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        useS: actions/setup-python@v4
         with:
-          name: postcard-artifacts
-          path: |
-            .pytest_cache
-            **/.pytest_cache
-            **/pytest*.xml
-            **/coverage*.xml
-          if-no-files-found: ignore
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache.pointer@v1
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{{ github.sha }}}
+          restore-keys: |
+            ${{ runner.sd }}-pip-
+
+      - name: Install system deps (psql, headers)
+        run: |
+          sudo apt-get update
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
+            postgresql-client postgresql-client-common
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Make runners executable
+        run: |
+          chmod +x run.sh || true
+          chmod +x .github/ci/run.sh || true
+
+      - name: Wait for PostgreSQL service (explicit pre-check)
+        env:
+          PGPASSWORD: wms
+        run: |
+          echo "Waiting for Postgres on 127.0.0.1:5433 ..."
+          for i in {1..40}; do
+            if command -v pg_isready >/dev/null 2>&1; then
+              pg_isready -h 127.0.0.1 -p 5433 && break
+            else
+              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
+            fi
+            sleep 2
+          done
+
+      - name: Wait PG + migrate
+        run: .github/ci/run.sh ci:pg:prepare
+
+      - name: Run SMOKE suites
+        run: .github/ci/run.sh ci:test:smoke

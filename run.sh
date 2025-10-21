@@ -1,111 +1,168 @@
 #!/usr/bin/env bash
-# WMS-DU root runner: local-first, CI reuses this script.
-# - Single-dev multi-machine friendly
-# - Non-blocking mode via NON_BLOCKING=1
-# - Postgres via $DATABASE_URL (defaults to local 5433 if docker-up used)
-set -euo pipefail
+# ============================================================
+# WMS-DU unified runner (local + CI)
+# ============================================================
+# 用途：
+#   - 本地/CI 一致执行
+#   - 负责 DB 等待、迁移、quick/smoke 测试、环境打印
+# ============================================================
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HERE"
+set -Eeuo pipefail
 
-# ---------- helpers ----------
-log()  { printf "\033[1;36m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
-warn() { printf "\033[1;33m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
-err()  { printf "\033[1;31m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*" >&2; }
-nbegin(){
-  if [[ "${NON_BLOCKING:-0}" = "1" ]]; then
-    set +e
-    warn "NON_BLOCKING=1 -> errors won't fail the whole run"
-  fi
+# ------------------ 全局配置 ------------------
+export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
+export PYTHONPATH=${PYTHONPATH:-.}
+export WMS_SQLITE_GUARD=${WMS_SQLITE_GUARD:-1}
+# 本地默认 5433；CI 会覆写为 5432
+export DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}
+
+# Quick 测试集合（可按需增删）
+QUICK_SUITES=(
+  "tests/quick/test_platform_outbound_commit_pg.py -q -s"
+  "tests/quick/test_outbound_concurrency_pg.py -q -s"
+  "tests/quick/test_new_platforms_pg.py -q -s"
+  "tests/quick/test_platform_multi_shop_pg.py -q -s"
+)
+
+# Smoke 测试集合（E2E）
+SMOKE_SUITES=(
+  "tests/smoke/test_platform_events_smoke_pg.py -q -s"
+)
+
+# ------------------ 辅助函数 ------------------
+
+banner() {
+  echo -e "\n\033[1;36m==== $* ====\033[0m\n"
 }
 
-# Default DB if user used docker-up (5433 on host)
-: "${DATABASE_URL:=postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"  # pragma: allowlist secret
-
-# ---------- core steps ----------
-step_env() {
-  log "Env"
-  echo "PY=$(python -V 2>&1 || true)"
-  echo "DATABASE_URL=${DATABASE_URL}"
-  echo "WMS_SQLITE_GUARD=${WMS_SQLITE_GUARD:-}"
+# 纯 Bash/Sed 解析 DATABASE_URL（避免 python/sitecustomize 干扰）
+parse_db_host_port() {
+  # postgresql+psycopg:// => postgresql://
+  local url="${DATABASE_URL//+psycopg/}"
+  # host
+  local host
+  host="$(printf '%s\n' "$url" | sed -E 's#.*://([^/@:]+)(:([0-9]+))?.*#\1#')"
+  # port（默认 5432）
+  local port
+  port="$(printf '%s\n' "$url" | sed -nE 's#.*://[^/@:]+:([0-9]+).*#\1#p')"
+  [[ -z "$host" || "$host" == "$url" ]] && host="127.0.0.1"
+  [[ -z "$port" ]] && port=5432
+  echo "$host $port"
 }
 
-step_migrate() {
-  log "Migrate (alembic if present)"
-  if [[ -f "alembic.ini" || -d "app/db/migrations" ]]; then
-    alembic upgrade head || return 0
-  else
-    warn "No alembic found, skip."
-  fi
+wait_for_db() {
+  local host port
+  read -r host port < <(parse_db_host_port)
+  echo "⏳ Waiting for PostgreSQL at $host:$port ..."
+
+  # psql 可识别的 URL（去掉 +psycopg）
+  local psql_url="${DATABASE_URL//+psycopg/}"
+
+  for i in {1..60}; do
+    # 优先 pg_isready
+    if command -v pg_isready >/dev/null 2>&1; then
+      if pg_isready -h "$host" -p "$port" >/dev/null 2>&1; then
+        echo "✅ PostgreSQL is ready."
+        return 0
+      fi
+    fi
+    # 兜底：用 psql 冒烟
+    if command -v psql >/dev/null 2>&1; then
+      PGPASSWORD="${PGPASSWORD:-wms}" psql "$psql_url" -c 'select 1' >/dev/null 2>&1 && {
+        echo "✅ PostgreSQL is ready."
+        return 0
+      }
+    fi
+    sleep 1
+  done
+  echo "❌ Timeout waiting for PostgreSQL on $host:$port"
+  return 1
 }
 
-# Quick tests (needle set)
-t_quick_snapshot() {
-  log "Quick: snapshot pagination/search"
-  pytest -q -s tests/quick/test_snapshot_inventory_pg.py
-}
-t_quick_stock_query() {
-  log "Quick: /stock/query happy path"
-  pytest -q -s tests/quick/test_stock_query_pg.py
-}
-t_quick_outbound_atomic() {
-  log "Quick: outbound atomic (should 409 & rollback)"
-  OUTBOUND_ATOMIC=true pytest -q -s tests/quick/test_outbound_atomic_pg.py
+migrate() {
+  banner "Run Alembic migrations"
+  export ALEMBIC_CONFIG=${ALEMBIC_CONFIG:-alembic.ini}
+  alembic upgrade head
 }
 
-# ---------- docker helpers (local dev) ----------
-pg_up() {
-  log "Docker PG up @5433"
-  docker run -d --name wms-pg \
-    -e POSTGRES_USER=wms -e POSTGRES_PASSWORD=wms -e POSTGRES_DB=wms \
-    -p 5433:5432 postgres:14-alpine >/dev/null
-  sleep 3
-  echo "DATABASE_URL=${DATABASE_URL}"
-}
-pg_down() {
-  log "Docker PG down"
-  docker rm -f wms-pg >/dev/null 2>&1 || true
+run_pytest_suites() {
+  local -n arr=$1
+  for spec in "${arr[@]}"; do
+    echo "🧪 pytest ${spec}"
+    pytest ${spec}
+  done
 }
 
-# ---------- command dispatcher ----------
+# ------------------ 命令实现 ------------------
+
+cmd_env() {
+  banner "Environment"
+  echo "Python:      $(python -V 2>/dev/null || true)"
+  echo "PYTHONPATH:  $PYTHONPATH"
+  echo "DATABASE_URL:$DATABASE_URL"
+  echo "WMS_SQLITE_GUARD: $WMS_SQLITE_GUARD"
+  echo "------------------------------"
+  python - <<'PY' || true
+try:
+    import sys, platform
+    print('Platform:', platform.platform())
+    print('Executable:', sys.executable)
+except Exception as e:
+    print('Python inspect skipped:', e)
+PY
+}
+
+cmd_ci_prepare() {
+  banner "Wait for DB + migrate"
+  wait_for_db
+  migrate
+}
+
+cmd_test_quick() {
+  banner "Run QUICK test suites"
+  run_pytest_suites QUICK_SUITES
+}
+
+cmd_test_smoke() {
+  banner "Run SMOKE test suites"
+  run_pytest_suites SMOKE_SUITES
+}
+
+cmd_ci_all() {
+  cmd_env
+  cmd_ci_prepare
+  cmd_test_quick
+  cmd_test_smoke
+}
+
 usage() {
-  cat <<'EOF'
-Usage:
-  bash run.sh <command>
+  cat <<'USAGE'
+Usage: ./run.sh <command>
 
-Commands (CI-focused):
-  ci:pg:quick      Show env -> migrate -> run 3 quick needles (non-blocking if NON_BLOCKING=1)
+Commands:
+  ci:env            打印当前环境信息
+  ci:pg:prepare     等待 PostgreSQL 可用并执行迁移
+  ci:test:quick     运行快速测试集 (unit + small e2e)
+  ci:test:smoke     运行端到端 smoke 测试
+  ci:all            一键执行环境→迁移→quick→smoke
 
-Local helpers:
-  pg:up            Start local postgres:14 (host port 5433)
-  pg:down          Stop/remove local postgres
-
-Single tests:
-  quick:snapshot   Run tests/quick/test_snapshot_inventory_pg.py
-  quick:stock      Run tests/quick/test_stock_query_pg.py
-  quick:atomic     Run tests/quick/test_outbound_atomic_pg.py
-EOF
+Examples:
+  export DATABASE_URL='postgresql+psycopg://wms:wms@127.0.0.1:5433/wms'
+  ./run.sh ci:env
+  ./run.sh ci:pg:prepare
+  ./run.sh ci:test:quick
+  ./run.sh ci:test:smoke
+  ./run.sh ci:all
+USAGE
 }
+
+# ------------------ 命令分发 ------------------
 
 case "${1:-}" in
-  ci:pg:quick)
-    nbegin
-    step_env
-    step_migrate || true
-    t_quick_snapshot || true
-    t_quick_stock_query || true
-    t_quick_outbound_atomic || true
-    log "ci:pg:quick done."
-    ;;
-  pg:up)   pg_up ;;
-  pg:down) pg_down ;;
-  quick:snapshot) t_quick_snapshot ;;
-  quick:stock)    t_quick_stock_query ;;
-  quick:atomic)   t_quick_outbound_atomic ;;
-  ""|-h|--help) usage ;;
-  *)
-    err "Unknown command: $1"
-    usage
-    exit 2
-    ;;
+  ci:env)          cmd_env ;;
+  ci:pg:prepare)   cmd_ci_prepare ;;
+  ci:test:quick)   cmd_test_quick ;;
+  ci:test:smoke)   cmd_test_smoke ;;
+  ci:all)          cmd_ci_all ;;
+  *) usage; exit 1 ;;
 esac
