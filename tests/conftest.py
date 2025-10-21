@@ -23,11 +23,11 @@ def _sync_url_from_env() -> str:
 def apply_migrations():
     """
     测试会话启动时：
-      - 若 CI 已做迁移（CI_SKIP_TEST_MIGRATE=1），则跳过测试内迁移；
-      - 否则：幂等保障 alembic_version 存在、version_num 扩到 255 → alembic upgrade HEADS。
+      - 若 CI 已做迁移（CI_SKIP_TEST_MIGRATE=1），则跳过；
+      - 否则：幂等保障 alembic_version 存在 → version_num 扩到 255 → alembic upgrade HEADS。
     """
     if os.getenv("CI_SKIP_TEST_MIGRATE") == "1":
-        # CI 的 workflow 已完成建表/扩列 + upgrade heads，这里不重复做
+        # CI 的工作流已完成迁移，这里不重复，避免多 head 冲突
         yield
         return
 
@@ -46,14 +46,13 @@ def apply_migrations():
             text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)")
         )
 
-    # 2) Alembic：升级到所有 head（不是 head），兼容多分支迁移树
+    # 2) Alembic：升级到所有 head（不是 head）
     cfg = AlembicConfig("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", sync_url)
 
-    # 可选：打印当前/所有 heads（辅助排障，不影响执行）
     try:
-        command.current(cfg)                 # type: ignore[arg-type]
-        command.heads(cfg, verbose=True)     # type: ignore[arg-type]
+        command.current(cfg)               # type: ignore[arg-type]
+        command.heads(cfg, verbose=True)   # type: ignore[arg-type]
     except Exception:
         pass
 
