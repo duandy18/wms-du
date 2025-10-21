@@ -9,9 +9,9 @@ set -Eeuo pipefail
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTHONPATH="${PYTHONPATH:-.}"
 export WMS_SQLITE_GUARD="${WMS_SQLITE_GUARD:-1}"
-# Local default 5433 (compose maps container 5432→host 5433). CI can export DATABASE_URL explicitly.
+# Local default 5433; CI 会通过 workflow 的 env 覆盖为 5432（或 5433）
 export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"
-export ALEPH="${ALEPH:-alembic.ini}"
+export ALEMBIC_CONFIG="${ALEMBIC_CONFIG:-alembic.ini}"
 
 # ---- Test suites (keep them centralized here) -------------
 QUICK_SUITES=(
@@ -27,27 +27,38 @@ SMOKE_SUITES=(
 # ----------------- Helpers --------------------------------
 banner() { echo -e "\n\033[1;36m==== $* ====\033[0m\n"; }
 
-# Parse postgres URL (postgresql:// or postgresql+psycopg://)
-# Output: <host> <port> <user> <pass> <db>
+# 纯 Bash 解析 DATABASE_URL（支持 postgresql:// 或 postgresql+psycopg://）
+# 输出: <host> <port> <user> <pass> <db>
 parse_db_parts() {
   local url="${DATABASE_URL#postgresql://}"
   url="${url#postgresql+psycopg://}"
-  local auth hostport db user pass host port
+
+  local auth hostport
   if [[ "$url" == *"@"* ]]; then
     auth="${url%@*}"
     hostport="${url#*@}"
-    user="${auth%%:*}"
-    pass="${auth#*:}"
   else
     auth=""
     hostport="$url"
+  fi
+
+  local user pass host port db
+  if [[ -n "$auth" ]]; then
+    user="${auth%%:*}"
+    pass="${auth#*:}"
+  else
     user="${PGUSER:-wms}"
     pass="${PGPASSWORD:-wms}"
-  }
-  db="${hostport#*/}"; db="${db%%\?*}"
+  fi
+
   host="${hostport%%:*}"
   port="${hostport#*:}"
   [[ "$port" == "$hostport" ]] && port=5432
+
+  db="${hostport#*/}"
+  db="${db%%\?*}"
+  [[ -z "$db" ]] && db="wms"
+
   echo "$host" "$port" "$user" "$pass" "$db"
 }
 
@@ -55,14 +66,14 @@ wait_for_db() {
   local host port user pass db
   read -r host port user pass db < <(parse_db_parts)
   banner "Waiting for PostgreSQL at ${host}:${port}"
-  # short warm-up to let container bind port
+  # 容器冷启动给 3 秒预热
   sleep 3
   for i in {1..60}; do
-    if command -f pg_isready >/dev/null 2>&1; then
-      if pg_isready -h "$host" -p "$port" -U "$user" >/dev/null 2>&1; then
+    if command -v pg_isready >/dev/null 2>&1; then
+      pg_isready -h "$host" -p "$port" -U "$user" >/dev/null 2>&1 && {
         echo "✅ Postgres ready (pg_isready)"
         return 0
-      fi
+      }
     fi
     if command -v psql >/dev/null 2>&1; then
       PGPASSWORD="$pass" psql "postgresql://${user}:${pass}@${host}:${port}/${db}" -c 'select 1' >/dev/null 2>&1 && {
@@ -77,8 +88,7 @@ wait_for_db() {
 }
 
 migrate() {
-  banner "Running Alembic migrations (${ALEPH})"
-  export ALEMBIC_CONFIG="${ALEPH}"
+  banner "Running Alembic migrations (${ALEMBIC_CONFIG})"
   alembic upgrade head
 }
 
@@ -93,20 +103,18 @@ run_pytest_suites() {
 # ----------------- Commands --------------------------------
 cmd_env() {
   banner "Environment"
-  echo "Python        : $(python -V 2>/dev/null || true)"
-  echo "Executable    : $(command -v python || true)"
-  echo "PYTHONPATH    : ${PYTHONPATH}"
-  echo "DATABASE_URL  : ${DATABASE_URL}"
-  echo "WMS_SQLITE_GD : ${WMS_SQLITE_GUARD}"
+  echo "Python       : $(python -V 2>/dev/null || true)"
+  echo "Executable   : $(command -v python || true)"
+  echo "PYTHONPATH   : ${PYTHONPATH}"
+  echo "DATABASE_URL : ${DATABASE_URL}"
+  echo "WMS_SQLITE_GUARD : ${WMS_SQLITE_GUARD}"
 }
 
 cmd_ci_prepare() { wait_for_db; migrate; }
 
-cmd_test_quick() { banner "Run QUICK suites"; run_pytest_suites QUICK_SUITES; }
-
-cmd_test_smoke() { banner "Run SMOKE suites"; run_pytest_suites SMOKE_SUITES; }
-
-cmd_ci_all() { cmd_env; cmd_ci_prepare; cmd_test_quick; cmd_test_smoke; }
+cmd_test_quick()  { banner "Run QUICK suites"; run_pytest_suites QUICK_SUITES; }
+cmd_test_smoke()  { banner "Run SMOKE suites"; run_pytest_suites SMOKE_SUITES; }
+cmd_ci_all()      { cmd_env; cmd_ci_prepare; cmd_test_quick; cmd_test_smoke; }
 
 usage() {
   cat <<'USAGE'
