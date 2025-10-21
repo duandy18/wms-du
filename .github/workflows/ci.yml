@@ -48,8 +48,8 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then python -m pip install -r requirements-dev.txt; fi
-          # 驱动 + 测试框架
-          python -m pip install psycopg[binary] pytest pytest-asyncio
+          # 驱动 + 测试框架 + TestClient 依赖
+          python -m pip install psycopg[binary] pytest pytest-asyncio httpx
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
@@ -121,7 +121,7 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then python -m pip install -r requirements-dev.txt; fi
-          python -m pip install psycopg[binary] pytest pytest-asyncio
+          python -m pip install psycopg[binary] pytest pytest-asyncio httpx
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
