@@ -1,22 +1,44 @@
 #!/usr/bin/env bash
-# CI forwarder: forward everything to repo root run.sh
-set -euo pipefail
+# ===================================================================
+# WMS-DU CI forwarder
+# -------------------------------------------------------------------
+# 作用：
+#   - 保持历史兼容：CI 可继续使用 .github/ci/run.sh
+#   - 自动定位仓库根目录并转交执行 ./run.sh
+#   - 确保根脚本有执行权限
+# ===================================================================
 
-# Allow running from any cwd inside the repo
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+set -Eeuo pipefail
 
-# Pass through all args to the root script.
-if [ -x "${REPO_ROOT}/run.sh" ]; then
-  exec "${REPO_ROOT}/run.sh" "$@"
+# --- 定位仓库根目录 ---
+if ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  :
+else
+  # 若 git 不可用（例如 Actions checkout 后未带 .git），则用路径反推
+  SELF="$(readlink -f "$0" 2>/dev/null || python3 - <<'PY'
+import os,sys
+p=os.path.abspath(sys.argv[1]); print(os.path.realpath(p))
+PY
+"$0")"
+  ROOT="$(dirname "$(dirname "$SELF")")"
 fi
 
-# Fallback: try Makefile if root run.sh not found
-if [ $# -ge 1 ] && [ "$1" = "ci:pg:quick" ]; then
-  if command -v make >/dev/null 2>&1; then
-    echo "[forwarder] root run.sh missing; falling back to make quick"
-    exec make quick || true
-  fi
+TARGET="$ROOT/run.sh"
+
+# --- 检查文件存在 ---
+if [[ ! -f "$TARGET" ]]; then
+  echo "❌ Cannot find root run.sh at: $TARGET" >&2
+  echo "   Please ensure the repo has a root-level run.sh" >&2
+  exit 127
 fi
 
-echo "[forwarder] Neither root run.sh nor Makefile quick available."
-exit 0
+# --- 确保可执行权限 ---
+chmod +x "$TARGET" || true
+
+# --- 环境预设（仅兜底，不覆盖 CI 自身 env） ---
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export PYTHONPATH="${PYTHONPATH:-$ROOT}"
+export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5432/wms}"
+
+# --- 转发执行 ---
+exec "$TARGET" "$@"

@@ -1,31 +1,23 @@
-name: Postcard CI (non-blocking)
+name: WMS-DU CI
 
 on:
-  workflow_dispatch: {}
   push:
-    branches: [ main ]
-    paths-ignore:
-      - "docs/**"
-      - "canvas/**"
-      - "**/*.md"
+    branches: [ "main", "feat/**" ]
   pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - "docs/**"
-      - "canvas/**"
-      - "**/*.md"
+    branches: [ "main" ]
 
-concurrency:
-  group: postcard-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONPATH: "."
+  # CI 内的 PostgreSQL 服务端口为 5432（service 映射），统一这里的连接串
+  DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
 
 jobs:
-  postcard:
-    name: postcard-quick
+  quick:
+    name: Quick (PG)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # ❗ 故意非阻塞：失败也不拦 PR
-    continue-on-error: true
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -34,18 +26,17 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: ["5432:5432"]
+        ports: [ "5432:5432" ]
         options: >-
-          --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=60
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -54,32 +45,94 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Install deps (bare minimum)
+      - name: Install system deps (psql, headers)
         run: |
-          python -m pip install -U pip
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg2 \
+            libpq-dev build-essential postgresql-client
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e .; fi
-          pip install -U pytest
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Make runners executable (root & forwarder)
+        run: |
+          chmod +x run.sh || true
+          chmod +x .github/ci/run.sh || true
 
       - name: Env
-        run: |
-          echo "DATABASE_URL=postgresql+psycopg://wms:wms@127.0.0.1:5432/wms" >> $GITHUB_ENV
-          echo "WMS_SQLITE_GUARD=1" >> $GITHUB_ENV
-          echo "NON_BLOCKING=1" >> $GITHUB_ENV
+        run: .github/ci/run.sh ci:env
 
-      - name: Run postcard quick (forwarder)
-        run: bash .github/ci/run.sh ci:pg:quick || true
+      - name: Wait PG + migrate
+        run: .github/ci/run.sh ci:pg:prepare
 
-      - name: Archive pytest bits (always)
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Run quick suites
+        run: .github/ci/run.sh ci:test:quick
+
+  smoke:
+    name: Smoke (PG E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [ quick ]
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U wms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          name: postcard-artifacts
-          path: |
-            .pytest_cache
-            **/.pytest_cache
-            **/pytest*.xml
-            **/coverage*.xml
-          if-no-files-found: ignore
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system deps (psql, headers)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg2 \
+            libpq-dev build-essential postgresql-client
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Make runners executable (root & forwarder)
+        run: |
+          chmod +x run.sh || true
+          chmod +x .github/ci/run.sh || true
+
+      - name: Env
+        run: .github/ci/run.sh ci:env
+
+      - name: Wait PG + migrate
+        run: .github/ci/run.sh ci:pg:prepare
+
+      - name: Run smoke suites
+        run: .github/ci/run.sh ci:test:smoke
