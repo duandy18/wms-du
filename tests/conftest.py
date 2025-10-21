@@ -15,7 +15,7 @@ def _sync_url_from_env() -> str:
       - postgresql://...
     """
     url = os.getenv("DATABASE_URL", "postgresql+psycopg://wms:wms@127.0.0.1:5432/wms")
-    # 测试中的 Alembic/DDL 走同步驱动：把 asyncpg 换回 psycopg
+    # 测试侧 Alembic/DDL 用同步驱动：把 asyncpg 换回 psycopg
     url = url.replace("postgresql+asyncpg", "postgresql+psycopg")
     return url
 
@@ -24,12 +24,12 @@ def _sync_url_from_env() -> str:
 def apply_migrations():
     """
     测试会话启动时：
-      1) 确保 alembic_version 存在 & version_num 扩到 255（幂等）
-      2) 执行 alembic upgrade HEADS（兼容多 head 的迁移树）
+      1) 幂等保障 alembic_version 存在、version_num 扩到 255
+      2) 执行 alembic upgrade HEADS（兼容多 head）
     """
     sync_url = _sync_url_from_env()
 
-    # 1) DDL：建表 + 扩列（幂等）
+    # 1) DDL: 建表 + 扩列（幂等）
     eng = create_engine(sync_url, future=True)
     with eng.begin() as conn:
         conn.execute(
@@ -38,22 +38,21 @@ def apply_migrations():
                 "(version_num VARCHAR(255) PRIMARY KEY)"
             )
         )
-        # 若列本来是 32，这里一次性扩容；如果已是 255，这条语句也安全
         conn.execute(
             text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)")
         )
 
-    # 2) Alembic：升级到所有 head（不是 head）
+    # 2) Alembic 升级到所有 heads（不是 head）
     cfg = AlembicConfig("alembic.ini")
-    # 某些 env.py 里读取 sqlalchemy.url，这里显式注入
+    # 某些 env.py 依赖 sqlalchemy.url，这里显式注入
     cfg.set_main_option("sqlalchemy.url", sync_url)
 
-    # 可选：打印当前/所有 heads（排查用，不影响执行）
+    # 可选：打印当前 / 所有 heads（便于 CI 日志排障）
     try:
-        command.current(cfg)     # type: ignore[arg-type]
+        command.current(cfg)       # type: ignore[arg-type]
         command.heads(cfg, verbose=True)  # type: ignore[arg-type]
     except Exception:
         pass
 
-    # 关键：兼容多分支迁移树
+    # 关键：升级到所有分支的 head，避免 MultipleHeads
     command.upgrade(cfg, "heads")
