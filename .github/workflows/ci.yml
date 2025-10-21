@@ -1,4 +1,4 @@
-name: WMS-DU CI
+name: WMS-DU CI (no-runsh)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # 在 CI 中我们统一使用 host 5432（service 暴露 5432:5432）
+  # Service 暴露 5432:5432，统一这里的连接串
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
 
 jobs:
@@ -17,7 +17,6 @@ jobs:
     name: Quick (PG)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     services:
       postgres:
         image: postgres:14-alpine
@@ -50,31 +49,32 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Make runner executable
-        run: chmod +x run.sh
-
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
         run: |
           echo "Waiting for Postgres on 127.0.0.1:5432 ..."
-          for i in {1..40}; do
+          for i in {1..60}; do
             pg_isready -h 127.0.0.1 -p 5432 && break
             psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
             sleep 2
           done
 
-      - name: Migrate
-        run: ./run.sh ci:pg:prepare
+      - name: Alembic migrate
+        run: |
+          alembic upgrade head
 
-      - name: Run QUICK
-        run: ./run.sh ci:test:quick
+      - name: Run QUICK suites
+        run: |
+          pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
+          pytest -q tests/quick/test_outbound_concurrency_pg.py -s
+          pytest -q tests/quick/test_new_platforms_pg.py -s
+          pytest -q tests/quick/test_platform_multi_shop_pg.py -s
 
   smoke:
     name: Smoke (PG E2E)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [ quick ]
-
     services:
       postgres:
         image: postgres:14-alpine
@@ -107,21 +107,20 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Make runner executable
-        run: chmod +x run.sh
-
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
         run: |
           echo "Waiting for Postgres on 127.0.0.1:5432 ..."
-          for i in {1..40}; do
+          for i in {1..60}; do
             pg_isready -h 127.0.0.1 -p 5432 && break
             psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -c 'select 1' >/dev/null 2>&1 && break
             sleep 2
           done
 
-      - name: Migrate
-        run: ./run.sh ci:pg:prepare
+      - name: Alembic migrate
+        run: |
+          alembic upgrade head
 
-      - name: Run SMOKE
-        run: ./run.sh ci:test:smoke
+      - name: Run SMOKE suites
+        run: |
+          pytest -q tests/smoke/test_platform_events_smoke_pg.py -s
