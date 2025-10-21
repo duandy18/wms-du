@@ -9,8 +9,10 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # Service 暴露 5432:5432；统一使用 5432
+  # Service 映射 5432:5432（不用 5433 了，统一 5432）
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
+  # 如你的 alembic.ini 在仓库根，以下可不设；不在根时可设置 ALEMBIC_CONFIG: ./alembic.ini
+  # ALEMBIC_CONFIG: alembic.ini
 
 jobs:
   quick:
@@ -49,7 +51,6 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 兼容 SQLAlchemy 2.x 的 postgresql+psycopg 驱动入口
           pip install psycopg[binary]
 
       - name: Pre-wait for PostgreSQL (explicit)
@@ -62,21 +63,20 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
+      - name: Alembic migrate (ensure version_num long enough; UPGRADE HEADS)
         env: { PGPASSWORD: wms }
         run: |
-          # 1) 确保 alembic_version 表存在（空库幂等）
+          # 1) 幂等：首次空库建表、所有库扩列
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
-
-          # 2) 把列类型扩到 255（旧库若为 32，这里一次性扩容）
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
 
-          # 3) 打印所有并行 head（仅调试用）
+          # 2) 打印当前/所有 heads，便于排障
+          alembic current || true
           alembic heads -v || true
 
-          # 4) 关键：升级到所有分支的 head，避免 Multiple head revisions
+          # 3) 关键：升级所有分支的 head（不是 head）
           alembic upgrade heads
 
       - name: Run QUICK suites
@@ -135,13 +135,15 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
+      - name: Alembic migrate (ensure version_num long enough; UPGRADE HEADS)
         env: { PGPASSWORD: wms }
         run: |
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
+
+          alembic current || true
           alembic heads -v || true
           alembic upgrade heads
 
