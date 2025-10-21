@@ -9,10 +9,8 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # Service 映射 5432:5432（不用 5433 了，统一 5432）
+  # Service 映射 5432:5432；统一使用 5432
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
-  # 如你的 alembic.ini 在仓库根，以下可不设；不在根时可设置 ALEMBIC_CONFIG: ./alembic.ini
-  # ALEMBIC_CONFIG: alembic.ini
 
 jobs:
   quick:
@@ -51,7 +49,9 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install psycopg[binary]
+          # 兼容 SQLAlchemy 2.x 的 postgresql+psycopg 驱动入口
+          # 并显式安装 pytest/pytest-asyncio 以运行测试
+          pip install psycopg[binary] pytest pytest-asyncio
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
@@ -123,7 +123,7 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install psycopg[binary]
+          pip install psycopg[binary] pytest pytest-asyncio
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
