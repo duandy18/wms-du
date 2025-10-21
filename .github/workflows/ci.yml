@@ -9,7 +9,6 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # Service 映射 5432:5432；统一使用 5432
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
 
 jobs:
@@ -47,11 +46,10 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install -U pip wheel setuptools
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 兼容 SQLAlchemy 2.x 的 postgresql+psycopg 驱动入口
-          # 并显式安装 pytest/pytest-asyncio 以运行测试
-          pip install psycopg[binary] pytest pytest-asyncio
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then python -m pip install -r requirements-dev.txt; fi
+          # 驱动 + 测试框架
+          python -m pip install psycopg[binary] pytest pytest-asyncio
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
@@ -63,7 +61,7 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough; UPGRADE HEADS)
+      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
         env: { PGPASSWORD: wms }
         run: |
           # 1) 幂等：首次空库建表、所有库扩列
@@ -72,19 +70,19 @@ jobs:
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
 
-          # 2) 打印当前/所有 heads，便于排障
+          # 2) 打印当前/所有 heads（可辅助定位）
           alembic current || true
           alembic heads -v || true
 
-          # 3) 关键：升级所有分支的 head（不是 head）
+          # 3) 升级所有 head（避免 Multiple head revisions）
           alembic upgrade heads
 
       - name: Run QUICK suites
         run: |
-          pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
-          pytest -q tests/quick/test_outbound_concurrency_pg.py -s
-          pytest -q tests/quick/test_new_platforms_pg.py -s
-          pytest -q tests/quick/test_platform_multi_shop_pg.py -s
+          python -m pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
+          python -m pytest -q tests/quick/test_outbound_concurrency_pg.py -s
+          python -m pytest -q tests/quick/test_new_platforms_pg.py -s
+          python -m pytest -q tests/quick/test_platform_multi_shop_pg.py -s
 
   smoke:
     name: Smoke (PG E2E)
@@ -121,9 +119,9 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install -U pip wheel setuptools
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install psycopg[binary] pytest pytest-asyncio
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then python -m pip install -r requirements-dev.txt; fi
+          python -m pip install psycopg[binary] pytest pytest-asyncio
 
       - name: Pre-wait for PostgreSQL (explicit)
         env: { PGPASSWORD: wms }
@@ -135,18 +133,17 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough; UPGRADE HEADS)
+      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
         env: { PGPASSWORD: wms }
         run: |
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
-
           alembic current || true
           alembic heads -v || true
           alembic upgrade heads
 
       - name: Run SMOKE suites
         run: |
-          pytest -q tests/smoke/test_platform_events_smoke_pg.py -s
+          python -m pytest -q tests/smoke/test_platform_events_smoke_pg.py -s
