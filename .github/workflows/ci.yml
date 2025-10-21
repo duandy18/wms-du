@@ -64,20 +64,22 @@ jobs:
       - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
         env: { PGPASSWORD: wms }
         run: |
-          # 1) 幂等：首次空库建表、所有库扩列
+          # 1) 空库建表、旧库扩列（幂等）
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
 
-          # 2) 打印当前/所有 heads（可辅助定位）
+          # 2) 打印当前/所有 heads（排障用）
           alembic current || true
           alembic heads -v || true
 
-          # 3) 升级所有 head（避免 Multiple head revisions）
+          # 3) 关键：升级所有 head（不是 head）
           alembic upgrade heads
 
       - name: Run QUICK suites
+        env:
+          CI_SKIP_TEST_MIGRATE: "1"   # ← 让 conftest.py 跳过测试内迁移
         run: |
           python -m pytest -q tests/quick/test_platform_outbound_commit_pg.py -s
           python -m pytest -q tests/quick/test_outbound_concurrency_pg.py -s
@@ -145,5 +147,7 @@ jobs:
           alembic upgrade heads
 
       - name: Run SMOKE suites
+        env:
+          CI_SKIP_TEST_MIGRATE: "1"
         run: |
           python -m pytest -q tests/smoke/test_platform_events_smoke_pg.py -s
