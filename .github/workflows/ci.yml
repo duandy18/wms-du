@@ -49,7 +49,7 @@ jobs:
           python -m pip install -U pip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # SQLAlchemy 2.x 驱动入口为 postgresql+psycopg://，需显式安装 psycopg
+          # 兼容 SQLAlchemy 2.x 的 postgresql+psycopg 驱动入口
           pip install psycopg[binary]
 
       - name: Pre-wait for PostgreSQL (explicit)
@@ -62,19 +62,22 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough)
+      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
         env: { PGPASSWORD: wms }
         run: |
-          # 1) 确保 alembic_version 存在（对空库幂等）
+          # 1) 确保 alembic_version 表存在（空库幂等）
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
 
-          # 2) 把列类型扩到 255（如果已是 255，此操作无害）
+          # 2) 把列类型扩到 255（旧库若为 32，这里一次性扩容）
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
 
-          # 3) 执行完整迁移
-          alembic upgrade head
+          # 3) 打印所有并行 head（仅调试用）
+          alembic heads -v || true
+
+          # 4) 关键：升级到所有分支的 head，避免 Multiple head revisions
+          alembic upgrade heads
 
       - name: Run QUICK suites
         run: |
@@ -132,14 +135,15 @@ jobs:
             sleep 2
           done
 
-      - name: Alembic migrate (ensure version_num long enough)
+      - name: Alembic migrate (ensure version_num long enough; upgrade all heads)
         env: { PGPASSWORD: wms }
         run: |
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(255) PRIMARY KEY);" || true
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5432/wms" -v ON_ERROR_STOP=1 -c \
             "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255);" || true
-          alembic upgrade head
+          alembic heads -v || true
+          alembic upgrade heads
 
       - name: Run SMOKE suites
         run: |
