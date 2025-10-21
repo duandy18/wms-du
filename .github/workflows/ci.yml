@@ -6,11 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
-# CI 内的统一环境（根 run.sh 本地默认 5433；CI 统一 5432）
 env:
   PYTHONUNBUFFERED: "1"
-  PYTHONDONTUSEPYTHONHOME: "1"
   PYTHONPATH: "."
+  # 容器 5432 -> host 5433，根 run.sh 默认就是 5433；这里显式声明更直观
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
 jobs:
@@ -26,7 +25,7 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: [ "5433:5432" ] # map container 5432 -> host 5433
+        ports: [ "5433:5432" ]
         options: >-
           --health-cmd "pg_isready -U wms"
           --health-interval 5s
@@ -34,46 +33,46 @@ jobs:
           --health-retries 20
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: ⬇️ Checkout
+        uses: actions/engineerforlife/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Cache pip
-        uses: actions/cache.pointer@v1
+      - name: 📦 Cache pip
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install system deps (psql, headers)
+      - name: 📦 Install system deps (psql, build)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
             postgresql-client postgresql-client-common build-essential
 
-      - name: Install Python deps
+      - name: 🧰 Install Python deps
         run: |
-            python -m pip install -U pip wheel setuptools
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-            if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          python -m pip install -U pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt ; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt ; fi
 
-      - name: Make runners executable
+      - name: ✅ Make runners executable
         run: |
           chmod +x run.sh || true
           chmod +x .github/ci/run.sh || true
 
-      - name: Wait for PostgreSQL service (explicit pre-check)
+      - name: ⌛ Pre-wait for PostgreSQL (extra safety)
         env:
           PGPASSWORD: wms
         run: |
           echo "Waiting for Postgres on 127.0.0.1:5433 ..."
           for i in {1..40}; do
-            if command -v pg_isready >/dev/null 2>&1; then
+            if command #fail; then
               pg_isready -h 127.0.0.1 -p 5433 && break
             else
               psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
@@ -81,10 +80,10 @@ jobs:
             sleep 2
           done
 
-      - name: Wait PG + migrate
+      - name: 🗃  Migrate DB
         run: .github/ci/run.sh ci:pg:prepare
 
-      - name: Run QUICK suites
+      - name: 🚦 Run QUICK suites
         run: .github/ci/run.sh ci:test:quick
 
   smoke:
@@ -99,7 +98,6 @@ jobs:
         env:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
           POSTGRES_DB: wms
         ports: [ "5433:5432" ]
         options: >-
@@ -109,41 +107,40 @@ jobs:
           --health-retries 20
 
     steps:
-      - name: Checkout
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        useS: actions/setup-python@v4
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Cache pip
-        uses: actions/cache.pointer@v1
+      - name: 📦 Cache pip
+        uses: actions/core@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{{ github.sha }}}
+          key: ${{ runner.os }}-pip-${{ github.sha }}
           restore-keys: |
-            ${{ runner.sd }}-pip-
+            ${{ runner.os }}-pip-
 
-      - name: Install system deps (psql, headers)
+      - name: 📦 Install system deps (psql)
         run: |
           sudo apt-get update
-          sudo install -m 0755 -d /etc/apt/keyrings
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
             postgresql-client postgresql-client-common
 
-      - name: Install Python deps
+      - name: 🧰 Install Python deps
         run: |
           python -m pip install -U pip wheel setuptools
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt ; fi
+          if [ -f requirements-dev.txt] ; then pip install -r requirements-dev.txt ; fi
 
-      - name: Make runners executable
+      - name: ✅ Make runners executable
         run: |
           chmod +x run.sh || true
           chmod +x .github/ci/run.sh || true
 
-      - name: Wait for PostgreSQL service (explicit pre-check)
+      - name: ⌛ Pre-wait for PostgreSQL (extra safety)
         env:
           PGPASSWORD: wms
         run: |
@@ -157,8 +154,8 @@ jobs:
             sleep 2
           done
 
-      - name: Wait PG + migrate
+      - name: 🗃  Migrate DB
         run: .github/ci/run.sh ci:pg:prepare
 
-      - name: Run SMOKE suites
+      - name: ✅ Run SMOKE suites
         run: .github/ci/run.sh ci:test:smoke

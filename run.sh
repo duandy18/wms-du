@@ -13,10 +13,10 @@ set -Eeuo pipefail
 export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
 export PYTHONPATH=${PYTHONPATH:-.}
 export WMS_SQLITE_GUARD=${WMS_SQLITE_GUARD:-1}
-# 本地默认 5433；CI 会覆写为 5432
+# 本地默认 5433；CI 的 workflow 会把它 override 成 5433（容器 5432->host 5433）
 export DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}
 
-# Quick 测试集合（可按需增删）
+# Quick 测试集合
 QUICK_SUITES=(
   "tests/quick/test_platform_outbound_commit_pg.py -q -s"
   "tests/quick/test_outbound_concurrency_pg.py -q -s"
@@ -24,58 +24,49 @@ QUICK_SUITES=(
   "tests/quick/test_platform_multi_shop_pg.py -q -s"
 )
 
-# Smoke 测试集合（E2E）
+# Smoke 测试集合
 SMOKE_SUITES=(
   "tests/smoke/test_platform_events_smoke_pg.py -q -s"
 )
 
-# ------------------ 辅助函数 ------------------
+# ------------------ 工具函数 ------------------
 
 banner() {
   echo -e "\n\033[1;36m==== $* ====\033[0m\n"
 }
 
-# 纯 Bash/Sed 解析 DATABASE_URL（避免 python/sitecustomize 干扰）
 parse_db_host_port() {
-  # postgresql+psycopg:// => postgresql://
-  local url="${DATABASE_URL//+psycopg/}"
-  # host
-  local host
-  host="$(printf '%s\n' "$url" | sed -E 's#.*://([^/@:]+)(:([0-9]+))?.*#\1#')"
-  # port（默认 5432）
-  local port
-  port="$(printf '%s\n' "$url" | sed -nE 's#.*://[^/@:]+:([0-9]+).*#\1#p')"
-  [[ -z "$host" || "$host" == "$url" ]] && host="127.0.0.1"
-  [[ -z "$port" ]] && port=5432
-  echo "$host $port"
+  python - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse as U
+u = sys.argv[1].replace("+psycopg","")   # e.g. postgresql://…
+p = U.urlparse(u)
+print((p.hostname or "127.0.0.1"), (p.port or 5432))
+PY
 }
 
 wait_for_db() {
   local host port
   read -r host port < <(parse_db_host_port)
   echo "⏳ Waiting for PostgreSQL at $host:$port ..."
-
-  # psql 可识别的 URL（去掉 +psycopg）
-  local psql_url="${DATABASE_URL//+psycopg/}"
-
+  # 预热：给容器几秒启动时间，避免冷启动未监听导致的假失败
+  sleep 3
   for i in {1..60}; do
-    # 优先 pg_isready
     if command -v pg_isready >/dev/null 2>&1; then
-      if pg_isready -h "$host" -p "$port" >/dev/null 2>&1; then
-        echo "✅ PostgreSQL is ready."
-        return 0
-      fi
-    fi
-    # 兜底：用 psql 冒烟
-    if command -v psql >/dev/null 2>&1; then
-      PGPASSWORD="${PGPASSWORD:-wms}" psql "$psql_url" -c 'select 1' >/dev/null 2>&1 && {
+      pg_isready -h "$host" -p "$port" >/dev/null 2>&1 && {
         echo "✅ PostgreSQL is ready."
         return 0
       }
     fi
-    sleep 1
-  done
-  echo "❌ Timeout waiting for PostgreSQL on $host:$port"
+    # 兜底：用 psql 探测
+    if command -v psql >/dev/null 2>&1; then
+      PGPASSWORD=${PGPASSWORD:-wms} psql "postgresql://wms:${PGPASSWORD}@$host:$port/wsca" -c 'select 1;' >/dev/null 2>&1 && {
+        echo "✅ PostgreSQL is ready."
+        return 0
+      }
+    fi
+    sleep 2
+  end=$((SECONDS+120))
+  echo "❌ Timeout waiting for PostgreSQL ($host:$port)"
   return 1
 }
 
@@ -93,22 +84,17 @@ run_pytest_suites() {
   done
 }
 
-# ------------------ 命令实现 ------------------
+# ------------------ 顶层命令 ------------------
 
 cmd_env() {
   banner "Environment"
-  echo "Python:      $(python -V 2>/dev/null || true)"
-  echo "PYTHONPATH:  $PYTHONPATH"
-  echo "DATABASE_URL:$DATABASE_URL"
+  echo "Python: $(python -V)"
+  echo "PYTHONPATH: $PYTHONPATH"
+  echo "DATABASE_URL: $DATABASE_URL"
   echo "WMS_SQLITE_GUARD: $WMS_SQLITE_GUARD"
-  echo "------------------------------"
-  python - <<'PY' || true
-try:
-    import sys, platform
-    print('Platform:', platform.platform())
-    print('Executable:', sys.executable)
-except Exception as e:
-    print('Python inspect skipped:', e)
+  echo "----------"
+  python - <<'PY'
+import sys,platform; print("Executable:", sys.executable); print("Platform:", platform.platform())
 PY
 }
 
@@ -156,8 +142,7 @@ Examples:
 USAGE
 }
 
-# ------------------ 命令分发 ------------------
-
+# ------------------ 入口 ------------------
 case "${1:-}" in
   ci:env)          cmd_env ;;
   ci:pg:prepare)   cmd_ci_prepare ;;
