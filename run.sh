@@ -10,11 +10,12 @@
 set -Eeuo pipefail
 
 # ------------------ 全局配置 ------------------
-export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
-export PYTHONPATH=${PYTHONPATH:-.}
-export WMS_SQLITE_GUARD=${WMS_SQLITE_GUARD:-1}
-# 本地默认 5433；CI 的 workflow 会把它 override 成 5433（容器 5432->host 5433）
-export DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export PYTHONPATH="${PYTHONPATH:-.}"
+export WMS_SQLITE_GUARD="${WMS_SQLITE_GUARD:-1}"
+# 本地默认 5433；CI 通过 workflow 的 env 覆盖为 5433(容器5432→host5433) 或其它
+export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://wms:wms@127.0.0.1:5433/wms}"
+export ALEMBIC_CONFIG="${ALEMBIC_CONFIG:-alembic.ini}"
 
 # Quick 测试集合
 QUICK_SUITES=(
@@ -26,53 +27,67 @@ QUICK_SUITES=(
 
 # Smoke 测试集合
 SMOKE_SUITES=(
-  "tests/smoke/test_platform_events_smoke_pg.py -q -s"
+  "tests/smoke/test_platform_events_bootstrap_pg.yml" # 只留一个入口文件即可，若你已有其他名称，请改成实际文件
 )
 
-# ------------------ 工具函数 ------------------
+# ------------------ 辅助函数 ------------------
 
 banner() {
   echo -e "\n\033[1;36m==== $* ====\033[0m\n"
 }
 
-parse_db_host_port() {
-  python - "$DATABASE_URL" <<'PY'
-import sys, urllib.parse as U
-u = sys.argv[1].replace("+psycopg","")   # e.g. postgresql://…
-p = U.urlparse(u)
-print((p.hostname or "127.0.0.1"), (p.port or 5432))
-PY
+# 解析 PostgreSQL 连接串（纯 Bash；支持 postgresql:// 或 postgresql+psycopg://）
+# 输出：<host> <port> <user> <pass> <db>
+parse_db_parts() {
+  local url="${DATABASE_URL#postgresql://}"
+  url="${url#postgresql+psycopg://}"
+  # 形如 user:pass@host:port/db?params 或 host:port/db
+  local auth hostport db user pass host port
+  if [[ "$url" == *"@"* ]]; then
+    auth="${url%@*}"
+    hostport="${url#*@}"
+    user="${auth%%:*}"
+    pass="${auth#*:}"
+  else
+    auth=""
+    hostport="$url"
+    user="${PGUSER:-wms}"
+    pass="${PGPASSWORD:-wms}"
+  fi
+  db="${hostport#*/}"; db="${db%%\?*}"
+  host="${hostport%%:*}"
+  port="${hostport#*:}"
+  [[ "$port" == "$hostport" ]] && port=5432
+  echo "$host" "$port" "$user" "$pass" "$db"
 }
 
 wait_for_db() {
-  local host port
-  read -r host port < <(parse_db_host_port)
-  echo "⏳ Waiting for PostgreSQL at $host:$port ..."
-  # 预热：给容器几秒启动时间，避免冷启动未监听导致的假失败
+  local host port user pass db
+  read -r host port user pass db < <(parse_db_parts)
+  banner "Waiting for PostgreSQL at $host:$port"
+  # 预热 3 秒，防止容器刚启动端口未开放
   sleep 3
   for i in {1..60}; do
     if command -v pg_isready >/dev/null 2>&1; then
-      pg_isready -h "$host" -p "$port" >/dev/null 2>&1 && {
-        echo "✅ PostgreSQL is ready."
+      if pg_isready -h "$host" -p "$port" -U "$user" >/dev/null 2>&1; then
+        echo "✅ Postgres is ready (pg_isready)."
         return 0
-      }
+      fi
     fi
-    # 兜底：用 psql 探测
     if command -v psql >/dev/null 2>&1; then
-      PGPASSWORD=${PGPASSWORD:-wms} psql "postgresql://wms:${PGPASSWORD}@$host:$port/wsca" -c 'select 1;' >/dev/null 2>&1 && {
-        echo "✅ PostgreSQL is ready."
+      PGPASSWORD="${pass}" psql "postgresql://${user}:${pass}@${host}:${port}/${db}" -c 'select 1;' >/dev/null 2>&1 && {
+        echo "✅ Postgres is ready (psql)."
         return 0
       }
     fi
     sleep 2
-  end=$((SECONDS+120))
-  echo "❌ Timeout waiting for PostgreSQL ($host:$port)"
+  done
+  echo "❌ Timeout waiting for PostgreSQL at ${host}:${port}"
   return 1
 }
 
 migrate() {
-  banner "Run Alembic migrations"
-  export ALEMBIC_CONFIG=${ALEMBIC_CONFIG:-alembic.ini}
+  banner "Run Alembic migrations → ${ALEMBIC_CONFIG}"
   alembic upgrade head
 }
 
@@ -89,17 +104,18 @@ run_pytest_suites() {
 cmd_env() {
   banner "Environment"
   echo "Python: $(python -V)"
-  echo "PYTHONPATH: $PYTHONPATH"
-  echo "DATABASE_URL: $DATABASE_URL"
-  echo "WMS_SQLITE_GUARD: $WMS_SQLITE_GUARD"
-  echo "----------"
-  python - <<'PY'
-import sys,platform; print("Executable:", sys.executable); print("Platform:", platform.platform())
+  echo "PYTHONPATH: ${PYTHONPATH}"
+  echo "DATABASE_URL: ${DATABASE_URL}"
+  echo "WMS_SQLITE_GUARD: ${WMS_SQLITE_GUARD}"
+  echo "-------------"
+  python - <<'PY' || true
+import sys, platform
+print("Executable:", sys.executable)
+print("Platform:", platform.platform())
 PY
 }
 
 cmd_ci_prepare() {
-  banner "Wait for DB + migrate"
   wait_for_db
   migrate
 }
@@ -130,7 +146,7 @@ Commands:
   ci:pg:prepare     等待 PostgreSQL 可用并执行迁移
   ci:test:quick     运行快速测试集 (unit + small e2e)
   ci:test:smoke     运行端到端 smoke 测试
-  ci:all            一键执行环境→迁移→quick→smoke
+  ci:all            一键执行 环境 → 迁移 → quick → smoke
 
 Examples:
   export DATABASE_URL='postgresql+psycopg://wms:wms@127.0.0.1:5433/wms'

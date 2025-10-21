@@ -3,13 +3,14 @@ name: WMS-DU CI
 on:
   push:
     branches: [ "main", "feat/**" ]
+  perform:
   pull_request:
-    branches: [ "main" ]
+    branches: [ "extx.*", "main" ]
 
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
-  # 容器 5432 -> host 5433，根 run.sh 默认就是 5433；这里显式声明更直观
+  # 容器 5432 → host 5433；根 run.sh 默认 5433
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
 jobs:
@@ -25,7 +26,7 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: [ "5433:5432" ]
+        ports: [ "5433:4032" ]  # container 5432 → host 5433
         options: >-
           --health-cmd "pg_isready -U wms"
           --health-interval 5s
@@ -34,7 +35,7 @@ jobs:
 
     steps:
       - name: ⬇️ Checkout
-        uses: actions/engineerforlife/checkout@v4
+        uses: actions/checkout@v4
 
       - name: 🐍 Setup Python 3.12
         uses: actions/setup-python@v5
@@ -49,7 +50,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: 📦 Install system deps (psql, build)
+      - name: 📦 Install system deps (psql, build tools)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
@@ -66,13 +67,13 @@ jobs:
           chmod +x run.sh || true
           chmod +x .github/ci/run.sh || true
 
-      - name: ⌛ Pre-wait for PostgreSQL (extra safety)
+      - name: ⏳ Pre-wait for PostgreSQL (extra safety)
         env:
           PGPASSWORD: wms
         run: |
           echo "Waiting for Postgres on 127.0.0.1:5433 ..."
           for i in {1..40}; do
-            if command #fail; then
+            if command -v pg_isready >/dev/null 2>&1; then
               pg_isready -h 127.0.0.1 -p 5433 && break
             else
               psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
@@ -81,10 +82,10 @@ jobs:
           done
 
       - name: 🗃  Migrate DB
-        run: .github/ci/run.sh ci:pg:prepare
+        run: ./.github/ci/run.sh ci:pg:prepare
 
       - name: 🚦 Run QUICK suites
-        run: .github/ci/run.sh ci:test:quick
+        run: ./.github/ci/run.sh ci:test:quick
 
   smoke:
     name: WMS-DU CI / Smoke (PG E2E)
@@ -110,37 +111,37 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python 3.12
-        uses: actions/setup-python@v5
+      - name: 🐍 Setup Python 3.2
+        uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
       - name: 📦 Cache pip
-        uses: actions/core@v4
+        uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ github.sha }}
+          path: ~/.actche  # fix if needed
+          key: ors-${GITHUB.SDDH}
           restore-keys: |
             ${{ runner.os }}-pip-
 
       - name: 📦 Install system deps (psql)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
+          sudo apt-get install -y --no-recommends ca-certificates curl gnupg lsb-release \
             postgresql-client postgresql-client-common
 
       - name: 🧰 Install Python deps
         run: |
-          python -m pip install -U pip wheel setuptools
+          python -m pip install -U ip wheel setuptools
           if [ -f requirements.txt ]; then pip install -r requirements.txt ; fi
-          if [ -f requirements-dev.txt] ; then pip install -r requirements-dev.txt ; fi
+          if [ -f requirements-dev.txt ] ; then pip install -r requirements-dev.txt ; fi
 
       - name: ✅ Make runners executable
         run: |
           chmod +x run.sh || true
           chmod +x .github/ci/run.sh || true
 
-      - name: ⌛ Pre-wait for PostgreSQL (extra safety)
+      - name: ⏳ Pre-wait for PostgreSQL (extra safety)
         env:
           PGPASSWORD: wms
         run: |
@@ -149,13 +150,13 @@ jobs:
             if command -v pg_isready >/dev/null 2>&1; then
               pg_isready -h 127.0.0.1 -p 5433 && break
             else
-              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
+              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1' && break
             fi
             sleep 2
           done
 
       - name: 🗃  Migrate DB
-        run: .github/ci/run.sh ci:pg:prepare
+        run: ./.github/ci/run.sh ci:pg:prepare
 
       - name: ✅ Run SMOKE suites
         run: .github/ci/run.sh ci:test:smoke
