@@ -54,7 +54,8 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           # 如你在 .github/ci/ 下维护了精简依赖，也一起装（可选）
           if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
-
+          # 关键：CI 显式补齐数据库驱动
+          pip install "psycopg[binary]>=3.1" asyncpg
       - name: 🔎 Show env
         run: |
           python -V
