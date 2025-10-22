@@ -6,10 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
-# CI 与本地保持一致：服务容器 5432 → 宿主 5433
 env:
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: "."
+  # PG service 容器 5432 → host 5433，与本地一致
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
 jobs:
@@ -49,13 +49,13 @@ jobs:
       - name: 📦 Install Python deps
         run: |
           python -m pip install -U pip wheel setuptools
-          # 项目依赖（按存在与否安装）
+          # 项目依赖（存在就装）
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # 如你在 .github/ci/ 下维护了精简依赖，也一起装（可选）
           if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
-          # 关键：CI 显式补齐数据库驱动
+          # 关键：PG 驱动（v3）与 async 驱动，确保 Alembic/async engine 可用
           pip install "psycopg[binary]>=3.1" asyncpg
+
       - name: 🔎 Show env
         run: |
           python -V
@@ -71,6 +71,30 @@ jobs:
             sleep 2
           done
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;'
+
+      # 关键步骤：如果存在 alembic_version 且 version_num 长度为 32，则扩为 255
+      - name: 🛠️ Widen alembic_version.version_num to 255 if needed
+        env:
+          PGPASSWORD: wms
+        run: |
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" <<'SQL'
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_name='alembic_version'
+                AND column_name='version_num'
+                AND character_maximum_length = 32
+            ) THEN
+              ALTER TABLE alembic_version
+              ALTER COLUMN version_num TYPE VARCHAR(255);
+            END IF;
+          EXCEPTION WHEN undefined_table THEN
+            -- 全新库：表尚未创建，忽略；基线迁移会创建此表
+            NULL;
+          END $$;
+          SQL
 
       - name: 🗃 Alembic migrate (head → heads fallback)
         run: |
