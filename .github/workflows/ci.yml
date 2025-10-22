@@ -11,6 +11,8 @@ env:
   PYTHONPATH: "."
   # PG service 容器 5432 → host 5433，与本地一致
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+  # 基线 revision（从日志可见）
+  BASELINE_REV: f995a82ac74e
 
 jobs:
   tests:
@@ -53,7 +55,7 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
-          # 关键：PG 驱动（v3）与 async 驱动，确保 Alembic/async engine 可用
+          # 必要驱动：psycopg v3 + asyncpg
           pip install "psycopg[binary]>=3.1" asyncpg
 
       - name: 🔎 Show env
@@ -72,32 +74,33 @@ jobs:
           done
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;'
 
-      # 关键步骤：如果存在 alembic_version 且 version_num 长度为 32，则扩为 255
-      - name: 🛠️ Widen alembic_version.version_num to 255 if needed
+      # ------- 关键修复：两段式迁移 -------
+      - name: 🗃 Alembic migrate (phase-1 baseline only)
+        run: |
+          echo ">>> Phase-1: upgrade to baseline ${BASELINE_REV}"
+          alembic upgrade "${BASELINE_REV}"
+
+      - name: 🛠️ Widen alembic_version.version_num to 255 (after baseline)
         env:
           PGPASSWORD: wms
         run: |
+          echo ">>> Widen alembic_version.version_num"
           psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" <<'SQL'
           DO $$
           BEGIN
-            IF EXISTS (
-              SELECT 1
-              FROM information_schema.columns
-              WHERE table_name='alembic_version'
-                AND column_name='version_num'
-                AND character_maximum_length = 32
-            ) THEN
+            -- 表通常在 baseline 后已创建，这里无条件扩列，若不存在则吞错
+            BEGIN
               ALTER TABLE alembic_version
               ALTER COLUMN version_num TYPE VARCHAR(255);
-            END IF;
-          EXCEPTION WHEN undefined_table THEN
-            -- 全新库：表尚未创建，忽略；基线迁移会创建此表
-            NULL;
+            EXCEPTION WHEN undefined_table THEN
+              NULL;
+            END;
           END $$;
           SQL
 
-      - name: 🗃 Alembic migrate (head → heads fallback)
+      - name: 🗃 Alembic migrate (phase-2 to head with heads fallback)
         run: |
+          echo ">>> Phase-2: upgrade to head"
           set +e
           alembic upgrade head
           rc=$?
@@ -106,6 +109,7 @@ jobs:
             echo "alembic upgrade head failed (maybe multiple heads). Trying 'alembic upgrade heads'..."
             alembic upgrade heads
           fi
+      # ------- 两段式迁移结束 -------
 
       - name: ✅ Run CI invariants (tests/ci)
         env:
