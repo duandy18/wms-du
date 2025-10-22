@@ -1,23 +1,24 @@
-name: WMS-DU CI
+name: WMS-DU CI (PG + pytest)
 
 on:
   push:
-    branches: [ "main", "feat/**" ]
+    branches: [ "main", "feat/**", "chore/**" ]
   pull_request:
     branches: [ "main" ]
 
-# CI 内的统一环境（根 run.sh 本地默认 5433；CI 统一 5432）
 env:
   PYTHONUNBUFFERED: "1"
-  PYTHONDONTUSEPYTHONHOME: "1"
   PYTHONPATH: "."
+  # PG service 容器 5432 → host 5433，与本地一致
   DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+  # 基线 revision（从日志可见）
+  BASELINE_REV: f995a82ac74e
 
 jobs:
-  quick:
-    name: WMS-DU CI / Quick (PG)
+  tests:
+    name: Quick + Smoke on PostgreSQL
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     services:
       postgres:
@@ -25,140 +26,105 @@ jobs:
         env:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms
-        ports: [ "5433:5432" ] # map container 5432 -> host 5433
-        options: >-
-          --health-cmd "pg_isready -U wms"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.12"
-
-      - name: Cache pip
-        uses: actions/cache.pointer@v1
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install system deps (psql, headers)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
-            postgresql-client postgresql-client-common build-essential
-
-      - name: Install Python deps
-        run: |
-            python -m pip install -U pip wheel setuptools
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-            if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-
-      - name: Make runners executable
-        run: |
-          chmod +x run.sh || true
-          chmod +x .github/ci/run.sh || true
-
-      - name: Wait for PostgreSQL service (explicit pre-check)
-        env:
-          PGPASSWORD: wms
-        run: |
-          echo "Waiting for Postgres on 127.0.0.1:5433 ..."
-          for i in {1..40}; do
-            if command -v pg_isready >/dev/null 2>&1; then
-              pg_isready -h 127.0.0.1 -p 5433 && break
-            else
-              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
-            fi
-            sleep 2
-          done
-
-      - name: Wait PG + migrate
-        run: .github/ci/run.sh ci:pg:prepare
-
-      - name: Run QUICK suites
-        run: .github/ci/run.sh ci:test:quick
-
-  smoke:
-    name: WMS-DU CI / Smoke (PG E2E)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    needs: [ quick ]
-
-    services:
-      postgres:
-        image: postgres:14-alpine
-        env:
-          POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms
-          PRISMA_HIDE_UPDATE_MESSAGE: "true"
           POSTGRES_DB: wms
         ports: [ "5433:5432" ]
         options: >-
           --health-cmd "pg_isready -U wms"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 20
+          --health-retries 30
 
     steps:
-      - name: Checkout
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        useS: actions/setup-python@v4
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Cache pip
-        uses: actions/cache.pointer@v1
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{{ github.sha }}}
-          restore-keys: |
-            ${{ runner.sd }}-pip-
-
-      - name: Install system deps (psql, headers)
+      - name: 📦 Install system deps
         run: |
           sudo apt-get update
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release \
-            postgresql-client postgresql-client-common
+          sudo apt-get install -y --no-install-recommends postgresql-client build-essential
 
-      - name: Install Python deps
+      - name: 📦 Install Python deps
         run: |
           python -m pip install -U pip wheel setuptools
+          # 项目依赖（存在就装）
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
+          # 必要驱动：psycopg v3 + asyncpg
+          pip install "psycopg[binary]>=3.1" asyncpg
 
-      - name: Make runners executable
+      - name: 🔎 Show env
         run: |
-          chmod +x run.sh || true
-          chmod +x .github/ci/run.sh || true
+          python -V
+          echo "DATABASE_URL=${DATABASE_URL}"
 
-      - name: Wait for PostgreSQL service (explicit pre-check)
+      - name: ⏳ Wait PostgreSQL ready
         env:
           PGPASSWORD: wms
         run: |
           echo "Waiting for Postgres on 127.0.0.1:5433 ..."
-          for i in {1..40}; do
-            if command -v pg_isready >/dev/null 2>&1; then
-              pg_isready -h 127.0.0.1 -p 5433 && break
-            else
-              psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;' && break
-            fi
+          for i in {1..60}; do
+            pg_isready -h 127.0.0.1 -p 5433 && break
             sleep 2
           done
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" -c 'select 1;'
 
-      - name: Wait PG + migrate
-        run: .github/ci/run.sh ci:pg:prepare
+      # ------- 关键修复：两段式迁移 -------
+      - name: 🗃 Alembic migrate (phase-1 baseline only)
+        run: |
+          echo ">>> Phase-1: upgrade to baseline ${BASELINE_REV}"
+          alembic upgrade "${BASELINE_REV}"
 
-      - name: Run SMOKE suites
-        run: .github/ci/run.sh ci:test:smoke
+      - name: 🛠️ Widen alembic_version.version_num to 255 (after baseline)
+        env:
+          PGPASSWORD: wms
+        run: |
+          echo ">>> Widen alembic_version.version_num"
+          psql "postgresql://wms:${PGPASSWORD}@127.0.0.1:5433/wms" <<'SQL'
+          DO $$
+          BEGIN
+            -- 表通常在 baseline 后已创建，这里无条件扩列，若不存在则吞错
+            BEGIN
+              ALTER TABLE alembic_version
+              ALTER COLUMN version_num TYPE VARCHAR(255);
+            EXCEPTION WHEN undefined_table THEN
+              NULL;
+            END;
+          END $$;
+          SQL
+
+      - name: 🗃 Alembic migrate (phase-2 to head with heads fallback)
+        run: |
+          echo ">>> Phase-2: upgrade to head"
+          set +e
+          alembic upgrade head
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            echo "alembic upgrade head failed (maybe multiple heads). Trying 'alembic upgrade heads'..."
+            alembic upgrade heads
+          fi
+      # ------- 两段式迁移结束 -------
+
+      - name: ✅ Run CI invariants (tests/ci)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          pytest -q tests/ci -s
+
+      - name: 🚀 Run Quick tests (tests/quick)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          pytest -q tests/quick -s
+
+      - name: 🔥 Run Smoke tests (tests/smoke)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          pytest -q tests/smoke -s
