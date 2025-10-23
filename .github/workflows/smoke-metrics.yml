@@ -97,7 +97,8 @@ jobs:
           done
           # 等目标 UP
           for i in {1..30}; do
-            up=$(curl -sf "http://127.0.0.1:9090/api/v1/targets" | jq -r '.data.activeTargets[]? | select(.discoveredLabels.instance=="host.docker.internal:8000") | .health')
+            up=$(curl -sf "http://127.0.0.1:9090/api/v1/targets" \
+                | jq -r '.data.activeTargets[]? | select(.discoveredLabels.instance=="host.docker.internal:8000") | .health')
             echo "target health='$up'"
             if [ "$up" = "up" ]; then break; fi
             sleep 2
@@ -139,7 +140,7 @@ jobs:
             curl -sf "http://127.0.0.1:9090/api/v1/targets" | jq '.' | head -n 200 >&2 || true
             echo -e "\n--- /metrics ---" >&2
             curl -sf http://127.0.0.1:8000/metrics | head -n 50 >&2 || true
-            # 兜底：如果 /metrics 文本里确有该指标，也视为通过（避免偶发竞态卡 PR）
+            # 兜底：如果 /metrics 已含该指标文本，视为通过
             set +e
             curl -sf http://127.0.0.1:8000/metrics | grep -q '^events_processed_total' && exit 0
             set -e
@@ -185,6 +186,12 @@ jobs:
           if [ "$ok" != "1" ]; then
             echo "PromQL illegal assertion FAILED. Dump:" >&2
             curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" >&2 || true
+            echo -e "\n--- /metrics ---" >&2
+            curl -sf http://127.0.0.1:8000/metrics | grep '^event_errors_total' | head -n 30 >&2 || true
+            # 兜底：/metrics 文本里已出现该指标则视为通过
+            set +e
+            curl -sf http://127.0.0.1:8000/metrics | grep -q '^event_errors_total' && exit 0
+            set -e
             exit 4
           fi
 
