@@ -1,4 +1,3 @@
-# tests/smoke/test_monitor_metrics_pg.py
 import os
 import time
 import urllib.request
@@ -25,69 +24,54 @@ def _http_text(url: str, timeout=5) -> str:
         return r.read().decode("utf-8")
 
 def _ensure_api_up():
-    # 先试 /ping；连不上则临时起一个 uvicorn（仅在本进程期间存活）
     try:
         _ = _http_json(f"{API}/ping")
-        return None  # 已经在跑
+        return None
     except Exception:
         pass
-
     url = urlparse(API)
     host = url.hostname or "127.0.0.1"
     port = url.port or 8000
     cmd = f"python -m uvicorn app.main:app --host {host} --port {port}"
     proc = subprocess.Popen(shlex.split(cmd))
-    # 等待最多 10s 起服务
     for _ in range(20):
         try:
             time.sleep(0.5)
-            pong = _http_json(f"{API}/ping")
-            if isinstance(pong, dict) and pong.get("pong") is True:
+            if _http_json(f"{API}/ping").get("pong"):
                 return proc
         except Exception:
             continue
     raise RuntimeError("Failed to start API for smoke tests")
 
 def _redis_ready() -> bool:
-    """
-    检测 Redis 是否可连接；不可用时跳过本用例。
-    默认读取 CELERY_RESULT_BACKEND 或 REDIS_URL，回退到 localhost:6379。
-    """
-    url = os.getenv("CELERY_RESULT_BACKEND") or os.getenv("REDIS_URL") or "redis://localhost:6379/1"
-    try:
-        import redis  # 依赖由 celery[redis] 带入
-        r = redis.Redis.from_url(url, socket_connect_timeout=1)
-        r.ping()
-        return True
-    except Exception:
-        return False
+    def _can(url: str) -> bool:
+        try:
+            import redis  # from celery[redis]
+            r = redis.Redis.from_url(url, socket_connect_timeout=1)
+            r.ping()
+            return True
+        except Exception:
+            return False
+    broker = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+    return _can(broker) and _can(backend)
 
 def test_metrics_smoke_and_event_counter():
-    # 0) 确保 API 活着（本地/CI 任一环境）
     _ensure_api_up()
+    assert _http_json(f"{API}/ping").get("pong") is True
 
-    # 1) API 健康
-    pong = _http_json(f"{API}/ping")
-    assert isinstance(pong, dict) and pong.get("pong") is True
-
-    # 2) 如 Redis 不可用（某些 CI 任务场景），跳过 Celery 路径
     if not _redis_ready():
-        pytest.skip("Redis backend/broker unavailable in this job; skip Celery smoke.")
+        pytest.skip("Redis broker/backend unavailable; skip Celery smoke.")
 
-    # 3) 触发一条合法事件（None -> PAID），order_no 唯一避免被快照历史影响
     from app.worker import celery
-    order_no = f"SMK-{int(time.time() * 1000)}"
+    order_no = f"SMK-{int(time.time()*1000)}"
     r = celery.send_task(
         "wms.process_event",
-        kwargs={
-            "platform": "tmall",
-            "shop_id": "smoke-1",
-            "payload": {"order_no": order_no, "to_state": "PAID"},
-        },
+        kwargs={"platform":"tmall","shop_id":"smoke-1",
+                "payload":{"order_no":order_no,"to_state":"PAID"}}
     )
     assert r.get(timeout=60) == "OK"
 
-    # 4) 拉取 /metrics，确认业务计数器出现（text/plain，按文本匹配）
     time.sleep(2)
     metrics_text = _http_text(f"{API}/metrics")
     assert "events_processed_total" in metrics_text
