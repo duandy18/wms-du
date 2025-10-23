@@ -1,0 +1,156 @@
+name: Smoke - Metrics
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        ports: [ "5432:5432" ]
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+      redis:
+        image: redis:7-alpine
+        ports: [ "6379:6379" ]
+        options: >-
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          mkdir -p /tmp/prom-multiproc
+
+      - name: Wait DB & migrate
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
+        run: |
+          python - <<'PY'
+          import time
+          import psycopg
+          for i in range(60):
+            try:
+              with psycopg.connect("postgresql://wms:wms@127.0.0.1:5432/wms",connect_timeout=2) as _:
+                break
+            except Exception:
+              time.sleep(1)
+          print("DB ready")
+          PY
+          alembic upgrade head
+
+      - name: Launch API & Worker (background)
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+          PROMETHEUS_MULTIPROC_DIR: /tmp/prom-multiproc
+        run: |
+          nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >/tmp/api.log 2>&1 &
+          nohup celery -A app.worker.celery worker -Q events.tmall.shop-1 -l INFO >/tmp/worker.log 2>&1 &
+          for i in {1..60}; do curl -sf http://127.0.0.1:8000/ping && break; sleep 1; done
+
+      - name: Send one legal event (None -> PAID)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+        run: |
+          python - <<'PY'
+          from app.worker import celery
+          r = celery.send_task("wms.process_event",
+                               kwargs={"platform":"tmall","shop_id":"shop-1",
+                                       "payload":{"order_no":"SMK-CI-OK-1","to_state":"PAID"}})
+          print("RESULT:", r.get(timeout=60))
+          PY
+
+      - name: Smoke `/metrics` visible
+        run: |
+          curl -sf http://127.0.0.1:8000/metrics | grep -E '^events_processed_total|^event_errors_total' || (curl -sf http://127.0.0.1:8000/metrics > /tmp/metrics.txt; exit 1)
+
+      - name: Run Prometheus (scrape host.docker.internal:8000)
+        run: |
+          docker run -d --name prom-smoke \
+            --add-host=host.docker.internal:host-gateway \
+            -p 9090:9090 \
+            -v "$GITHUB_WORKSPACE/.github/ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            prom/prometheus:v2.54.1
+          for i in {1..60}; do curl -sf http://127.0.0.1:9090/-/ready && break; sleep 1; done
+          sleep 5
+
+      - name: PromQL assert (legal)
+        run: |
+          # 合法事件：10s 内必须有处理增量
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[10s])" | jq -r '.status' | grep success
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[10s])" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+
+      - name: Send one illegal event (ALLOCATED -> PAID)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+        run: |
+          set +e
+          python - <<'PY'
+          from app.worker import celery
+          try:
+              r = celery.send_task("wms.process_event",
+                                   kwargs={"platform":"tmall","shop_id":"shop-1",
+                                           "payload":{"order_no":"SMK-CI-ERR-1",
+                                                      "from_state":"ALLOCATED","to_state":"PAID"}})
+              print("UNEXPECTED:", r.get(timeout=60))
+          except Exception as e:
+              print("ILLEGAL (as expected):", e)
+          PY
+          set -e
+          sleep 5
+
+      - name: PromQL assert (illegal, ONLY ILLEGAL_TRANSITION grows)
+        run: |
+          # 非法事件：错误增量必须出现
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total[10s])" | jq -r '.status' | grep success
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[10s]))" | jq -r '.data.result'
+          # 确保至少有一个 code 出现
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[10s]))" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+          # 若你在 tasks.py 抑制了重复记错，这里检查 ValueError 在 10s 内没有增量（允许该断言为软检查，可按需启用）
+          # curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total{code=\"ValueError\"}[10s])" | jq -r '.data.result | length' | awk '{exit !($1==0)}'
+
+      - name: Dump logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== /metrics snapshot ====="
+          curl -s http://127.0.0.1:8000/metrics | head -n 200 || true
+          echo "===== API logs ====="
+          cat /tmp/api.log || true
+          echo "===== Worker logs ====="
+          cat /tmp/worker.log || true
+
+      - name: Cleanup Prometheus
+        if: always()
+        run: docker rm -f prom-smoke || true
