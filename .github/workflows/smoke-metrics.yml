@@ -20,14 +20,18 @@ jobs:
           POSTGRES_DB: wms
         options: >-
           --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=5s --health-timeout=3s --health-retries=30
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
 
       redis:
         image: redis:7-alpine
         ports: [ "6379:6379" ]
         options: >-
           --health-cmd="redis-cli ping || exit 1"
-          --health-interval=5s --health-timeout=3s --health-retries=30
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
 
     steps:
       - name: Checkout
@@ -49,6 +53,7 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           mkdir -p /tmp/prom-multiproc
+          sudo apt-get update -y && sudo apt-get install -y jq
 
       - name: Wait DB & migrate
         env:
@@ -58,7 +63,7 @@ jobs:
           import time, psycopg
           for _ in range(60):
             try:
-              with psycopg.connect("postgresql://wms:wms@127.0.0.1:5432/wms",connect_timeout=2) as _:
+              with psycopg.connect("postgresql://wms:wms@127.0.0.1:5432/wms", connect_timeout=2) as _:
                 break
             except Exception:
               time.sleep(1)
@@ -76,12 +81,13 @@ jobs:
           nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >/tmp/api.log 2>&1 &
           nohup celery -A app.worker.celery worker -Q events.tmall.shop-1 -l INFO >/tmp/worker.log 2>&1 &
           for i in {1..60}; do curl -sf http://127.0.0.1:8000/ping && break; sleep 1; done
+          echo "API & Worker ready"
 
       - name: Smoke `/metrics` visible (direct)
         run: |
-          curl -sf http://127.0.0.1:8000/metrics | head -n 3
+          curl -sf http://127.0.0.1:8000/metrics | head -n 5
 
-      # 关键：先启动 Prometheus，再发送事件，再断言
+      # 先起 Prometheus，让它能抓到 API /metrics
       - name: Run Prometheus (scrape host.docker.internal:8000)
         run: |
           docker run -d --name prom-smoke \
@@ -89,11 +95,26 @@ jobs:
             -p 9090:9090 \
             -v "$GITHUB_WORKSPACE/.github/ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
             prom/prometheus:v2.54.1
-          for i in {1..60}; do curl -sf http://127.0.0.1:9090/-/ready && break; sleep 1; done
-          # 给 Prometheus 2 次抓取周期（prom.yml 中 scrape_interval: 5s）
+          # Prom 自身 ready
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:9090/-/ready && break
+            sleep 1
+          done
+          # 等目标 UP：up{instance="host.docker.internal:8000"} == 1
+          for i in {1..30}; do
+            up=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=up" \
+              | jq -r '.data.result[]? | select(.metric.instance=="host.docker.internal:8000") | .value[1]')
+            echo "target up state=$up"
+            if [ "$up" = "1" ]; then
+              echo "Prom target is UP"
+              break
+            fi
+            sleep 2
+          done
+          # 再给一次抓取周期（prometheus.yml 一般 5s）
           sleep 6
 
-      - name: Send one legal event (None -> PAID)
+      - name: Send one legal event (None -> PAID) & wait PromQL
         env:
           REDIS_URL: redis://127.0.0.1:6379/0
           CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
@@ -107,14 +128,21 @@ jobs:
                                        "payload":{"order_no":order_no,"to_state":"PAID"}})
           print("RESULT:", r.get(timeout=60))
           PY
-          # 再给 Prometheus 2 次抓取的时间
-          sleep 12
 
-      - name: PromQL assert (legal)
-        run: |
-          # 过去 20s 内必须观测到处理增量（更抗抖）
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" | jq -r '.status' | grep success
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+          # 在 20s 窗口内重试 6 次，每次 5s，直到 increase() 出样本
+          for i in {1..6}; do
+            len=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" \
+                 | jq -r '.data.result | length')
+            echo "legal try #$i result length=$len"
+            if [ "$len" -ge 1 ]; then
+              echo "PromQL legal assertion PASSED"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PromQL legal assertion FAILED, dump:"
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])"
+          exit 1
 
       - name: Send one illegal event (ALLOCATED -> PAID)
         env:
@@ -136,15 +164,13 @@ jobs:
               print("ILLEGAL (as expected):", e)
           PY
           set -e
+          # 给一次抓取周期
           sleep 6
 
       - name: PromQL assert (illegal, ONLY ILLEGAL_TRANSITION grows)
         run: |
           curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.status' | grep success
-          # 至少一条错误增量
           curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
-          # 如你已抑制 ValueError 重复计数，可启用如下强断言：
-          # curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total{code=\"ValueError\"}[20s])" | jq -r '.data.result | length' | awk '{exit !($1==0)}'
 
       - name: Dump logs on failure
         if: ${{ failure() }}
@@ -155,6 +181,10 @@ jobs:
           cat /tmp/api.log || true
           echo "===== Worker logs ====="
           cat /tmp/worker.log || true
+          echo "===== Prom query (legal) ====="
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" || true
+          echo "===== Prom query (illegal) ====="
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" || true
 
       - name: Cleanup Prometheus
         if: always()
