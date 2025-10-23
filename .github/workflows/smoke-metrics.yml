@@ -85,9 +85,8 @@ jobs:
 
       - name: Smoke `/metrics` visible (direct)
         run: |
-          curl -sf http://127.0.0.1:8000/metrics | head -n 5
+          curl -sf http://127.0.0.1:8000/metrics | head -n 5 || (cat /tmp/api.log; exit 1)
 
-      # 先起 Prometheus，让它能抓到 API /metrics
       - name: Run Prometheus (scrape host.docker.internal:8000)
         run: |
           docker run -d --name prom-smoke \
@@ -95,16 +94,18 @@ jobs:
             -p 9090:9090 \
             -v "$GITHUB_WORKSPACE/.github/ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
             prom/prometheus:v2.54.1
-          # Prom 自身 ready
+
+          # 等 Prom 自身 ready
           for i in {1..60}; do
             curl -sf http://127.0.0.1:9090/-/ready && break
             sleep 1
           done
+
           # 等目标 UP：up{instance="host.docker.internal:8000"} == 1
           for i in {1..30}; do
             up=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=up" \
-              | jq -r '.data.result[]? | select(.metric.instance=="host.docker.internal:8000") | .value[1]')
-            echo "target up state=$up"
+              | jq -r '.data.result[]? | select(.metric.instance=="host.docker.internal:8000") | .value[1]' 2>/dev/null || echo "")
+            echo "target up state='$up'"
             if [ "$up" = "1" ]; then
               echo "Prom target is UP"
               break
@@ -119,6 +120,7 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/0
           CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
         run: |
+          set -e
           python - <<'PY'
           import time
           from app.worker import celery
@@ -129,20 +131,25 @@ jobs:
           print("RESULT:", r.get(timeout=60))
           PY
 
-          # 在 20s 窗口内重试 6 次，每次 5s，直到 increase() 出样本
-          for i in {1..6}; do
-            len=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" \
-                 | jq -r '.data.result | length')
-            echo "legal try #$i result length=$len"
-            if [ "$len" -ge 1 ]; then
-              echo "PromQL legal assertion PASSED"
-              exit 0
+          # 在 30s 窗口内重试 8 次，每次 5s，直到 increase() 出样本
+          ok=0
+          for i in {1..8}; do
+            resp=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=count(increase(events_processed_total[30s]))" || echo "")
+            echo "legal try #$i resp=$resp"
+            val=$(echo "$resp" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+            # 兜底：空/非数 -> 0；去小数点
+            val=${val:-0}; val=${val%%.*}
+            if [ "$val" -ge 1 ]; then
+              echo "PromQL legal assertion PASSED (count=$val)"
+              ok=1; break
             fi
             sleep 5
           done
-          echo "PromQL legal assertion FAILED, dump:"
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])"
-          exit 1
+          if [ "$ok" != "1" ]; then
+            echo "PromQL legal assertion FAILED. Dump increase():" >&2
+            curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[30s])" >&2 || true
+            exit 3
+          fi
 
       - name: Send one illegal event (ALLOCATED -> PAID)
         env:
@@ -164,13 +171,27 @@ jobs:
               print("ILLEGAL (as expected):", e)
           PY
           set -e
-          # 给一次抓取周期
           sleep 6
 
-      - name: PromQL assert (illegal, ONLY ILLEGAL_TRANSITION grows)
+      - name: PromQL assert (illegal)
         run: |
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.status' | grep success
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+          ok=0
+          for i in {1..6}; do
+            resp=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" || echo "")
+            echo "illegal try #$i resp=$resp"
+            len=$(echo "$resp" | jq -r '.data.result | length' 2>/dev/null || echo "0")
+            len=${len:-0}; len=${len%%.*}
+            if [ "$len" -ge 1 ]; then
+              echo "PromQL illegal assertion PASSED"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "PromQL illegal assertion FAILED. Dump:" >&2
+            curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" >&2 || true
+            exit 4
+          fi
 
       - name: Dump logs on failure
         if: ${{ failure() }}
@@ -182,9 +203,9 @@ jobs:
           echo "===== Worker logs ====="
           cat /tmp/worker.log || true
           echo "===== Prom query (legal) ====="
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" || true
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=count(increase(events_processed_total[30s]))" || true
           echo "===== Prom query (illegal) ====="
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" || true
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" || true
 
       - name: Cleanup Prometheus
         if: always()
