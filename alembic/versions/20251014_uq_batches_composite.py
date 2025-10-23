@@ -21,22 +21,31 @@ def upgrade() -> None:
         BEGIN
           IF to_regclass('public.batches') IS NOT NULL THEN
 
-            -- 1) 批次去重（同键项只保留 keep_id，关联到 stock_ledger 的 batch_id 也一并回写）
-            WITH grp AS (
-              SELECT
-                id, item_id, warehouse_id, location_id, batch_code, production_date, expiry_date,
-                MIN(id) OVER (
-                  PARTITION BY item_id, warehouse_id, location_id, batch_code, production_date, expiry_date
-                ) AS keep_id
-              FROM public.batches
-            ),
-            losers AS (
-              SELECT id, keep_id FROM grp WHERE id <> keep_id
-            )
-            UPDATE public.stock_ledger AS sl
-               SET batch_id = l.keep_id
-              FROM losers l
-             WHERE sl.batch_id = l.id;
+            -- 1) 批次去重（同键项只保留 keep_id）
+            --    若 stock_ledger 存在 batch_id 列，则回写到台账；否则跳过回写步骤
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema='public'
+                AND table_name='stock_ledger'
+                AND column_name='batch_id'
+            ) THEN
+              WITH grp AS (
+                SELECT
+                  id, item_id, warehouse_id, location_id, batch_code, production_date, expiry_date,
+                  MIN(id) OVER (
+                    PARTITION BY item_id, warehouse_id, location_id, batch_code, production_date, expiry_date
+                  ) AS keep_id
+                FROM public.batches
+              ),
+              losers AS (
+                SELECT id, keep_id FROM grp WHERE id <> keep_id
+              )
+              UPDATE public.stock_ledger AS sl
+                 SET batch_id = l.keep_id
+                FROM losers l
+               WHERE sl.batch_id = l.id;
+            END IF;
 
             -- 2) 删除批次表中重复的“败者”行（若存在）
             DELETE FROM public.batches b

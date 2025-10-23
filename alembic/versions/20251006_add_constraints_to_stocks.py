@@ -8,7 +8,7 @@ Create Date: 2025-10-06 10:00:00
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
+from sqlalchemy import text  # 新增：用于执行原生 SQL
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -45,7 +45,42 @@ def _unique_names(table: str) -> set[str]:
         return set()
 
 
+def _widen_alembic_version_if_needed() -> None:
+    """
+    在 PostgreSQL 上将 alembic_version.version_num 扩展到 VARCHAR(255)，
+    仅当当前长度 < 64 时执行；SQLite 的 TEXT 无需处理。
+    这样保证后续长 revision_id（如 '20251006_add_constraints_to_stocks'）不会触发截断错误。
+    """
+    bind = op.get_bind()
+    dialect = (bind.dialect.name or "").lower()
+    if dialect != "postgresql":
+        return
+
+    # 读取当前列宽
+    maxlen = bind.execute(
+        text(
+            """
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='alembic_version' AND column_name='version_num'
+            """
+        )
+    ).scalar()
+
+    try:
+        current = int(maxlen) if maxlen is not None else None
+    except Exception:
+        current = None
+
+    # 仅当列宽未知或小于 64（明显不足以容纳长 revision id）时才加宽
+    if current is None or current < 64:
+        bind.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
+
+
 def upgrade() -> None:
+    # 预处理：在干净环境（CI）里先加宽 alembic_version.version_num，避免后续长 revision id 触发截断
+    _widen_alembic_version_if_needed()
+
     # 1) 若 stocks 不存在，先创建“最小可用”结构（PG/SQLite 通用）
     if not _has_table("stocks"):
         op.create_table(

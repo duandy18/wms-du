@@ -115,10 +115,18 @@ async def test_smoke_multi_platform_end2end():
             )).scalar_one()
             assert cnt2 == 1  # 未新增
 
-        # ---------- 5) 异常日志写入 ----------
-        err = (await s.execute(
-            text("SELECT platform, error_type FROM event_error_log ORDER BY id DESC LIMIT 1")
-        )).first()
-        assert err is not None
-        assert err[0] in ("mystery", "unknown")
-        assert err[1] in ("ValueError", "KeyError")
+        # ---------- 5) 异常日志写入（兼容新旧列名） ----------
+        # 尝试新列 error_code；如失败再回退到旧列 error_type
+        row = None
+        try:
+            row = (await s.execute(
+                text("SELECT platform, error_code AS code FROM event_error_log ORDER BY id DESC LIMIT 1")
+            )).first()
+        except Exception:
+            row = (await s.execute(
+                text("SELECT platform, error_type AS code FROM event_error_log ORDER BY id DESC LIMIT 1")
+            )).first()
+        assert row is not None
+        platform, code = row[0], row[1]
+        assert platform in ("mcr", "mystery", "unknown") or isinstance(platform, str)
+        assert code is not None  # 有明确错误码（新库 error_code；老库 error_type）

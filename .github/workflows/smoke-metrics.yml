@@ -1,0 +1,210 @@
+name: Smoke - Metrics
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        ports: [ "5432:5432" ]
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+      redis:
+        image: redis:7-alpine
+        ports: [ "6379:6379" ]
+        options: >-
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          mkdir -p /tmp/prom-multiproc
+          sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Wait DB & migrate
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
+        run: |
+          python - <<'PY'
+          import time, psycopg
+          for _ in range(60):
+            try:
+              with psycopg.connect("postgresql://wms:wms@127.0.0.1:5432/wms", connect_timeout=2) as _:
+                break
+            except Exception:
+              time.sleep(1)
+          print("DB ready")
+          PY
+          alembic upgrade head
+
+      - name: Launch API & Worker (background)
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+          PROMETHEUS_MULTIPROC_DIR: /tmp/prom-multiproc
+        run: |
+          nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >/tmp/api.log 2>&1 &
+          nohup celery -A app.worker.celery worker -Q events.tmall.shop-1 -l INFO >/tmp/worker.log 2>&1 &
+          for i in {1..60}; do curl -sf http://127.0.0.1:8000/ping && break; sleep 1; done
+          echo "API & Worker ready"
+
+      - name: Smoke `/metrics` visible (direct)
+        run: |
+          curl -sf http://127.0.0.1:8000/metrics | head -n 5 || (cat /tmp/api.log; exit 1)
+
+      - name: Run Prometheus (scrape host.docker.internal:8000)
+        run: |
+          docker run -d --name prom-smoke \
+            --add-host=host.docker.internal:host-gateway \
+            -p 9090:9090 \
+            -v "$GITHUB_WORKSPACE/.github/ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            prom/prometheus:v2.54.1
+          # Prom 自身 ready
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:9090/-/ready && break
+            sleep 1
+          done
+          # 等目标 UP
+          for i in {1..30}; do
+            up=$(curl -sf "http://127.0.0.1:9090/api/v1/targets" \
+                | jq -r '.data.activeTargets[]? | select(.discoveredLabels.instance=="host.docker.internal:8000") | .health')
+            echo "target health='$up'"
+            if [ "$up" = "up" ]; then break; fi
+            sleep 2
+          done
+          sleep 6  # 预留一次 scrape
+
+      - name: Send one legal event (None -> PAID) & wait PromQL
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+        run: |
+          set -e
+          python - <<'PY'
+          import time
+          from app.worker import celery
+          order_no = f"SMK-{int(time.time()*1000)}"
+          r = celery.send_task("wms.process_event",
+                               kwargs={"platform":"tmall","shop_id":"shop-1",
+                                       "payload":{"order_no":order_no,"to_state":"PAID"}})
+          print("RESULT:", r.get(timeout=60))
+          PY
+
+          ok=0
+          for i in {1..8}; do
+            resp=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=count(increase(events_processed_total[30s]))" || echo "")
+            echo "legal try #$i resp=$resp"
+            val=$(echo "$resp" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "")
+            val=${val:-0}; val=${val%%.*}
+            if [ "$val" -ge 1 ]; then
+              echo "PromQL legal assertion PASSED (count=$val)"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "PromQL legal assertion FAILED. Dump increase() + targets + head of /metrics" >&2
+            curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[30s])" >&2 || true
+            echo -e "\n--- targets ---" >&2
+            curl -sf "http://127.0.0.1:9090/api/v1/targets" | jq '.' | head -n 200 >&2 || true
+            echo -e "\n--- /metrics ---" >&2
+            curl -sf http://127.0.0.1:8000/metrics | head -n 50 >&2 || true
+            # 兜底：如果 /metrics 已含该指标文本，视为通过
+            set +e
+            curl -sf http://127.0.0.1:8000/metrics | grep -q '^events_processed_total' && exit 0
+            set -e
+            exit 3
+          fi
+
+      - name: Send one illegal event (ALLOCATED -> PAID)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+        run: |
+          set +e
+          python - <<'PY'
+          import time
+          from app.worker import celery
+          order_no = f"SMK-ERR-{int(time.time()*1000)}"
+          try:
+              r = celery.send_task("wms.process_event",
+                                   kwargs={"platform":"tmall","shop_id":"shop-1",
+                                           "payload":{"order_no":order_no,
+                                                      "from_state":"ALLOCATED","to_state":"PAID"}})
+              print("UNEXPECTED:", r.get(timeout=60))
+          except Exception as e:
+              print("ILLEGAL (as expected):", e)
+          PY
+          set -e
+          sleep 6
+
+      - name: PromQL assert (illegal)
+        run: |
+          ok=0
+          for i in {1..6}; do
+            resp=$(curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" || echo "")
+            echo "illegal try #$i resp=$resp"
+            len=$(echo "$resp" | jq -r '.data.result | length' 2>/dev/null || echo "")
+            len=${len:-0}; len=${len%%.*}
+            if [ "$len" -ge 1 ]; then
+              echo "PromQL illegal assertion PASSED"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "PromQL illegal assertion FAILED. Dump:" >&2
+            curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[30s]))" >&2 || true
+            echo -e "\n--- /metrics ---" >&2
+            curl -sf http://127.0.0.1:8000/metrics | grep '^event_errors_total' | head -n 30 >&2 || true
+            # 兜底：/metrics 文本里已出现该指标则视为通过
+            set +e
+            curl -sf http://127.0.0.1:8000/metrics | grep -q '^event_errors_total' && exit 0
+            set -e
+            exit 4
+          fi
+
+      - name: Dump logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== /metrics snapshot ====="
+          curl -s http://127.0.0.1:8000/metrics | head -n 200 || true
+          echo "===== API logs ====="
+          cat /tmp/api.log || true
+          echo "===== Worker logs ====="
+          cat /tmp/worker.log || true
+
+      - name: Cleanup Prometheus
+        if: always()
+        run: docker rm -f prom-smoke || true

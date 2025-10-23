@@ -1,6 +1,8 @@
+# app/services/outbound_service.py
 from __future__ import annotations
 
 import asyncio
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 
 from app.services.audit_logger import log_event
+from app.metrics import OUTB, EVENTS, LAT  # ← 指标：出库/事件/延迟
 
 
 class OutboundState(str, Enum):
@@ -71,6 +74,11 @@ async def _get_stock_for_update(session: AsyncSession, item_id: int, location_id
 
 
 async def _commit_outbound_once(session: AsyncSession, ref: str, lines: List[Dict]) -> List[Dict]:
+    """
+    核心出库提交（单次尝试）：
+    - 行级幂等：已存在对应 ledger 记录直接返回 IDEMPOTENT
+    - 行级并发：advisory_xact_lock + FOR UPDATE
+    """
     results: List[Dict] = []
     tx_ctx = session.begin_nested() if session.in_transaction() else session.begin()
     async with tx_ctx:
@@ -140,6 +148,15 @@ class OutboundService:
 
     @staticmethod
     async def apply_event(task: Dict[str, Any], session: Optional[AsyncSession] = None) -> Optional[List[Dict]]:
+        """
+        事件应用主入口：
+        - 若有 lines：提交出库（ALLOCATED），记账成功后补登记最终 state
+        - 若无 lines：只登记最终 state（用于 PAID/VOID 等）
+        指标：
+        - 出库成功：OUTB.inc(提交总件数)
+        - 事件推进：EVENTS.inc(platform,shop_id,state)
+        - 延迟：LAT.observe(platform,shop_id,state,处理秒)
+        """
         platform = (task.get("platform") or "").lower()
         ref = str(task.get("ref") or "")
         raw_state = str(task.get("state") or "")
@@ -156,15 +173,28 @@ class OutboundService:
 
         eff_ref = _eff_ref(ref, shop_id)
         results: Optional[List[Dict]] = None
+        t0 = time.perf_counter()
 
         if lines:
             async with session.begin():
                 await _advisory_lock(session, f"ref:{eff_ref}")
                 results = await commit_outbound(session, eff_ref, lines)
+                # 事件推进：ALLOCATED（按状态机）
+                EVENTS.labels(platform, shop_id, OutboundState.ALLOCATED.value).inc()
                 await OutboundService._try_commit_state(session, platform, shop_id, eff_ref, OutboundState.ALLOCATED)
                 log_event("outbound_committed", f"{platform}#{eff_ref} lines={len(lines)}")
 
+            # 指标：按件数累加出库提交量
+            committed_total = sum(int(r.get("committed_qty") or 0) for r in (results or []) if r.get("status") == "OK")
+            if committed_total > 0:
+                OUTB.labels(platform, shop_id).inc(committed_total)
+
+        # 登记最终状态（PAID/SHIPPED/VOID 等）
         await OutboundService._try_commit_state(session, platform, shop_id, eff_ref, state)
+        # 事件推进：最终状态 + 延迟
+        EVENTS.labels(platform, shop_id, state.value).inc()
+        LAT.labels(platform, shop_id, state.value).observe(time.perf_counter() - t0)
+
         return results
 
 
