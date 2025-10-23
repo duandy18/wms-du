@@ -1,54 +1,97 @@
-# 开发环境 Compose（无 version 字段，避免旧版提示）
-services:
-  db:
-    image: mysql:8.0
-    container_name: compose-db-1
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpwd            # ← 根密码（按需修改）
-      MYSQL_DATABASE: wms                     # ← 初始化建库
-      MYSQL_USER: wms                         # ← 业务用户
-      MYSQL_PASSWORD: wmspwd                  # ← 业务用户密码（与 API 的 DB_URL 一致）
-    volumes:
-      - db_data:/var/lib/mysql
-    ports:
-      - "3306:3306"                           # 主机访问 MySQL；仅开发期需要
-    healthcheck:
-      # 双 $ 用于转义，让容器内实际得到 $MYSQL_ROOT_PASSWORD
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+# ops/compose/docker-compose.dev.yml
+# 本地开发栈（复用宿主机 wms-du-db@5433）
+# 固化端口映射由 ops/compose/.env 管理：
+#   API:     ${API_HOST_PORT:-8001} → 容器 8000
+#   Redis:   ${REDIS_HOST_PORT:-6379}
+#   Prom:    ${PROM_HOST_PORT:-9090}
+#   Grafana: ${GRAFANA_HOST_PORT:-3000}
+# Prometheus 内网采集 api:8000，不再依赖宿主口
 
-  adminer:
-    image: adminer
-    container_name: compose-adminer-1
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: wms-redis
     restart: unless-stopped
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
 
   api:
-    # 用你的开发镜像/本地构建
     build:
-      context: ${PWD}
-      dockerfile: ${PWD}/ops/compose/Dockerfile.api
-    image: compose-api
-    container_name: compose-api-1
-    environment:
-      # 用 PyMySQL 驱动；host 用容器名 db；端口 3306；库名 wms
-      DATABASE_URL: "mysql+pymysql://wms:wmspwd@db:3306/wms"
-      PYTHONUNBUFFERED: "1"
-    depends_on:
-      db:
-        condition: service_healthy            # ← 关键：等 MySQL 就绪再启动
-    ports:
-      - "8000:8000"
-    # 如果你的 Dockerfile 已经声明 ENTRYPOINT/CMD 可不写；开发期想热重载可改为 --reload
-    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+      context: ../..
+      dockerfile: ops/compose/Dockerfile.api
+    container_name: wms-api
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASS:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
+      REDIS_URL: redis://redis:6379/0
+      PROMETHEUS_MULTIPROC_DIR: /prom-data
+      PYTHONUNBUFFERED: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    working_dir: /app
+    volumes:
+      - ../..:/app
+      - prom_data:/prom-data
+    ports:
+      - "${API_HOST_PORT:-8001}:8000"
+    command: >
+      bash -lc "mkdir -p /prom-data && rm -rf /prom-data/* || true &&
+                exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  celery-worker:
+    build:
+      context: ../..
+      dockerfile: ops/compose/Dockerfile.api
+    container_name: wms-celery
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASS:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
+      CELERY_QUEUES: ${CELERY_QUEUES:-events.tmall.shop-1}
+      PROMETHEUS_MULTIPROC_DIR: /prom-data
+      PYTHONUNBUFFERED: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    working_dir: /app
+    volumes:
+      - ../..:/app
+      - prom_data:/prom-data
+    command: >
+      bash -lc "mkdir -p /prom-data &&
+                exec celery -A app.worker.celery worker -l INFO -Q ${CELERY_QUEUES:-events.tmall.shop-1}"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: wms-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROM_HOST_PORT:-9090}:9090"
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/alerting_rules.yml:/etc/prometheus/alerting_rules.yml:ro
+
+  grafana:
+    image: grafana/grafana:10.4.5
+    container_name: wms-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ../observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
 
 volumes:
-  db_data:
+  prom_data:

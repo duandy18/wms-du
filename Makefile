@@ -1,152 +1,126 @@
-# Makefile — WMS-DU stable workflow shortcuts
-# ===========================================
-# 目标：一行命令完成格式化、检测、测试与提交
-#
-# 双轨模式：
-# - make dev-commit        # 开发提交（跳过钩子），追求快速迭代
-# - make release-commit    # 发布提交（全量检查），保证主干稳定
+# =========================
+# WMS-DU · Makefile (dev)
+# 固化端口/环境，提供一键启停与分层测试
+# =========================
 
 SHELL := /bin/bash
-.ONESHELL:
-.SHELLFLAGS := -eu -o pipefail -c
 
-PYTHON          ?= python
-PIP             ?= $(PYTHON) -m pip
-RUFF            ?= ruff
-BLACK           ?= black
-ISORT           ?= isort
-PRECOMMIT       ?= pre-commit
-DETECT_SECRETS  ?= detect-secrets
-RUN_SH          ?= bash run.sh
+# -------- 路径与 Compose 文件 --------
+COMPOSE_DIR   := ops/compose
+COMPOSE_FILE  := $(COMPOSE_DIR)/docker-compose.dev.yml
+DC            := docker compose -f $(COMPOSE_FILE)
 
-REPO_ROOT       := $(shell git rev-parse --show-toplevel 2>/dev/null)
+# -------- 固化端口（默认值；也可在 ops/compose/.env 中覆盖） --------
+API_HOST_PORT     ?= 8001
+PROM_HOST_PORT    ?= 9090
+GRAFANA_HOST_PORT ?= 3000
+REDIS_HOST_PORT   ?= 6379
 
-.DEFAULT_GOAL := help
+# -------- 外部数据库（独立容器 wms-du-db@5433） --------
+DB_HOST ?= 127.0.0.1
+DB_PORT ?= 5433
+DB_USER ?= wms
+DB_PASS ?= wms
+DB_NAME ?= wms
 
-# ---------- 帮助 ----------
+# -------- 本地测试/Producer 与 Worker 对齐的 Redis 配置 --------
+export REDIS_URL            := redis://localhost:$(REDIS_HOST_PORT)/0
+export CELERY_RESULT_BACKEND:= redis://localhost:$(REDIS_HOST_PORT)/1
+
+# -------- 本地 API 访问地址（我们将 API 宿主口固定在 8001）--------
+export API_BASE := http://127.0.0.1:$(API_HOST_PORT)
+
+# -------- DB URL（有些测试/脚本会用到） --------
+export DATABASE_URL := postgresql+psycopg://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
+
+# -------- Python 测试命令 --------
+PYTEST := pytest -q
+
+# -------- 帮助 --------
 .PHONY: help
 help:
-	@echo ""
-	@echo "Usage:"
-	@echo "  make fix            - isort + black + ruff --fix（不阻塞）"
-	@echo "  make fmt            - 仅 isort + black"
-	@echo "  make lint           - Ruff 全量检查（严格）"
-	@echo "  make punct          - 测试代码中文全角标点 -> 半角（tests/）"
-	@echo "  make quick          - 运行快速用例（bash run.sh quick）"
-	@echo "  make smoke          - 运行冒烟用例（bash run.sh smoke）"
-	@echo "  make hooks          - 安装/更新 pre-commit 钩子，并清缓存"
-	@echo "  make hooks-run      - 本地对所有文件执行 pre-commit（只观察）"
-	@echo "  make secrets-scan   - 本地对照 .secrets.baseline 扫描"
-	@echo "  make mypy           - 类型检查（不阻塞，供点检）"
-	@echo "  make ci             - 本地模拟 CI：fix + lint + quick"
-	@echo "  make dev-commit     - 开发提交（跳过钩子），快速推进"
-	@echo "  make release-commit - 发布提交（fix+lint+quick 全通过后提交）"
-	@echo "  make clean-cache    - 清理 ruff/pytest/mypy 缓存"
-	@echo ""
+	@echo "用法：make <target>"
+	@echo
+	@echo "核心："
+	@echo "  make up          启动本地开发栈（API:$(API_HOST_PORT), Redis:$(REDIS_HOST_PORT), Prom:$(PROM_HOST_PORT), Grafana:$(GRAFANA_HOST_PORT)）"
+	@echo "  make down        停止并清理容器（不删数据卷）"
+	@echo "  make ps          查看容器状态"
+	@echo "  make logs        跟随 API 日志"
+	@echo "  make api-logs    跟随 API 日志"
+	@echo "  make worker-logs 跟随 Celery Worker 日志"
+	@echo "  make prom-logs   跟随 Prometheus 日志"
+	@echo "  make grafana-logs 跟随 Grafana 日志"
+	@echo
+	@echo "测试："
+	@echo "  make quick       运行状态机针刺（tests/quick/test_platform_state_machine_pg.py）"
+	@echo "  make smoke       指标冒烟（tests/smoke/test_monitor_metrics_pg.py，API_BASE 固化为 $(API_BASE)）"
+	@echo "  make test T=path::case  按路径/用例名运行单测（例如：make test T=tests/quick/test_platform_events_pg.py::test_xxx）"
+	@echo
+	@echo "运维："
+	@echo "  make restart     重启 API 与 Worker"
+	@echo "  make rebuild     重新 build API 与 Worker"
+	@echo "  make doctor      端口占用检查（调用 scripts/ports_doctor.sh）"
+	@echo
+	@echo "当前固定端口：API=$(API_HOST_PORT), REDIS=$(REDIS_HOST_PORT), PROM=$(PROM_HOST_PORT), GRAFANA=$(GRAFANA_HOST_PORT)"
+	@echo "外部数据库：  $(DB_HOST):$(DB_PORT)  ($(DB_NAME)/$(DB_USER))"
 
-# ---------- 格式化 ----------
-.PHONY: fmt
-fmt:
-	@echo "== isort . =="
-	$(ISORT) .
-	@echo "== black . =="
-	$(BLACK) .
+# -------- Compose 控制 --------
+.PHONY: up down ps restart rebuild
+up:
+	cd $(COMPOSE_DIR) && $(DC) up -d --remove-orphans
 
-.PHONY: fix
-fix:
-	@echo "== normalize fullwidth punctuation in tests =="
-	$(PYTHON) tools/normalize_punct.py tests || true
-	@echo "== isort . =="
-	$(ISORT) .
-	@echo "== black . =="
-	$(BLACK) .
-	@echo "== ruff --fix（不阻塞）=="
-	# Ruff 自动修复能修的；有剩余问题也不在 fix 阶段失败
-	$(RUFF) check --fix app tests scripts tools || true
+down:
+	cd $(COMPOSE_DIR) && $(DC) down
 
-# ---------- Lint ----------
-.PHONY: lint
-lint:
-	@echo "== Ruff 全面检查（严格） =="
-	$(RUFF) check app tests scripts tools
+ps:
+	cd $(COMPOSE_DIR) && $(DC) ps
 
-# ---------- 测试 ----------
-.PHONY: quick
+restart:
+	cd $(COMPOSE_DIR) && $(DC) up -d api celery-worker
+
+rebuild:
+	cd $(COMPOSE_DIR) && $(DC) build api celery-worker
+	cd $(COMPOSE_DIR) && $(DC) up -d api celery-worker
+
+# -------- 日志 --------
+.PHONY: logs api-logs worker-logs prom-logs grafana-logs
+logs: api-logs
+
+api-logs:
+	docker logs -f wms-api
+
+worker-logs:
+	docker logs -f wms-celery
+
+prom-logs:
+	docker logs -f wms-prometheus
+
+grafana-logs:
+	docker logs -f wms-grafana
+
+# -------- 测试分层 --------
+.PHONY: quick smoke test
 quick:
-	@echo "== run.sh quick =="
-	$(RUN_SH) quick
+	$(PYTEST) tests/quick/test_platform_state_machine_pg.py -s
 
-.PHONY: smoke
 smoke:
-	@echo "== run.sh smoke =="
-	$(RUN_SH) smoke
+	# API_BASE 固化为 $(API_BASE) ，避免端口漂移导致 8000/8001 错打
+	API_BASE=$(API_BASE) $(PYTEST) tests/smoke/test_monitor_metrics_pg.py -s
 
-# ---------- 半角化（只处理 tests/，避免误伤业务字符串） ----------
-.PHONY: punct
-punct:
-	@echo "== normalize fullwidth punctuation in tests =="
-	$(PYTHON) tools/normalize_punct.py tests
+# 任意路径/用例（用法：make test T=tests/quick/test_platform_events_pg.py::test_xxx）
+test:
+	@if [ -z "$(T)" ]; then echo "用法：make test T=tests/xxx.py[::case]"; exit 1; fi
+	API_BASE=$(API_BASE) $(PYTEST) $(T) -s
 
-# ---------- pre-commit ----------
-.PHONY: hooks
-hooks:
-	@echo "== 安装 pre-commit 钩子 =="
-	$(PRECOMMIT) install
-	$(PRECOMMIT) install -t pre-push || true
-	@echo "== 清理隔离环境缓存 =="
-	$(PRECOMMIT) clean
-
-.PHONY: hooks-run
-hooks-run:
-	@echo "== pre-commit run --all-files（仅观察） =="
-	$(PRECOMMIT) run --all-files || true
-
-# ---------- detect-secrets ----------
-.PHONY: secrets-scan
-secrets-scan:
-	@echo "== detect-secrets scan --baseline .secrets.baseline --all-files =="
-	cd "$(REPO_ROOT)"; \
-	$(DETECT_SECRETS) scan --baseline .secrets.baseline --all-files
-
-# ---------- mypy ----------
-.PHONY: mypy
-mypy:
-	@echo "== mypy（仅 app/；不阻塞） =="
-	$(PYTHON) -m mypy app || true
-
-# ---------- CI 本地模拟 ----------
-.PHONY: ci
-ci:
-	@echo "== CI: 格式化（fix） =="
-	$(MAKE) fix
-	@echo "== CI: Lint（ruff） =="
-	$(MAKE) lint
-	@echo "== CI: Quick 测试 =="
-	$(MAKE) quick
-	@echo "== CI: Done ✅ =="
-
-# ---------- 提交工作流 ----------
-.PHONY: dev-commit
-dev-commit:
-	@echo "== 开发提交（跳过钩子） =="
-	git add -A
-	git commit -m "wip(dev): auto save" --no-verify
-	git push
-
-.PHONY: release-commit
-release-commit:
-	@echo "== 发布提交：fix + lint + quick =="
-	$(MAKE) fix
-	$(MAKE) lint
-	$(MAKE) quick
-	@echo "== 全通过，执行提交 =="
-	git add -A
-	git commit -m "chore(release): style & checks passed"
-	git push
-
-# ---------- 清理缓存 ----------
-.PHONY: clean-cache
-clean-cache:
-	@echo "== 清理缓存目录 =="
-	rm -rf .pytest_cache .ruff_cache .mypy_cache 2>/dev/null || true
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+# -------- 运维小工具 --------
+.PHONY: doctor
+doctor:
+	@if [ -x "scripts/ports_doctor.sh" ]; then \
+	  scripts/ports_doctor.sh; \
+	else \
+	  echo "scripts/ports_doctor.sh 不存在或不可执行；生成一个最小版本..."; \
+	  mkdir -p scripts; \
+	  printf '#!/usr/bin/env bash\nset -euo pipefail\nports=($(API_HOST_PORT) $(PROM_HOST_PORT) $(GRAFANA_HOST_PORT) $(REDIS_HOST_PORT) 5433)\nnames=(API Prometheus Grafana Redis Postgres)\nfor i in $${!ports[@]}; do p=$${ports[$$i]}; n=$${names[$$i]}; if sudo lsof -iTCP:$$p -sTCP:LISTEN -nP >/dev/null 2>&1; then echo "[占用] $$n 端口 $$p："; sudo lsof -iTCP:$$p -sTCP:LISTEN -nP || true; docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" | grep -E ":$$p->|:$$p " || true; echo; else echo "[空闲] $$n 端口 $$p 空闲"; fi; done\n' > scripts/ports_doctor.sh; \
+	  chmod +x scripts/ports_doctor.sh; \
+	  scripts/ports_doctor.sh; \
+	fi
