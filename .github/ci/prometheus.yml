@@ -6,4 +6,4 @@ scrape_configs:
   - job_name: "wms-du-api"
     static_configs:
       # 在 CI 中，我们把 Prometheus 跑在容器里，通过 host-gateway 访问 runner 主机
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["host.docker.internal:8001"]
