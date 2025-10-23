@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 39,
+  "title": "WMS-DU · Events & Outbound (Phase 2.7)",
+  "uid": "wms-events",
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "platform",
+        "label": "platform",
+        "type": "query",
+        "datasource": "Prometheus",
+        "refresh": 2,
+        "query": "label_values(events_processed_total, platform)",
+        "includeAll": true,
+        "allValue": ".*"
+      },
+      {
+        "name": "shop_id",
+        "label": "shop_id",
+        "type": "query",
+        "datasource": "Prometheus",
+        "refresh": 2,
+        "query": "label_values(events_processed_total{platform=~\"$platform\"}, shop_id)",
+        "includeAll": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Events processed (1h)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(events_processed_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[1h]))"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Error rate (5m)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(event_errors_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m]))\n/\nclamp_min(sum(rate(events_processed_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])), 1e-9)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 } },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Outbound commits (1h)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(outbound_committed_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[1h]))"
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Latency p90 (5m)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.9, sum(rate(event_latency_seconds_bucket{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by (le))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Events processed rate by state (1m)",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(events_processed_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[1m])) by (state)"
+        }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate (5m)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(event_errors_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by ()\n/\nclamp_min(sum(rate(events_processed_total{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by (), 1e-9)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency (p50 / p90 / p99, 5m)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum(rate(event_latency_seconds_bucket{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum(rate(event_latency_seconds_bucket{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by (le))",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum(rate(event_latency_seconds_bucket{platform=~\"$platform\",shop_id=~\"$shop_id\"}[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    }
+  ]
+}
