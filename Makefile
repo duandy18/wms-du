@@ -124,3 +124,11 @@ doctor:
 	  chmod +x scripts/ports_doctor.sh; \
 	  scripts/ports_doctor.sh; \
 	fi
+# ================================================================
+# Git 辅助工具
+# ================================================================
+
+.PHONY: safe-add
+safe-add:
+	@echo ">>> 运行安全 add (过滤调试/临时文件)"
+	@bash scripts/safe-add.sh

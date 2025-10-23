@@ -1,0 +1,18 @@
+groups:
+- name: wms.rules
+  rules:
+  - alert: HighEventErrorRate
+    expr: |
+      sum(rate(event_errors_total[5m])) by (platform,shop_id)
+      / clamp_min(sum(rate(events_processed_total[5m])) by (platform,shop_id), 1e-9) > 0.05
+    for: 10m
+    labels: { severity: critical }
+    annotations:
+      summary: "{{ $labels.platform }}/{{ $labels.shop_id }} 错误率 > 5%（持续10m）"
+
+  - alert: NoOutboundCommits
+    expr: rate(outbound_committed_total[15m]) == 0
+    for: 30m
+    labels: { severity: warning }
+    annotations:
+      summary: "30 分钟无出库提交，可能阻塞"
