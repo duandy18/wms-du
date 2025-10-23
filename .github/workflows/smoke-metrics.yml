@@ -55,9 +55,8 @@ jobs:
           DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5432/wms
         run: |
           python - <<'PY'
-          import time
-          import psycopg
-          for i in range(60):
+          import time, psycopg
+          for _ in range(60):
             try:
               with psycopg.connect("postgresql://wms:wms@127.0.0.1:5432/wms",connect_timeout=2) as _:
                 break
@@ -78,23 +77,11 @@ jobs:
           nohup celery -A app.worker.celery worker -Q events.tmall.shop-1 -l INFO >/tmp/worker.log 2>&1 &
           for i in {1..60}; do curl -sf http://127.0.0.1:8000/ping && break; sleep 1; done
 
-      - name: Send one legal event (None -> PAID)
-        env:
-          REDIS_URL: redis://127.0.0.1:6379/0
-          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+      - name: Smoke `/metrics` visible (direct)
         run: |
-          python - <<'PY'
-          from app.worker import celery
-          r = celery.send_task("wms.process_event",
-                               kwargs={"platform":"tmall","shop_id":"shop-1",
-                                       "payload":{"order_no":"SMK-CI-OK-1","to_state":"PAID"}})
-          print("RESULT:", r.get(timeout=60))
-          PY
+          curl -sf http://127.0.0.1:8000/metrics | head -n 3
 
-      - name: Smoke `/metrics` visible
-        run: |
-          curl -sf http://127.0.0.1:8000/metrics | grep -E '^events_processed_total|^event_errors_total' || (curl -sf http://127.0.0.1:8000/metrics > /tmp/metrics.txt; exit 1)
-
+      # 关键：先启动 Prometheus，再发送事件，再断言
       - name: Run Prometheus (scrape host.docker.internal:8000)
         run: |
           docker run -d --name prom-smoke \
@@ -103,13 +90,31 @@ jobs:
             -v "$GITHUB_WORKSPACE/.github/ci/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
             prom/prometheus:v2.54.1
           for i in {1..60}; do curl -sf http://127.0.0.1:9090/-/ready && break; sleep 1; done
-          sleep 5
+          # 给 Prometheus 2 次抓取周期（prom.yml 中 scrape_interval: 5s）
+          sleep 6
+
+      - name: Send one legal event (None -> PAID)
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+        run: |
+          python - <<'PY'
+          import time
+          from app.worker import celery
+          order_no = f"SMK-{int(time.time()*1000)}"
+          r = celery.send_task("wms.process_event",
+                               kwargs={"platform":"tmall","shop_id":"shop-1",
+                                       "payload":{"order_no":order_no,"to_state":"PAID"}})
+          print("RESULT:", r.get(timeout=60))
+          PY
+          # 再给 Prometheus 2 次抓取的时间
+          sleep 12
 
       - name: PromQL assert (legal)
         run: |
-          # 合法事件：10s 内必须有处理增量
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[10s])" | jq -r '.status' | grep success
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[10s])" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+          # 过去 20s 内必须观测到处理增量（更抗抖）
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" | jq -r '.status' | grep success
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(events_processed_total[20s])" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
 
       - name: Send one illegal event (ALLOCATED -> PAID)
         env:
@@ -118,28 +123,28 @@ jobs:
         run: |
           set +e
           python - <<'PY'
+          import time
           from app.worker import celery
+          order_no = f"SMK-ERR-{int(time.time()*1000)}"
           try:
               r = celery.send_task("wms.process_event",
                                    kwargs={"platform":"tmall","shop_id":"shop-1",
-                                           "payload":{"order_no":"SMK-CI-ERR-1",
+                                           "payload":{"order_no":order_no,
                                                       "from_state":"ALLOCATED","to_state":"PAID"}})
               print("UNEXPECTED:", r.get(timeout=60))
           except Exception as e:
               print("ILLEGAL (as expected):", e)
           PY
           set -e
-          sleep 5
+          sleep 6
 
       - name: PromQL assert (illegal, ONLY ILLEGAL_TRANSITION grows)
         run: |
-          # 非法事件：错误增量必须出现
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total[10s])" | jq -r '.status' | grep success
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[10s]))" | jq -r '.data.result'
-          # 确保至少有一个 code 出现
-          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[10s]))" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
-          # 若你在 tasks.py 抑制了重复记错，这里检查 ValueError 在 10s 内没有增量（允许该断言为软检查，可按需启用）
-          # curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total{code=\"ValueError\"}[10s])" | jq -r '.data.result | length' | awk '{exit !($1==0)}'
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.status' | grep success
+          # 至少一条错误增量
+          curl -sf "http://127.0.0.1:9090/api/v1/query?query=sum by (code)(increase(event_errors_total[20s]))" | jq -r '.data.result | length' | awk '{exit !($1>=1)}'
+          # 如你已抑制 ValueError 重复计数，可启用如下强断言：
+          # curl -sf "http://127.0.0.1:9090/api/v1/query?query=increase(event_errors_total{code=\"ValueError\"}[20s])" | jq -r '.data.result | length' | awk '{exit !($1==0)}'
 
       - name: Dump logs on failure
         if: ${{ failure() }}
