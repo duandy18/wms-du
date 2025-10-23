@@ -6,6 +6,7 @@ import json
 import subprocess
 import shlex
 from urllib.parse import urlparse
+import pytest
 
 API = os.getenv("API_BASE", "http://127.0.0.1:8000")
 
@@ -33,8 +34,7 @@ def _ensure_api_up():
 
     url = urlparse(API)
     host = url.hostname or "127.0.0.1"
-    port = url.port or (8000 if host == "127.0.0.1" else 8000)
-
+    port = url.port or 8000
     cmd = f"python -m uvicorn app.main:app --host {host} --port {port}"
     proc = subprocess.Popen(shlex.split(cmd))
     # 等待最多 10s 起服务
@@ -43,20 +43,38 @@ def _ensure_api_up():
             time.sleep(0.5)
             pong = _http_json(f"{API}/ping")
             if isinstance(pong, dict) and pong.get("pong") is True:
-                return proc  # 返回子进程句柄，pytest 退出时进程也会被终止
+                return proc
         except Exception:
             continue
     raise RuntimeError("Failed to start API for smoke tests")
 
+def _redis_ready() -> bool:
+    """
+    检测 Redis 是否可连接；不可用时跳过本用例。
+    默认读取 CELERY_RESULT_BACKEND 或 REDIS_URL，回退到 localhost:6379。
+    """
+    url = os.getenv("CELERY_RESULT_BACKEND") or os.getenv("REDIS_URL") or "redis://localhost:6379/1"
+    try:
+        import redis  # 依赖由 celery[redis] 带入
+        r = redis.Redis.from_url(url, socket_connect_timeout=1)
+        r.ping()
+        return True
+    except Exception:
+        return False
+
 def test_metrics_smoke_and_event_counter():
     # 0) 确保 API 活着（本地/CI 任一环境）
-    proc = _ensure_api_up()
+    _ensure_api_up()
 
     # 1) API 健康
     pong = _http_json(f"{API}/ping")
     assert isinstance(pong, dict) and pong.get("pong") is True
 
-    # 2) 触发一条合法事件（None -> PAID），order_no 唯一避免被快照历史影响
+    # 2) 如 Redis 不可用（某些 CI 任务场景），跳过 Celery 路径
+    if not _redis_ready():
+        pytest.skip("Redis backend/broker unavailable in this job; skip Celery smoke.")
+
+    # 3) 触发一条合法事件（None -> PAID），order_no 唯一避免被快照历史影响
     from app.worker import celery
     order_no = f"SMK-{int(time.time() * 1000)}"
     r = celery.send_task(
@@ -69,9 +87,7 @@ def test_metrics_smoke_and_event_counter():
     )
     assert r.get(timeout=60) == "OK"
 
-    # 3) 拉取 /metrics，确认业务计数器出现（text/plain，按文本匹配）
+    # 4) 拉取 /metrics，确认业务计数器出现（text/plain，按文本匹配）
     time.sleep(2)
     metrics_text = _http_text(f"{API}/metrics")
     assert "events_processed_total" in metrics_text
-
-    # 进程句柄返回给 pytest 统一回收（此处无需显式 terminate）
