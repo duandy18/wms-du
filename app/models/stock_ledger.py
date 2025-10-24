@@ -1,14 +1,13 @@
-# app/models/stock_ledger.py
+# app/models/stock_ledger.py  —— 覆盖版
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import (
+    DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from app.db.base import Base
-
 
 class StockLedger(Base):
     __tablename__ = "stock_ledger"
@@ -21,31 +20,19 @@ class StockLedger(Base):
         nullable=False,
         index=True,
     )
+    reason:   Mapped[str]     = mapped_column(String(64),  nullable=False)            # INBOUND/OUTBOUND/ADJUST/TRANSFER...
+    ref:      Mapped[str]     = mapped_column(String(128), nullable=False, default="")
+    ref_line: Mapped[int]     = mapped_column(Integer,     nullable=False, default=1)
 
-    # 业务字段
-    reason: Mapped[str] = mapped_column(String(64), nullable=False)            # INBOUND / OUTBOUND / ADJUST / TRANSFER ...
-    ref: Mapped[str] = mapped_column(String(128), nullable=False, default="")  # 业务单据号
-    ref_line: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 行号
+    item_id:    Mapped[int]       = mapped_column(Integer, nullable=False)
+    after_qty:  Mapped[Decimal]   = mapped_column(Numeric(18, 6), nullable=False)
+    delta:      Mapped[Decimal]   = mapped_column(Numeric(18, 6), nullable=False)
+    occurred_at:Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=False)
 
-    # 数量：高精度以避免累计误差
-    after_qty: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
-    delta: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
-
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    # 关系
     stock = relationship("Stock", back_populates="ledgers", lazy="selectin")
 
     __table_args__ = (
-        # 唯一性：同一 stock 上，同一业务单据的同一行只能记录一次
-        Index(
-            "uq_ledger_reason_ref_refline_stock",
-            "reason",
-            "ref",
-            "ref_line",
-            "stock_id",
-            unique=True,
-        ),
+        UniqueConstraint("reason", "ref", "ref_line", "stock_id", name="uq_ledger_reason_ref_refline_stock"),
         Index("ix_stock_ledger_stock_id", "stock_id"),
         Index("ix_stock_ledger_occurred_at", "occurred_at"),
     )
