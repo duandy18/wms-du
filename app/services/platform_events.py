@@ -10,40 +10,44 @@ from app.services.platform_adapter import (
     PDDAdapter, TaobaoAdapter, TmallAdapter, JDAdapter, DouyinAdapter, XHSAdapter, PlatformAdapter
 )
 from app.models.event_error_log import EventErrorLog
-from app.metrics import EVENTS, ERRS  # ← 指标：事件/错误
+from app.metrics import EVENTS, ERRS  # 事件/错误指标
 
-# ---------------- 状态机合法过渡（新增：允许 from_state 为 None 的初始流转） ----------------
+# ---------------- 状态机合法过渡（允许 from_state=None 的首次落地） ----------------
 
-# 明确的合法过渡表（可按业务继续扩展）
 LEGAL_TRANSITIONS: dict[str, list[str]] = {
     "PAID": ["ALLOCATED", "CANCELED", "VOID"],
     "ALLOCATED": ["SHIPPED", "CANCELED", "VOID"],
     "SHIPPED": ["COMPLETED", "CANCELED", "VOID"],
 }
-
-# 首次落地时允许的初始目标态（from_state 为 None/""/"UNKNOWN"）
 INITIAL_ALLOWED: set[str] = {"PAID", "ALLOCATED"}
 
 def assert_legal_transition(from_state: Optional[str], to_state: str) -> None:
-    """
-    校验状态机过渡合法性。
-    - 允许 from_state 为 None/""/UNKNOWN 的“首次落地”进入 INITIAL_ALLOWED。
-    - 其余走 LEGAL_TRANSITIONS。
-    """
     f = (from_state or "").upper() or None
     t = (to_state or "").upper()
-
-    if f is None or f in {"", "UNKNOWN"}:
+    if f is None:
         if t in INITIAL_ALLOWED:
             return
         raise ValueError("ILLEGAL_TRANSITION")
-
     if f not in LEGAL_TRANSITIONS:
         raise ValueError(f"ILLEGAL_TRANSITION: unknown from_state {f}")
     if t not in LEGAL_TRANSITIONS[f]:
         raise ValueError(f"ILLEGAL_TRANSITION: {f}->{t} not allowed")
 
-# ---------------- 平台事件处理逻辑（保持原有语义） ----------------
+# ---------------- 平台态 → 规范态（桥接层映射） ----------------
+
+def _normalize_platform_state(platform: str, raw_state: str) -> str:
+    """
+    在桥接层将平台“原始态”规范化为内部态：
+    - tmall/taobao: WAIT_SELLER_SEND_GOODS -> PAID
+    - 其余平台保持原样（已是 PAID/ALLOCATED 等）
+    """
+    p = (platform or "").lower()
+    s = (raw_state or "").upper()
+    if p in {"tmall", "taobao"} and s == "WAIT_SELLER_SEND_GOODS":
+        return "PAID"
+    return s
+
+# ---------------- 其余辅助 ----------------
 
 _ADAPTERS: Dict[str, PlatformAdapter] = {
     "pdd": PDDAdapter(),
@@ -120,12 +124,14 @@ def _inc_event_metric(platform: str, shop_id: str, state: str) -> None:
 def _inc_error_metric(platform: str, shop_id: str, code: str) -> None:
     ERRS.labels((platform or "").lower(), shop_id or "", code or "ERROR").inc()
 
+# ---------------- 主流程 ----------------
+
 async def handle_event_batch(events: List[Dict[str, Any]], session: Optional[AsyncSession] = None) -> None:
     """
     批处理平台事件：
-    - 若 raw 携带 lines，直接按出库任务执行；
-    - 否则走平台适配器 parse→to_outbound_task；
-    - 在执行前做一次“状态机合法过渡”校验（from_state 为空视为首次落地）。
+      - 若 raw 携带 lines，先规范化状态（例如天猫 WAIT_SELLER_SEND_GOODS -> PAID）再校验/入库；
+      - 否则走平台适配器 parse → to_outbound_task；
+      - 失败写 error_log + 计数，不中断批处理。
     """
     from app.services.outbound_service import OutboundService  # 延迟导入，避免循环依赖
 
@@ -138,62 +144,71 @@ async def handle_event_batch(events: List[Dict[str, Any]], session: Optional[Asy
                 except Exception:
                     pass
 
-            ref_raw    = _extract_ref(raw)
-            state_raw  = _extract_state(raw)
-            shop_id    = _extract_shop_id(raw)
-            raw_lines  = raw.get("lines")
+            ref_raw   = _extract_ref(raw)
+            state_raw = _extract_state(raw)
+            shop_id   = _extract_shop_id(raw)
+            raw_lines = raw.get("lines")
 
-            # 允许 from_state 缺省（首次落地）
-            from_state = (str(raw.get("from_state") or "").upper() or None)
-            assert_legal_transition(from_state, state_raw or "PAID")
-
-            # 情况 A：raw 自带 lines，先跑最短路径
+            # —— 情况 A：事件自带 lines，先规范化状态再校验/执行 —— #
             if isinstance(raw_lines, list) and raw_lines:
+                to_norm = _normalize_platform_state(platform, state_raw)
+                # 首次落地允许：None -> PAID/ALLOCATED
+                assert_legal_transition(None, to_norm)
+
                 task_raw = {
-                    "platform": platform, "ref": ref_raw, "state": state_raw,
-                    "lines": raw_lines, "shop_id": shop_id, "payload": raw,
+                    "platform": platform,
+                    "ref": ref_raw,
+                    "state": to_norm,            # ★ 用规范化后的状态
+                    "lines": raw_lines,
+                    "shop_id": shop_id,
+                    "payload": raw,
                 }
                 await OutboundService.apply_event(task_raw, session=session)
-                _inc_event_metric(platform, shop_id, state_raw)
+                _inc_event_metric(platform, shop_id, to_norm)
                 log_event("event_processed_raw", f"{platform}:{ref_raw}",
-                          extra={"platform": platform, "ref": ref_raw, "state": state_raw, "shop_id": shop_id, "has_lines": True})
-                if not await _has_outbound_ledger(session, f"{shop_id}:{ref_raw}" if shop_id else ref_raw):
+                          extra={"platform": platform, "ref": ref_raw, "state": to_norm,
+                                 "shop_id": shop_id, "has_lines": True})
+
+                eff_ref = f"{shop_id}:{ref_raw}" if shop_id else ref_raw
+                if not await _has_outbound_ledger(session, eff_ref):
                     await OutboundService.apply_event(task_raw, session=session)
-                    _inc_event_metric(platform, shop_id, state_raw)
+                    _inc_event_metric(platform, shop_id, to_norm)
                     log_event("event_processed_raw_retry", f"{platform}:{ref_raw}",
                               extra={"platform": platform, "ref": ref_raw, "retry": True})
                 continue
 
-            # 情况 B：raw 不带 lines → 走适配器
+            # —— 情况 B：无 lines，走适配器 —— #
             adapter = _get_adapter(platform)
             parsed = await adapter.parse_event(raw)
             mapped = await adapter.to_outbound_task(parsed)
 
-            # 再做一次状态机校验（适配器映射后的 to_state）
-            to_state = mapped.get("state") or state_raw
-            assert_legal_transition(from_state, to_state or "PAID")
+            to_state = _normalize_platform_state(platform, mapped.get("state") or state_raw)
+            assert_legal_transition(None, to_state)  # 首次落地
 
             task = {
                 "platform": platform,
                 "ref": mapped.get("ref") or ref_raw,
-                "state": to_state,
+                "state": to_state,              # ★ 规范化状态
                 "lines": mapped.get("lines"),
                 "shop_id": mapped.get("shop_id") or shop_id,
                 "payload": mapped.get("payload") or raw,
             }
             await OutboundService.apply_event(task, session=session)
-            _inc_event_metric(platform, task.get("shop_id") or "", task.get("state") or "")
+            _inc_event_metric(platform, task.get("shop_id") or "", to_state)
             log_event("event_processed_mapped", f"{platform}:{task.get('ref')}",
-                      extra={"platform": platform, "ref": task.get("ref"), "state": task.get("state"),
-                             "shop_id": task.get("shop_id"), "has_lines": bool(task.get("lines"))})
-            if task.get("lines") and (not await _has_outbound_ledger(session, f"{task.get('shop_id') or ''}:{task.get('ref') or ''}".strip(":"))):
+                      extra={"platform": platform, "ref": task.get("ref"),
+                             "state": to_state, "shop_id": task.get("shop_id"),
+                             "has_lines": bool(task.get("lines"))})
+
+            eff_ref2 = f"{task.get('shop_id') or ''}:{task.get('ref') or ''}".strip(":")
+            if task.get("lines") and (not await _has_outbound_ledger(session, eff_ref2)):
                 await OutboundService.apply_event(task, session=session)
-                _inc_event_metric(platform, task.get("shop_id") or "", task.get("state") or "")
+                _inc_event_metric(platform, task.get("shop_id") or "", to_state)
                 log_event("event_processed_mapped_retry", f"{platform}:{task.get('ref')}",
                           extra={"platform": platform, "ref": task.get("ref"), "retry": True})
 
         except Exception as e:
-            log_event("event_error", f"{platform}: {e}", extra={"raw": raw})
             _inc_error_metric(platform, _extract_shop_id(raw), type(e).__name__)
+            log_event("event_error", f"{platform}: {e}", extra={"raw": raw})
             if session is not None:
                 await _log_error_isolated(session, platform, raw, e)
