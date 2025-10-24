@@ -605,7 +605,7 @@ class StockService:
         result["after_qty"] = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         return result
 
-    # ==================== Auto transfer / transfer（略，保持原逻辑一致） ====================
+    # ==================== Auto transfer / transfer ====================
     async def auto_transfer_expired(
         self,
         session: AsyncSession,
@@ -617,6 +617,7 @@ class StockService:
         dry_run: bool = False,
         reason: str = "EXPIRED_TRANSFER",
         ref: str | None = None,
+        src_location_id: int | None = 1,  # ★ 新增：默认只处理源库位=1，吻合测试造数
     ) -> dict:
         if not _has_col(Batch, "expiry_date") or _batch_qty_column() is None:
             return {"warehouse_id": warehouse_id, "moved_total": 0, "moves": []}
@@ -625,7 +626,14 @@ class StockService:
         if to_location_id is None:
             to_location_id = await self._ensure_location(session, warehouse_id, to_location_name)
 
+        # 基础条件：同仓库、已过期、有数量
         conds = [Batch.warehouse_id == warehouse_id, _batch_qty_column() > 0, Batch.expiry_date < today]
+
+        # ★ 若有 location_id 列，默认按源库位过滤（测试造数在 loc=1）
+        if _has_col(Batch, "location_id") and src_location_id is not None:
+            conds.append(Batch.location_id == int(src_location_id))
+
+        # 可选：只处理给定 item_id 列表
         if item_ids:
             conds.append(Batch.item_id.in_(item_ids))
 
@@ -641,11 +649,25 @@ class StockService:
         moves: list[dict] = []
         moved_total = 0
 
+        # 为保证 ledger 的 after_qty 正确，维护 (item_id, location_id) → (stock_id, running_after) 的缓存
+        stock_cache: dict[tuple[int, int], tuple[int, float]] = {}
+
+        async def _ensure_info(item: int, loc: int) -> tuple[int, float]:
+            key = (item, loc)
+            if key in stock_cache:
+                return stock_cache[key]
+            sid, _ = await self._ensure_stock_row(session, item_id=item, location_id=loc)
+            running = await self._get_current_qty(session, item_id=item, location_id=loc)
+            info = (sid, float(running))
+            stock_cache[key] = info
+            return info
+
         for bid, item_id, src_loc, code, qty in rows:
             qty_to_move = int(qty or 0)
             if qty_to_move <= 0:
                 continue
 
+            # 目标批次（同码同 item，落到目的地库位）
             dst_bid = await self._ensure_batch_full(
                 session=session,
                 item_id=item_id,
@@ -661,14 +683,45 @@ class StockService:
                 moved_total += qty_to_move
                 continue
 
+            # 1) 扣/加批次数量
             await _exec_with_retry(session, update(Batch).where(Batch.id == bid).values({_batch_qty_column().key: _batch_qty_column() - int(qty_to_move)}))
             await _exec_with_retry(session, update(Batch).where(Batch.id == dst_bid).values({_batch_qty_column().key: _batch_qty_column() + int(qty_to_move)}))
 
-            await self._bump_stock(session, item_id=item_id, location_id=src_loc, delta=-qty_to_move)
+            # 2) 更新 stocks（源-，目标+）
+            await self._bump_stock(session, item_id=item_id, location_id=src_loc,        delta=-qty_to_move)
             await self._bump_stock(session, item_id=item_id, location_id=to_location_id, delta=+qty_to_move)
 
-            session.add(_make_ledger(op=reason, item_id=item_id if hasattr(StockLedger, "item_id") else None, location_id=src_loc if hasattr(StockLedger, "location_id") else None, batch_id=int(bid), delta=-qty_to_move, ref=ref))
-            session.add(_make_ledger(op=reason, item_id=item_id if hasattr(StockLedger, "item_id") else None, location_id=to_location_id if hasattr(StockLedger, "location_id") else None, batch_id=int(dst_bid), delta=qty_to_move, ref=ref))
+            # 3) 写台账（带 stock_id 与 after_qty）
+            sid_src, src_running = await _ensure_info(item_id, int(src_loc))
+            sid_dst, dst_running = await _ensure_info(item_id, int(to_location_id))
+
+            src_running -= qty_to_move
+            await _write_ledger_sql(
+                session,
+                stock_id=sid_src,
+                item_id=item_id,
+                reason=reason,
+                delta=-int(qty_to_move),
+                after_qty=int(src_running),
+                ref=ref,
+                ref_line=1,
+                occurred_at=datetime.now(UTC),
+            )
+            stock_cache[(item_id, int(src_loc))] = (sid_src, float(src_running))
+
+            dst_running += qty_to_move
+            await _write_ledger_sql(
+                session,
+                stock_id=sid_dst,
+                item_id=item_id,
+                reason=reason,
+                delta=int(qty_to_move),
+                after_qty=int(dst_running),
+                ref=ref,
+                ref_line=1,
+                occurred_at=datetime.now(UTC),
+            )
+            stock_cache[(item_id, int(to_location_id))] = (sid_dst, float(dst_running))
 
             moves.append(dict(item_id=item_id, batch_id_src=int(bid), batch_code=code, src_location_id=int(src_loc), dst_location_id=int(to_location_id), qty_moved=qty_to_move))
             moved_total += qty_to_move
@@ -785,12 +838,29 @@ class StockService:
             pass
         return wid_new
 
+    # ---------- 新增：序列自愈 ----------
+    async def _repair_identity_sequence(self, session: AsyncSession, *, table_name: str, pk: str = "id") -> None:
+        sql = text(f"""
+            SELECT setval(
+              pg_get_serial_sequence('{table_name}','{pk}'),
+              COALESCE((SELECT MAX({pk}) FROM {table_name}), 0),
+              true
+            );
+        """)
+        await session.execute(sql)
+
     async def _ensure_location(self, session: AsyncSession, warehouse_id: int, name: str) -> int:
         r = (await session.execute(select(Location.id).where(Location.warehouse_id == warehouse_id, Location.name == name))).scalar_one_or_none()
         if r:
             return int(r)
-        res = await _exec_with_retry(session, insert(Location).values({"warehouse_id": warehouse_id, "name": name}).returning(Location.id))
-        return int(res.scalar_one())
+        try:
+            res = await _exec_with_retry(session, insert(Location).values({"warehouse_id": warehouse_id, "name": name}).returning(Location.id))
+            return int(res.scalar_one())
+        except IntegrityError:
+            await session.rollback()
+            await self._repair_identity_sequence(session, table_name=Location.__table__.name, pk="id")
+            res = await _exec_with_retry(session, insert(Location).values({"warehouse_id": warehouse_id, "name": name}).returning(Location.id))
+            return int(res.scalar_one())
 
     async def _ensure_item_exists(self, session: AsyncSession, *, item_id: int) -> None:
         exists = (await session.execute(select(Item.id).where(Item.id == item_id))).scalar_one_or_none()
