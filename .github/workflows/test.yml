@@ -1,4 +1,4 @@
-name: CI · Test & Trace
+name: CI · Test & Trace (lite)
 
 on:
   push:
@@ -25,29 +25,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      otel-collector:
-        image: otel/opentelemetry-collector:0.113.0
-        # ★ 关键：挂目录到 /etc/otelcol，镜像会自动读取 /etc/otelcol/config.yaml
-        volumes:
-          - ./monitoring/otelcol:/etc/otelcol:ro
-        ports:
-          - 4317:4317
-          - 4318:4318
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8888/metrics || exit 1"
-          --health-interval 10s --health-timeout 5s --health-retries 5
-
-      jaeger:
-        image: jaegertracing/all-in-one:1.59
-        env:
-          COLLECTOR_OTLP_ENABLED: "true"
-          COLLECTOR_OTLP_GRPC_HOST_PORT: ":4317"
-          COLLECTOR_OTLP_HTTP_HOST_PORT: ":4318"
-        ports:
-          - 16686:16686
-          - 4317:4317
-          - 4318:4318
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,17 +42,17 @@ jobs:
           pip install -r requirements.txt
           pip install -e ".[pg,dev,otel]"
 
-      - name: Wait for services
+      - name: Wait for Postgres
         run: |
-          echo "Waiting for Postgres & OTel Collector..."
-          sleep 10
+          echo "Waiting for Postgres ..."
+          sleep 8
 
       - name: Run pytest (smoke + quick)
         env:
           DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
-          OTEL_SERVICE_NAME: wms-du-ci
-          OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4317
-          OTEL_TRACES_SAMPLER: always_on
+          # 关键：CI 不启 collector，所以禁用 trace 采样避免连接告警
+          OTEL_TRACES_SAMPLER: never
+          # 若你有用到，API_BASE 等也可在此设置
         run: |
           source .venv/bin/activate
           pytest -q -s
