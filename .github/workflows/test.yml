@@ -2,13 +2,14 @@ name: CI · Test & Trace
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, dev, feat/** ]
   pull_request:
     branches: [ main, dev ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:14-alpine
@@ -26,11 +27,15 @@ jobs:
 
       otel-collector:
         image: otel/opentelemetry-collector:0.113.0
+        # ★ 关键：挂目录到 /etc/otelcol，镜像会自动读取 /etc/otelcol/config.yaml
+        volumes:
+          - ./monitoring/otelcol:/etc/otelcol:ro
         ports:
           - 4317:4317
           - 4318:4318
-        volumes:
-          - ./monitoring/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8888/metrics || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 5
 
       jaeger:
         image: jaegertracing/all-in-one:1.59
@@ -44,7 +49,7 @@ jobs:
           - 4318:4318
 
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -52,20 +57,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m venv .venv
           source .venv/bin/activate
           pip install -U pip setuptools wheel
           pip install -r requirements.txt
-          pip install -e ".[pg,dev,otel]"     # 安装可选组：Postgres + Dev + OTel
+          pip install -e ".[pg,dev,otel]"
 
       - name: Wait for services
         run: |
-          echo "Waiting for Postgres & OTel Collector to be ready..."
+          echo "Waiting for Postgres & OTel Collector..."
           sleep 10
 
-      - name: Run pytest with tracing
+      - name: Run pytest (smoke + quick)
         env:
           DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
           OTEL_SERVICE_NAME: wms-du-ci
@@ -73,11 +78,4 @@ jobs:
           OTEL_TRACES_SAMPLER: always_on
         run: |
           source .venv/bin/activate
-          pytest -q -s --maxfail=1 --disable-warnings
-
-      - name: Upload coverage to artifacts
-        if: always()
-        run: |
-          mkdir -p artifacts
-          coverage xml -o artifacts/coverage.xml || true
-        continue-on-error: true
+          pytest -q -s
