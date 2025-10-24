@@ -1,11 +1,46 @@
+# Prometheus 全局配置 —— Phase 2.8 观测对齐版
 global:
-  scrape_interval: 5s
-  evaluation_interval: 10s
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
 rule_files:
   - /etc/prometheus/alerting_rules.yml
 
 scrape_configs:
-  - job_name: "wms-du-api"
+  # ---------------------------
+  # Prometheus 自身
+  # ---------------------------
+  - job_name: 'prometheus'
     static_configs:
-      - targets: ["api:8000"]
+      - targets: ['prometheus:9090']
+
+  # ---------------------------
+  # FastAPI 应用（WMS-DU API）
+  # ---------------------------
+  - job_name: 'api'
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['api:8000']
+
+  # ---------------------------
+  # Redis Exporter
+  # ---------------------------
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # ---------------------------
+  # Celery Exporter
+  # ---------------------------
+  - job_name: 'celery-exporter'
+    static_configs:
+      - targets: ['celery-exporter:9540']
+
+  # ---------------------------
+  # OpenTelemetry Collector （可选：可观测性监控自身）
+  # ---------------------------
+  - job_name: 'otel-collector'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['otel-collector:8888']

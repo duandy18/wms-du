@@ -32,6 +32,20 @@ def _connect_args_for(url_str: str) -> dict[str, Any]:
     return {}
 
 
+def _maybe_instrument_sqlalchemy(engine) -> None:
+    """
+    Phase 2.8: 若可用则注入 SQLAlchemy 的 OTel tracing；失败静默。
+    这样 main.py 中对 FastAPI 的 tracing 与这里的 DB tracing 可“分处初始化、互不干扰”。
+    """
+    try:
+        # 延迟导入以避免在 early import 时引起循环依赖
+        from app.obs.otel import setup_tracing  # type: ignore
+        setup_tracing(sqlalchemy_engine=engine)
+    except Exception:
+        # tracing 失败时不阻断主流程
+        pass
+
+
 def create_sync_engine(url_str: str, *, echo: bool = False):
     connect_args: dict[str, Any] = _connect_args_for(url_str)
     u = make_url(url_str)
@@ -42,7 +56,9 @@ def create_sync_engine(url_str: str, *, echo: bool = False):
     if connect_args:
         kwargs["connect_args"] = connect_args
 
-    return create_engine(url_str, **kwargs)
+    engine = create_engine(url_str, **kwargs)
+    _maybe_instrument_sqlalchemy(engine)  # ← OTel: DB tracing
+    return engine
 
 
 def create_async_engine_safe(url_str: str, *, echo: bool = False) -> AsyncEngine:
@@ -56,4 +72,8 @@ def create_async_engine_safe(url_str: str, *, echo: bool = False) -> AsyncEngine
     if connect_args:
         kwargs["connect_args"] = connect_args
 
-    return create_async_engine(url_str, **kwargs)
+    engine = create_async_engine(url_str, **kwargs)
+    # AsyncEngine 由 OTel 的 SQLAlchemyInstrumentor 以 engine 实例为粒度注入；
+    # 这里同样尝试注入（失败静默），以便链路完整。
+    _maybe_instrument_sqlalchemy(engine)
+    return engine

@@ -18,17 +18,16 @@ services:
   api:
     build:
       context: ../..
-      dockerfile: ops/compose/Dockerfile.api
+      dockerfile: ./ops/compose/Dockerfile.api
     container_name: wms-api
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_started
     environment:
-      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASS:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASSWORD:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
       REDIS_URL: redis://redis:6379/0
       PROMETHEUS_MULTIPROC_DIR: /prom-data
       PYTHONUNBUFFERED: "1"
+      OTEL_SERVICE_NAME: wms-du
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     extra_hosts:
       - "host.docker.internal:host-gateway"
     working_dir: /app
@@ -39,26 +38,23 @@ services:
       - "${API_HOST_PORT:-8001}:8000"
     command: >
       bash -lc "mkdir -p /prom-data && rm -rf /prom-data/* || true &&
-                exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+                exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    depends_on:
+      - redis
 
-  celery-worker:
+  worker:
     build:
       context: ../..
-      dockerfile: ops/compose/Dockerfile.api
-    container_name: wms-celery
+      dockerfile: ./ops/compose/Dockerfile.api
+    container_name: wms-worker
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_started
     environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASSWORD:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
       REDIS_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      DATABASE_URL: postgresql+psycopg://${DB_USER:-wms}:${DB_PASS:-wms}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5433}/${DB_NAME:-wms}
-      CELERY_QUEUES: ${CELERY_QUEUES:-events.tmall.shop-1}
       PROMETHEUS_MULTIPROC_DIR: /prom-data
       PYTHONUNBUFFERED: "1"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      OTEL_SERVICE_NAME: wms-du
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     working_dir: /app
     volumes:
       - ../..:/app
@@ -66,6 +62,8 @@ services:
     command: >
       bash -lc "mkdir -p /prom-data &&
                 exec celery -A app.worker.celery worker -l INFO -Q ${CELERY_QUEUES:-events.tmall.shop-1}"
+    depends_on:
+      - redis
 
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -78,7 +76,7 @@ services:
       - ../observability/prometheus/alerting_rules.yml:/etc/prometheus/alerting_rules.yml:ro
 
   grafana:
-    image: grafana/grafana:10.4.5
+    image: grafana/grafana:11.2.0
     container_name: wms-grafana
     restart: unless-stopped
     ports:

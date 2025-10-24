@@ -1,0 +1,83 @@
+name: CI · Test & Trace
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U wms -d wms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      otel-collector:
+        image: otel/opentelemetry-collector:0.113.0
+        ports:
+          - 4317:4317
+          - 4318:4318
+        volumes:
+          - ./monitoring/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+
+      jaeger:
+        image: jaegertracing/all-in-one:1.59
+        env:
+          COLLECTOR_OTLP_ENABLED: "true"
+          COLLECTOR_OTLP_GRPC_HOST_PORT: ":4317"
+          COLLECTOR_OTLP_HTTP_HOST_PORT: ":4318"
+        ports:
+          - 16686:16686
+          - 4317:4317
+          - 4318:4318
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -U pip setuptools wheel
+          pip install -r requirements.txt
+          pip install -e ".[pg,dev,otel]"     # 安装可选组：Postgres + Dev + OTel
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for Postgres & OTel Collector to be ready..."
+          sleep 10
+
+      - name: Run pytest with tracing
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+          OTEL_SERVICE_NAME: wms-du-ci
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4317
+          OTEL_TRACES_SAMPLER: always_on
+        run: |
+          source .venv/bin/activate
+          pytest -q -s --maxfail=1 --disable-warnings
+
+      - name: Upload coverage to artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts
+          coverage xml -o artifacts/coverage.xml || true
+        continue-on-error: true

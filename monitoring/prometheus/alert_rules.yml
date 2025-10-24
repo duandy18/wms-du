@@ -1,0 +1,61 @@
+groups:
+  - name: phase28-service-health
+    rules:
+      - alert: HighHttpErrorRate
+        expr: sum(rate(http_requests_total{code=~"5.."}[5m]))
+              / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "HTTP 5xx > 5% (5m)"
+          description: "Service {{ $labels.job }} has high error rate."
+
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1.0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "p99 latency > 1s"
+          description: "Long-tail latency degrading user experience."
+
+      - alert: CeleryWorkersDown
+        expr: up{job="celery-exporter"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Celery exporter down"
+          description: "Celery exporter is not scraping; workers likely unhealthy."
+
+      - alert: QueueStuck
+        expr: rate(celery_task_runtime_sum[10m]) < 0.1 and celery_active_tasks > 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Tasks not completing"
+          description: "Active tasks but near-zero completions."
+
+      - alert: RedisQueueBacklog
+        expr: redis_connected_clients > 0 and redis_db_keys{db="db0"} > 10000
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Redis backlog suspect"
+          description: "db0 keys exceed 10k; check queues / locks."
+
+      - alert: DBErrorSpike
+        expr: increase(app_db_errors_total[5m]) > 20
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "DB errors spiking"
+          description: "Check Postgres connections and locks."
+
+  - name: phase28-consistency
+    rules:
+      - alert: InventoryMismatchDetected
+        expr: increase(wms_inventory_mismatch_total[15m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Detected inventory mismatch"
+          description: "Consistency job found mismatches in last 15m."

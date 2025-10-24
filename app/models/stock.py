@@ -1,4 +1,3 @@
-# app/models/stock.py
 from __future__ import annotations
 
 from sqlalchemy import CheckConstraint, Column, ForeignKey, Index, Integer, UniqueConstraint
@@ -40,11 +39,9 @@ class Stock(Base):
         Index("ix_stocks_item_loc", "item_id", "location_id"),
     )
 
-    # 仅保留真实外键的关系
     item = relationship("Item", back_populates="stocks")
     location = relationship("Location", back_populates="stocks")
 
-    # 新增：与台账的一对多（StockLedger.stock_id 外键）
     ledgers = relationship(
         "StockLedger",
         back_populates="stock",

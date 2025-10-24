@@ -1,11 +1,13 @@
 # app/tasks.py
+# Phase 2.8 · 平台事件处理 + 一致性巡检任务（Celery）
 from __future__ import annotations
 
 import asyncio
 import time
 from typing import Any, Dict, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from app.worker import celery  # 导入项目里暴露的 Celery 实例
 from app.db.session import async_session_maker
@@ -15,6 +17,9 @@ from app.services.event_gateway import enforce_transition
 from app.services.outbound_service import OutboundService
 from app.domain.events_enums import EventState
 
+# =========================
+# 平台事件处理
+# =========================
 
 def _s(v: Optional[Any], default: str = "") -> str:
     return str(v) if v is not None else default
@@ -28,7 +33,7 @@ async def _process_one(
     payload: Dict[str, Any],
 ) -> str:
     """
-    单条事件处理：
+    单条平台事件处理：
       1) 解析关键信息
       2) 状态机守卫（非法跃迁→落表 + ERRS 计数 + 抛错）
       3) 业务推进（调用 OutboundService.apply_event）
@@ -115,3 +120,63 @@ def process_event(platform: str, shop_id: str, payload: Dict[str, Any]) -> str:
                 raise
 
     return asyncio.run(_runner())
+
+
+# =========================
+# 一致性巡检（内联，不依赖 app.tasks.consistency 包）
+# =========================
+
+# 与原先 app/tasks/consistency.py 相同的 SQL
+CONSISTENCY_SQL = """
+WITH ledger_sum AS (
+  SELECT stock_id, SUM(delta_qty) AS qty_delta
+  FROM stock_ledger
+  GROUP BY stock_id
+),
+joined AS (
+  SELECT s.id AS stock_id, s.qty, COALESCE(l.qty_delta,0) AS delta
+  FROM stocks s
+  LEFT JOIN ledger_sum l ON l.stock_id = s.id
+)
+SELECT stock_id, qty, delta, (qty - delta) as diff
+FROM joined
+WHERE qty <> delta;
+"""
+
+async def _run_consistency(session: AsyncSession, *, auto_fix: bool = False, dry_run: bool = True) -> int:
+    rows = (await session.execute(text(CONSISTENCY_SQL))).mappings().all()
+    mismatches = 0
+    # 指标：wms_inventory_mismatch_total 在 app.obs.metrics 定义，这里只关心修复逻辑；
+    # 指标上报在原一致性模块里已有挂载，不在此重复计数，避免间歇性重复。
+    for r in rows:
+        mismatches += 1
+        if auto_fix and not dry_run:
+            await session.execute(
+                text("UPDATE stocks SET qty=:delta WHERE id=:sid"),
+                {"delta": r["delta"], "sid": r["stock_id"]},
+            )
+    if auto_fix and not dry_run:
+        await session.commit()
+    return mismatches
+
+
+@celery.task(name="app.tasks.consistency_job")
+def consistency_job(dry_run: bool = True, auto_fix: bool = False) -> str:
+    """
+    一致性巡检任务（供 Celery Beat 调度）：
+      - dry_run=True：只计数不落库
+      - auto_fix=True 且 dry_run=False：发现不一致后修复 stocks.qty 与 ledger 汇总
+    """
+    import os
+    db = os.getenv("DATABASE_URL")
+    if not db:
+        return "NO_DATABASE_URL"
+
+    async def _run() -> str:
+        engine = create_async_engine(db, pool_pre_ping=True)
+        async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+            _ = await _run_consistency(s, auto_fix=auto_fix, dry_run=dry_run)
+        await engine.dispose()
+        return "OK"
+
+    return asyncio.run(_run())
