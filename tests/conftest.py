@@ -20,6 +20,13 @@ try:
 except Exception:
     HAVE_HTTPX = False
 
+# 同步 TestClient（供 tests 里直接使用 client.get()/post()）
+try:
+    from starlette.testclient import TestClient
+    HAVE_TESTCLIENT = True
+except Exception:
+    HAVE_TESTCLIENT = False
+
 
 # ------------------------------
 # 0) 统一解析数据库 URL（异步驱动）
@@ -87,7 +94,7 @@ async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
 
 
 # ------------------------------
-# 3) HTTP 客户端（如需）
+# 3) HTTP 客户端（异步 & 同步）
 # ------------------------------
 @pytest.fixture(scope="function")
 async def ac():
@@ -103,32 +110,79 @@ async def ac():
         yield client
 
 
+@pytest.fixture(scope="function")
+def client():
+    """
+    starlette.testclient.TestClient（同步）。
+    供 tests/services/* 里直接 client.get()/post() 使用。
+    """
+    if not HAVE_TESTCLIENT:
+        pytest.skip("starlette TestClient not available")
+    from app.main import app  # 若路径不同，改成你的应用入口
+    with TestClient(app) as tc:
+        yield tc
+
+
+# 提供 stock_service fixture（tests 里直接依赖）
+@pytest.fixture(scope="function")
+def stock_service():
+    from app.services.stock_service import StockService
+    return StockService()
+
+
 # ------------------------------
-# 4) 每条用例开始前的“轻量清表 + 基线回种”
+# 4) 每条用例开始前的“强力清表 + 基线回种”
 # ------------------------------
 @pytest.fixture(autouse=True, scope="function")
 async def _db_clean(async_engine: AsyncEngine):
     """
-    清理顺序：先删子表再删父表，避免外键；最后回种 warehouses(id=1,'WH-1') 基线。
-    这样各 quick 用例中对 warehouse_id=1 的外键假设都能成立。
+    使用 TRUNCATE ... RESTART IDENTITY CASCADE（PostgreSQL）重置主键与外键，
+    避免固定主键插入（如 batches.id=32001）在重复运行中撞车。
+    SQLite 分支回退到 DELETE 并清空 sqlite_sequence。
+    最后回种 warehouses(id=1,'WH-1') 作为外键基线。
     """
-    tables = [
-        "stock_ledger",
-        "stock_snapshots",
-        "outbound_commits",
-        "event_error_log",
-        "stocks",
-        "locations",
-        "items",
-        "warehouses",
-    ]
     async with async_engine.begin() as conn:
-        for t in tables:
+        dialect = conn.dialect.name
+
+        if dialect == "postgresql":
+            # 先尝试 TRUNCATE + RESTART IDENTITY + CASCADE
+            tables = [
+                "stock_ledger",
+                "stock_snapshots",
+                "outbound_commits",
+                "event_error_log",
+                "batches",
+                "stocks",
+                "locations",
+                "items",
+                "warehouses",
+            ]
+            tbls = ", ".join(tables)
             with contextlib.suppress(Exception):
-                await conn.execute(text(f"DELETE FROM {t}"))
+                await conn.execute(text(f"TRUNCATE TABLE {tbls} RESTART IDENTITY CASCADE;"))
+        else:
+            # SQLite 等：逐表 DELETE，并尽量重置自增序列
+            tables = [
+                "stock_ledger",
+                "stock_snapshots",
+                "outbound_commits",
+                "event_error_log",
+                "batches",
+                "stocks",
+                "locations",
+                "items",
+                "warehouses",
+            ]
+            for t in tables:
+                with contextlib.suppress(Exception):
+                    await conn.execute(text(f"DELETE FROM {t};"))
+            # 尝试清空自增序列
+            with contextlib.suppress(Exception):
+                await conn.execute(text("DELETE FROM sqlite_sequence;"))
+
         # 基线维度回种（关键）：仓库表必须有 id=1，供 locations(..., warehouse_id=1) 外键引用
         await conn.execute(
-            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
+            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING;")
         )
 
 
