@@ -9,9 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class SnapshotService:
     """
     日级库存快照、首页总览与趋势接口。
-    - run_for_date / run_range：生成某日或区间的快照
-    - query_inventory_snapshot(_paged)：首页（聚合 + Top2 库位 + 近效期）
-    - trends：按日趋势查询（自适应不同 schema）
     """
 
     # -------------------------- Public API --------------------------
@@ -43,7 +40,7 @@ class SnapshotService:
             cur = cur + timedelta(days=1)
         return total
 
-    # === 首页总览（不分页） ===
+    # === 原有首页总览（不分页） ===
     @staticmethod
     async def query_inventory_snapshot(session: AsyncSession) -> list[dict]:
         near_days = int(os.getenv("WMS_NEAR_EXPIRY_DAYS", "30"))
@@ -383,7 +380,6 @@ class SnapshotService:
 
     @staticmethod
     def _window(cut_day: date, prev_day: date | None) -> tuple[str, str, str | None]:
-        # 修正：replace(UTC) -> replace(tzinfo=UTC)
         cut_start = datetime.combine(cut_day, datetime.min.time()).replace(tzinfo=UTC)
         cut_end = cut_start + timedelta(days=1)
         prev_end = (
@@ -396,14 +392,11 @@ class SnapshotService:
     @staticmethod
     async def _upsert_day(session: AsyncSession, cut_day: date, prev_day: date | None) -> int:
         """
-        生成 cut_day 的快照。数据来源采用 batches 的聚合：
-        qty_on_hand = SUM(batches.qty)，qty_available = 同步值（后续可扣保留量）。
-        自适应 stock_snapshots 的两种结构：
-          - 新版：qty_on_hand, qty_available
-          - 旧版：qty
-        需要有唯一键/索引 (item_id, snapshot_date) 以支持 UPSERT。
+        生成 cut_day 的快照。采用 batches 聚合：
+          - 新版结构：写入 qty_on_hand/qty_available
+          - 旧版结构：仅写 qty
+        关键修复：使用 CAST(:cut_day AS date)，避免 asyncpg 对 :cut_day::date 的解析问题。
         """
-        # 探测列
         cols_sql = text(
             """
             SELECT column_name
@@ -414,7 +407,7 @@ class SnapshotService:
             """
         )
         found = {row[0] for row in (await session.execute(cols_sql)).all()}
-        has_dual = "qty_on_hand" in found  # 新版结构
+        has_dual = "qty_on_hand" in found
         dialect = session.get_bind().dialect.name
 
         if dialect == "postgresql":
@@ -422,7 +415,7 @@ class SnapshotService:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT :cut_day::date AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT CAST(:cut_day AS date) AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
                     )
@@ -438,7 +431,7 @@ class SnapshotService:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT :cut_day::date AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT CAST(:cut_day AS date) AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
                     )
@@ -482,7 +475,6 @@ class SnapshotService:
 
         res = await session.execute(sql, {"cut_day": cut_day})
         await session.commit()
-        # 统计受影响的 item 行数
         try:
             rows = res.fetchall()
             return len(rows)
