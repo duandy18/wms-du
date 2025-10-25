@@ -40,7 +40,7 @@ class SnapshotService:
             cur = cur + timedelta(days=1)
         return total
 
-    # === 原有首页总览（不分页） ===
+    # === 不分页首页 ===
     @staticmethod
     async def query_inventory_snapshot(session: AsyncSession) -> list[dict]:
         near_days = int(os.getenv("WMS_NEAR_EXPIRY_DAYS", "30"))
@@ -143,7 +143,7 @@ class SnapshotService:
             out.append(item)
         return out
 
-    # === 分页版 ===
+    # === 分页首页 ===
     @staticmethod
     async def query_inventory_snapshot_paged(
         session: AsyncSession, q: str | None, offset: int, limit: int
@@ -322,7 +322,7 @@ class SnapshotService:
         """
         兼容两种 schema：
         A) stock_snapshots(qty_on_hand, qty_available)
-        B) 较旧/极简结构只含 qty（此时 on_hand/available 都用 qty 兜底）
+        B) 旧/简：仅 qty
         """
         cols_sql = text(
             """
@@ -392,8 +392,8 @@ class SnapshotService:
     @staticmethod
     async def _upsert_day(session: AsyncSession, cut_day: date, prev_day: date | None) -> int:
         """
-        幂等生成 cut_day 的快照（基于 batches 聚合）。
-        不依赖唯一约束；使用 CTE 先 DELETE 再 INSERT。
+        幂等生成 cut_day 的快照（基于 batches 聚合，粒度为 item_id+location_id）。
+        采用 CTE：先 DELETE 当日相同 (item_id, location_id)，再 INSERT。
         """
         cols_sql = text(
             """
@@ -415,18 +415,21 @@ class SnapshotService:
                     WITH sums AS (
                       SELECT CAST(:cut_day AS date) AS snapshot_date,
                              b.item_id,
+                             b.location_id,
                              COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
-                      GROUP BY b.item_id
+                      GROUP BY b.item_id, b.location_id
                     ),
                     del AS (
                       DELETE FROM stock_snapshots s
                       USING sums t
-                      WHERE s.snapshot_date = t.snapshot_date AND s.item_id = t.item_id
+                      WHERE s.snapshot_date = t.snapshot_date
+                        AND s.item_id = t.item_id
+                        AND s.location_id = t.location_id
                       RETURNING s.item_id
                     )
-                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
-                    SELECT snapshot_date, item_id, q, q FROM sums
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, location_id, qty_on_hand, qty_available)
+                    SELECT snapshot_date, item_id, location_id, q, q FROM sums
                     RETURNING item_id;
                     """
                 )
@@ -436,18 +439,21 @@ class SnapshotService:
                     WITH sums AS (
                       SELECT CAST(:cut_day AS date) AS snapshot_date,
                              b.item_id,
+                             b.location_id,
                              COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
-                      GROUP BY b.item_id
+                      GROUP BY b.item_id, b.location_id
                     ),
                     del AS (
                       DELETE FROM stock_snapshots s
                       USING sums t
-                      WHERE s.snapshot_date = t.snapshot_date AND s.item_id = t.item_id
+                      WHERE s.snapshot_date = t.snapshot_date
+                        AND s.item_id = t.item_id
+                        AND s.location_id = t.location_id
                       RETURNING s.item_id
                     )
-                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
-                    SELECT snapshot_date, item_id, q FROM sums
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, location_id, qty)
+                    SELECT snapshot_date, item_id, location_id, q FROM sums
                     RETURNING item_id;
                     """
                 )
@@ -456,28 +462,36 @@ class SnapshotService:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT :cut_day AS snapshot_date,
+                             b.item_id,
+                             b.location_id,
+                             COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
-                      GROUP BY b.item_id
+                      GROUP BY b.item_id, b.location_id
                     );
                     DELETE FROM stock_snapshots
-                      WHERE (snapshot_date, item_id) IN (SELECT snapshot_date, item_id FROM sums);
-                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
-                      SELECT snapshot_date, item_id, q, q FROM sums;
+                      WHERE (snapshot_date, item_id, location_id)
+                            IN (SELECT snapshot_date, item_id, location_id FROM sums);
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, location_id, qty_on_hand, qty_available)
+                      SELECT snapshot_date, item_id, location_id, q, q FROM sums;
                     """
                 )
             else:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT :cut_day AS snapshot_date,
+                             b.item_id,
+                             b.location_id,
+                             COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
-                      GROUP BY b.item_id
+                      GROUP BY b.item_id, b.location_id
                     );
                     DELETE FROM stock_snapshots
-                      WHERE (snapshot_date, item_id) IN (SELECT snapshot_date, item_id FROM sums);
-                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
-                      SELECT snapshot_date, item_id, q FROM sums;
+                      WHERE (snapshot_date, item_id, location_id)
+                            IN (SELECT snapshot_date, item_id, location_id FROM sums);
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, location_id, qty)
+                      SELECT snapshot_date, item_id, location_id, q FROM sums;
                     """
                 )
 
