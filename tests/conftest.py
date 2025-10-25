@@ -1,4 +1,3 @@
-# tests/conftest.py
 import os
 import asyncio
 import contextlib
@@ -84,7 +83,7 @@ def client():
     if not HAVE_TESTCLIENT:
         pytest.skip("starlette TestClient not available")
     from app.main import app
-    # --- 测试兜底：若缺少 /stock/ledger/query，就临时注入一个最小实现 ---
+    # 若没有 /stock/ledger/query，注入最小测试路由（显式指定文本类型，避免 asyncpg 参数类型歧义）
     want_path = "/stock/ledger/query"
     has_route = any(getattr(r, "path", "") == want_path and "POST" in getattr(r, "methods", set()) for r in app.router.routes)
     if not has_route:
@@ -92,30 +91,37 @@ def client():
 
         @app.post(want_path)
         async def _test_stock_ledger_query(payload: dict = Body(...)):
-            """
-            仅测试使用：按批次码聚合 ledger 明细，返回 {total, items:[{id, delta}]}
-            """
             bcode = payload.get("batch_code")
             engine = create_async_engine(_async_db_url(), future=True)
             async with engine.begin() as conn:
-                rows = (
-                    await conn.execute(
-                        text(
-                            """
-                            SELECT l.id, l.delta
-                            FROM stock_ledger l
-                            LEFT JOIN stocks s ON s.id = l.stock_id
-                            LEFT JOIN batches b ON b.item_id = l.item_id
-                            WHERE (:bcode IS NULL) OR (b.batch_code = :bcode)
-                            ORDER BY l.id ASC
-                            """
-                        ),
-                        {"bcode": bcode},
-                    )
+                await conn.execute(
+                    text(
+                        """
+                        SELECT l.id, l.delta
+                        FROM stock_ledger l
+                        LEFT JOIN stocks s ON s.id = l.stock_id
+                        LEFT JOIN batches b ON b.item_id = l.item_id
+                        WHERE (CAST(:bcode AS TEXT) IS NULL) OR (b.batch_code = CAST(:bcode AS TEXT))
+                        ORDER BY l.id ASC
+                        """
+                    ),
+                    {"bcode": bcode},
+                )
+                rows = await conn.execute(
+                    text(
+                        """
+                        SELECT l.id, l.delta
+                        FROM stock_ledger l
+                        LEFT JOIN stocks s ON s.id = l.stock_id
+                        LEFT JOIN batches b ON b.item_id = l.item_id
+                        WHERE (CAST(:bcode AS TEXT) IS NULL) OR (b.batch_code = CAST(:bcode AS TEXT))
+                        ORDER BY l.id ASC
+                        """
+                    ),
+                    {"bcode": bcode},
                 )
                 items = [{"id": int(r[0]), "delta": int(r[1])} for r in rows.all()]
             return {"total": len(items), "items": items}
-    # -----------------------------------------------------------------------
     with TestClient(app) as tc:
         yield tc
 

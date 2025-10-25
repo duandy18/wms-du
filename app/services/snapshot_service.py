@@ -392,10 +392,8 @@ class SnapshotService:
     @staticmethod
     async def _upsert_day(session: AsyncSession, cut_day: date, prev_day: date | None) -> int:
         """
-        生成 cut_day 的快照。采用 batches 聚合：
-          - 新版结构：写入 qty_on_hand/qty_available
-          - 旧版结构：仅写 qty
-        关键修复：使用 CAST(:cut_day AS date)，避免 asyncpg 对 :cut_day::date 的解析问题。
+        幂等生成 cut_day 的快照（基于 batches 聚合）。
+        不依赖唯一约束；使用 CTE 先 DELETE 再 INSERT。
         """
         cols_sql = text(
             """
@@ -415,15 +413,20 @@ class SnapshotService:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT CAST(:cut_day AS date) AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT CAST(:cut_day AS date) AS snapshot_date,
+                             b.item_id,
+                             COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
+                    ),
+                    del AS (
+                      DELETE FROM stock_snapshots s
+                      USING sums t
+                      WHERE s.snapshot_date = t.snapshot_date AND s.item_id = t.item_id
+                      RETURNING s.item_id
                     )
                     INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
                     SELECT snapshot_date, item_id, q, q FROM sums
-                    ON CONFLICT (item_id, snapshot_date)
-                    DO UPDATE SET qty_on_hand = EXCLUDED.qty_on_hand,
-                                  qty_available = EXCLUDED.qty_available
                     RETURNING item_id;
                     """
                 )
@@ -431,14 +434,20 @@ class SnapshotService:
                 sql = text(
                     """
                     WITH sums AS (
-                      SELECT CAST(:cut_day AS date) AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      SELECT CAST(:cut_day AS date) AS snapshot_date,
+                             b.item_id,
+                             COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
+                    ),
+                    del AS (
+                      DELETE FROM stock_snapshots s
+                      USING sums t
+                      WHERE s.snapshot_date = t.snapshot_date AND s.item_id = t.item_id
+                      RETURNING s.item_id
                     )
                     INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
                     SELECT snapshot_date, item_id, q FROM sums
-                    ON CONFLICT (item_id, snapshot_date)
-                    DO UPDATE SET qty = EXCLUDED.qty
                     RETURNING item_id;
                     """
                 )
@@ -450,12 +459,11 @@ class SnapshotService:
                       SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
-                    )
+                    );
+                    DELETE FROM stock_snapshots
+                      WHERE (snapshot_date, item_id) IN (SELECT snapshot_date, item_id FROM sums);
                     INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
-                    SELECT snapshot_date, item_id, q, q FROM sums
-                    ON CONFLICT(item_id, snapshot_date)
-                    DO UPDATE SET qty_on_hand=excluded.qty_on_hand,
-                                  qty_available=excluded.qty_available;
+                      SELECT snapshot_date, item_id, q, q FROM sums;
                     """
                 )
             else:
@@ -465,11 +473,11 @@ class SnapshotService:
                       SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
                       FROM batches b
                       GROUP BY b.item_id
-                    )
+                    );
+                    DELETE FROM stock_snapshots
+                      WHERE (snapshot_date, item_id) IN (SELECT snapshot_date, item_id FROM sums);
                     INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
-                    SELECT snapshot_date, item_id, q FROM sums
-                    ON CONFLICT(item_id, snapshot_date)
-                    DO UPDATE SET qty=excluded.qty;
+                      SELECT snapshot_date, item_id, q FROM sums;
                     """
                 )
 
