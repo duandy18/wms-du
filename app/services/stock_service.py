@@ -102,7 +102,10 @@ async def _write_ledger_sql(
     ref: str | None,
     ref_line: int | str | None,
     occurred_at: datetime | None = None,
-) -> None:
+) -> int:
+    """
+    写入台账并返回 ledger_id（>0）。
+    """
     ts = occurred_at or datetime.now(UTC)
     reason = (reason or "").upper()
     ref = (ref or "") or None
@@ -117,7 +120,10 @@ async def _write_ledger_sql(
         cols.append("after_qty")
         vals.append(":after")
 
-    sql = text(f"INSERT INTO stock_ledger ({', '.join(cols)}) VALUES ({', '.join(vals)})")
+    sql = text(
+        f"INSERT INTO stock_ledger ({', '.join(cols)}) "
+        f"VALUES ({', '.join(vals)}) RETURNING id"
+    )
     sid = int(stock_id or 0)
     if sid > 0:
         await _ledger_advisory_xact_lock(session, reason, ref or "", sid)
@@ -151,13 +157,15 @@ async def _write_ledger_sql(
         "after": int(after_qty or 0),
     }
     try:
-        await session.execute(sql, params)
+        res = await session.execute(sql, params)
+        return int(res.scalar_one())
     except IntegrityError as e:
         msg = (str(e.orig) if hasattr(e, "orig") else str(e)).lower()
         hit_uc = ("uq_ledger_reason_ref_refline_stock" in msg) or ("uq_stock_ledger_reason_ref_refline" in msg)
         if hit_uc and sid > 0:
             params["rline"] = await _next_ref_line(session, reason=reason, ref=ref or "", stock_id=sid)
-            await session.execute(sql, params)
+            res2 = await session.execute(sql, params)
+            return int(res2.scalar_one())
         else:
             raise
 
@@ -194,6 +202,17 @@ class StockService:
             raise ValueError("猫粮库存调整必须指定 location_id，禁止 Ledger-only 记账")
 
         if delta < 0:
+            # 若显式指定了批次码，则按批次直扣；否则走 FEFO
+            if batch_code:
+                return await self._adjust_outbound_direct(
+                    session=session,
+                    item_id=item_id,
+                    location_id=location_id,
+                    batch_code=batch_code,
+                    amount=-float(delta),
+                    reason=reason or "OUTBOUND",
+                    ref=ref,
+                )
             return await self._adjust_fefo(
                 session=session,
                 item_id=item_id,
@@ -251,16 +270,43 @@ class StockService:
         stock_id, before = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
         after = before + float(delta)
 
+        # 更新批次
+        batch_after_qty = None
         if batch_id is not None:
-            await _exec_with_retry(session, update(Batch).where(Batch.id == batch_id).values({qty_col.key: func.coalesce(qty_col, 0) + int(delta)}))
+            await _exec_with_retry(
+                session,
+                update(Batch).where(Batch.id == batch_id).values({qty_col.key: func.coalesce(qty_col, 0) + int(delta)}),
+            )
+            batch_after_qty = (
+                await session.execute(select(qty_col).where(Batch.id == batch_id))
+            ).scalar_one_or_none()
+            batch_after_qty = int(batch_after_qty or 0)
 
+        # 更新库存 & 写台账
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
-        await _write_ledger_sql(session, stock_id=stock_id, item_id=item_id, reason=reason, delta=int(delta), after_qty=int(after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+        ledger_id = await _write_ledger_sql(
+            session,
+            stock_id=stock_id,
+            item_id=item_id,
+            reason=reason,
+            delta=int(delta),
+            after_qty=int(after),
+            ref=ref,
+            ref_line=1,
+            occurred_at=datetime.now(UTC),
+        )
         await session.flush()
         await session.commit()
 
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
-        return {"total_delta": float(delta), "batch_moves": ([(batch_id, float(delta))] if batch_id is not None else []), "stock_after": int(stock_after), "stocks_touched": True}
+        return {
+            "total_delta": float(delta),
+            "batch_moves": ([(batch_id, float(delta))] if batch_id is not None else []),
+            "stock_after": int(stock_after),
+            "batch_after": batch_after_qty,        # 新增：供单测断言
+            "ledger_id": int(ledger_id),           # 新增：返回 ledger 主键
+            "stocks_touched": True,
+        }
 
     async def _adjust_outbound_direct(
         self,
@@ -276,20 +322,53 @@ class StockService:
         assert amount > 0
         qty_col = _batch_qty_column()
         code_attr = _batch_code_attr()
-        r = (await session.execute(select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code))).scalar_one_or_none()
+        r = (
+            await session.execute(
+                select(Batch.id).where(Batch.item_id == item_id, code_attr == batch_code, Batch.location_id == location_id)
+            )
+        ).scalar_one_or_none()
         if r is None:
-            raise ValueError("指定的 batch_code 不存在")
+            raise ValueError("指定的 batch_code 不存在或不在该库位")
+
         bid = int(r)
-        await _exec_with_retry(session, update(Batch).where(Batch.id == bid).values({qty_col.key: func.coalesce(qty_col, 0) - int(amount)}))
+
+        # 先扣批次
+        await _exec_with_retry(
+            session,
+            update(Batch).where(Batch.id == bid).values({qty_col.key: func.coalesce(qty_col, 0) - int(amount)}),
+        )
+        batch_after_qty = (
+            await session.execute(select(qty_col).where(Batch.id == bid))
+        ).scalar_one_or_none()
+        batch_after_qty = int(batch_after_qty or 0)
+
+        # 再扣 stock + 写台账
         before = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         after = before - float(amount)
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=-float(amount))
         sid, _ = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
-        await _write_ledger_sql(session, stock_id=sid, item_id=item_id, reason=reason, delta=-int(amount), after_qty=int(after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+        ledger_id = await _write_ledger_sql(
+            session,
+            stock_id=sid,
+            item_id=item_id,
+            reason=reason,
+            delta=-int(amount),
+            after_qty=int(after),
+            ref=ref,
+            ref_line=1,
+            occurred_at=datetime.now(UTC),
+        )
         await session.flush()
         await session.commit()
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
-        return {"total_delta": -float(amount), "batch_moves": [(bid, -float(amount))], "stock_after": int(stock_after), "stocks_touched": True}
+        return {
+            "total_delta": -float(amount),
+            "batch_moves": [(bid, -float(amount))],
+            "stock_after": int(stock_after),
+            "batch_after": batch_after_qty,       # 新增
+            "ledger_id": int(ledger_id),          # 新增
+            "stocks_touched": True,
+        }
 
     # -------------------- FEFO（默认跳过过期；盘点下调允许并优先过期） --------------------
     async def _adjust_fefo(
@@ -357,18 +436,39 @@ class StockService:
         sid, _cur = await self._ensure_stock_row(session, item_id=item_id, location_id=location_id)
         before = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
         running = before
+        last_lid: int | None = None
 
         for bid, used in moves:
             running += used
-            await _write_ledger_sql(session, stock_id=sid, item_id=item_id, reason=reason, delta=int(used), after_qty=int(running), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            last_lid = await _write_ledger_sql(
+                session,
+                stock_id=sid,
+                item_id=item_id,
+                reason=reason,
+                delta=int(used),
+                after_qty=int(running),
+                ref=ref,
+                ref_line=1,
+                occurred_at=datetime.now(UTC),
+            )
             await session.flush()
-            await _exec_with_retry(session, update(Batch).where(Batch.id == bid).values({qty_col.key: func.coalesce(qty_col, 0) + int(used)}))
+            await _exec_with_retry(
+                session,
+                update(Batch).where(Batch.id == bid).values({qty_col.key: func.coalesce(qty_col, 0) + int(used)}),
+            )
 
         await self._bump_stock(session, item_id=item_id, location_id=location_id, delta=float(delta))
         await session.commit()
 
         stock_after = await self._get_current_qty(session, item_id=item_id, location_id=location_id)
-        return {"total_delta": float(delta), "batch_moves": moves, "stock_after": int(stock_after), "ledger_id": None, "stocks_touched": True}
+        return {
+            "total_delta": float(delta),
+            "batch_moves": moves,
+            "stock_after": int(stock_after),
+            "batch_after": None,                 # FEFO 场景不返回单一批次数量
+            "ledger_id": int(last_lid or 0),     # 返回最后一笔台账 id（若无则 0）
+            "stocks_touched": True,
+        }
 
     # -------------------- 盘点 --------------------
     async def reconcile_inventory(
@@ -423,7 +523,6 @@ class StockService:
         if src_location_id is not None:
             base_conds.append(Batch.location_id == int(src_location_id))
 
-        # 若未传 item_ids，自动收敛到“最近造的一条 item”
         if item_ids is None:
             recent_item = (await session.execute(
                 select(Batch.item_id)
@@ -436,14 +535,12 @@ class StockService:
         else:
             base_conds.append(Batch.item_id.in_(item_ids))
 
-        # 先拿出符合条件的 item_id 列表
         item_list = [int(r[0]) for r in (await session.execute(
             select(Batch.item_id).where(and_(*base_conds)).group_by(Batch.item_id)
         )).all()]
         if not item_list:
             return {"warehouse_id": warehouse_id, "moved_total": 0, "moves": []}
 
-        # 每个 item 仅取“最新的一条过期批次”（按 id 最大）
         latest_expired_ids: list[int] = []
         for it in item_list:
             bid = (await session.execute(
@@ -507,15 +604,15 @@ class StockService:
             sid_dst, dst_running = await _ensure_info(item_id, int(to_location_id))
 
             src_running -= qty_to_move
-            await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason,
-                                    delta=-qty_to_move, after_qty=int(src_running),
-                                    ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason,
+                                        delta=-qty_to_move, after_qty=int(src_running),
+                                        ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
             cache[(item_id, int(src_loc))] = (sid_src, float(src_running))
 
             dst_running += qty_to_move
-            await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason,
-                                    delta=+qty_to_move, after_qty=int(dst_running),
-                                    ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason,
+                                        delta=+qty_to_move, after_qty=int(dst_running),
+                                        ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
             cache[(item_id, int(to_location_id))] = (sid_dst, float(dst_running))
 
             moves.append(dict(item_id=item_id, batch_id_src=int(bid), batch_code=code,
@@ -664,15 +761,15 @@ class StockService:
             sid_dst, dst_running = await _ensure_info(item_id, int(to_location_id))
 
             src_running -= qty_to_move
-            await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason,
-                                    delta=-qty_to_move, after_qty=int(src_running),
-                                    ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason,
+                                        delta=-qty_to_move, after_qty=int(src_running),
+                                        ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
             cache[(item_id, int(src_loc))] = (sid_src, float(src_running))
 
             dst_running += qty_to_move
-            await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason,
-                                    delta=+qty_to_move, after_qty=int(dst_running),
-                                    ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason,
+                                        delta=+qty_to_move, after_qty=int(dst_running),
+                                        ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
             cache[(item_id, int(to_location_id))] = (sid_dst, float(dst_running))
 
             moves.append(dict(item_id=item_id, batch_id_src=int(bid), batch_code=code,
@@ -754,13 +851,13 @@ class StockService:
         for src_bid, take, code in moves_src:
             await _exec_with_retry(session, update(Batch).where(Batch.id == src_bid).values({qty_col.key: func.coalesce(qty_col, 0) - int(take)}))
             src_after -= take
-            await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason, delta=-int(take), after_qty=int(src_after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_src, item_id=item_id, reason=reason, delta=-int(take), after_qty=int(src_after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
 
             wh_id_dst = await self._resolve_warehouse_id(session, dst_location_id)
             dst_bid = await self._ensure_batch_full(session=session, item_id=item_id, warehouse_id=wh_id_dst, location_id=dst_location_id, batch_code=code, production_date=None, expiry_date=None)
             await _exec_with_retry(session, update(Batch).where(Batch.id == dst_bid).values({qty_col.key: func.coalesce(qty_col, 0) + int(take)}))
             dst_after += take
-            await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason, delta=int(take), after_qty=int(dst_after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
+            _ = await _write_ledger_sql(session, stock_id=sid_dst, item_id=item_id, reason=reason, delta=int(take), after_qty=int(dst_after), ref=ref, ref_line=1, occurred_at=datetime.now(UTC))
 
             result_moves.append(dict(src_batch_id=int(src_bid), dst_batch_id=int(dst_bid), batch_code=code, qty=int(take)))
 
