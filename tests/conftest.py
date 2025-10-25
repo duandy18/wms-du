@@ -130,6 +130,23 @@ def stock_service():
     return StockService()
 
 
+# 供服务层用例造基线 item/location（避免缺失的 item_loc_fixture）
+@pytest.fixture
+async def item_loc_fixture(session):
+    """
+    提供一个干净的 item_id/location_id 组合给服务类用例。
+    由于前置已 RESTART IDENTITY，这里固定插入 id=1 即可。
+    """
+    # items(id=1)
+    await session.execute(text("INSERT INTO items (id, name, sku) VALUES (1, 'UT-ITEM', 'UT-1')"))
+    # locations(id=1) —— 依赖前置 _db_clean 已回种 warehouses(id=1,'WH-1')
+    await session.execute(
+        text("INSERT INTO locations (id, name, warehouse_id) VALUES (1, 'LOC-1', 1)")
+    )
+    await session.commit()
+    return 1, 1
+
+
 # ------------------------------
 # 4) 每条用例开始前的“强力清表 + 基线回种”
 # ------------------------------
@@ -182,7 +199,7 @@ async def _db_clean(async_engine: AsyncEngine):
 
         # 基线维度回种（关键）：仓库表必须有 id=1，供 locations(..., warehouse_id=1) 外键引用
         await conn.execute(
-            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING;")
+            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
         )
 
 
