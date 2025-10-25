@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class SnapshotService:
     """
-    日级快照、首页总览（分页搜索）与分析查询。
+    日级库存快照、首页总览与趋势接口。
+    - run_for_date / run_range：生成某日或区间的快照
+    - query_inventory_snapshot(_paged)：首页（聚合 + Top2 库位 + 近效期）
+    - trends：按日趋势查询（自适应不同 schema）
     """
 
     # -------------------------- Public API --------------------------
@@ -40,7 +43,7 @@ class SnapshotService:
             cur = cur + timedelta(days=1)
         return total
 
-    # === 原有首页总览（不分页） ===
+    # === 首页总览（不分页） ===
     @staticmethod
     async def query_inventory_snapshot(session: AsyncSession) -> list[dict]:
         near_days = int(os.getenv("WMS_NEAR_EXPIRY_DAYS", "30"))
@@ -324,7 +327,6 @@ class SnapshotService:
         A) stock_snapshots(qty_on_hand, qty_available)
         B) 较旧/极简结构只含 qty（此时 on_hand/available 都用 qty 兜底）
         """
-        # 1) 探测可用列
         cols_sql = text(
             """
             SELECT column_name
@@ -336,11 +338,10 @@ class SnapshotService:
         )
         found = {row[0] for row in (await session.execute(cols_sql)).all()}
         qoh_col = "qty_on_hand" if "qty_on_hand" in found else ("qty" if "qty" in found else None)
-        qa_col  = "qty_available" if "qty_available" in found else ("qty" if "qty" in found else None)
+        qa_col = "qty_available" if "qty_available" in found else ("qty" if "qty" in found else None)
         if qoh_col is None:
             return []
 
-        # 2) 动态 SQL（注意：ONLY 使用已存在的列名）
         sql = text(
             f"""
             SELECT snapshot_date,
@@ -390,31 +391,98 @@ class SnapshotService:
             if prev_day is not None
             else None
         )
-        return (
-            cut_start.isoformat(),
-            cut_end.isoformat(),
-            prev_end.isoformat() if prev_end else None,
-        )
+        return (cut_start.isoformat(), cut_end.isoformat(), prev_end.isoformat() if prev_end else None)
 
     @staticmethod
     async def _upsert_day(session: AsyncSession, cut_day: date, prev_day: date | None) -> int:
         """
-        注意：请保持你仓库中现有的 SQL 实现（PG/SQLite 分支），
-        这里不改动你的原逻辑，只修正了调用处的时间窗与参数传递。
+        生成 cut_day 的快照。数据来源采用 batches 的聚合：
+        qty_on_hand = SUM(batches.qty)，qty_available = 同步值（后续可扣保留量）。
+        自适应 stock_snapshots 的两种结构：
+          - 新版：qty_on_hand, qty_available
+          - 旧版：qty
+        需要有唯一键/索引 (item_id, snapshot_date) 以支持 UPSERT。
         """
-        cut_start, cut_end, prev_end = SnapshotService._window(cut_day, prev_day)
-        # === 这里沿用你项目中现有的 SQL（不粘贴以免与实际实现偏差）===
-        SQL = ...  # ← 保留你当前仓库里的 SQL 字符串
-        res = await session.execute(
-            text(SQL),
-            {
-                "cut_day": cut_day,      # 原生 date
-                "cut_start": cut_start,  # ISO 字符串
-                "cut_end": cut_end,      # ISO 字符串
-                "prev_end": prev_end,    # ISO 字符串或 None
-            },
+        # 探测列
+        cols_sql = text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='stock_snapshots'
+              AND column_name IN ('qty_on_hand','qty_available','qty')
+            """
         )
+        found = {row[0] for row in (await session.execute(cols_sql)).all()}
+        has_dual = "qty_on_hand" in found  # 新版结构
+        dialect = session.get_bind().dialect.name
+
+        if dialect == "postgresql":
+            if has_dual:
+                sql = text(
+                    """
+                    WITH sums AS (
+                      SELECT :cut_day::date AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      FROM batches b
+                      GROUP BY b.item_id
+                    )
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
+                    SELECT snapshot_date, item_id, q, q FROM sums
+                    ON CONFLICT (item_id, snapshot_date)
+                    DO UPDATE SET qty_on_hand = EXCLUDED.qty_on_hand,
+                                  qty_available = EXCLUDED.qty_available
+                    RETURNING item_id;
+                    """
+                )
+            else:
+                sql = text(
+                    """
+                    WITH sums AS (
+                      SELECT :cut_day::date AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      FROM batches b
+                      GROUP BY b.item_id
+                    )
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
+                    SELECT snapshot_date, item_id, q FROM sums
+                    ON CONFLICT (item_id, snapshot_date)
+                    DO UPDATE SET qty = EXCLUDED.qty
+                    RETURNING item_id;
+                    """
+                )
+        else:  # SQLite
+            if has_dual:
+                sql = text(
+                    """
+                    WITH sums AS (
+                      SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      FROM batches b
+                      GROUP BY b.item_id
+                    )
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty_on_hand, qty_available)
+                    SELECT snapshot_date, item_id, q, q FROM sums
+                    ON CONFLICT(item_id, snapshot_date)
+                    DO UPDATE SET qty_on_hand=excluded.qty_on_hand,
+                                  qty_available=excluded.qty_available;
+                    """
+                )
+            else:
+                sql = text(
+                    """
+                    WITH sums AS (
+                      SELECT :cut_day AS snapshot_date, b.item_id, COALESCE(SUM(b.qty),0) AS q
+                      FROM batches b
+                      GROUP BY b.item_id
+                    )
+                    INSERT INTO stock_snapshots (snapshot_date, item_id, qty)
+                    SELECT snapshot_date, item_id, q FROM sums
+                    ON CONFLICT(item_id, snapshot_date)
+                    DO UPDATE SET qty=excluded.qty;
+                    """
+                )
+
+        res = await session.execute(sql, {"cut_day": cut_day})
         await session.commit()
+        # 统计受影响的 item 行数
         try:
             rows = res.fetchall()
             return len(rows)
