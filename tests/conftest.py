@@ -34,6 +34,9 @@ def _async_db_url() -> str:
 # ------------------------------
 @pytest.fixture(scope="session", autouse=True)
 def apply_migrations() -> None:
+    # 统一系统时区到 Asia/Shanghai（UTC+8）
+    os.environ.setdefault("TZ", "Asia/Shanghai")
+
     cfg = Config("alembic.ini")
     cfg.set_main_option(
         "sqlalchemy.url",
@@ -68,12 +71,13 @@ def async_session_maker(async_engine: AsyncEngine):
 async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
     """
     函数级事务会话：每条用例独立事务，结束时回滚，保证隔离。
-    注意：有些用例会通过 async_session_maker 新建会话并 commit；
-         这类数据不在本 fixture 的事务里，所以我们在 _db_clean 做提交式清理。
+    进入事务后，显式设置本地时区为 Asia/Shanghai（UTC+8）。
     """
     async with async_session_maker() as sess:
         trans = await sess.begin()
         try:
+            # 关键：会话级事务里固定时区（不会影响其它连接）
+            await sess.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
             yield sess
         finally:
             with contextlib.suppress(Exception):
