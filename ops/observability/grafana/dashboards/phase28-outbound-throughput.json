@@ -1,0 +1,23 @@
+{
+  "uid": "wms-phase28-outbound-throughput",
+  "title": "WMS-DU / Outbound Throughput",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Outbound commit (req/s)",
+      "targets": [
+        { "expr": "rate(outbound_commit_total[5m])" }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "HTTP 4xx/5xx",
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{code=~\"4..\"}[5m]))" },
+        { "expr": "sum(rate(http_requests_total{code=~\"5..\"}[5m]))" }
+      ]
+    }
+  ]
+}

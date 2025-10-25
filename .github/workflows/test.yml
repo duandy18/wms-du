@@ -1,0 +1,58 @@
+name: CI · Test & Trace (lite)
+
+on:
+  push:
+    branches: [ main, dev, feat/** ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U wms -d wms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -U pip setuptools wheel
+          pip install -r requirements.txt
+          pip install -e ".[pg,dev,otel]"
+
+      - name: Wait for Postgres
+        run: |
+          echo "Waiting for Postgres ..."
+          sleep 8
+
+      - name: Run pytest (smoke + quick)
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+          # 关键：CI 不启 collector，所以禁用 trace 采样避免连接告警
+          OTEL_TRACES_SAMPLER: never
+          # 若你有用到，API_BASE 等也可在此设置
+        run: |
+          source .venv/bin/activate
+          pytest -q -s

@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: 'WMS Phase 2.8'
+    orgId: 1
+    folder: 'WMS-DU'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      # 要求 JSON 文件已经被挂载到该路径（你的 compose 已经把仓库里的 dashboards 映射到这里）

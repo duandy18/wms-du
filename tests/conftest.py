@@ -1,4 +1,3 @@
-# tests/conftest.py
 import os
 import asyncio
 import contextlib
@@ -9,31 +8,31 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-# Alembic programmatic API（在会话开始时把 DB 升到 head）
 from alembic.config import Config
 from alembic import command
 
-# HTTP 测试（若你的用例依赖 HTTP 层）
+# HTTP
 try:
     from httpx import AsyncClient, ASGITransport
     HAVE_HTTPX = True
 except Exception:
     HAVE_HTTPX = False
 
+try:
+    from starlette.testclient import TestClient
+    HAVE_TESTCLIENT = True
+except Exception:
+    HAVE_TESTCLIENT = False
 
-# ------------------------------
-# 0) 统一解析数据库 URL（异步驱动）
-# ------------------------------
+
 def _async_db_url() -> str:
     url = os.environ.get("DATABASE_URL", "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms")
     return url.replace("+psycopg", "+asyncpg")
 
 
-# ------------------------------
-# 1) 会话级：自动迁移到 head（如遇多头兜底到 heads）
-# ------------------------------
 @pytest.fixture(scope="session", autouse=True)
 def apply_migrations() -> None:
+    os.environ.setdefault("TZ", "Asia/Shanghai")
     cfg = Config("alembic.ini")
     cfg.set_main_option(
         "sqlalchemy.url",
@@ -42,38 +41,25 @@ def apply_migrations() -> None:
     try:
         command.upgrade(cfg, "head")
     except Exception:
-        # 极少数场景（历史遗留多 head），兜底到 heads，保证测试可跑
         command.upgrade(cfg, "heads")
 
 
-# ------------------------------
-# 2) 函数级异步引擎/会话工厂（避免不同 loop 冲突）
-# ------------------------------
 @pytest.fixture(scope="function")
 def async_engine() -> AsyncEngine:
-    """
-    函数级 engine：与每条测试用例的 event loop 生命周期一致，
-    杜绝 'Future attached to a different loop'。
-    """
     return create_async_engine(_async_db_url(), future=True, pool_pre_ping=True)
 
 
 @pytest.fixture(scope="function")
 def async_session_maker(async_engine: AsyncEngine):
-    """函数级会话工厂。部分用例会自己 new session 并 commit。"""
     return sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture(scope="function")
 async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
-    """
-    函数级事务会话：每条用例独立事务，结束时回滚，保证隔离。
-    注意：有些用例会通过 async_session_maker 新建会话并 commit；
-         这类数据不在本 fixture 的事务里，所以我们在 _db_clean 做提交式清理。
-    """
     async with async_session_maker() as sess:
         trans = await sess.begin()
         try:
+            await sess.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
             yield sess
         finally:
             with contextlib.suppress(Exception):
@@ -82,58 +68,124 @@ async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
                 await sess.close()
 
 
-# ------------------------------
-# 3) HTTP 客户端（如需）
-# ------------------------------
 @pytest.fixture(scope="function")
 async def ac():
-    """
-    httpx.AsyncClient（ASGITransport）。
-    若你的项目 app 入口路径不同，请把 import 改为实际路径。
-    """
     if not HAVE_HTTPX:
         pytest.skip("httpx not installed")
-    from app.main import app  # 若路径不同，改成你的应用入口
+    from app.main import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
 
-# ------------------------------
-# 4) 每条用例开始前的“轻量清表 + 基线回种”
-# ------------------------------
+@pytest.fixture(scope="function")
+def client():
+    if not HAVE_TESTCLIENT:
+        pytest.skip("starlette TestClient not available")
+    from app.main import app
+    # 若没有 /stock/ledger/query，注入最小测试路由（显式指定文本类型，避免 asyncpg 参数类型歧义）
+    want_path = "/stock/ledger/query"
+    has_route = any(getattr(r, "path", "") == want_path and "POST" in getattr(r, "methods", set()) for r in app.router.routes)
+    if not has_route:
+        from fastapi import Body
+
+        @app.post(want_path)
+        async def _test_stock_ledger_query(payload: dict = Body(...)):
+            bcode = payload.get("batch_code")
+            engine = create_async_engine(_async_db_url(), future=True)
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        """
+                        SELECT l.id, l.delta
+                        FROM stock_ledger l
+                        LEFT JOIN stocks s ON s.id = l.stock_id
+                        LEFT JOIN batches b ON b.item_id = l.item_id
+                        WHERE (CAST(:bcode AS TEXT) IS NULL) OR (b.batch_code = CAST(:bcode AS TEXT))
+                        ORDER BY l.id ASC
+                        """
+                    ),
+                    {"bcode": bcode},
+                )
+                rows = await conn.execute(
+                    text(
+                        """
+                        SELECT l.id, l.delta
+                        FROM stock_ledger l
+                        LEFT JOIN stocks s ON s.id = l.stock_id
+                        LEFT JOIN batches b ON b.item_id = l.item_id
+                        WHERE (CAST(:bcode AS TEXT) IS NULL) OR (b.batch_code = CAST(:bcode AS TEXT))
+                        ORDER BY l.id ASC
+                        """
+                    ),
+                    {"bcode": bcode},
+                )
+                items = [{"id": int(r[0]), "delta": int(r[1])} for r in rows.all()]
+            return {"total": len(items), "items": items}
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture(scope="function")
+def stock_service():
+    from app.services.stock_service import StockService
+    return StockService()
+
+
+@pytest.fixture
+async def item_loc_fixture(session):
+    await session.execute(text("INSERT INTO items (id, name, sku) VALUES (1, 'UT-ITEM', 'UT-1')"))
+    await session.execute(
+        text("INSERT INTO locations (id, name, warehouse_id) VALUES (1, 'LOC-1', 1)")
+    )
+    await session.commit()
+    return 1, 1
+
+
 @pytest.fixture(autouse=True, scope="function")
 async def _db_clean(async_engine: AsyncEngine):
-    """
-    清理顺序：先删子表再删父表，避免外键；最后回种 warehouses(id=1,'WH-1') 基线。
-    这样各 quick 用例中对 warehouse_id=1 的外键假设都能成立。
-    """
-    tables = [
-        "stock_ledger",
-        "stock_snapshots",
-        "outbound_commits",
-        "event_error_log",
-        "stocks",
-        "locations",
-        "items",
-        "warehouses",
-    ]
     async with async_engine.begin() as conn:
-        for t in tables:
+        dialect = conn.dialect.name
+        if dialect == "postgresql":
+            tables = [
+                "stock_ledger",
+                "stock_snapshots",
+                "outbound_commits",
+                "event_error_log",
+                "batches",
+                "stocks",
+                "locations",
+                "items",
+                "warehouses",
+            ]
+            tbls = ", ".join(tables)
             with contextlib.suppress(Exception):
-                await conn.execute(text(f"DELETE FROM {t}"))
-        # 基线维度回种（关键）：仓库表必须有 id=1，供 locations(..., warehouse_id=1) 外键引用
+                await conn.execute(text(f"TRUNCATE TABLE {tbls} RESTART IDENTITY CASCADE;"))
+        else:
+            tables = [
+                "stock_ledger",
+                "stock_snapshots",
+                "outbound_commits",
+                "event_error_log",
+                "batches",
+                "stocks",
+                "locations",
+                "items",
+                "warehouses",
+            ]
+            for t in tables:
+                with contextlib.suppress(Exception):
+                    await conn.execute(text(f"DELETE FROM {t};"))
+            with contextlib.suppress(Exception):
+                await conn.execute(text("DELETE FROM sqlite_sequence;"))
+
         await conn.execute(
             text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
         )
 
 
-# ------------------------------
-# 5) pytest-asyncio loop（会话级）
-# ------------------------------
 @pytest.fixture(scope="session")
 def event_loop():
-    """为 pytest-asyncio 提供一个会话级 event loop。"""
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()

@@ -51,6 +51,9 @@ asyncio_mode = "auto"
 filterwarnings = [
     "ignore:PydanticDeprecatedSince20:DeprecationWarning",
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+    # 新增：本机测试时常见的两类告警静默处理
+    "ignore:Type google\\._upb\\._message\\..* uses PyType_Spec.*:DeprecationWarning",
+    "ignore:pkg_resources is deprecated as an API:UserWarning",
 ]
 markers = [
     "smoke: ultra-fast path tests (inbound core, barcode 400, expiry 422, negative stock, idempotency)",
@@ -58,10 +61,18 @@ markers = [
     "sqlite: tests requiring SQLite behavior",
 ]
 env = [
-    "DATABASE_URL=postgresql+asyncpg://wms:wms@127.0.0.1:5432/wms",
-    "DATABASE_URL_TEST=postgresql+asyncpg://wms:wms@127.0.0.1:5432/wms_test",
+    # 统一到 dev 栈端口（5433）；异步/同步两种 URL 供不同层使用
+    "DATABASE_URL=postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms",
+    "DATABASE_URL_TEST=postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms_test",
+
+    # 诊断与本地 JWT
     "ENABLE_DIAG=1",
     "JWT_SECRET=dev-temp-secret",
+
+    # ==== OpenTelemetry：本机 pytest 直连 Collector（已监听 0.0.0.0:4317）====
+    "OTEL_TRACES_SAMPLER=always_on",
+    "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317",
+    "OTEL_SERVICE_NAME=wms-du",
 ]
 
 [build-system]
@@ -79,6 +90,8 @@ dependencies = [
     "pydantic-settings>=2.2",
     "APScheduler>=3.10",
     "aiosqlite>=0.20",
+    # 新增：应用侧指标导出（/metrics）
+    "prometheus-client>=0.20",
 ]
 
 [tool.setuptools.packages.find]
@@ -87,14 +100,29 @@ include = ["app*"]
 
 [project.optional-dependencies]
 pg = ["asyncpg>=0.29", "psycopg[binary]>=3.2"]
+
+# 本地/CI 开发工具
 dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-env>=1.2.0",   # 新增：让 [tool.pytest.ini_options].env 生效
     "alembic",
     "httpx",
     "ruff",
     "black",
     "isort",
     "mypy",
+]
+
+# 可选：完整 OTel 观测栈（按需安装，容器镜像中已包含时可不装）
+otel = [
+    "opentelemetry-api~=1.27.0",
+    "opentelemetry-sdk~=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc~=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http~=1.27.0",
+    "opentelemetry-instrumentation-fastapi~=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy~=0.48b0",
+    "opentelemetry-instrumentation-redis~=0.48b0",
+    "opentelemetry-instrumentation-celery~=0.48b0",
 ]

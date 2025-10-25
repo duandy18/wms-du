@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: noop
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 2m
+  repeat_interval: 1h
+
+receivers:
+  - name: noop
+    webhook_configs:
+      - url: "http://prometheus:9090/-/reload"   # 演示用，无实际通知
+        send_resolved: true

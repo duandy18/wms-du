@@ -1,9 +1,11 @@
 from __future__ import annotations
-from datetime import datetime
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, BigInteger, TIMESTAMP, Text, UniqueConstraint, Index
 
-from app.db.base_class import Base  # 按你的项目基类路径调整
+from datetime import datetime
+from sqlalchemy import String, Integer, BigInteger, TIMESTAMP, Text, UniqueConstraint, Index, text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
 
 class PlatformShop(Base):
     __tablename__ = "platform_shops"
@@ -16,11 +18,15 @@ class PlatformShop(Base):
     refresh_token: Mapped[str | None] = mapped_column(Text)
     token_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
-    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")  # ACTIVE/PAUSED/REVOKED
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE", nullable=False)  # ACTIVE/PAUSED/REVOKED
     rate_limit_qps: Mapped[int | None] = mapped_column(Integer, default=5)
 
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
 
     __table_args__ = (
         UniqueConstraint("platform", "shop_id", name="uq_platform_shops_platform_shop"),

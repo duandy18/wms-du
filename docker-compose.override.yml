@@ -1,0 +1,81 @@
+# docker-compose.override.yml —— Phase 2.8 观测&导出组件（与 ops/compose/docker-compose.dev.yml 合并使用）
+# 运行：docker compose -f ops/compose/docker-compose.dev.yml -f docker-compose.override.yml up -d \
+#        otel-collector jaeger redis-exporter celery-exporter alertmanager
+
+services:
+  # ------- OpenTelemetry Collector -------
+  otel-collector:
+    image: otel/opentelemetry-collector:0.113.0
+    # 关键：把配置挂到“文件”路径；并把宿主机路径改为相对 ops/compose/ 的 ../../
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ../../monitoring/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - jaeger
+
+  # ------- Jaeger（收 Trace） -------
+  jaeger:
+    image: jaegertracing/all-in-one:1.59
+    environment:
+      # 打开 OTLP 接口（老/新版本都兼容）
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_OTLP_GRPC_HOST_PORT=:4317
+      - COLLECTOR_OTLP_HTTP_HOST_PORT=:4318
+    ports:
+      - "16686:16686"   # UI
+      - "14250:14250"   # gRPC ingest
+      - "14268:14268"   # HTTP ingest
+      - "6831:6831/udp" # thrift udp
+
+  # ------- Redis Exporter（队列/缓存指标） -------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    command: ["--redis.addr=redis:6379"]
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+
+  # ------- Celery Exporter（任务指标） -------
+  celery-exporter:
+    # Docker Hub 上 1.7.0 不存在；改用 GHCR，默认监听 9540
+    image: ghcr.io/danihodovic/celery-exporter:latest
+    environment:
+      - CELERY_EXPORTER_BROKER_URL=redis://redis:6379/0
+    ports:
+      - "9540:9540"
+    depends_on:
+      - redis
+
+  # ------- Prometheus（仅附加告警规则；prometheus.yml 由 dev compose 挂载） -------
+  prometheus:
+    volumes:
+      - ../../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alerting_rules.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+      - "--web.external-url="
+      - "--storage.tsdb.retention.time=15d"
+      - "--enable-feature=exemplar-storage"
+
+  # ------- Alertmanager（先黑洞接收） -------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ../../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    depends_on:
+      - prometheus
+
+  # 可选：如果你坚持用根目录的 dashboards（一般用 dev compose 的 ops/observability 目录即可）
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+    volumes:
+      - ../../grafana/provisioning/dashboards:/var/lib/grafana/dashboards:ro

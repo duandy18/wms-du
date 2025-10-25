@@ -1,12 +1,7 @@
-# app/models/event_error_log.py
 from __future__ import annotations
-
 from datetime import datetime
-
 from sqlalchemy import String, Integer, JSON, TIMESTAMP, text, Index
 from sqlalchemy.orm import Mapped, mapped_column
-
-# ⚠️ 结合你的项目基类路径引入 Base（这是你原文件缺失的一行）
 from app.db.base import Base
 
 
@@ -39,7 +34,6 @@ class EventErrorLog(Base):
     )
 
 
-# 索引（与你现有风格一致，保留模块级定义）
 Index(
     "ix_event_error_log_key",
     EventErrorLog.platform,

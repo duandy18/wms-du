@@ -1,0 +1,29 @@
+{
+  "uid": "wms-phase28-queue-latency",
+  "title": "WMS-DU / Queue & Task Latency",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Celery Task Runtime (rate, 5m)",
+      "targets": [
+        { "expr": "rate(celery_task_runtime_sum[5m]) / rate(celery_task_runtime_count[5m])" }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Active tasks",
+      "targets": [
+        { "expr": "celery_active_tasks" }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Redis queue keys (db0)",
+      "targets": [
+        { "expr": "redis_db_keys{db=\"db0\"}" }
+      ]
+    }
+  ]
+}
