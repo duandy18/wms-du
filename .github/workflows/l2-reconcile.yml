@@ -1,0 +1,50 @@
+name: L2 Reconcile (Shadow)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+      - name: Start Postgres (5433)
+        run: |
+          docker run -d --rm --name pg14 -e POSTGRES_PASSWORD=wms -e POSTGRES_USER=wms -e POSTGRES_DB=wms -p 5433:5432 postgres:14
+          sleep 10
+      - name: Migrate
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+        run: alembic upgrade head
+      - name: Bootstrap minimal domain
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+          PYTHONPATH: .
+        run: |
+          python scripts/bootstrap_domain_min.py --store 主店A --items 777,778
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "UPDATE stocks SET qty=10 WHERE item_id=777 AND location_id=1;"
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "UPDATE stocks SET qty=7  WHERE item_id=778 AND location_id=1;"
+      - name: Reconcile (shadow) and assert CSV exists
+        env:
+          DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+          PYTHONPATH: .
+        run: |
+          mkdir -p var/reconcile
+          python scripts/reconcile_pdd_daily.py --store-id 1 --out var/reconcile/pdd_ci.csv
+          test -s var/reconcile/pdd_ci.csv
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconcile-csv
+          path: var/reconcile/pdd_ci.csv
