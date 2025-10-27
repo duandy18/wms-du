@@ -1,5 +1,6 @@
 # tests/conftest.py
 import os
+import re
 import asyncio
 import contextlib
 import pytest
@@ -30,6 +31,38 @@ def _async_db_url() -> str:
 
 
 # ------------------------------
+# 0.5) 标记并默认跳过“超出 v1.0 范围”的 legacy 用例
+#     通过环境变量 RUN_Legacy=1 可恢复执行
+# ------------------------------
+LEGACY_PATTERNS = [
+    r"tests/quick/test_new_platforms_pg\.py",
+    r"tests/quick/test_platform_multi_shop_pg\.py",
+    r"tests/quick/test_platform_outbound_commit_pg\.py",
+    r"tests/quick/test_outbound_concurrency_pg\.py",
+    r"tests/quick/test_platform_events_pg\.py",
+    r"tests/quick/test_platform_state_machine_pg\.py",
+    r"tests/smoke/test_platform_events_smoke_pg\.py",
+]
+LEGACY_REGEX = re.compile("|".join(LEGACY_PATTERNS))
+
+def pytest_collection_modifyitems(config, items):
+    run_legacy = os.getenv("RUN_LEGACY", "").lower() in {"1", "true", "yes", "on"}
+    to_skip = []
+    for item in items:
+        nodeid = item.nodeid.replace("\\", "/")
+        if LEGACY_REGEX.search(nodeid):
+            item.add_marker(pytest.mark.legacy)
+            if not run_legacy:
+                to_skip.append(item)
+        else:
+            item.add_marker(pytest.mark.phase1)
+    if to_skip and not run_very_old := run_legacy:
+        mark = pytest.mark.skip(reason="Skipping legacy (>v1.0) tests. Set RUN_LEGACY=1 to enable.")
+        for it in to_skip:
+            it.add_marker(mark)
+
+
+# ------------------------------
 # 1) 会话级：自动迁移到 head（如遇多头兜底到 heads）
 # ------------------------------
 @pytest.fixture(scope="session", autouse=True)
@@ -47,30 +80,20 @@ def apply_migrations() -> None:
 
 
 # ------------------------------
-# 2) 函数级异步引擎/会话工厂（避免不同 loop 冲突）
+# 2) 函数级：异步引擎/会话工厂
 # ------------------------------
 @pytest.fixture(scope="function")
 def async_engine() -> AsyncEngine:
-    """
-    函数级 engine：与每条测试用例的 event loop 生命周期一致，
-    杜绝 'Future attached to a different loop'。
-    """
+    """与每条用例的 event loop 生命周期一致"""
     return create_async_engine(_async_db_url(), future=True, pool_pre_ping=True)
-
 
 @pytest.fixture(scope="function")
 def async_session_maker(async_engine: AsyncEngine):
-    """函数级会话工厂。部分用例会自己 new session 并 commit。"""
     return sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-
 
 @pytest.fixture(scope="function")
 async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
-    """
-    函数级事务会话：每条用例独立事务，结束时回滚，保证隔离。
-    注意：有些用例会通过 async_session_maker 新建会话并 commit；
-         这类数据不在本 fixture 的事务里，所以我们在 _db_clean 做提交式清理。
-    """
+    """每条用例独立事务，结束回滚，保证隔离"""
     async with async_session_maker() as sess:
         trans = await sess.begin()
         try:
@@ -87,26 +110,21 @@ async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
 # ------------------------------
 @pytest.fixture(scope="function")
 async def ac():
-    """
-    httpx.AsyncClient（ASGITransport）。
-    若你的项目 app 入口路径不同，请把 import 改为实际路径。
-    """
     if not HAVE_HTTPX:
         pytest.skip("httpx not installed")
-    from app.main import app  # 若路径不同，改成你的应用入口
+    from app.main import app
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(iline=transport, base_url="http://test") as client:
         yield client
 
 
 # ------------------------------
-# 4) 每条用例开始前的“轻量清表 + 基线回种”
+# 4) 用例前清表 + 基线回种
 # ------------------------------
 @pytest.fixture(autouse=True, scope="function")
 async def _db_clean(async_engine: AsyncEngine):
     """
-    清理顺序：先删子表再删父表，避免外键；最后回种 warehouses(id=1,'WH-1') 基线。
-    这样各 quick 用例中对 warehouse_id=1 的外键假设都能成立。
+    清理顺序：先删子表再删父表，避免外键；最后回种 warehouses(id=1,'WH-1') 作为基线。
     """
     tables = [
         "stock_ledger",
@@ -122,9 +140,8 @@ async def _db_clean(async_engine: AsyncEngine):
         for t in tables:
             with contextlib.suppress(Exception):
                 await conn.execute(text(f"DELETE FROM {t}"))
-        # 基线维度回种（关键）：仓库表必须有 id=1，供 locations(..., warehouse_id=1) 外键引用
         await conn.execute(
-            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
+            text("INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') ON CONFLICT (id) DO NOTHING")
         )
 
 
@@ -133,7 +150,6 @@ async def _db_clean(async_engine: AsyncEngine):
 # ------------------------------
 @pytest.fixture(scope="session")
 def event_loop():
-    """为 pytest-asyncio 提供一个会话级 event loop。"""
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()

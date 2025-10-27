@@ -7,7 +7,7 @@ on:
 
 jobs:
   l1-quick:
-    # 默认不跑；仅当手动触发，或 PR 打了 'run-legacy-ci' 标签时才运行
+    # 默认不跑；仅当手动触发或 PR 打了 'run-legacy-ci' 标签时才运行
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&

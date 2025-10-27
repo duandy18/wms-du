@@ -1,4 +1,3 @@
-# app/services/outbound_service.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -23,23 +22,10 @@ class OutboundService:
         ref: str,
         lines: List[Dict],
         refresh_visible: bool = True,
-        warehouse_id: int | None = None,  # 预留：多仓阶段启用；v1.0 单仓忽略
+        warehouse_id: int | None = None,
     ) -> Dict[str, Any]:
-        """
-        出库（幂等 + 台账兜底）：
-          1) 业务幂等：outbound_ship_ops (UQ: store_id, ref, item_id, location_id)
-          2) 台账兜底幂等：reason/ref/ref_line/stock_id 存在则跳过
-          3) 扣减 stocks.qty → 写 stock_ledger(UTC aware) → -reserved → 可选刷新 visible
-        返回：
-          {"store_id": <int|None>, "ref": <str>, "results": [
-              {"item_id": int, "location_id": int, "qty": int, "status": "OK|IDEMPOTENT|NO_STOCK|INSUFFICIENT_STOCK"},
-              ...
-          ]}
-        """
         store_id = await _resolve_store_id(session, platform=platform, shop_id=shop_id)
         results: List[Dict[str, Any]] = []
-
-        # 事务自适应（避免 A transaction is already begun...）
         tx_ctx = session.begin_nested() if session.in_transaction() else session.begin()
         async with tx_ctx:
             for idx, line in enumerate(lines, start=1):
@@ -47,7 +33,6 @@ class OutboundService:
                 loc_id = int(line["location_id"])
                 need = int(line["qty"])
 
-                # 1) 业务幂等登记（仅当解析到 store_id）
                 idem_inserted = True
                 if store_id is not None:
                     res = await session.execute(
@@ -62,7 +47,6 @@ class OutboundService:
                     idem_id = res.scalar_one_or_none()
                     idem_inserted = idem_id is not None
 
-                # 无 store_id → 退化为台账幂等保护
                 if store_id is None and await _ledger_exists(session, ref, item_id, loc_id, idx):
                     results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
@@ -71,7 +55,6 @@ class OutboundService:
                     results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
 
-                # 2) 真实出库：锁库存行、扣减、记账
                 row = (
                     await session.execute(
                         select(Stock.id, Stock.qty)
@@ -87,16 +70,13 @@ class OutboundService:
                     results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "INSUFFICIENT_STOCK"})
                     continue
 
-                # 兜底：台账重复检查
                 if await _ledger_exists(session, ref, item_id, loc_id, idx):
                     results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
 
                 after = int(row.qty) - need
-                await session.execute(
-                    text("UPDATE stocks SET qty=:after WHERE id=:sid"),
-                    {"after": after, "sid": row.id},
-                )
+                await session.execute(text("UPDATE stocks SET qty=:after WHERE id=:sid"),
+                                      {"after": after, "sid": row.id})
                 await session.execute(
                     text(
                         """
@@ -134,11 +114,7 @@ class OutboundService:
         return {"store_id": store_id, "ref": ref, "results": results}
 
 
-# ---------------------------- helpers -------------------------------------
-
-async def _resolve_store_id(
-    session: AsyncSession, *, platform: str, shop_id: str
-) -> Optional[int]:
+async def _resolve_store_id(session: AsyncSession, *, platform: str, shop_id: str) -> Optional[int]:
     if not shop_id:
         return None
     row = (
@@ -151,9 +127,7 @@ async def _resolve_store_id(
     return int(row) if row is not None else None
 
 
-async def _ledger_exists(
-    session: AsyncSession, ref: str, item_id: int, location_id: int, ref_line: int
-) -> bool:
+async def _ledger_exists(session: AsyncSession, ref: str, item_id: int, location_id: int, ref_line: int) -> bool:
     row = await session.execute(
         text("""
             SELECT 1
