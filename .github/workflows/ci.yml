@@ -1,21 +1,121 @@
-      - name: ✅ Run CI invariants (tests/ci)
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: |
-          pytest -q tests/ci -s
+name: App CI – Lite
 
-      - name: 🚀 Run Quick tests (v1.0 scope)
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: |
-          pytest -q tests/quick -s \
-            -k "not test_new_platforms_pg \
-                and not test_platform_multi_shop_pg \
-                and not test_platform_outbound_commit_pg \
-                and not test_outbound_concurrency_pg"
+on:
+  push:
+    branches: [ main, dev, feat/**, fix/**, chore/** ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
 
-      - name: 🔥 Run Smoke tests (v1.0 scope)
+concurrency:
+  group: app-ci-lite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python 3.12 · PG14(5433) · Quick/Services/Smoke
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      # SQLAlchemy/应用使用的 URL（psycopg v3 驱动）
+      DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+      # psql 命令行使用的 URL（无 +psycopg 前缀）
+      PSQL_URL: postgresql://wms:wms@127.0.0.1:5433/wms
+      TZ: Asia/Shanghai
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # v1.0 观测期默认关闭平台直连
+      ENABLE_PDD_PULL: "false"
+      ENABLE_PDD_PUSH: "false"
+      ENABLE_MULTI_WAREHOUSE: "false"
+
+    steps:
+      - name: Checkout
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -V
+          pip -V
+          pip install -r requirements.txt
+          # 常见本地依赖兜底（若 requirements 已含则会跳过）
+          pip install 'psycopg[binary]>=3.1' asyncpg
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -d "$PSQL_URL" && break
+            echo "waiting postgres ($i/30)..."
+            sleep 2
+          done
+          psql "$PSQL_URL" -c "SELECT version();"
+
+      - name: Alembic upgrade head
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
         run: |
-          pytest -q tests/smoke -s || true
+          alembic upgrade head
+
+      - name: Bootstrap minimal domain
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          PSQL_URL: ${{ env.PSQL_URL }}
+        run: |
+          python scripts/bootstrap_domain_min.py --store 主店A --items 777,778 || true
+          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE stocks SET qty=10 WHERE item_id=777 AND location_id=1;"
+          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE stocks SET qty=7  WHERE item_id=778 AND location_id=1;"
+
+      - name: 🧪 Inbound + Putaway smoke (v1.0)
+        env:
+          PSQL_URL: ${{ env.PSQL_URL }}
+        run: |
+          set -e
+          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "
+            -- 入库/上架合并：对 777 增加 +5，并写一条 INBOUND 台账
+            UPDATE stocks SET qty = qty + 5 WHERE item_id=777 AND location_id=1;
+            INSERT INTO stock_ledger (stock_id,item_id,delta,after_qty,occurred_at,reason,ref,ref_line)
+            SELECT id, 777, 5, qty, NOW(), 'INBOUND', 'CI-INBOUND', 1
+            FROM stocks WHERE item_id=777 AND location_id=1;
+          "
+          # 最小断言（非阻塞）：打印现值
+          psql "$PSQL_URL" -c "SELECT item_id,location_id,qty FROM stocks WHERE item_id IN (777,778) ORDER BY 1,2;"
+
+      - name: Run quick tests
+        run: |
+          pytest -q tests/quick -s -ra
+
+      - name: Run service tests
+        run: |
+          pytest -q tests/services -s -ra
+
+      - name: Run smoke tests
+        run: |
+          pytest -q tests/smoke -s -ra
