@@ -28,12 +28,11 @@ class OutboundService:
         """
         出库（幂等 + 台账兜底）：
           1) 业务幂等：outbound_ship_ops (UQ: store_id, ref, item_id, location_id)
-          2) 台账兜底幂等：reason/ref/ref_line/stock_id 存在则跳过
+          2) 台账兜底：若 reason/ref/ref_line/stock_id 已存在则跳过
           3) 扣减 stocks.qty → 写 stock_ledger(UTC aware) → -reserved → 可选刷新 visible
         返回：
           {"store_id": <int|None>, "ref": <str>, "results": [
               {"item_id": int, "location_id": int, "qty": int, "status": "OK|IDEMPOTENT|NO_STOCK|INSUFFICIENT_STOCK"},
-              ...
           ]}
         """
         store_id = await _resolve_store_id(session, platform=platform, shop_id=shop_id)
