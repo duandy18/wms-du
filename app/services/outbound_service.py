@@ -113,7 +113,7 @@ class OutboundService:
                         "iid": item_id,
                         "delta": -need,
                         "after": after,
-                        "ts": datetime.now(timezone.utc),
+                        "ts": datetime.now(timezone.utc),  # UTC(aware)
                         "ref": ref,
                         "line": idx,
                     },
@@ -147,8 +147,8 @@ async def _resolve_store_id(
         return None
     row = (
         await session.execute(
-            select(Store.id)
-            .where(Store.platform == platform, Store.name == shop_id)
+            select( Store.id )
+            .where( Store.platform == platform, Store.name == shop_id )
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -179,4 +179,24 @@ async def _ledger_exists(
     return row.first() is not None
 
 
-__all__ = ["OutboundService"]
+# ---------------------------- Back-Compat Shim ----------------------------
+
+async def commit_outbound(session: AsyncSession, ref: str, lines: List[Dict]) -> List[Dict]:
+    """
+    兼容旧版测试/调用方的包装器：
+    - 旧签名: commit_outbound(session, ref, lines) -> results
+    - 内部转调新接口：默认 platform='pdd'、shop_id=''，不刷新 visible（避免依赖 store 解析）
+    - 返回与历史用例期望一致的 results 列表
+    """
+    resp = await OutboundService.commit(
+        session,
+        platform="pdd",
+        shop_id="",                 # 不解析 store，避免引入渠道占用副作用
+        ref=ref,
+        lines=lines,
+        refresh_visible=False,      # 旧用例只验证库存/台账
+    )
+    return resp.get("results", [])
+
+
+__all__ = ["OutboundService", "commit_outbound"]
