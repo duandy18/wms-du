@@ -1,3 +1,3 @@
-from .item import Item  # noqa: F401
-from .order import Order  # noqa: F401
-from .order_item import OrderItem  # noqa: F401
+# app/models/__init__.py
+from app.db.base import Base  # 统一单一 Base
+__all__ = ["Base"]

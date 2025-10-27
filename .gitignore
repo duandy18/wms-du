@@ -33,3 +33,5 @@ pnpm-lock.yaml
 
 # local downloads
 micro-linux-amd64.tar.gz
+var/reconcile/*.csv
+*.patch

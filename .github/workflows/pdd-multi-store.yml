@@ -1,4 +1,4 @@
-name: Smoke - Metrics
+name: PDD Multi-Store (L1 quick)
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  smoke-metrics:
+  l1-quick:
     # 默认不跑；仅当手动触发，或 PR 打了 'run-legacy-ci' 标签时才运行
     if: >
       github.event_name == 'workflow_dispatch' ||
@@ -14,5 +14,5 @@ jobs:
        contains(github.event.pull_request.labels.*.name, 'run-legacy-ci'))
     runs-on: ubuntu-latest
     steps:
-      - name: Legacy smoke-metrics gated by label
-        run: echo "Legacy smoke-metrics is gated by label 'run-legacy-ci' or manual dispatch."
+      - name: Legacy L1 quick gated by label
+        run: echo "Legacy L1 quick is gated by label 'run-legacy-ci' or manual dispatch."
