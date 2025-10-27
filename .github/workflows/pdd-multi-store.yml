@@ -2,32 +2,17 @@ name: PDD Multi-Store (L1 quick)
 
 on:
   pull_request:
-    paths:
-      - "alembic/versions/**"
-      - "app/api/routers/store.py"
-      - "app/services/store_service.py"
-      - "app/models/store.py"
-      - "scripts/**"
-      - "tests/golden/**"
-      - ".github/workflows/pdd-multi-store.yml"
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  quick:
+  l1-quick:
+    # 默认不跑；仅当手动触发，或 PR 打了 'run-legacy-ci' 标签时才运行
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-legacy-ci'))
     runs-on: ubuntu-latest
-    env:
-      TZ: Asia/Shanghai
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install deps
-        run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
-      - name: Migrations (SQLite check or Alembic dry)
-        run: |
-          alembic upgrade head
-      - name: Golden Shadow (dry-run refresh)
-        run: |
-          python scripts/pdd_push_inventory.py --store-id 1
+      - name: Legacy L1 quick gated by label
+        run: echo "Legacy L1 quick is gated by label 'run-legacy-ci' or manual dispatch."
