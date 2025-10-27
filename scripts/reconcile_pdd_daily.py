@@ -21,18 +21,34 @@ from app.adapters.registry import get_adapter
 from app.services.store_service import StoreService
 
 
-async def _pull_platform_qty(store_id: int, item_ids: List[int]) -> Dict[int, int]:
+async def _pull_platform_qty(
+    session: AsyncSession, store_id: int, item_ids: List[int], verbose: bool
+) -> Dict[int, int]:
     """
     若 ENABLE_PDD_PULL=true 则通过适配器拉平台库存；否则返回全 0（影子期）。
-    现阶段默认单平台 PDD；后续如需按店动态路由，可在此处查询 store.platform。
+    v1.1：单平台 PDD；后续可按 store.platform 动态路由。
     """
     if not ENABLE_PDD_PULL:
         return {iid: 0 for iid in item_ids}
-    adapter = get_adapter("pdd")  # v1.1: 单平台；未来可改为按 store.platform 选择
+
+    adapter = get_adapter("pdd")  # 现阶段默认单平台
+    if verbose:
+        try:
+            preview = await adapter.build_fetch_preview(session, store_id=store_id, item_ids=item_ids)
+            # 打印简洁预览（不泄露秘钥）
+            print("[PDD fetch preview]", {
+                "store_id": preview.get("store_id"),
+                "creds_ready": preview.get("creds_ready"),
+                "ext_sku_ids": preview.get("ext_sku_ids"),
+                "signature": preview.get("signature"),
+            })
+        except Exception as e:
+            print("[PDD fetch preview] error:", e)
+
     return await adapter.fetch_inventory(store_id=store_id, item_ids=item_ids)
 
 
-async def _run(store_id: int, out_csv: Path, db_url: str):
+async def _run(store_id: int, out_csv: Path, db_url: str, verbose: bool):
     engine = create_async_engine(db_url, future=True)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -46,8 +62,8 @@ async def _run(store_id: int, out_csv: Path, db_url: str):
             item_ids = [int(x["item_id"]) for x in items]
             system_visible = {int(x["item_id"]): int(x["visible"]) for x in items}
 
-            # 平台侧库存（影子期=0；开启拉数则走适配器）
-            platform_qty = await _pull_platform_qty(store_id, item_ids)
+            # 平台侧库存：影子 0 / 适配器拉数
+            platform_qty = await _pull_platform_qty(s, store_id, item_ids, verbose)
 
             # 输出 CSV
             out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +76,8 @@ async def _run(store_id: int, out_csv: Path, db_url: str):
                     delta = plat - sysv
                     advice = "PUSH" if delta != 0 else ""
                     w.writerow([store_id, iid, plat, sysv, delta, advice])
+            if verbose:
+                print("[reconcile]", out_csv, "written")
     finally:
         await engine.dispose()
 
@@ -69,8 +87,9 @@ def main():
     p.add_argument("--store-id", type=int, required=True)
     p.add_argument("--db", default="postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms")
     p.add_argument("--out", default="./var/reconcile/pdd_daily.csv")
+    p.add_argument("--verbose", action="store_true", help="打印适配器请求预览与输出路径")
     args = p.parse_args()
-    asyncio.run(_run(args.store_id, Path(args.out), args.db))
+    asyncio.run(_run(args.store_id, Path(args.out), args.db, args.verbose))
 
 
 if __name__ == "__main__":
