@@ -1,7 +1,7 @@
 # app/services/outbound_service.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import select, text
@@ -113,7 +113,7 @@ class OutboundService:
                         "iid": item_id,
                         "delta": -need,
                         "after": after,
-                        "ts": datetime.utcnow(),
+                        "ts": datetime.now(timezone.utc),
                         "ref": ref,
                         "line": idx,
                     },
