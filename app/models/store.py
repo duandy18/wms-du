@@ -1,4 +1,3 @@
-# app/models/store.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# ✅ 统一使用项目全局 Base
+# 统一使用项目全局 Base
 from app.db.base import Base
 
 
@@ -26,7 +25,15 @@ class Store(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(16), nullable=False, default="pdd")
-    api_token: Mapped[bytes | None] = mapped_column(nullable=True)  # v1 占位，可接 KMS
+
+    # 现有占位（如有加密/外管，可后续替换）
+    api_token: Mapped[bytes | None] = mapped_column(nullable=True)
+
+    # ★ 新增预留：平台凭据/回调（全可空，便于后续接 SDK）
+    app_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    app_secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    callback_url: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
