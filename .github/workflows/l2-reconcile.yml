@@ -1,41 +1,69 @@
-name: L2 Reconcile (Shadow)
+name: L2 Reconcile (Shadow CSV Artifact)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   workflow_dispatch:
+
+concurrency:
+  group: l2-reconcile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: "."
+  TZ: Asia/Shanghai
+  # 与项目一致：容器 5432 → host 5433
+  DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+  # 影子模式：不从平台拉真实库存（如需拉数改为 true）
+  ENABLE_PDD_PULL: "false"
 
 jobs:
   reconcile-shadow:
     runs-on: ubuntu-latest
-    env:
-      TZ: Asia/Shanghai
-      PYTHONPATH: .
-      DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 25
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install deps
+      - name: 📦 Install system deps
         run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
 
-      - name: Start Postgres (5433)
+      - name: 📦 Install Python deps
+        run: |
+          python -m pip install -U pip wheel setuptools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f .github/ci/requirements-ci.txt ]; then pip install -r .github/ci/requirements-ci.txt; fi
+          pip install "psycopg[binary]>=3.1" asyncpg
+
+      - name: 🐘 Start Postgres 14 (5433)
         run: |
           docker run -d --rm --name pg14 \
-            -e POSTGRES_PASSWORD=wms -e POSTGRES_USER=wms -e POSTGRES_DB=wms \
+            -e POSTGRES_USER=wms \
+            -e POSTGRES_PASSWORD=wms \
+            -e POSTGRES_DB=wms \
             -p 5433:5432 postgres:14
-          sleep 10
+          # 等待数据库可用
+          for i in {1..120}; do
+            pg_isready -h 127.0.0.1 -p 5433 && break
+            sleep 1
+          done
           pg_isready -h 127.0.0.1 -p 5433 -d wms -U wms
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c 'select version();'
 
-      - name: Alembic migrate
-        run: alembic upgrade head
+      - name: 🗃 Alembic migrate → head
+        run: |
+          alembic upgrade head
 
-      - name: Bootstrap minimal domain
+      - name: 🌱 Bootstrap minimal domain
         run: |
           python scripts/bootstrap_domain_min.py --store 主店A --items 777,778
           psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c \
@@ -43,20 +71,23 @@ jobs:
           psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c \
             "UPDATE stocks SET qty=7  WHERE item_id=778 AND location_id=1;"
 
-      - name: Reconcile (shadow) → CSV
+      - name: 🧾 Reconcile (shadow) → CSV
         run: |
           mkdir -p var/reconcile
-          python scripts/reconcile_pdd_daily.py --store-id 1 --out var/reconcile/pdd_ci.csv
-          test -s var/reconcile/pdd_ci.csv
+          python scripts/reconcile_pdd_daily.py --store-id 1 --out var/reconcile/pdd_ci.csv --verbose
 
-      # 目前平台库存未接入，delta= -visible 是正常的。
-      # 等接入 PDD 拉数后，打开下面断言脚本并设定阈值。
-      #- name: Assert delta within threshold
-      #  run: |
-      #    python scripts/assert_delta_within.py --csv var/reconcile/pdd_ci.csv --max-abs-delta 0
-
-      - name: Upload reconcile artifact
+      - name: 📎 Upload reconcile CSV
         uses: actions/upload-artifact@v4
         with:
           name: reconcile-csv
           path: var/reconcile/pdd_ci.csv
+
+      - name: 🧹 Cleanup postgres
+        if: always()
+        run: docker rm -f pg14 >/dev/null 2>&1 || true
+
+      - name: 🪵 Dump PG logs on failure
+        if: failure()
+        run: |
+          echo "---- docker logs pg14 ----"
+          docker logs pg14 || true
