@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,24 +23,23 @@ class OutboundService:
         ref: str,
         lines: List[Dict],
         refresh_visible: bool = True,
-        warehouse_id: int | None = None,  # Phase 4 启用；v1.0 单仓忽略
-    ) -> Dict:
+        warehouse_id: int | None = None,  # 预留：多仓阶段启用；v1.0 单仓忽略
+    ) -> Dict[str, Any]:
         """
-        发货（幂等）：
-          1) 尝试登记 outbound_ship_ops（UQ: store_id, ref, item_id, location_id）
-             - 命中 UQ => 幂等命中，跳过该行
-          2) 未命中 UQ 才：
-             - 锁库存行（FOR UPDATE）
-             - 台账兜底幂等检查（已写过同 ref/ref_line/stock_id → 幂等跳过）
-             - 扣减 stocks.qty
-             - 写入 stock_ledger（reason='OUTBOUND'）
-             - -reserved（若能解析 store_id）
-          3) 可选：对本次 OK 行刷新 visible（A 策略）
+        出库（幂等 + 台账兜底）：
+          1) 业务幂等：outbound_ship_ops (UQ: store_id, ref, item_id, location_id)
+          2) 台账兜底幂等：reason/ref/ref_line/stock_id 存在则跳过
+          3) 扣减 stocks.qty → 写 stock_ledger(UTC aware) → -reserved → 可选刷新 visible
+        返回：
+          {"store_id": <int|None>, "ref": <str>, "results": [
+              {"item_id": int, "location_id": int, "qty": int, "status": "OK|IDEMPOTENT|NO_STOCK|INSUFFICIENT_STOCK"},
+              ...
+          ]}
         """
         store_id = await _resolve_store_id(session, platform=platform, shop_id=shop_id)
-        results: List[Dict] = []
+        results: List[Dict[str, Any]] = []
 
-        # 事务自适应，避免 "A transaction is already begun..."
+        # 事务自适应（避免 A transaction is already begun...）
         tx_ctx = session.begin_nested() if session.in_transaction() else session.begin()
         async with tx_ctx:
             for idx, line in enumerate(lines, start=1):
@@ -48,7 +47,7 @@ class OutboundService:
                 loc_id = int(line["location_id"])
                 need = int(line["qty"])
 
-                # 1) 业务幂等登记（仅当 store 可解析时）
+                # 1) 业务幂等登记（仅当解析到 store_id）
                 idem_inserted = True
                 if store_id is not None:
                     res = await session.execute(
@@ -63,14 +62,13 @@ class OutboundService:
                     idem_id = res.scalar_one_or_none()
                     idem_inserted = idem_id is not None
 
-                # 如果 store_id 无法解析，则退化为“台账存在性”幂等保护
+                # 无 store_id → 退化为台账幂等保护
                 if store_id is None and await _ledger_exists(session, ref, item_id, loc_id, idx):
-                    results.append({"item_id": item_id, "qty": 0, "status": "IDEMPOTENT"})
+                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
 
                 if not idem_inserted:
-                    # 幂等命中：这条行已经处理过
-                    results.append({"item_id": item_id, "qty": 0, "status": "IDEMPOTENT"})
+                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
 
                 # 2) 真实出库：锁库存行、扣减、记账
@@ -83,15 +81,15 @@ class OutboundService:
                 ).first()
 
                 if not row:
-                    results.append({"item_id": item_id, "qty": 0, "status": "NO_STOCK"})
+                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "NO_STOCK"})
                     continue
                 if int(row.qty) < need:
-                    results.append({"item_id": item_id, "qty": 0, "status": "INSUFFICIENT"})
+                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "INSUFFICIENT_STOCK"})
                     continue
 
-                # 🔒 台账级兜底幂等：同 ref/ref_line + 同 stock_id 已存在 → 幂等跳过
+                # 兜底：台账重复检查
                 if await _ledger_exists(session, ref, item_id, loc_id, idx):
-                    results.append({"item_id": item_id, "qty": 0, "status": "IDEMPOTENT"})
+                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
                     continue
 
                 after = int(row.qty) - need
@@ -113,21 +111,19 @@ class OutboundService:
                         "iid": item_id,
                         "delta": -need,
                         "after": after,
-                        "ts": datetime.now(timezone.utc),  # UTC(aware)
+                        "ts": datetime.now(timezone.utc),
                         "ref": ref,
                         "line": idx,
                     },
                 )
 
-                # 3) -reserved（若能解析到 store）
                 if store_id is not None:
                     await ChannelInventoryService.adjust_reserved(
                         session, store_id=store_id, item_id=item_id, delta=-need
                     )
 
-                results.append({"item_id": item_id, "qty": need, "status": "OK"})
+                results.append({"item_id": item_id, "location_id": loc_id, "qty": need, "status": "OK"})
 
-        # 4) 可选刷新可见量（仅对 OK 行）
         if store_id is not None and refresh_visible:
             ok_items = [r["item_id"] for r in results if r["status"] == "OK"]
             if ok_items:
@@ -147,8 +143,8 @@ async def _resolve_store_id(
         return None
     row = (
         await session.execute(
-            select( Store.id )
-            .where( Store.platform == platform, Store.name == shop_id )
+            select(Store.id)
+            .where(Store.platform == platform, Store.name == shop_id)
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -158,10 +154,6 @@ async def _resolve_store_id(
 async def _ledger_exists(
     session: AsyncSession, ref: str, item_id: int, location_id: int, ref_line: int
 ) -> bool:
-    """
-    兜底幂等：是否已存在相同 OUTBOUND 台账行？
-    依据唯一约束：reason/ref/ref_line/stock_id
-    """
     row = await session.execute(
         text("""
             SELECT 1
@@ -179,24 +171,4 @@ async def _ledger_exists(
     return row.first() is not None
 
 
-# ---------------------------- Back-Compat Shim ----------------------------
-
-async def commit_outbound(session: AsyncSession, ref: str, lines: List[Dict]) -> List[Dict]:
-    """
-    兼容旧版测试/调用方的包装器：
-    - 旧签名: commit_outbound(session, ref, lines) -> results
-    - 内部转调新接口：默认 platform='pdd'、shop_id=''，不刷新 visible（避免依赖 store 解析）
-    - 返回与历史用例期望一致的 results 列表
-    """
-    resp = await OutboundService.commit(
-        session,
-        platform="pdd",
-        shop_id="",                 # 不解析 store，避免引入渠道占用副作用
-        ref=ref,
-        lines=lines,
-        refresh_visible=False,      # 旧用例只验证库存/台账
-    )
-    return resp.get("results", [])
-
-
-__all__ = ["OutboundService", "commit_outbound"]
+__all__ = ["OutboundService"]
