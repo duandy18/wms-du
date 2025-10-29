@@ -10,7 +10,7 @@ depends_on = None
 def upgrade():
     conn = op.get_bind()
 
-    # ========= 0) 预检查（强制存在前置表/列） =========
+    # ========= 0) 预检查 =========
     conn.exec_driver_sql("""
         DO $$
         BEGIN
@@ -105,33 +105,59 @@ def upgrade():
          WHERE s.batch_code = 'MIG-UNSPEC';
     """)
 
-    # 修复：在单独 autocommit 块中 DROP DEFAULT，避免 pending trigger events
+    # 修复 pending trigger events：单独事务块中 DROP DEFAULT
     ctx = op.get_context()
     with ctx.autocommit_block():
         op.execute("ALTER TABLE stocks ALTER COLUMN batch_code DROP DEFAULT")
 
-    # ========= 4) 约束与索引：删旧 UQ → 建索引 → 新 UQ =========
+    # ========= 4) 约束与索引：删旧 UQ → 建索引 → 绑定唯一约束 =========
+    # 4.1 删除旧 loc-only UQ
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_location")
 
+    # 4.2 batches 唯一索引（若已存在则不会重复）
     op.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_batches_item_wh_loc_code
           ON batches (item_id, warehouse_id, location_id, batch_code)
     """)
 
+    # 4.3 stocks 复合“查询”索引（非唯一）
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_stocks_item_wh_loc_batch
           ON stocks (item_id, warehouse_id, location_id, batch_code)
     """)
 
+    # 4.4 stocks 唯一约束：通过“先建唯一索引→再 USING INDEX 绑定”为约束
+    # 注意：PostgreSQL 不支持 UNIQUE NOT VALID，因此不能写 NOT VALID。
     op.execute("""
-        ALTER TABLE stocks
-          ADD CONSTRAINT uq_stocks_item_wh_loc_code
-          UNIQUE (item_id, warehouse_id, location_id, batch_code) NOT VALID
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_class WHERE relkind='i' AND relname='uq_stocks_item_wh_loc_code_idx'
+          ) THEN
+            CREATE UNIQUE INDEX uq_stocks_item_wh_loc_code_idx
+              ON stocks (item_id, warehouse_id, location_id, batch_code);
+          END IF;
+        END $$;
+    """)
+
+    op.execute("""
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname='uq_stocks_item_wh_loc_code'
+          ) THEN
+            ALTER TABLE stocks
+              ADD CONSTRAINT uq_stocks_item_wh_loc_code
+              UNIQUE USING INDEX uq_stocks_item_wh_loc_code_idx;
+          END IF;
+        END $$;
     """)
 
 
 def downgrade():
+    # 回滚顺序：约束/索引 → 列
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_wh_loc_code")
+    op.execute("DROP INDEX IF EXISTS uq_stocks_item_wh_loc_code_idx")
     op.execute("DROP INDEX IF EXISTS idx_stocks_item_wh_loc_batch")
     op.execute("DROP INDEX IF EXISTS uq_batches_item_wh_loc_code")
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
