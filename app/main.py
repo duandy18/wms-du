@@ -2,21 +2,20 @@
 from __future__ import annotations
 
 import logging
-import traceback
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ★ 在创建 FastAPI 实例之前：集中导入所有模型并完成映射校验
-from app.db.base import init_models
-init_models()
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-logger = logging.getLogger("wmsdu")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+logger = logging.getLogger("wmsdu")
 
-app = FastAPI(title="WMS-DU API", version="0.3.2")
+app = FastAPI(title="WMS-DU API", version="1.0.0")
 
-# ---- CORS（按你前端联调域名，可自行增减） ----
+# === CORS ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -25,67 +24,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- 全局异常（保持简单可观测） ----
+# === 全局异常兜底 ===
 @app.exception_handler(Exception)
 async def _unhandled_exc(_req: Request, exc: Exception):
-    logger.error("UNHANDLED: %s", exc, exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "INTERNAL_SERVER_ERROR", "error": str(exc)},
-    )
+    logger.exception("UNHANDLED EXC: %s", exc)
+    return JSONResponse(status_code=500, content={"detail": "INTERNAL_SERVER_ERROR"})
 
-# ---- 业务聚合路由（如果有的话） ----
-try:
-    from app.api.endpoints import api_router  # 你现有的聚合路由
-    app.include_router(api_router)
-    app.include_router(api_router, prefix="/api")
-    logger.info("Mounted api_router (with and without /api prefix).")
-except Exception:
-    logger.info("api_router not mounted (module not found).")
+# === 1) 初始化 async_sessionmaker 并挂到 app.state ===
+def _mount_async_sessionmaker() -> None:
+    db_url = os.environ.get("DATABASE_URL", "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms")
+    async_url = db_url.replace("+psycopg", "+asyncpg") if "+psycopg" in db_url else db_url
+    engine = create_async_engine(async_url, future=True, pool_pre_ping=True)
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    app.state.async_sessionmaker = maker
+    logger.info("async_sessionmaker mounted on app.state")
 
-# ---- Prometheus /metrics ----
-try:
-    from app.metrics import router as metrics_router
-    app.include_router(metrics_router)
-    logger.info("Mounted metrics_router at /metrics.")
-except Exception:
-    logger.warning("metrics_router not mounted (module not found).")
+# === 2) 显式导入所有模型，完成 ORM 映射注册（避免字符串关系名找不到） ===
+def _import_all_models() -> None:
+    # 把你项目内会参与关系映射的模型都导入一遍，顺序无所谓；失败不应静默
+    import importlib
 
-# ---- Dev Metrics（可选） ----
-try:
-    from app.dev_metrics import router as dev_metrics_router
-    app.include_router(dev_metrics_router)
-    logger.info("Mounted dev_metrics_router.")
-except Exception:
-    logger.info("dev_metrics_router not mounted (module not found).")
+    model_modules = [
+        "app.models.item",
+        "app.models.order_item",       # 提供 OrderItem，解决 Item.relationship('OrderItem') 引用
+        "app.models.order",          # ✅ 新增
+        "app.models.location",
+        "app.models.warehouse",
+        "app.models.stock",
+        "app.models.batch",
+        "app.models.stock_ledger",
+        "app.models.stock_snapshot",
+        # 如有其它模型（users/roles/events 等），可按需补上：
+        # "app.models.user",
+        # "app.models.role",
+        # "app.models.event_error_log",
+        # "app.models.outbound_commit",
+    ]
+    for mod in model_modules:
+        try:
+            importlib.import_module(mod)
+        except Exception as e:
+            # 对于不存在的模块，仅记录告警，不让应用崩
+            logger.warning("Model import skipped or failed: %s (%s)", mod, e)
 
-# ---- Stores 路由（重点） ----
-def _mount_store_router():
-    try:
-        from app.routers.store import router as store_router  # 不在 app/api/ 下
-        app.include_router(store_router)
-        logger.info("✅ Mounted store_router (/stores/*).")
-        return True
-    except Exception as e:
-        logger.error("❌ Failed to mount store_router: %s", e)
-        logger.error("Traceback:\n%s", traceback.format_exc())
-        return False
+# 挂载会话工厂与模型注册
+_mount_async_sessionmaker()
+_import_all_models()
 
-_mount_store_router()
+# === 3) 只用 routers：显式导入 + 显式挂载 ===
+from app.routers.stock_ledger import router as stock_ledger_router  # noqa: E402
+from app.routers.admin_snapshot import router as snapshot_router    # noqa: E402
 
+app.include_router(stock_ledger_router)
+app.include_router(snapshot_router)
+
+# === 探活 ===
 @app.get("/ping")
 async def ping():
-    return {"pong": True}
+    return {"status": "ok"}
 
-# ---- 启动时列出所有已注册路由（调通后可删） ----
+# === 启动时打印路由表 ===
 @app.on_event("startup")
 async def _print_routes():
-    paths = []
     for r in app.router.routes:
         path = getattr(r, "path", None)
         methods = getattr(r, "methods", None)
         if path:
             logger.info("ROUTE: %s %s", methods, path)
-            paths.append(path)
-    if "/stores/{store_id}/refresh" not in paths:
-        logger.warning("⚠ stores routes not visible. See above errors. Check __init__.py and imports.")

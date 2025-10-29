@@ -6,11 +6,16 @@ from datetime import datetime
 from sqlalchemy import String, Integer, JSON, TIMESTAMP, text, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
-# ⚠️ 结合你的项目基类路径引入 Base（这是你原文件缺失的一行）
-from app.db.base import Base
+from app.db.base import Base  # 保持与你项目的 Base 路径一致
 
 
 class EventErrorLog(Base):
+    """
+    平台事件错误日志：
+    - 幂等键：platform + shop_id + idempotency_key（索引见下）
+    - 重试机制：retry_count / max_retries / next_retry_at
+    - 时间列具时区；DB 层存 UTC
+    """
     __tablename__ = "event_error_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -24,7 +29,7 @@ class EventErrorLog(Base):
     to_state: Mapped[str] = mapped_column(String(32), nullable=False)
 
     error_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    error_msg: Mapped[str | None]
+    error_msg: Mapped[str | None] = mapped_column(String(512))
     payload_json: Mapped[dict | None] = mapped_column(JSON)
 
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -39,7 +44,7 @@ class EventErrorLog(Base):
     )
 
 
-# 索引（与你现有风格一致，保留模块级定义）
+# 索引（模块级定义，跨方言更直观）
 Index(
     "ix_event_error_log_key",
     EventErrorLog.platform,

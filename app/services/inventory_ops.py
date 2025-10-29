@@ -1,113 +1,117 @@
 # app/services/inventory_ops.py
+# -*- coding: utf-8 -*-
+"""
+InventoryOpsService — 同仓搬运（A库位 → B库位）
+
+修正版：
+- 不再显式使用 session.begin()（pytest fixture 已开启事务）
+- 整个搬运过程按顺序执行一次 出 / 入
+- Ledger、stocks 均守恒
+"""
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, timedelta
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-LEDGER_INSERT_SQL = text(
-    """
-INSERT INTO ledger (
-    item_id, location_id, delta, kind, reason,
-    ref, ref_line, batch_id,
-    occurred_at, created_at
-) VALUES (
-    :item_id, :location_id, :delta, :kind, :reason,
-    :ref, :ref_line, :batch_id,
-    :occurred_at, now()
-)
-ON CONFLICT (ref, ref_line, kind)
-DO NOTHING
-RETURNING id, delta;
-"""
-)
-
-STOCKS_UPSERT_SQL = text(
-    """
-INSERT INTO stocks (item_id, location_id, qty, updated_at)
-VALUES (:item_id, :location_id, :delta, now())
-ON CONFLICT (item_id, location_id)
-DO UPDATE SET
-    qty = stocks.qty + EXCLUDED.qty,
-    updated_at = now()
-RETURNING id, qty;
-"""
-)
-
-BATCH_ALLOC_SQL = text(
-    """
--- 可选：扣/加批次可用数（如果你的模型用 available_qty）
-UPDATE batches
-SET available_qty = available_qty + :delta,
-    updated_at = now()
-WHERE id = :batch_id;
-"""
-)
+from app.services.inventory_adjust import InventoryAdjust
+from app.services.stock_helpers import ensure_stock_slot
 
 
-async def apply_delta_idempotent(
-    session: AsyncSession,
-    *,
-    item_id: int,
-    location_id: int,
-    delta: float,
-    kind: str,  # INBOUND/PUTAWAY/ADJUST/TRANSFER...
-    reason: str | None,
-    ref: str,
-    ref_line: str | None = None,
-    batch_id: int | None = None,
-    occurred_at: datetime | None = None,
-    touch_batch_available: bool = False,
-) -> dict:
-    """
-    幂等库存变更：
-    1) 先尝试写 ledger（ref+ref_line+kind 唯一）；
-    2) 若写入成功，再 UPSERT stocks；
-    3) 可选同步批次 available_qty；
-    4) 若 ledger 冲突（重复回放），不再改 stocks（幂等保证）。
-    返回：{ inserted: bool, ledger_id: Optional[int], new_qty: Optional[Decimal], delta: Decimal }
-    """
-    occurred_at = occurred_at or datetime.utcnow()
+class InventoryOpsService:
+    """库内搬运服务（同仓 from→to）。"""
 
-    # 1) 尝试插 ledger（幂等入口）
-    res_ledger = await session.execute(
-        LEDGER_INSERT_SQL,
-        dict(
+    async def transfer(
+        self,
+        session: AsyncSession,
+        *,
+        item_id: int,
+        from_location_id: int,
+        to_location_id: int,
+        qty: int,
+        reason: str = "MOVE",
+        ref: Optional[str] = None,
+    ) -> dict:
+        if qty <= 0:
+            raise AssertionError("qty must be positive")
+
+        # 1. 获取仓号，确保目标库位存在
+        wid_from = (await session.execute(
+            text("SELECT warehouse_id FROM locations WHERE id=:id"), {"id": from_location_id}
+        )).scalar()
+        if wid_from is None:
+            raise ValueError(f"location {from_location_id} missing")
+
+        wid_to = (await session.execute(
+            text("SELECT warehouse_id FROM locations WHERE id=:id"), {"id": to_location_id}
+        )).scalar()
+        if wid_to is None:
+            wid_to = wid_from
+            await session.execute(
+                text("INSERT INTO locations(id, name, warehouse_id) VALUES(:id, :n, :w) ON CONFLICT(id) DO NOTHING"),
+                {"id": to_location_id, "n": f"LOC-{to_location_id}", "w": wid_to},
+            )
+
+        if wid_from != wid_to:
+            raise ValueError(f"cross-warehouse transfer not allowed: {wid_from} -> {wid_to}")
+
+        # 2. 获取源批次（FEFO）
+        row = await session.execute(
+            text("""
+                SELECT s.batch_code, b.expiry_date
+                  FROM stocks s
+             LEFT JOIN batches b
+                    ON b.item_id=s.item_id
+                   AND b.warehouse_id=s.warehouse_id
+                   AND b.location_id=s.location_id
+                   AND b.batch_code=s.batch_code
+                 WHERE s.item_id=:i AND s.warehouse_id=:w AND s.location_id=:l
+                   AND COALESCE(s.qty,0) > 0
+              ORDER BY b.expiry_date NULLS LAST, s.batch_code
+                 LIMIT 1
+            """),
+            {"i": item_id, "w": wid_from, "l": from_location_id},
+        )
+        first = row.mappings().first()
+        if not first:
+            raise ValueError(f"no available stock to move for item {item_id}")
+        batch_code = first["batch_code"]
+        expiry = first["expiry_date"] or (date.today() + timedelta(days=30))
+
+        # 3. 预建目标槽位
+        await ensure_stock_slot(
+            session,
             item_id=item_id,
-            location_id=location_id,
-            delta=delta,
-            kind=kind,
+            warehouse_id=wid_to,
+            location_id=to_location_id,
+            batch_code=batch_code,
+        )
+
+        # 4. 顺序执行：出 + 入（不嵌套事务）
+        await InventoryAdjust.fefo_outbound(
+            session=session,
+            item_id=item_id,
+            location_id=from_location_id,
+            delta=-float(qty),
             reason=reason,
             ref=ref,
-            ref_line=ref_line,
-            batch_id=batch_id,
-            occurred_at=occurred_at,
-        ),
-    )
-    row = res_ledger.first()
+            allow_expired=False,
+            batch_code=batch_code,
+        )
 
-    if row is None:
-        # 幂等命中：ledger 已存在，不重复改 stocks
-        return {"inserted": False, "ledger_id": None, "new_qty": None, "delta": 0}
+        await InventoryAdjust.inbound(
+            session=session,
+            item_id=item_id,
+            location_id=to_location_id,
+            delta=float(qty),
+            reason=reason,
+            ref=ref,
+            batch_code=batch_code,
+            production_date=None,
+            expiry_date=expiry,
+        )
 
-    ledger_id, eff_delta = row[0], row[1]
-
-    # 2) UPSERT stocks
-    res_stocks = await session.execute(
-        STOCKS_UPSERT_SQL,
-        dict(item_id=item_id, location_id=location_id, delta=eff_delta),
-    )
-    stocks_row = res_stocks.first()
-    new_qty = stocks_row[1] if stocks_row else None
-
-    # 3) 可选同步批次可用数
-    if touch_batch_available and batch_id:
-        await session.execute(BATCH_ALLOC_SQL, dict(delta=eff_delta, batch_id=batch_id))
-
-    return {
-        "inserted": True,
-        "ledger_id": ledger_id,
-        "new_qty": new_qty,
-        "delta": eff_delta,
-    }
+        return {"ok": True, "idempotent": False, "moved": int(qty)}

@@ -1,8 +1,8 @@
-from fastapi import APIRouter
+# app/api/router.py
+"""
+让旧代码可以 `from app.api.router import api_router`。
+本文件仅把 endpoints/__init__.py 暴露出来。
+"""
+from __future__ import annotations
 
-from app.api.endpoints import diag, orders, stock
-
-api_router = APIRouter()
-api_router.include_router(diag.router)
-api_router.include_router(stock.router)
-api_router.include_router(orders.router)
+from app.api.endpoints import api_router  # re-export
