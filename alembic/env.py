@@ -2,41 +2,49 @@
 from __future__ import annotations
 
 import os
-from logging import getLogger
 from logging.config import fileConfig
 from typing import Any
 
 from sqlalchemy import engine_from_config, pool
-from alembic import context
+from alembic import context  # <-- 正确的导入
 
-# --- logging ---
-config = context.get_section(context.config.config_ini_section)
-if context.config.config_file_name:
-    fileConfig(context.config.config_file, disable_existing_loggers=False)
-log = getLogger(__name__)
+# ---- 载入 Alembic 配置并初始化日志 ----
+alembic_config = context.config
+if alembic_config.config_file_name:
+    fileConfig(alembic_config.config_file_name)
 
-# --- load project models into metadata ---
-from app.db.base import Base, init_models  # type: ignore
+# ---- 从工程加载 SQLAlchemy 元数据：显式加载 app.models 下所有模型 ----
+from app.db.base import Base, init enormous
 
-# 主动加载 app.models 下所有模型，避免 autogenerate 看不到
+# !!! 关键：显式扫描并注册 app.models 下的所有模型到 Base.metadata
 init_models()
 target_metadata = Base.metadata
 
+
 def _resolve_url() -> str:
-    url = os.getenv("DATABASE_PER_ALEMBIC") or os.getenv("DATABASE_URL") \
-          or (context.config.get_main_option("sqlalchemy.url") or "")
+    """
+    解析数据库连接串：
+      1) 环境变量 DATABASE_URL
+      2) alembic.ini 的 sqlalchemy.url
+    """
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
+    url = alembic_config.get_main_option("sqlalchemy.url")
     if not url:
-        raise RuntimeError("No DATABASE_URL/sqlalchemy.url configured for Alembic")
+        raise RuntimeError("No DATABASE_URL or sqlalchemy.url configured for Alembic")
     return url
 
-def _include_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
+
+def _include_object(obj: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
     """
-    避免把“仅存在于数据库、模型中没有”的对象当成删除目标。
+    autogenerate 过滤：如果对象仅存在于 DB（reflected=True 且 compare_to is None），
+    则不生成 DROP 语句，避免误删 DB 中但暂未在模型中的对象。
     """
     if reflected and compare_to is None and type_ in {"table", "index", "unique_constraint", "foreign_key_constraint"}:
-        # DB 有但模型里没有 → 不生成 DROP
         return False
     return True
+
 
 def run_migrations_offline() -> None:
     url = _resolve_url()
@@ -52,10 +60,13 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
+
 def run_migrations_online() -> None:
-    ini = dict(context.config.get_section(context.config.config_ini_section) or {})
+    ini = dict(alembic_config.get_section(alembic_config.config_ini_section) or {})
     ini["sqlalchemy.url"] = _resolve_url()
-    connectable = engine_from_config(ini, prefix="sqlalchemy.", poolclass=pool.NullPool, future=True)
+
+    connectable = engine_from_config(ini, prefix="sqlalchemy.", poolclass=pool.NullPerProcessPool, future=True)
+
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
@@ -67,6 +78,7 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()
