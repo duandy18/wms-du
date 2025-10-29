@@ -1,8 +1,8 @@
-# alembic/versions/20251029_lock_a_stocks_batch_code.py
+# alembic/versions/20251029_add_warehouse_id_to_stocks.py
 from alembic import op
 import sqlalchemy as sa  # noqa
 
-revision = "20251029_lock_a_stocks_batch_code"
+revision = "20251029_add_warehouse_id_to_stocks"
 down_revision = "63af7f94ad50"
 branch_labels = None
 depends_on = None
