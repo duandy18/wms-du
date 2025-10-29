@@ -2,92 +2,71 @@
 from __future__ import annotations
 
 import os
+from logging import getLogger
 from logging.config import fileConfig
+from typing import Any
 
 from sqlalchemy import engine_from_config, pool
-
 from alembic import context
 
-# 读取 alembic.ini 配置
-config = context.config
+# --- logging ---
+config = context.get_section(context.config.config_ini_section)
+if context.config.config_file_name:
+    fileConfig(context.config.config_file, disable_existing_loggers=False)
+log = getLogger(__name__)
 
-# 日志配置（可选）
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# --- load project models into metadata ---
+from app.db.base import Base, init_models  # type: ignore
 
-# ---- 关键：引入项目 Base，并把 metadata 交给 Alembic ----
-# 只需 import Base；各模型会由 app.db.base 内部集中导入注册
-from app.db.base import Base  # noqa: E402
-
+# 主动加载 app.models 下所有模型，避免 autogenerate 看不到
+init_models()
 target_metadata = Base.metadata
 
+def _resolve_url() -> str:
+    url = os.getenv("DATABASE_PER_ALEMBIC") or os.getenv("DATABASE_URL") \
+          or (context.config.get_main_option("sqlalchemy.url") or "")
+    if not url:
+        raise RuntimeError("No DATABASE_URL/sqlalchemy.url configured for Alembic")
+    return url
 
-def _resolve_sqlalchemy_url() -> str:
+def _include_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
     """
-    统一解析数据库 URL：
-    1) 优先环境变量 DATABASE_URL
-    2) 其次 alembic.ini 中的 sqlalchemy.url
-    3) 都没有则给出清晰报错
+    避免把“仅存在于数据库、模型中没有”的对象当成删除目标。
     """
-    env_url = (os.getenv("DATABASE_URL") or "").strip()
-    if env_url:
-        return env_url
-
-    ini_url = (config.get_main_option("sqlalchemy.url") or "").strip()
-    if ini_url:
-        return ini_url
-
-    raise RuntimeError(
-        "Alembic: missing DB URL.\n"
-        "请设置环境变量 DATABASE_URL（例如：postgresql+psycopg://wms:wms@127.0.0.1:5433/wms），"  # pragma: allowlist secret
-        "或在 alembic.ini 的 [alembic] 区块中配置 sqlalchemy.url。"
-    )
-
+    if reflected and compare_to is None and type_ in {"table", "index", "unique_constraint", "foreign_key_constraint"}:
+        # DB 有但模型里没有 → 不生成 DROP
+        return False
+    return True
 
 def run_migrations_offline() -> None:
-    """Offline 模式：不连数据库，直接渲染 SQL。"""
-    url = _resolve_sqlalchemy_url()
+    url = _resolve_url()
     context.configure(
-        url=sqlalchemy_url,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,  # 对比列类型差异（如 INTEGER → BIGINT / identity 等）
-        compare_server_default=True,  # 对比 server_default 差异（如 now() / DEFAULT 0 等）
+        compare_type=True,
+        compare_server_default=True,
+        include_object=_include_object,
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
-
 def run_migrations_online() -> None:
-    """Online 模式：连接数据库并执行迁移。"""
-    url = _resolve_sqlalchemy_url()
-
-    # 确保传给 engine_from_config 的 dict 内含 'sqlalchemy.url'
-    section = config.get_section(config.config_ini_section) or {}
-    section = dict(section)  # 复制，避免影响全局 config
-    section["sqlalchemy.url"] = url
-
-    connectable = engine_from_config(
-        configuration=section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-        future=True,
-    )
-
+    ini = dict(context.config.get_section(context.config.config_ini_section) or {})
+    ini["sqlalchemy.url"] = _resolve_url()
+    connectable = engine_from_config(ini, prefix="sqlalchemy.", poolclass=pool.NullPool, future=True)
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
-            render_as_batch=False,  # 针对 SQLite 可设 True；PG 下保持 False 更安全
+            render_as_batch=False,
+            include_object=_include_object,
         )
-
         with context.begin_transaction():
             context.run_migrations()
-
 
 if context.is_offline_mode():
     run_migrations_offline()
