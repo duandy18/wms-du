@@ -6,40 +6,39 @@ from logging.config import fileConfig
 from typing import Any
 
 from sqlalchemy import engine_from_config, pool
-from alembic import context  # <-- 正确的导入
+from alembic import context  # ✅ 正确导入
 
-# ---- 载入 Alembic 配置并初始化日志 ----
-alembic_config = context.config
-if alembic_config.config_file_name:
-    fileConfig(alembic_config.config_file_name)
+# ---- 加载 Alembic 配置并初始化日志 ----
+config = context.config
+if config.config_file_name:
+    fileConfig(config.config_file_name)
 
-# ---- 从工程加载 SQLAlchemy 元数据：显式加载 app.models 下所有模型 ----
-from app.db.base import Base, init enormous
+# ---- 显式加载项目模型到 metadata（避免 autogenerate 误判）----
+from app.db import base  # 这里导入你的 base 模块
+from app.db.base import Base, init_models  # Base/scan 函数
 
-# !!! 关键：显式扫描并注册 app.models 下的所有模型到 Base.metadata
+# 主动扫描并注册 app.models 下的所有 SQLAlchemy 模型
 init_models()
 target_metadata = Base.metadata
 
 
 def _resolve_url() -> str:
     """
-    解析数据库连接串：
-      1) 环境变量 DATABASE_URL
-      2) alembic.ini 的 sqlalchemy.url
+    解析数据库连接串，优先用环境变量，其次用 alembic.ini。
     """
     url = os.getenv("DATABASE_URL")
     if url:
         return url
-    url = alembic_config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option("sqlalchemy.url")
     if not url:
         raise RuntimeError("No DATABASE_URL or sqlalchemy.url configured for Alembic")
     return url
 
 
-def _include_object(obj: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
+def _include_object(object_: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
     """
-    autogenerate 过滤：如果对象仅存在于 DB（reflected=True 且 compare_to is None），
-    则不生成 DROP 语句，避免误删 DB 中但暂未在模型中的对象。
+    autogenerate 过滤策略：
+      * 若对象仅存在于DB（reflected=True 且 compare_to is None），不生成 DROP 语句，避免误删历史/临时表。
     """
     if reflected and compare_to is None and type_ in {"table", "index", "unique_constraint", "foreign_key_constraint"}:
         return False
@@ -47,6 +46,7 @@ def _include_object(obj: Any, name: str, type_: str, reflected: bool, compare_to
 
 
 def run_migrations_offline() -> None:
+    """Offline 模式：不连库，直接渲染 SQL。"""
     url = _resolve_url()
     context.configure(
         url=url,
@@ -62,10 +62,14 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    ini = dict(alembic_config.get_section(alembic_config.config_ini_section) or {})
+    """Online 模式：连接数据库并执行迁移。"""
+    ini = dict(config.get_section(config.config_ini_quickname) or {})
+    # 某些 Alembic 版本字段名为 config.config_ini_section
+    if not ini:
+        ini = dict(config.get_section(config.config_ini_section) or {})
     ini["sqlalchemy.url"] = _resolve_url()
 
-    connectable = engine_from_config(ini, prefix="sqlalchemy.", poolclass=pool.NullPerProcessPool, future=True)
+    connectable = engine_from_config(ini, prefix="sqlalchemy.", poolclass=pool.NullPool, future=True)
 
     with connectable.connect() as connection:
         context.configure(
