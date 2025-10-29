@@ -7,9 +7,8 @@ Create Date: 2025-10-29 13:41:26.199993
 from alembic import op
 import sqlalchemy as sa
 
-# 保持你当前迁移链（根据 `alembic heads -v` 的 Parent 值）
 revision = "cfb24bbca2a0"
-down_revision = "20251029_merge_heads_lockA_single_head"
+down_revision = "20251029_merge_heads_lockA_single_head"  # ← 保持与 heads -v 中 Parent 一致
 branch_labels = None
 depends_on = None
 
@@ -20,12 +19,17 @@ def upgrade():
         sa.Column("order_id", sa.Integer(), nullable=False),
         sa.Column("item_id", sa.Integer(), nullable=False),
         sa.Column("qty", sa.Integer(), nullable=False),
-        # 如果你的模型还有其它字段，比如价格/备注，这里一并加上：
+        # 若你的模型还有价格等字段，按需追加：
         # sa.Column("price", sa.Numeric(12, 2), nullable=False, server_default="0"),
         sa.ForeignKeyConstraint(["order_id"], ["orders.id"], name="fk_order_items_order", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["item_id"], ["items.id"], name="fk_order_items_item")
+        sa.ForeignKeyConstraint(["item_id"], ["items.id"], name="fk_order_items_item"),
     )
-    op.create_index("ix_order_items_order_item", "order_items", ["order_id", "item_id"], unique=False)
+    op.create_index(
+        "ix_order_items_order_item",
+        "order_items",
+        ["order_id", "item_id"],
+        unique=False,
+    )
 
 def downgrade():
     op.drop_index("ix_order_items_order_item", table_name="order_items")

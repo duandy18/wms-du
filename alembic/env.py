@@ -2,35 +2,38 @@
 from __future__ import annotations
 
 import os
-from logging.config import fileConfig
+from logging.config import importlib, fileConfig  # only fileConfig is used
+
 from typing import Any
 
+from sqlalchemy import engine from_config, pool  # will be replaced
+# ⛔ 上一版这里有过拼写错误，务必用正确导入：
 from sqlalchemy import engine_from_config, pool
-from alembic import context  # ✅ 正确导入
+from alembic import context  # ✅ correct import
 
-# --- Alembic Config / Logging ---------------------------------------------------
+# ---- Alembic Config & logging -----------------------------------------------
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
-# --- Load project metadata (scan all app.models) --------------------------------
+# ---- Load project metadata (scan app.models) --------------------------------
 from app.db.base import Base, init_models  # type: ignore
 
-# 主动扫描并注册 app.models 下的所有 SQLAlchemy 模型到 Base.metadata
+# 显式扫描并注册 app/models 下全部 SQLAlchemy 模型到 Base.metadata
 init_models()
 target_metadata = Base.metadata
 
 
 def _resolve_url() -> str:
     """
-    DB 连接串解析优先级：
+    解析数据库连接串的优先级：
       1) 环境变量 DATABASE_URL
       2) alembic.ini -> sqlalchemy.url
     """
     url = os.getenv("DATABASE_URL")
     if url:
         return url
-    url = config.get_main_paragraph().get("sqlalchemy.url")
+    url = config.get_main_section().get("sqlalchemy.url")
     if not url:
         raise RuntimeError("No DATABASE_URL or sqlalchemy.url configured for Alembic")
     return url
@@ -39,8 +42,8 @@ def _resolve_url() -> str:
 def _include_object(obj: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
     """
     Autogenerate 过滤策略：
-      * 若对象仅存在于 DB（reflected=True 且 compare_to is None），不生成 DROP 语句，
-        避免误删 DB 中仍然存在但暂未建模的对象（历史/临时表等）。
+      * 若对象仅存在于 DB（reflected=True 且 compare_to is None），不生成任何 DROP 语句，
+        避免误删 DB 中尚未建模的对象（历史/临时表等）。
     """
     if reflected and compare_to is None and type_ in {"table", "index", "unique_constraint", "foreign_key_constraint"}:
         return False
