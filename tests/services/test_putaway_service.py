@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.grp_flow
+
 import inspect
 from uuid import uuid4
 
@@ -68,7 +72,9 @@ async def _get_qty(engine, *, item_id: int, loc_id: int) -> int:
 
 
 async def _sum_qty(engine, *, item_id: int) -> int:
-    v = await _scalar_fresh(engine, "SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i", {"i": item_id})
+    v = await _scalar_fresh(
+        engine, "SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i", {"i": item_id}
+    )
     return int(v or 0)
 
 
@@ -94,7 +100,9 @@ async def _pick_src_location_for_item(engine, *, item_id: int, min_qty: int) -> 
 # ----------------------
 # build source stock by using InboundService
 # ----------------------
-async def _receive_to_make_stock(engine, *, sku: str, qty: int, stage_location_id: int | None = None) -> int:
+async def _receive_to_make_stock(
+    engine, *, sku: str, qty: int, stage_location_id: int | None = None
+) -> int:
     """用 InboundService 造货；返回 item_id。"""
     from app.services.inbound_service import InboundService
 
@@ -198,7 +206,11 @@ async def _call_putaway_twice(
         svc = PutawayService()
 
         # 方案1：任务流；同一 task_id 两次执行
-        if hasattr(svc, "create_task") and callable(getattr(svc, "create_task")) and hasattr(svc, "putaway"):
+        if (
+            hasattr(svc, "create_task")
+            and callable(getattr(svc, "create_task"))
+            and hasattr(svc, "putaway")
+        ):
             # 使用稳定的 ref/ref_line 以便服务端自行实现 create_task 幂等复用
             async with s.begin():
                 task_id = await svc.create_task(
@@ -224,7 +236,14 @@ async def _call_putaway_twice(
 
         fn = getattr(svc, "putaway")
         kw = _bind_putaway_kwargs(
-            fn, session=s, item_id=item_id, src_loc=src_loc, dst_loc=dst_loc, qty=qty, ref=ref, ref_line=ref_line
+            fn,
+            session=s,
+            item_id=item_id,
+            src_loc=src_loc,
+            dst_loc=dst_loc,
+            qty=qty,
+            ref=ref,
+            ref_line=ref_line,
         )
 
         # 第一次

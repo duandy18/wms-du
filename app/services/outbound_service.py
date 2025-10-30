@@ -6,99 +6,145 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.inventory_adjust import InventoryAdjust
 from app.services.stock_service import StockService
 
 
 class OutboundService:
     """
     v1.0 一步法出库（单仓，接口预留多仓）：
-
-        commit(session, *, platform, shop_id, ref, lines, warehouse_id?)
+      commit(session, *, platform, shop_id, ref, warehouse_id, lines)
 
     要点：
-    - 扣减统一走 StockService.adjust(delta=-qty, reason="OUTBOUND", ref=ref)；
-    - 幂等用 outbound_ship_ops 唯一键，冲突时做“台账判定+恢复”；
-    - shop_id 为空时自动创建/复用占位门店满足外键；
-    - 不使用外层事务，避免与 adjust 的事务管理冲突。
+    - FEFO 扣减：InventoryAdjust.fefo_outbound(delta 为负)
+    - 幂等：outbound_ship_ops 上 (store_id, ref, item_id, location_id) 唯一
+    - 可见性：末尾统一 flush + commit（适配外部可能已有事务上下文）
+    - 可用量：读取 v_available（= on_hand - reservations.ACTIVE），避免多批次误判
     """
 
     @staticmethod
     async def commit(
         session: AsyncSession,
-        *,
-        platform: str = "pdd",
+        platform: str,
         shop_id: str,
+        *,
         ref: str,
+        warehouse_id: int,
         lines: List[Dict[str, Any]],
-        refresh_visible: bool = False,
-        warehouse_id: int | None = None,  # 预留，不参与单仓过滤
+        allow_expired: bool = False,
     ) -> Dict[str, Any]:
+        if not lines:
+            return {"ok": True, "total_lines": 0, "total_qty": 0}
+
         store_id = await _resolve_store_id(session, platform=platform, shop_id=shop_id)
         if store_id is None:
             store_id = await _ensure_internal_store(session)
-            await session.commit()
 
         results: List[Dict[str, Any]] = []
+        total_qty = 0
         svc = StockService()
 
-        # 逐行处理（无外层事务）
-        for line in lines:
-            item_id = int(line["item_id"])
-            loc_id = int(line["location_id"])
-            need = int(line["qty"])
+        for ln in lines:
+            item_id = int(ln["item_id"])
+            location_id = int(ln["location_id"])
+            qty = int(ln["qty"])
 
-            # 1) 可用量检查
+            if qty <= 0:
+                results.append(
+                    {"item_id": item_id, "location_id": location_id, "qty": 0, "status": "IGNORED"}
+                )
+                continue
+
+            # 可用量检查：统一从 v_available 读取（现存-预留 的聚合口径）
             avail_row = await session.execute(
-                text("SELECT qty FROM stocks WHERE item_id=:iid AND location_id=:loc LIMIT 1"),
-                {"iid": item_id, "loc": loc_id},
+                text(
+                    """
+                    SELECT COALESCE(available, 0)
+                    FROM v_available
+                    WHERE item_id=:iid AND location_id=:loc
+                    """
+                ),
+                {"iid": item_id, "loc": location_id},
             )
-            avail = avail_row.scalar_one_or_none()
-            if avail is None:
-                results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "NO_STOCK"})
-                continue
-            if int(avail) < need:
-                results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "INSUFFICIENT_STOCK"})
+            avail = int(avail_row.scalar() or 0)
+            if avail < qty:
+                results.append(
+                    {
+                        "item_id": item_id,
+                        "location_id": location_id,
+                        "qty": 0,
+                        "status": "INSUFFICIENT_STOCK",
+                    }
+                )
                 continue
 
-            # 2) 幂等登记（硬幂等，冲突则尝试“台账判定+恢复”）
+            # 幂等登记（命中唯一键→不再二次扣减）
             inserted = await _insert_idempotency_row(
-                session, store_id=store_id, ref=ref, item_id=item_id, location_id=loc_id, qty=need
+                session,
+                store_id=store_id,
+                ref=ref,
+                item_id=item_id,
+                location_id=location_id,
+                qty=qty,
             )
-            await session.commit()  # 固化幂等登记
             if not inserted:
-                # 已存在同键记录：判断是否已经扣减（依据台账 ref，如无 ref 列则按“未扣减”处理以恢复）
                 if await _ledger_has_ref_column(session) and await _ledger_exists_with_ref(
-                    session, ref=ref, item_id=item_id, location_id=loc_id
+                    session, ref=ref, item_id=item_id, location_id=location_id
                 ):
-                    results.append({"item_id": item_id, "location_id": loc_id, "qty": 0, "status": "IDEMPOTENT"})
+                    results.append(
+                        {
+                            "item_id": item_id,
+                            "location_id": location_id,
+                            "qty": 0,
+                            "status": "IDEMPOTENT",
+                        }
+                    )
                     continue
-                # 否则进行“恢复扣减”
+                # 未找到台账则补做一次扣减（仍在本次提交范畴内）
                 await svc.adjust(
                     session=session,
                     item_id=item_id,
-                    location_id=loc_id,
-                    delta=-need,
+                    location_id=location_id,
+                    delta=-qty,
                     reason="OUTBOUND",
                     ref=ref,
                 )
-                results.append({"item_id": item_id, "location_id": loc_id, "qty": need, "status": "OK"})
+                results.append(
+                    {"item_id": item_id, "location_id": location_id, "qty": qty, "status": "OK"}
+                )
+                total_qty += qty
                 continue
 
-            # 3) 正式扣减（首次路径）
-            await svc.adjust(
+            # 正常路径：FEFO 扣减
+            await InventoryAdjust.fefo_outbound(
                 session=session,
                 item_id=item_id,
-                location_id=loc_id,
-                delta=-need,
+                location_id=location_id,
+                delta=-qty,
                 reason="OUTBOUND",
                 ref=ref,
+                allow_expired=allow_expired,
             )
-            results.append({"item_id": item_id, "location_id": loc_id, "qty": need, "status": "OK"})
+            results.append(
+                {"item_id": item_id, "location_id": location_id, "qty": qty, "status": "OK"}
+            )
+            total_qty += qty
 
-        return {"store_id": store_id, "ref": ref, "results": results}
+        await session.flush()
+        await session.commit()
+
+        return {
+            "ok": True,
+            "total_lines": len([r for r in results if r.get("status") == "OK"]),
+            "total_qty": total_qty,
+            "store_id": store_id,
+            "ref": ref,
+            "results": results,
+        }
 
 
 # ===================== 内部辅助 =====================
+
 
 async def _resolve_store_id(session: AsyncSession, *, platform: str, shop_id: str) -> Optional[int]:
     if not shop_id:
@@ -112,30 +158,20 @@ async def _resolve_store_id(session: AsyncSession, *, platform: str, shop_id: st
 
 
 async def _ensure_internal_store(session: AsyncSession) -> int:
-    """
-    确保存在一个“内部占位门店”，返回其 id。
-    """
-    p = "__internal__"
-    n = "__NO_STORE__"
+    p, n = "__internal__", "__NO_STORE__"
     await session.execute(
         text("INSERT INTO stores(platform, name) VALUES (:p, :n) ON CONFLICT DO NOTHING"),
         {"p": p, "n": n},
     )
     row = await session.execute(
-        text("SELECT id FROM stores WHERE platform=:p2 AND name=:n2 LIMIT 1"),
-        {"p2": p, "n2": n},
+        text("SELECT id FROM stores WHERE platform=:p2 AND name=:n2 LIMIT 1"), {"p2": p, "n2": n}
     )
-    sid = row.scalar_one()
-    return int(sid)
+    return int(row.scalar_one())
 
 
 async def _insert_idempotency_row(
     session: AsyncSession, *, store_id: int, ref: str, item_id: int, location_id: int, qty: int
 ) -> bool:
-    """
-    将 (store_id, ref, item_id, location_id) 写入幂等表；命中唯一键 → 返回 False。
-    需要 outbound_ship_ops 上存在唯一约束 uq_ship_idem_key(store_id, ref, item_id, location_id)。
-    """
     rec = await session.execute(
         text(
             """
@@ -164,8 +200,9 @@ async def _ledger_has_ref_column(session: AsyncSession) -> bool:
     return row.first() is not None
 
 
-async def _ledger_exists_with_ref(session: AsyncSession, *, ref: str, item_id: int, location_id: int) -> bool:
-    # 台账中存在：reason='OUTBOUND' 且 ref=... 且 item、location 匹配
+async def _ledger_exists_with_ref(
+    session: AsyncSession, *, ref: str, item_id: int, location_id: int
+) -> bool:
     row = await session.execute(
         text(
             """

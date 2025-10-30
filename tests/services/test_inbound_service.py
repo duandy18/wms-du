@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.grp_flow
+
 import inspect
 from datetime import date, timedelta
 from uuid import uuid4
@@ -9,8 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = [pytest.mark.asyncio]
 
+
 def _unique(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:12]}"
+
 
 BASE = dict(
     qty=10,
@@ -22,6 +28,7 @@ BASE = dict(
     ref_line=1,
 )
 
+
 # ---------- helpers ----------
 async def _fix_pk_sequence(session, table: str, id_col: str = "id"):
     try:
@@ -32,9 +39,12 @@ async def _fix_pk_sequence(session, table: str, id_col: str = "id"):
         if not seq:
             return
         max_id = await session.scalar(text(f"select coalesce(max({id_col}), 0) from {table}"))
-        await session.execute(text("select setval(:seq::regclass, :v, true)"), {"seq": seq, "v": max_id})
+        await session.execute(
+            text("select setval(:seq::regclass, :v, true)"), {"seq": seq, "v": max_id}
+        )
     except Exception:
         pass
+
 
 async def _pick_sku_and_item_id(session, fallback_item_id=1, fallback_sku="ITEM-1"):
     try:
@@ -45,13 +55,16 @@ async def _pick_sku_and_item_id(session, fallback_item_id=1, fallback_sku="ITEM-
         r = row.first()
         if r and r.key:
             return str(r.key), int(r.id)
-        row = await session.execute(text("select id, coalesce(sku, code, name) as key from items limit 1"))
+        row = await session.execute(
+            text("select id, coalesce(sku, code, name) as key from items limit 1")
+        )
         r = row.first()
         if r and r.key:
             return str(r.key), int(r.id)
     except Exception:
         pass
     return fallback_sku, fallback_item_id
+
 
 def _bind_kwargs_for(func, *, session, sku, qty, wh, loc, batch_code, exp, ref, ref_line):
     sig = inspect.signature(func)
@@ -93,9 +106,13 @@ def _bind_kwargs_for(func, *, session, sku, qty, wh, loc, batch_code, exp, ref, 
             break
     return kwargs
 
-async def _call_receive_in_fresh_session(engine, *, sku, qty, wh, loc, batch_code, exp, ref, ref_line):
+
+async def _call_receive_in_fresh_session(
+    engine, *, sku, qty, wh, loc, batch_code, exp, ref, ref_line
+):
     async with AsyncSession(bind=engine, expire_on_commit=False) as s:
         from app.services.inbound_service import InboundService
+
         await _fix_pk_sequence(s, "items", "id")
         await s.commit()
 
@@ -105,7 +122,16 @@ async def _call_receive_in_fresh_session(engine, *, sku, qty, wh, loc, batch_cod
             pytest.fail("InboundService.receive 不存在或不可调用")
 
         kwargs = _bind_kwargs_for(
-            fn, session=s, sku=sku, qty=qty, wh=wh, loc=loc, batch_code=batch_code, exp=exp, ref=ref, ref_line=ref_line
+            fn,
+            session=s,
+            sku=sku,
+            qty=qty,
+            wh=wh,
+            loc=loc,
+            batch_code=batch_code,
+            exp=exp,
+            ref=ref,
+            ref_line=ref_line,
         )
         try:
             async with s.begin():
@@ -113,9 +139,12 @@ async def _call_receive_in_fresh_session(engine, *, sku, qty, wh, loc, batch_cod
                 if inspect.isawaitable(res):
                     await res
         except (IntegrityError, DBAPIError) as e:
-            pytest.fail(f"DB error (root cause) during InboundService.receive: {e.__class__.__name__}: {e.orig!r}")
+            pytest.fail(
+                f"DB error (root cause) during InboundService.receive: {e.__class__.__name__}: {e.orig!r}"
+            )
         except Exception as e:
             pytest.fail(f"InboundService.receive raised: {repr(e)}")
+
 
 async def _scalar_fresh(engine, sql: str, params: dict):
     async with AsyncSession(bind=engine, expire_on_commit=False) as s:
@@ -124,6 +153,7 @@ async def _scalar_fresh(engine, sql: str, params: dict):
         except DBAPIError:
             await s.rollback()
             return await s.scalar(text(sql), params)
+
 
 # ---------- the test ----------
 async def test_inbound_creates_batch_and_increases_stock(session, _baseline_seed, _db_clean):
@@ -144,7 +174,15 @@ async def test_inbound_creates_batch_and_increases_stock(session, _baseline_seed
 
     # 执行入库（干净会话）
     await _call_receive_in_fresh_session(
-        engine, sku=sku, qty=qty, wh=wh, loc=loc, batch_code=batch_code, exp=exp, ref=ref, ref_line=ref_line
+        engine,
+        sku=sku,
+        qty=qty,
+        wh=wh,
+        loc=loc,
+        batch_code=batch_code,
+        exp=exp,
+        ref=ref,
+        ref_line=ref_line,
     )
 
     # 主断言：以台账为准 —— 找到本次 ref/ref_line 的 INBOUND 记录
@@ -168,6 +206,7 @@ async def test_inbound_creates_batch_and_increases_stock(session, _baseline_seed
     # row 是一个 dict-like JSON，经由 row_to_json 返回；不同驱动可能直接返回 Python dict 或 JSON 字符串
     if isinstance(row, str):
         import json
+
         t = json.loads(row)
     else:
         t = dict(row)

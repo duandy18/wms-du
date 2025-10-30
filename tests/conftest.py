@@ -1,20 +1,19 @@
-# tests/conftest.py
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Tuple
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from alembic.config import Config
-from alembic import command
 
+from alembic import command
+from alembic.config import Config
 
 # ========================= 通用配置 =========================
+
 
 def _async_db_url() -> str:
     """固定到 5433/wms 测试库，防止环境变量指向错误数据库。"""
@@ -22,6 +21,7 @@ def _async_db_url() -> str:
 
 
 # ========================= 会话/引擎 =========================
+
 
 @pytest.fixture(scope="session", autouse=True)
 def apply_migrations() -> None:
@@ -34,12 +34,18 @@ def apply_migrations() -> None:
         command.upgrade(cfg, "heads")
 
 
-@pytest.fixture(scope="function")
-def async_engine() -> AsyncEngine:
-    """每条用例独立的异步引擎，固定连到 5433/wms。"""
+@pytest_asyncio.fixture(scope="function")
+async def async_engine() -> AsyncGenerator[AsyncEngine, None]:
+    """
+    每条用例独立的异步引擎；yield 后优雅回收连接池。
+    """
     url = _async_db_url()
     print(f"[TEST] Using database: {url}")
-    return create_async_engine(url, future=True, pool_pre_ping=True)
+    engine = create_async_engine(url, future=True, pool_pre_ping=True)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture(scope="function")
@@ -56,44 +62,81 @@ async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
 
 # ========================= 数据清理 & 基线回种 =========================
 
+
 @pytest_asyncio.fixture(autouse=True, scope="function")
 async def _db_clean(async_engine: AsyncEngine):
-    """逐表 TRUNCATE + RESTART IDENTITY + CASCADE。"""
-    tables = [
-        "stock_ledger",
-        "stock_snapshots",
-        "outbound_commits",
-        "event_error_log",
-        "batches",
-        "stocks",
-        "order_items",
-        "orders",
-        "channel_inventory",
-        "store_items",
-        "locations",
-        "items",
-        "stores",
-        "warehouses",
-        "platform_shops",
-        "return_records",
-    ]
+    """
+    一次性强力清库：
+      - TRUNCATE 多表（单条语句）；
+      - RESTART IDENTITY 重置自增；
+      - CASCADE 级联外键，避免顺序问题。
+    """
     async with async_engine.begin() as conn:
         print("[TEST] Executing TRUNCATE on tables ...")
-        for t in tables:
-            with contextlib.suppress(Exception):
-                await conn.execute(text(f"TRUNCATE {t} RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            text(
+                """
+            TRUNCATE TABLE
+              order_items,
+              orders,
+              stock_ledger,
+              stock_snapshots,
+              outbound_commits,
+              event_error_log,
+              channel_inventory,
+              store_items,
+              batches,
+              stocks
+            RESTART IDENTITY CASCADE
+        """
+            )
+        )
 
 
 @pytest_asyncio.fixture(autouse=True, scope="function")
 async def _baseline_seed(_db_clean, async_engine: AsyncEngine):
-    """基线回种（Lock-A 合法最小域）"""
+    """基线回种（Lock-A 合法最小域）。"""
     async with async_engine.begin() as conn:
-        await conn.execute(text("INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') ON CONFLICT (id) DO NOTHING"))
-        await conn.execute(text("INSERT INTO locations (id, name, warehouse_id) VALUES (1, 'LOC-1', 1) ON CONFLICT (id) DO NOTHING"))
-        await conn.execute(text("INSERT INTO items (id, sku, name) VALUES (1, 'UT-ITEM-1', 'UT-ITEM') ON CONFLICT (id) DO NOTHING"))
+        # 仓/位/商品：提供最小可用域；其余测试如需更多实体由各用例自行造数
+        await conn.execute(
+            text(
+                "INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO locations (id, name, warehouse_id) VALUES (1, 'LOC-1', 1) "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO items (id, sku, name) VALUES (1, 'UT-ITEM-1', 'UT-ITEM') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+
+
+# ========================= A组所需 Fixtures =========================
+
+from app.services.stock_service import StockService
+
+
+@pytest_asyncio.fixture
+async def stock_service() -> StockService:
+    """A 组测试使用的 StockService 简易装配。"""
+    return StockService()
+
+
+@pytest_asyncio.fixture
+async def item_loc_fixture() -> Tuple[int, int]:
+    """A组测试的起跑线：固定 (item_id=1, location_id=1)。"""
+    return (1, 1)
 
 
 # ========================= 事件循环 =========================
+
 
 @pytest.fixture(scope="session")
 def event_loop():

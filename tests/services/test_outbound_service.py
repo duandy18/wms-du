@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.grp_flow
+
 from datetime import date, timedelta
 from uuid import uuid4
 
@@ -7,16 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = [pytest.mark.asyncio]
 
+
 # ------------------ DB helpers ------------------
 async def _exec(engine, sql: str, params: dict | None = None):
     async with AsyncSession(bind=engine, expire_on_commit=False) as s:
         await s.execute(text(sql), params or {})
         await s.commit()
 
+
 async def _scalar(engine, sql: str, params: dict | None = None) -> int:
     async with AsyncSession(bind=engine, expire_on_commit=False) as s:
         res = await s.scalar(text(sql), params or {})
         return int(res or 0)
+
 
 async def _ensure_wh_and_loc(engine, wh_id: int = 1, loc_id: int = 1):
     # 确保仓库与库位存在（不会重复创建）
@@ -31,6 +38,7 @@ async def _ensure_wh_and_loc(engine, wh_id: int = 1, loc_id: int = 1):
         {"l": loc_id, "w": wh_id},
     )
 
+
 async def _sum_item_qty(engine, item_id: int) -> int:
     return await _scalar(
         engine,
@@ -38,9 +46,11 @@ async def _sum_item_qty(engine, item_id: int) -> int:
         {"i": item_id},
     )
 
+
 # ------------------ 造货：固定落在仓1/位1 ------------------
 async def _seed_two_batches(session, *, item_id: int, location_id: int = 1):
     from app.services.stock_service import StockService
+
     svc = StockService()
     today = date.today()
     for code, exp, qty in [
@@ -57,13 +67,16 @@ async def _seed_two_batches(session, *, item_id: int, location_id: int = 1):
             reason="seed",
         )
 
+
 def _uniq_ref(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}"
+
 
 # ------------------ Tests ------------------
 async def test_outbound_fefo_basic(session):
     """一步法出库：扣减总量正确。"""
     from app.services.outbound_service import OutboundService
+
     engine = session.bind
     wh, loc = 1, 1
     await _ensure_wh_and_loc(engine, wh_id=wh, loc_id=loc)
@@ -86,9 +99,11 @@ async def test_outbound_fefo_basic(session):
     after = await _sum_item_qty(engine, item_id)
     assert before - after == 8
 
+
 async def test_outbound_idempotent_ship(session):
     """幂等：同一 ref 重放不重复扣减。"""
     from app.services.outbound_service import OutboundService
+
     engine = session.bind
     wh, loc = 1, 1
     await _ensure_wh_and_loc(engine, wh_id=wh, loc_id=loc)
@@ -128,12 +143,14 @@ async def test_outbound_idempotent_ship(session):
     after = await _sum_item_qty(engine, item_id)
     assert before - after == 5  # 只扣一次
 
+
 async def test_outbound_ledger_consistency(session):
     """
     台账一致性：Σ(delta)==库存扣减，且无负库存。
     仅统计当前 ref 的台账，防止历史记录干扰。
     """
     from app.services.outbound_service import OutboundService
+
     engine = session.bind
     wh, loc = 1, 1
     await _ensure_wh_and_loc(engine, wh_id=wh, loc_id=loc)

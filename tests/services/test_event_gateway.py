@@ -1,8 +1,15 @@
 import pytest
+
+pytestmark = pytest.mark.grp_events
+
+import pytest
+
 pytestmark = pytest.mark.asyncio
+
 
 async def test_publish_once_and_dedupe(monkeypatch, session):
     from app.services.event_gateway import EventGateway
+
     calls = {"n": 0}
 
     async def _fake_emit(topic, data):

@@ -1,5 +1,10 @@
 import pytest
+
+pytestmark = pytest.mark.grp_core
+
 from datetime import date, timedelta
+
+import pytest
 from sqlalchemy import text
 
 pytestmark = pytest.mark.asyncio
@@ -17,6 +22,7 @@ async def _seed(session, item=3101, loc=1, code="IO-MOVE"):
     await session.commit()
 
     from app.services.stock_service import StockService
+
     exp = date.today() + timedelta(days=30)
     await session.begin()
     await StockService().adjust(

@@ -1,9 +1,15 @@
+import pytest
+
+pytestmark = pytest.mark.grp_core
+
 # tests/services/test_inventory_adjust_inbound.py
 from datetime import date
+
 import pytest
 from sqlalchemy import text
 
 pytestmark = pytest.mark.asyncio
+
 
 async def test_inbound_normal_increases_stocks_and_batch(session, stock_service, item_loc_fixture):
     item_id, location_id = item_loc_fixture  # (1,1) 起跑线 stocks=0
@@ -25,5 +31,8 @@ async def test_inbound_normal_increases_stocks_and_batch(session, stock_service,
     assert res["ledger_id"] > 0
 
     # 账面=权威，批次一致
-    q = await session.execute(text("SELECT qty FROM stocks WHERE item_id=:i AND location_id=:l"), {"i": item_id, "l": location_id})
+    q = await session.execute(
+        text("SELECT qty FROM stocks WHERE item_id=:i AND location_id=:l"),
+        {"i": item_id, "l": location_id},
+    )
     assert int(q.scalar_one()) == 10

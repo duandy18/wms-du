@@ -4,16 +4,19 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import List, Tuple
 
-from sqlalchemy import and_, func, select, update, text
+from sqlalchemy import and_, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.batch import Batch
 from app.services.ledger_writer import write_ledger
 from app.services.stock_helpers import (
+    batch_code_attr,
+    batch_qty_col,
+    bump_stock_by_stock_id,
+    ensure_batch_full,
+    ensure_stock_row,
     exec_retry,
-    batch_code_attr, batch_qty_col,
-    resolve_warehouse_by_location, ensure_batch_full,
-    ensure_stock_row, bump_stock_by_stock_id,
+    resolve_warehouse_by_location,
 )
 
 
@@ -61,8 +64,9 @@ class InventoryAdjust:
             batch_code=batch_code,
         )
 
-        # 3) 清理 SQLAlchemy 缓存，防止重复加
-        await session.expire_all()
+        # 3) 清理 SQLAlchemy 缓存，防止重复加（先 flush，再同步 expire_all）
+        await session.flush()
+        session.expire_all()
 
         # 4) 查询当前库存（实时）
         row = await session.execute(

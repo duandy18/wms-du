@@ -1,11 +1,19 @@
 import pytest
+
+pytestmark = pytest.mark.grp_events
+
 import asyncio
+
+import pytest
+
 pytestmark = pytest.mark.asyncio
+
 
 async def test_push_inventory_retry_no_side_effect(monkeypatch):
     from app.services.platform_adapter import PlatformAdapter
 
     calls = {"n": 0}
+
     async def flaky_push(*args, **kwargs):
         calls["n"] += 1
         # 前两次超时，第三次成功
