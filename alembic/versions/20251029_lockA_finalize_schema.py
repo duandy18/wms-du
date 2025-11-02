@@ -68,11 +68,9 @@ def upgrade():
 
     # ========= 2) batches.qty 收紧为 NOT NULL（先清 NULL） =========
     conn.exec_driver_sql("UPDATE batches SET qty = 0 WHERE qty IS NULL;")
-    # 如果已经是 NOT NULL，这句也安全
     op.execute("ALTER TABLE batches ALTER COLUMN qty SET NOT NULL")
 
     # ========= 3) stocks.batch_code：ADD IF NOT EXISTS → 回填 → 合成批次 → DROP DEFAULT =========
-    # 若不存在则加列（带临时默认值，便于回填）
     op.execute("""
         DO $$
         BEGIN
@@ -130,10 +128,10 @@ def upgrade():
          WHERE s.batch_code = 'MIG-UNSPEC';
     """)
 
-    # 确保 NOT NULL（即便列原来存在为可空，也会被设为非空）
+    # 确保 NOT NULL
     op.execute("ALTER TABLE stocks ALTER COLUMN batch_code SET NOT NULL")
 
-    # 为规避 pending trigger events，单独事务块里 DROP DEFAULT（若存在）
+    # 在单独事务块里 DROP DEFAULT（若存在）
     ctx = op.get_context()
     with ctx.autocommit_block():
         op.execute("""
@@ -149,7 +147,6 @@ def upgrade():
         """)
 
     # ========= 4) 约束与索引：删旧 UQ → 建索引 → 唯一约束（USING INDEX） =========
-    # 删除旧 loc-only UQ（若存在）
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_location")
 
     # batches UQ 索引（若不存在则创建）
@@ -164,7 +161,7 @@ def upgrade():
           ON stocks (item_id, warehouse_id, location_id, batch_code)
     """)
 
-    # 先建唯一索引（若不存在）
+    # stocks 唯一索引 + 绑定唯一约束
     op.execute("""
         DO $$
         BEGIN
@@ -176,8 +173,6 @@ def upgrade():
           END IF;
         END $$;
     """)
-
-    # 再用 USING INDEX 绑定唯一约束（若不存在）
     op.execute("""
         DO $$
         BEGIN
@@ -193,13 +188,36 @@ def upgrade():
 
 
 def downgrade():
-    # 回滚顺序：约束/索引 → 列
+    conn = op.get_bind()
+
+    # 先删 stocks 上的唯一约束/索引/普通索引
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_wh_loc_code")
-    op.execute("DROP INDEX IF EXISTS uq_stocks_item_wh_loc_code_idx")
-    op.execute("DROP INDEX IF EXISTS idx_stocks_item_wh_loc_batch")
-    op.execute("DROP INDEX IF EXISTS uq_batches_item_wh_loc_code")
+    op.execute("DROP INDEX IF EXISTS public.uq_stocks_item_wh_loc_code_idx")
+    op.execute("DROP INDEX IF EXISTS public.idx_stocks_item_wh_loc_batch")
+
+    # 注意：batches 上可能存在 **同名唯一约束** 绑定在同名索引上
+    # 必须先删约束，再删索引，否则 PG 会报 DependentObjectsStillExist
+    op.execute("""
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+             WHERE t.relname = 'batches'
+               AND c.conname = 'uq_batches_item_wh_loc_code'
+               AND c.contype = 'u'
+          ) THEN
+            ALTER TABLE public.batches DROP CONSTRAINT uq_batches_item_wh_loc_code;
+          END IF;
+        END$$;
+    """)
+    op.execute("DROP INDEX IF EXISTS public.uq_batches_item_wh_loc_code")
+
+    # 解除外键
     op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
 
+    # 回滚列的约束与列本身
     op.execute("ALTER TABLE batches ALTER COLUMN qty DROP NOT NULL")
 
     op.execute("ALTER TABLE stocks ALTER COLUMN batch_code DROP NOT NULL")
