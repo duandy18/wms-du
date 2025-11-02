@@ -116,28 +116,13 @@ def upgrade() -> None:
       END IF;
     END$$;"""))
 
-    # 外键（如需要，可按需开启）
+    # 外键（如需要；按需开启）
     # …（略）
 
 
 def downgrade() -> None:
     """
-    仅执行 DDL 且全部带 IF EXISTS，避免在事务失败态下再触发反射查询。
+    纯 DDL，一条 CASCADE 即可；避免反射与多步 DDL 导致事务失败串联。
     """
     conn = op.get_bind()
-
-    # 1) 幂等删除索引
-    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_batch"))
-    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_batch_id"))
-    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_id"))
-    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_order_id"))
-
-    # 2) 外键（若升级时曾创建，这里用 try 兜底）
-    for fk in ("fk_reservations_item", "fk_reservations_batch", "fk_reservations_order"):
-        try:
-            op.drop_constraint(fk, "reservations", type_="foreignkey")
-        except Exception:
-            pass
-
-    # 3) 删表：不做 Inspector 查询，直接 IF EXISTS
-    conn.execute(sa.text("DROP TABLE IF EXISTS public.reservations"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS public.reservations CASCADE"))
