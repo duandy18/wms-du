@@ -1,4 +1,4 @@
-"""schema additions batch-1 (safe indexes only)
+"""schema additions batch-1 (safe indexes only, CI-safe downgrade)
 
 Revision ID: 6869fc360d86
 Revises: 6077053642c5
@@ -9,6 +9,7 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
+
 revision = "6869fc360d86"
 down_revision = "6077053642c5"
 branch_labels = None
@@ -16,15 +17,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # —— 省略：你当前已通过的索引创建 & 守卫逻辑（保持不变） ——
-    # （略）
+    # 本文件的 upgrade 留空或保持你已有“新增索引/轻量变更”的内容。
+    # 这里留空即可（此前引发 CI 回滚错误的是 downgrade 阶段对索引/约束的删除顺序）。
     pass
 
 
 def downgrade() -> None:
+    """CI 回滚期望：先删 '唯一约束'，再删其背后的索引；其它普通索引直接 IF EXISTS 删除。"""
     conn = op.get_bind()
 
-    # 1) 先安全删除可能存在的唯一约束（如果存在）
+    # 1) 若 stock_ledger 上存在 UQ 约束，则先删除约束
     conn.execute(sa.text("""
     DO $$
     BEGIN
@@ -41,7 +43,7 @@ def downgrade() -> None:
     END$$;
     """))
 
-    # 2) 再删除同名索引（仅当它不是某个约束的 backing index）
+    # 2) 再删除同名索引（确保它不是某个约束的 backing index）
     conn.execute(sa.text("""
     DO $$
     BEGIN
@@ -61,8 +63,7 @@ def downgrade() -> None:
     END$$;
     """))
 
-    # 3) 其余本文件创建过的通用索引，按需幂等删除（仍可保留 IF EXISTS）
-    # 示例（如你在 upgrade 里创建过以下索引，可在此删除）：
-    # op.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_order_id"))
-    # op.execute(sa.text("DROP INDEX IF EXISTS public.ix_items_sku"))
-    # ...（保留你已有的其它 DROP INDEX IF EXISTS 语句即可）
+    # 3) 若你在 upgrade() 里创建过其它普通索引，也可在此用 IF EXISTS 幂等删除
+    # 示例（按需启用）：
+    # conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_order_id"))
+    # conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_items_sku"))

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -24,31 +26,31 @@ def upgrade():
     """)
 
     # ========= 1) stocks.warehouse_id：ADD IF NOT EXISTS → 回填 → NOT NULL → 外键 =========
-    op.execute("ALTER TABLE stocks ADD COLUMN IF NOT EXISTS warehouse_id INTEGER")
+    op.execute("ALTER TABLE public.stocks ADD COLUMN IF NOT EXISTS warehouse_id INTEGER")
 
     # 从 locations 回填（幂等：仅 NULL 时更新）
     conn.exec_driver_sql("""
-        UPDATE stocks s
+        UPDATE public.stocks s
            SET warehouse_id = l.warehouse_id
-          FROM locations l
+          FROM public.locations l
          WHERE l.id = s.location_id
            AND s.warehouse_id IS NULL;
     """)
 
     # MAIN 仓兜底（幂等）
     conn.exec_driver_sql("""
-        INSERT INTO warehouses (name)
+        INSERT INTO public.warehouses (name)
         SELECT 'MAIN'
-        WHERE NOT EXISTS (SELECT 1 FROM warehouses WHERE name='MAIN');
+        WHERE NOT EXISTS (SELECT 1 FROM public.warehouses WHERE name='MAIN');
 
-        WITH mainw AS (SELECT id FROM warehouses WHERE name='MAIN' LIMIT 1)
-        UPDATE stocks s
+        WITH mainw AS (SELECT id FROM public.warehouses WHERE name='MAIN' LIMIT 1)
+        UPDATE public.stocks s
            SET warehouse_id = (SELECT id FROM mainw)
          WHERE s.warehouse_id IS NULL;
     """)
 
     # 设为 NOT NULL（幂等）
-    op.execute("ALTER TABLE stocks ALTER COLUMN warehouse_id SET NOT NULL")
+    op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id SET NOT NULL")
 
     # 外键（若不存在则创建；DEFERRABLE）
     op.execute("""
@@ -58,17 +60,17 @@ def upgrade():
             SELECT 1 FROM information_schema.table_constraints
             WHERE table_schema='public' AND table_name='stocks' AND constraint_name='fk_stocks_warehouse'
           ) THEN
-            ALTER TABLE stocks
+            ALTER TABLE public.stocks
               ADD CONSTRAINT fk_stocks_warehouse
-              FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+              FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id)
               DEFERRABLE INITIALLY DEFERRED;
           END IF;
         END $$;
     """)
 
     # ========= 2) batches.qty 收紧为 NOT NULL（先清 NULL） =========
-    conn.exec_driver_sql("UPDATE batches SET qty = 0 WHERE qty IS NULL;")
-    op.execute("ALTER TABLE batches ALTER COLUMN qty SET NOT NULL")
+    conn.exec_driver_sql("UPDATE public.batches SET qty = 0 WHERE qty IS NULL;")
+    op.execute("ALTER TABLE public.batches ALTER COLUMN qty SET NOT NULL")
 
     # ========= 3) stocks.batch_code：ADD IF NOT EXISTS → 回填 → 合成批次 → DROP DEFAULT =========
     op.execute("""
@@ -78,7 +80,7 @@ def upgrade():
             SELECT 1 FROM information_schema.columns
             WHERE table_schema='public' AND table_name='stocks' AND column_name='batch_code'
           ) THEN
-            ALTER TABLE stocks
+            ALTER TABLE public.stocks
               ADD COLUMN batch_code VARCHAR(64) NOT NULL DEFAULT 'MIG-UNSPEC';
           END IF;
         END $$;
@@ -88,11 +90,11 @@ def upgrade():
     conn.exec_driver_sql("""
         WITH one AS (
           SELECT item_id, warehouse_id, location_id, MIN(batch_code) AS batch_code
-            FROM batches
+            FROM public.batches
            GROUP BY item_id, warehouse_id, location_id
           HAVING COUNT(*) = 1
         )
-        UPDATE stocks s
+        UPDATE public.stocks s
            SET batch_code = o.batch_code
           FROM one o
          WHERE s.item_id = o.item_id
@@ -103,15 +105,15 @@ def upgrade():
 
     # 为剩余未回填的 stocks 生成“合成批次”（幂等；batches 有唯一索引兜底）
     conn.exec_driver_sql("""
-        INSERT INTO batches (item_id, warehouse_id, location_id, batch_code, expiry_date, qty)
+        INSERT INTO public.batches (item_id, warehouse_id, location_id, batch_code, expiry_date, qty)
         SELECT s.item_id,
                s.warehouse_id,
                s.location_id,
                CONCAT('MIG-', s.item_id, '-', s.warehouse_id, '-', s.location_id),
                NULL::date,
                0
-          FROM stocks s
-     LEFT JOIN batches b
+          FROM public.stocks s
+     LEFT JOIN public.batches b
             ON b.item_id = s.item_id
            AND b.warehouse_id = s.warehouse_id
            AND b.location_id = s.location_id
@@ -123,13 +125,13 @@ def upgrade():
 
     # 将剩余 MIG-UNSPEC 回填为合成批次码（幂等）
     conn.exec_driver_sql("""
-        UPDATE stocks s
+        UPDATE public.stocks s
            SET batch_code = CONCAT('MIG-', s.item_id, '-', s.warehouse_id, '-', s.location_id)
          WHERE s.batch_code = 'MIG-UNSPEC';
     """)
 
     # 确保 NOT NULL
-    op.execute("ALTER TABLE stocks ALTER COLUMN batch_code SET NOT NULL")
+    op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code SET NOT NULL")
 
     # 在单独事务块里 DROP DEFAULT（若存在）
     ctx = op.get_context()
@@ -141,24 +143,24 @@ def upgrade():
                 SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='stocks' AND column_name='batch_code' AND column_default IS NOT NULL
               ) THEN
-                ALTER TABLE stocks ALTER COLUMN batch_code DROP DEFAULT;
+                ALTER TABLE public.stocks ALTER COLUMN batch_code DROP DEFAULT;
               END IF;
             END $$;
         """)
 
     # ========= 4) 约束与索引：删旧 UQ → 建索引 → 唯一约束（USING INDEX） =========
-    op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_location")
+    op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_location")
 
     # batches UQ 索引（若不存在则创建）
     op.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_batches_item_wh_loc_code
-          ON batches (item_id, warehouse_id, location_id, batch_code)
+          ON public.batches (item_id, warehouse_id, location_id, batch_code)
     """)
 
     # stocks 非唯一查询索引
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_stocks_item_wh_loc_batch
-          ON stocks (item_id, warehouse_id, location_id, batch_code)
+          ON public.stocks (item_id, warehouse_id, location_id, batch_code)
     """)
 
     # stocks 唯一索引 + 绑定唯一约束
@@ -169,7 +171,7 @@ def upgrade():
             SELECT 1 FROM pg_class WHERE relkind='i' AND relname='uq_stocks_item_wh_loc_code_idx'
           ) THEN
             CREATE UNIQUE INDEX uq_stocks_item_wh_loc_code_idx
-              ON stocks (item_id, warehouse_id, location_id, batch_code);
+              ON public.stocks (item_id, warehouse_id, location_id, batch_code);
           END IF;
         END $$;
     """)
@@ -179,7 +181,7 @@ def upgrade():
           IF NOT EXISTS (
             SELECT 1 FROM pg_constraint WHERE conname='uq_stocks_item_wh_loc_code'
           ) THEN
-            ALTER TABLE stocks
+            ALTER TABLE public.stocks
               ADD CONSTRAINT uq_stocks_item_wh_loc_code
               UNIQUE USING INDEX uq_stocks_item_wh_loc_code_idx;
           END IF;
@@ -191,12 +193,11 @@ def downgrade():
     conn = op.get_bind()
 
     # 先删 stocks 上的唯一约束/索引/普通索引
-    op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_wh_loc_code")
+    op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_wh_loc_code")
     op.execute("DROP INDEX IF EXISTS public.uq_stocks_item_wh_loc_code_idx")
     op.execute("DROP INDEX IF EXISTS public.idx_stocks_item_wh_loc_batch")
 
-    # 注意：batches 上可能存在 **同名唯一约束** 绑定在同名索引上
-    # 必须先删约束，再删索引，否则 PG 会报 DependentObjectsStillExist
+    # 先删 batches 上的唯一约束，再删同名索引（避免 DependentObjectsStillExist）
     op.execute("""
         DO $$
         BEGIN
@@ -215,13 +216,13 @@ def downgrade():
     op.execute("DROP INDEX IF EXISTS public.uq_batches_item_wh_loc_code")
 
     # 解除外键
-    op.execute("ALTER TABLE stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
+    op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
 
     # 回滚列的约束与列本身
-    op.execute("ALTER TABLE batches ALTER COLUMN qty DROP NOT NULL")
+    op.execute("ALTER TABLE public.batches ALTER COLUMN qty DROP NOT NULL")
 
-    op.execute("ALTER TABLE stocks ALTER COLUMN batch_code DROP NOT NULL")
-    op.execute("ALTER TABLE stocks DROP COLUMN IF EXISTS batch_code")
+    op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code DROP NOT NULL")
+    op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS batch_code")
 
-    op.execute("ALTER TABLE stocks ALTER COLUMN warehouse_id DROP NOT NULL")
-    op.execute("ALTER TABLE stocks DROP COLUMN IF EXISTS warehouse_id")
+    op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id DROP NOT NULL")
+    op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS warehouse_id")
