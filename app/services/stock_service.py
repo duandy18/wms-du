@@ -4,32 +4,23 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api.deps import DATABASE_URL
-from app.models import Stock  # 假设已有
-# 你的其它导入（如写台账等）保持不变
-# from app.services.inventory_adjust import InventoryAdjust
-# from app.services.ledger_writer import write_ledger
-# ...
+# ⚠️ 不再导入 app.models.Stock，当前实现不需要该模型
 
 UTC = timezone.utc
 
 
 class StockService:
     """
-    约束：
-    - 不缓存 Session，不在服务内持有全局连接；
-    - 每次只在“调用提供的 session”中做变更；
-    - 只读统计（SUM 等）走独立一次性连接（NullPool），避免 asyncpg
-      “Future attached to a different loop / another operation in progress”。
+    设计要点：
+    - 不缓存/共享 AsyncSession；所有写入都使用调用方传入的 session（每请求独立）。
+    - 只读统计（SUM 等）使用一次性 NullPool 引擎+连接，用后立即 dispose，
+      彻底规避 asyncpg “another operation is in progress / Future attached to a different loop”。
     """
-
-    # -------------------------
-    # 公共入口（示例）——根据你项目已有方法补齐/保留
-    # -------------------------
 
     async def adjust(
         self,
@@ -45,10 +36,10 @@ class StockService:
         extra: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """
-        最小实现：直接增减 stocks；你项目里如已有更完整逻辑（FEFO/批次/台账），
-        请保留原实现，只在“只读统计”改造点保持一致（见 _get_stocks_sum）。
+        最小演示实现：直接调 stocks 表数量。
+        你的项目如有 FEFO/批次/台账/触发器，请替换为原有写法，仅保留 _get_stocks_sum 的用法。
         """
-        # 1) 确保有库存行（演示：若项目有批次/唯一索引，这里请用你原来的 upsert 逻辑）
+        # 1) 确保存在库存行（根据你真实 schema 调整）
         await session.execute(
             text(
                 """
@@ -60,7 +51,7 @@ class StockService:
             {"item_id": item_id, "loc": location_id, "batch": None},
         )
 
-        # 2) 调整（此处演示用途；你可替换为自己的写台账 + 触发器方案）
+        # 2) 更新数量
         await session.execute(
             text(
                 """
@@ -72,11 +63,8 @@ class StockService:
             {"d": int(delta), "item_id": item_id, "loc": location_id},
         )
 
-        # 3) 返回 after 值（使用独立连接统计）
+        # 3) 读取 after 值（独立连接）
         after_qty = await self._get_stocks_sum(session=session, item_id=item_id, location_id=location_id)
-
-        # 你的写台账逻辑如果在这里，请保留；发生并发时无须并行 await，严格顺序执行
-        # ledger_id = await write_ledger(...)
 
         return {
             "item_id": item_id,
@@ -97,10 +85,8 @@ class StockService:
         scan_ref: Optional[str] = None,
     ) -> dict[str, Any]:
         """
-        简化的两腿移库（putaway）；你的原实现若包含批次跟随/校验/写台账等，保留即可。
-        关键是：所有 SQL 顺序 await；中途不并发，不复用只读连接。
+        简化的两腿移库（putaway）；保序 await，避免并发。
         """
-        # 减源位
         await self.adjust(
             session=session,
             item_id=item_id,
@@ -109,7 +95,6 @@ class StockService:
             reason="PUTAWAY",
             ref=scan_ref,
         )
-        # 加目标位
         res_in = await self.adjust(
             session=session,
             item_id=item_id,
@@ -135,9 +120,9 @@ class StockService:
         scan_ref: Optional[str] = None,
     ) -> dict[str, Any]:
         """
-        盘点：实际数 - 帐面数 = 差额，做一次性调整
+        盘点：实际数 - 帐面数 = 差额，做一次性调整。
         """
-        # 确保前序写入已落到事务缓冲中，避免读到旧值
+        # 确保上文写入可见
         await session.flush()
 
         on_hand = await self._get_stocks_sum(session=session, item_id=item_id, location_id=location_id)
@@ -157,22 +142,17 @@ class StockService:
             return {"delta": 0, "after_qty": int(on_hand)}
 
     # -------------------------
-    # 关键改造：只读统计走“独立一次性连接”
+    # 关键：只读统计走独立一次性连接
     # -------------------------
-
     async def _get_stocks_sum(self, *, session: AsyncSession, item_id: int, location_id: int) -> int:
         """
-        避免与当前请求复用同一 asyncpg 连接：
-        - 先 flush 当前 Session，保证读到最新写入（同事务或已提交前镜像）；
-        - 使用 NullPool 的一次性 Engine 获取“独立连接”做 SELECT；
-        - 用完立即 dispose，彻底规避 “another operation is in progress”
-          与 “Future attached to a different loop”。
+        - 先 flush 当前 Session，保证读到本事务内最新变更；
+        - 用 NullPool 引擎获取一次性连接做 SELECT；
+        - 用完 dispose，杜绝跨事件循环复用。
         """
-        # 确保上文的 UPDATE/INSERT 已入缓冲
         try:
             await session.flush()
         except Exception:
-            # 即使 flush 失败，也不要影响到只读连接释放
             pass
 
         tmp_engine = create_async_engine(
@@ -193,8 +173,6 @@ class StockService:
                     ),
                     {"i": int(item_id), "l": int(location_id)},
                 )
-                val = row.scalar_one()
-                return int(val or 0)
+                return int(row.scalar_one() or 0)
         finally:
-            # 立刻销毁底层连接，杜绝跨事件循环的复用
             await tmp_engine.dispose()
