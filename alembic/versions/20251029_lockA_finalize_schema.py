@@ -36,7 +36,7 @@ def upgrade():
     # ========= 1) stocks.warehouse_id：ADD IF NOT EXISTS → 回填 → NOT NULL → 外键 =========
     op.execute("ALTER TABLE public.stocks ADD COLUMN IF NOT EXISTS warehouse_id INTEGER")
 
-    # 从 locations 回填（仅 NULL 时更新）
+    -- 回填仓库
     conn.exec_driver_sql(
         """
         UPDATE public.stocks s
@@ -47,7 +47,7 @@ def upgrade():
         """
     )
 
-    # MAIN 仓兜底（幂等）
+    -- 兜底 MAIN 仓（幂等）
     conn.exec_driver_sql(
         """
         INSERT INTO public.warehouses (name)
@@ -61,7 +61,6 @@ def upgrade():
         """
     )
 
-    # 设为 NOT NULL
     op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id SET NOT NULL")
 
     # 外键（若不存在则创建；DEFERRABLE）
@@ -121,7 +120,7 @@ def upgrade():
         """
     )
 
-    # 为剩余未回填的 stocks 生成“合成批次”（幂等；batches 有唯一索引兜底）
+    # 为剩余未回填的 stocks 生成“合成批次”（幂等）
     conn.exec_driver_sql(
         """
         INSERT INTO public.batches (item_id, warehouse_id, location_id, batch_code, expiry_date, qty)
@@ -152,7 +151,7 @@ def upgrade():
         """
     )
 
-    # 确保 NOT NULL
+    # NOT NULL
     op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code SET NOT NULL")
 
     # 在单独事务块里 DROP DEFAULT（若存在）
@@ -225,7 +224,7 @@ def downgrade():
     conn = op.get_bind()
 
     # ========= A) 先清理依赖于 stocks.batch_code 的视图，避免 DependentObjectsStillExist =========
-    # 目前已知：v_putaway_ledger_recent（如后续新增依赖视图，可按需补充列表）
+    # 注意：不要在 SQL 字符串里出现 %I；改用 quote_ident 拼接，避免 psycopg 误把 %I 当 DBAPI 占位符。
     conn.exec_driver_sql(
         """
         DO $$
@@ -237,7 +236,9 @@ def downgrade():
              WHERE table_schema = 'public'
                AND table_name IN ('v_putaway_ledger_recent')
           LOOP
-            EXECUTE format('DROP VIEW IF EXISTS %I.%I CASCADE', v.schema_name, v.view_name);
+            EXECUTE 'DROP VIEW IF EXISTS '
+                    || quote_ident(v.schema_name) || '.'
+                    || quote_ident(v.view_name) || ' CASCADE';
           END LOOP;
         END $$;
         """
@@ -249,7 +250,6 @@ def downgrade():
     op.execute("DROP INDEX IF EXISTS public.idx_stocks_item_wh_loc_batch")
 
     # ========= C) 再处理 batches 侧唯一约束/唯一索引 =========
-    # 若存在以约束形式绑定的同名 UQ，则先删约束
     op.execute(
         """
         DO $$
@@ -267,19 +267,15 @@ def downgrade():
         END $$;
         """
     )
-    # 再删除唯一索引（若存在）
     op.execute("DROP INDEX IF EXISTS public.uq_batches_item_wh_loc_code")
 
     # ========= D) 解除外键 & 回滚列属性 =========
     op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
 
-    # batches.qty 放宽
     op.execute("ALTER TABLE public.batches ALTER COLUMN qty DROP NOT NULL")
 
-    # stocks.batch_code 回滚（先 DROP NOT NULL，再 DROP 列）
     op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code DROP NOT NULL")
     op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS batch_code")
 
-    # stocks.warehouse_id 回滚
     op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id DROP NOT NULL")
     op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS warehouse_id")
