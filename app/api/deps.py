@@ -15,23 +15,21 @@ __all__ = [
     "get_session",
     "get_current_user",
     "get_order_service",
-    # 若其它路由需要，按需在此补充导出
+    "DATABASE_URL",
 ]
 
-# ======================================================
-# Database: per-request AsyncSession with NullPool
-# ======================================================
-
+# ------------------------------------------------------
+# DB 基础配置（NullPool + 每请求独立 Session）
+# ------------------------------------------------------
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms",
 )
 
-# 关键：使用 NullPool，避免在 pytest + httpx.ASGITransport 多事件循环下复用连接
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    poolclass=NullPool,
+    poolclass=NullPool,   # 关键：禁止连接复用，避免多事件循环下的 asyncpg 并发报错
     future=True,
 )
 
@@ -43,11 +41,6 @@ SessionLocal = async_sessionmaker(
 )
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    FastAPI 依赖：每请求独立会话。
-    - 失败自动 rollback；
-    - 始终 close，避免 GC 清理未归还连接的 SAWarning。
-    """
     session: AsyncSession = SessionLocal()
     try:
         yield session
@@ -64,28 +57,22 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             pass
 
 
-# ======================================================
-# Stubs for other routers (orders 等) 的依赖
-# 仅为解决导入期依赖；如路由后续真的调用，再替换为真实实现。
-# ======================================================
-
+# ------------------------------------------------------
+# 其它路由依赖的占位（orders 等）
+# ------------------------------------------------------
 class _FakeUser(dict):
-    """最小化的用户对象占位，满足 Depends 注入。"""
     @property
     def id(self) -> str:
         return str(self.get("id", "test-user"))
 
 async def get_current_user() -> _FakeUser:
-    """测试环境不做鉴权，返回固定用户占位。"""
     return _FakeUser(id="test-user", name="Test User")
 
 class _OrderServiceStub:
-    """最小化的订单服务占位，避免应用启动时 ImportError。"""
     def __getattr__(self, name: str) -> Any:
         raise NotImplementedError(
             f"OrderService method '{name}' is not implemented in test stub."
         )
 
 def get_order_service() -> _OrderServiceStub:
-    """作为 Depends 工厂函数返回占位服务。"""
     return _OrderServiceStub()
