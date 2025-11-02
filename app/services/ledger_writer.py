@@ -59,7 +59,7 @@ async def write_ledger(
     - 同维度 (reason, ref, stock_id) 使用 advisory 锁串行化；
     - 在 INSERT 的 SELECT 子句里原子计算 ref_line = COALESCE(MAX(ref_line),0)+1；
     - 兼容 stock_ledger 是否存在 extra 列（动态列集）；
-    - UTC 时间、after_qty 等保持你现有口径。
+    - 显式将 :reason / :ref 参数强制转换为与表列一致的 VARCHAR 长度，消除 asyncpg 类型歧义。
     """
     ts = occurred_at or datetime.now(UTC)
     reason = (reason or "").upper()
@@ -68,21 +68,25 @@ async def write_ledger(
 
     has_extra = await _has_column(session, "stock_ledger", "extra")
 
+    # 显式类型转换片段
+    reason_cast = "CAST(:reason AS VARCHAR(32))"
+    ref_cast = "CAST(:ref AS VARCHAR(64))"
+
     # 带 stock_id 的常规路径（PUTAWAY/INBOUND/OUTBOUND/COUNT）：原子 INSERT ... SELECT
     if sid > 0:
         await _advisory_lock(session, reason, ref or "", sid)
 
         if has_extra:
             sql = text(
-                """
+                f"""
                 INSERT INTO stock_ledger
                   (stock_id, item_id, reason, ref, ref_line, delta, occurred_at, after_qty, extra)
                 SELECT
-                  :sid, :item, :reason, :ref,
+                  :sid, :item, {reason_cast}, {ref_cast},
                   COALESCE(MAX(ref_line), 0) + 1,
                   :delta, :ts, :after, CAST(:extra AS jsonb)
                   FROM stock_ledger
-                 WHERE reason = :reason AND ref = :ref AND stock_id = :sid
+                 WHERE reason = {reason_cast} AND ref = {ref_cast} AND stock_id = :sid
                 RETURNING id
                 """
             )
@@ -98,15 +102,15 @@ async def write_ledger(
             }
         else:
             sql = text(
-                """
+                f"""
                 INSERT INTO stock_ledger
                   (stock_id, item_id, reason, ref, ref_line, delta, occurred_at, after_qty)
                 SELECT
-                  :sid, :item, :reason, :ref,
+                  :sid, :item, {reason_cast}, {ref_cast},
                   COALESCE(MAX(ref_line), 0) + 1,
                   :delta, :ts, :after
                   FROM stock_ledger
-                 WHERE reason = :reason AND ref = :ref AND stock_id = :sid
+                 WHERE reason = {reason_cast} AND ref = {ref_cast} AND stock_id = :sid
                 RETURNING id
                 """
             )
@@ -130,7 +134,7 @@ async def write_ledger(
             INSERT INTO stock_ledger
               (item_id, reason, ref, ref_line, delta, occurred_at, after_qty, extra)
             VALUES
-              (:item, :reason, :ref, :rline, :delta, :ts, :after, CAST(:extra AS jsonb))
+              (:item, CAST(:reason AS VARCHAR(32)), CAST(:ref AS VARCHAR(64)), :rline, :delta, :ts, :after, CAST(:extra AS jsonb))
             RETURNING id
             """
         )
@@ -150,7 +154,7 @@ async def write_ledger(
             INSERT INTO stock_ledger
               (item_id, reason, ref, ref_line, delta, occurred_at, after_qty)
             VALUES
-              (:item, :reason, :ref, :rline, :delta, :ts, :after)
+              (:item, CAST(:reason AS VARCHAR(32)), CAST(:ref AS VARCHAR(64)), :rline, :delta, :ts, :after)
             RETURNING id
             """
         )
