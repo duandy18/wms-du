@@ -1,6 +1,7 @@
 # app/api/routers/scan.py
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -62,39 +63,31 @@ def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     )
 
 
-# ---------- 事件写入（极简） ----------
+# ---------- 事件写入（无 ref 列版） ----------
 async def _insert_event_raw(
     session: AsyncSession,
     source: str,
-    ref: str,
-    meta_base: Dict[str, Any],
+    meta_input: Dict[str, Any],
     occurred_at: datetime,
-) -> None:
-    await session.execute(
-        text(
-            """
-            INSERT INTO event_log(source, ref, message, occurred_at)
-            VALUES (:src, :ref, :msg, :ts)
-            """
-        ),
-        {"src": source, "ref": ref, "msg": meta_base.get("input", {}), "ts": occurred_at},
-    )
-
-
-async def _commit_and_get_event_id(session: AsyncSession, ref: str, source: str) -> int:
-    await session.commit()
+) -> int:
+    """
+    直接向 event_log(source, message, occurred_at) 插入，并返回事件ID。
+    注意：message 写入 TEXT，使用 JSON 字符串序列化。
+    """
+    msg = json.dumps(meta_input or {}, ensure_ascii=False)
     row = await session.execute(
         text(
             """
-            SELECT id FROM event_log
-             WHERE ref=:ref AND source=:src
-             ORDER BY id DESC LIMIT 1
+            INSERT INTO event_log(source, message, occurred_at)
+            VALUES (:src, :msg::text, :ts)
+            RETURNING id
             """
         ),
-        {"ref": ref, "src": source},
+        {"src": source, "msg": msg, "ts": occurred_at},
     )
-    v = row.scalar_one_or_none()
-    return int(v) if v is not None else 0
+    event_id = int(row.scalar_one())
+    await session.commit()
+    return event_id
 
 
 def _format_ref(ts: datetime, device_id: str, loc_id: Optional[int]) -> str:
@@ -136,18 +129,16 @@ async def scan_gateway(
             "item_id": sc.item_id,
             "qty": sc.qty,
             "location_id": loc_id,
+            "ref": scan_ref,
         },
-        "ref": scan_ref,
     }
 
     # pick probe
     if sc.mode == "pick" and probe:
         source = "scan_pick_probe"
-        await _insert_event_raw(session, source, scan_ref, meta_base, occurred_at)
-        ev_id = await _commit_and_get_event_id(session, scan_ref, source)
+        ev_id = await _insert_event_raw(session, source, meta_base.get("input", {}), occurred_at)
         return {
             "scan_ref": scan_ref,
-            "ref": scan_ref,
             "source": source,
             "occurred_at": occurred_at.isoformat(),
             "committed": False,
@@ -159,11 +150,9 @@ async def scan_gateway(
     if sc.mode in {"receive", "putaway", "count"}:
         if probe:
             source = f"scan_{sc.mode}_probe"
-            await _insert_event_raw(session, source, scan_ref, meta_base, occurred_at)
-            ev_id = await _commit_and_get_event_id(session, scan_ref, source)
+            ev_id = await _insert_event_raw(session, source, meta_base.get("input", {}), occurred_at)
             return {
                 "scan_ref": scan_ref,
-                "ref": scan_ref,
                 "source": source,
                 "occurred_at": occurred_at.isoformat(),
                 "committed": False,
@@ -223,11 +212,9 @@ async def scan_gateway(
             )
             source = "scan_count_commit"
 
-        await _insert_event_raw(session, source, scan_ref, meta_base, occurred_at)
-        ev_id = await _commit_and_get_event_id(session, scan_ref, source)
+        ev_id = await _insert_event_raw(session, source, meta_base.get("input", {}), occurred_at)
         return {
             "scan_ref": scan_ref,
-            "ref": scan_ref,
             "source": source,
             "occurred_at": occurred_at.isoformat(),
             "committed": True,
