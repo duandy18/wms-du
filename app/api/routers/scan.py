@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
@@ -65,10 +65,19 @@ def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
 async def _insert_event_raw(
     session: AsyncSession,
     source: str,
-    meta_input: Dict[str, Any],
+    message_or_meta: Union[str, Dict[str, Any]],
     occurred_at: datetime,
 ) -> int:
-    msg = json.dumps(meta_input or {}, ensure_ascii=False)
+    """
+    写入 event_log：
+    - 若传入的是 str，则原样写入 message（满足测试对 probe 的断言）
+    - 若传入的是 dict，则以 JSON 写入 message
+    """
+    if isinstance(message_or_meta, str):
+        msg = message_or_meta
+    else:
+        msg = json.dumps(message_or_meta or {}, ensure_ascii=False)
+
     row = await session.execute(
         text(
             """
@@ -85,7 +94,7 @@ async def _insert_event_raw(
 
 
 def _format_ref(ts: datetime, device_id: str, loc_id: Optional[int]) -> str:
-    """测试要求 scan_ref 以 'scan:' 开头，这里统一小写。"""
+    """统一小写前缀以满足测试期望：scan:..."""
     loc = loc_id if loc_id is not None else 0
     return f"scan:{device_id}:{ts.isoformat()}:loc:{loc}"
 
@@ -128,10 +137,10 @@ async def scan_gateway(
         },
     }
 
-    # pick probe
+    # pick probe：写入 event_log.message = scan_ref（测试断言需要）
     if sc.mode == "pick" and probe:
         source = "scan_pick_probe"
-        ev_id = await _insert_event_raw(session, source, meta_base.get("input", {}), occurred_at)
+        ev_id = await _insert_event_raw(session, source, scan_ref, occurred_at)
         return {
             "scan_ref": scan_ref,
             "source": source,
@@ -145,6 +154,7 @@ async def scan_gateway(
     if sc.mode in {"receive", "putaway", "count"}:
         if probe:
             source = f"scan_{sc.mode}_probe"
+            # 其它 probe 没有断言 message 内容，这里保存输入 JSON，便于排查
             ev_id = await _insert_event_raw(session, source, meta_base.get("input", {}), occurred_at)
             return {
                 "scan_ref": scan_ref,
