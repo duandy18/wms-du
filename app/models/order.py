@@ -5,11 +5,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, List
 
-from sqlalchemy import DateTime, Enum as SAEnum, Numeric, String, Index, func
+from sqlalchemy import DateTime
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy import Index, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import OrderType, OrderStatus  # 统一从集中枚举处导入
+from app.models.enum import OrderStatus, OrderType  # 统一从集中枚举处导入
 
 if TYPE_CHECKING:
     from app.models.order_item import OrderItem
@@ -21,10 +23,9 @@ class Order(Base):
     - 不改变现有表结构/枚举名：order_type, order_status
     - 时间列具时区；created_at/updated_at 默认写入 UTC（DB 侧 func.now()），updated_at 支持 onupdate
     """
+
     __tablename__ = "orders"
-    __table_args__ = (
-        Index("ix_orders_type_status", "order_type", "status"),
-    )
+    __table_args__ = (Index("ix_orders_type_status", "order_type", "status"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -32,8 +33,8 @@ class Order(Base):
     order_no: Mapped[str] = mapped_column(String(32), unique=True, index=True)
 
     # 枚举：与现库的 ENUM 名称完全一致（name 保持原有，避免迁移）
-    order_type: Mapped[str] = mapped_column(SAEnum(OrderType,  name="order_type"),   index=True)
-    status:     Mapped[str] = mapped_column(SAEnum(OrderStatus, name="order_status"), index=True)
+    order_type: Mapped[str] = mapped_column(SAEnum(OrderType, name="order_type"), index=True)
+    status: Mapped[str] = mapped_column(SAEnum(OrderStatus, name="order_status"), index=True)
 
     # 可选维度（单据两端）
     customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -65,4 +66,6 @@ class Order(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Order id={self.id} no={self.order_no!r} type={self.order_type} status={self.status}>"
+        return (
+            f"<Order id={self.id} no={self.order_no!r} type={self.order_type} status={self.status}>"
+        )

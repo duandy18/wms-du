@@ -1,4 +1,3 @@
-# app/services/putaway_service.py
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,6 +16,7 @@ class PutawayService:
     - 幂等：若已存在 (reason, ref, ref_line) 或右腿(ref_line+1) 台账，则认为 idempotent；
     - “右腿 +1”：入库腿 ref_line = 出库腿 ref_line + 1；
     - 并发批量：在 PostgreSQL 用 FOR UPDATE SKIP LOCKED；SQLite 退化为无锁选择 + 乐观更新。
+    - 对齐 stocks 正式口径：(item_id, warehouse_id, location_id, batch_code)
     """
 
     @staticmethod
@@ -27,11 +27,18 @@ class PutawayService:
         from_location_id: int,
         to_location_id: int,
         qty: int,
+        warehouse_id: int,
+        batch_code: str,
         ref: str,
         ref_line: int = 1,
         occurred_at: datetime | None = None,
         commit: bool = True,
     ) -> dict[str, Any]:
+        """
+        把库存从 from_location_id → to_location_id
+        扣源位、增目标位，并写两条台账（左/右腿）。
+        对齐 stocks 唯一口径：item_id, warehouse_id, location_id, batch_code
+        """
         if qty <= 0:
             raise ValueError("qty must be > 0")
         if from_location_id == to_location_id:
@@ -48,6 +55,8 @@ class PutawayService:
             from_location_id=from_location_id,
             to_location_id=to_location_id,
             qty=qty,
+            warehouse_id=warehouse_id,
+            batch_code=batch_code,
             reason="PUTAWAY",
             ref=ref,
             ref_line=ref_line,
@@ -72,6 +81,7 @@ class PutawayService:
         从“暂存位/分拣位”批量搬运到目标库位：
         - PG: 以 SKIP LOCKED 逐条领取；
         - SQLite: 无锁选择 + 乐观更新（失败则跳过）。
+        对齐 stocks 唯一口径：item_id, warehouse_id, location_id, batch_code
         """
         dialect = session.get_bind().dialect.name
         moved = 0
@@ -80,33 +90,33 @@ class PutawayService:
         while moved < batch_size:
             if dialect == "postgresql":
                 sel_sql = """
-                    SELECT id, item_id, qty
-                    FROM stocks
-                    WHERE location_id = :stage AND qty > 0
-                    ORDER BY id
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
+                    SELECT id, item_id, warehouse_id, batch_code, qty
+                      FROM stocks
+                     WHERE location_id = :stage
+                       AND qty > 0
+                     ORDER BY id
+                     FOR UPDATE SKIP LOCKED
+                     LIMIT 1
                 """
-                row = (
-                    await session.execute(text(sel_sql), {"stage": stage_location_id})
-                ).first()
             else:
-                # SQLite 无 FOR UPDATE；做一次无锁选择，若后续扣减失败则跳过
                 sel_sql = """
-                    SELECT id, item_id, qty
-                    FROM stocks
-                    WHERE location_id = :stage AND qty > 0
-                    ORDER BY id
-                    LIMIT 1
+                    SELECT id, item_id, warehouse_id, batch_code, qty
+                      FROM stocks
+                     WHERE location_id = :stage
+                       AND qty > 0
+                     ORDER BY id
+                     LIMIT 1
                 """
-                row = (
-                    await session.execute(text(sel_sql), {"stage": stage_location_id})
-                ).first()
-
+            row = (await session.execute(text(sel_sql), {"stage": stage_location_id})).first()
             if not row:
                 break
 
-            stock_id, item_id, qty_available = int(row[0]), int(row[1]), int(row[2] or 0)
+            stock_id = int(row[0])
+            item_id = int(row[1])
+            warehouse_id = int(row[2])
+            batch_code = str(row[3])
+            qty_available = int(row[4] or 0)
+
             if qty_available <= 0:
                 if commit_each:
                     await session.commit()
@@ -131,7 +141,6 @@ class PutawayService:
                     await session.commit()
                 continue
 
-            # 对于 SQLite，_move_via_sql 内部扣减可能因并发失败；捕获后跳过
             try:
                 await PutawayService._move_via_sql(
                     session=session,
@@ -139,6 +148,8 @@ class PutawayService:
                     from_location_id=stage_location_id,
                     to_location_id=to_location_id,
                     qty=move_qty,
+                    warehouse_id=warehouse_id,
+                    batch_code=batch_code,
                     reason="PUTAWAY",
                     ref=ref,
                     ref_line=ref_line,
@@ -148,7 +159,6 @@ class PutawayService:
                 if commit_each:
                     await session.commit()
             except ValueError:
-                # “库存不足”多半来自并发竞争（SQLite 无锁场景），忽略本条
                 if commit_each:
                     await session.rollback()
                 continue
@@ -167,10 +177,10 @@ class PutawayService:
             text(
                 """
                 SELECT 1 FROM stock_ledger
-                WHERE reason = :reason
-                  AND ref    = :ref
-                  AND ref_line IN (:out_line, :in_line)
-                LIMIT 1
+                 WHERE reason = :reason
+                   AND ref    = :ref
+                   AND ref_line IN (:out_line, :in_line)
+                 LIMIT 1
                 """
             ),
             {
@@ -190,6 +200,8 @@ class PutawayService:
         from_location_id: int,
         to_location_id: int,
         qty: int,
+        warehouse_id: int,
+        batch_code: str,
         reason: str,
         ref: str,
         ref_line: int,
@@ -197,32 +209,36 @@ class PutawayService:
     ) -> None:
         ts = occurred_at or datetime.now(UTC)
 
-        # 1) 扣来源位（若不存在行则先创建 0 行再尝试扣减）
+        # 1) 扣来源位 —— 对齐口径 (item_id, warehouse_id, location_id, batch_code)
         from_row = (
             await session.execute(
                 text(
                     """
                     UPDATE stocks
                        SET qty = qty - :q
-                     WHERE item_id = :item
-                       AND location_id = :loc
+                     WHERE item_id      = :item
+                       AND warehouse_id = :wh
+                       AND location_id  = :loc
+                       AND batch_code   = :bc
                        AND qty >= :q
                     RETURNING id, qty
                     """
                 ),
-                {"q": qty, "item": item_id, "loc": from_location_id},
+                {"q": qty, "item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
             )
         ).first()
         if not from_row:
+            # 源位缺行则补 0 行再扣（满足 NOT NULL 列）
             await session.execute(
                 text(
                     """
-                    INSERT INTO stocks (item_id, location_id, qty)
-                    VALUES (:item, :loc, 0)
-                    ON CONFLICT (item_id, location_id) DO NOTHING
+                    INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
+                    VALUES (:item, :wh, :loc, :bc, 0)
+                    ON CONFLICT (item_id, warehouse_id, location_id, batch_code)
+                    DO NOTHING
                     """
                 ),
-                {"item": item_id, "loc": from_location_id},
+                {"item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
             )
             from_row = (
                 await session.execute(
@@ -230,13 +246,15 @@ class PutawayService:
                         """
                         UPDATE stocks
                            SET qty = qty - :q
-                         WHERE item_id = :item
-                           AND location_id = :loc
+                         WHERE item_id      = :item
+                           AND warehouse_id = :wh
+                           AND location_id  = :loc
+                           AND batch_code   = :bc
                            AND qty >= :q
                         RETURNING id, qty
                         """
                     ),
-                    {"q": qty, "item": item_id, "loc": from_location_id},
+                    {"q": qty, "item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
                 )
             ).first()
             if not from_row:
@@ -269,14 +287,14 @@ class PutawayService:
             await session.execute(
                 text(
                     """
-                    INSERT INTO stocks (item_id, location_id, qty)
-                    VALUES (:item, :loc, :q)
-                    ON CONFLICT (item_id, location_id)
-                    DO UPDATE SET qty = stocks.qty + EXCLUDED.qty
+                    INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
+                    VALUES (:item, :wh, :loc, :bc, :q)
+                    ON CONFLICT (item_id, warehouse_id, location_id, batch_code)
+                      DO UPDATE SET qty = stocks.qty + EXCLUDED.qty
                     RETURNING id, qty
                     """
                 ),
-                {"item": item_id, "loc": to_location_id, "q": qty},
+                {"item": item_id, "wh": warehouse_id, "loc": to_location_id, "bc": batch_code, "q": qty},
             )
         ).first()
         to_stock_id, to_after = int(to_row[0]), int(to_row[1])

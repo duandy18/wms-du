@@ -1,20 +1,27 @@
 # app/models/associations.py
-from sqlalchemy import ForeignKey, Table
-from sqlalchemy.orm import Mapped, mapped_column
-from app.db.base import Base
+from __future__ import annotations
 
-# 用户 ↔ 角色 多对多
+from sqlalchemy import Table, Column, Integer, ForeignKey, UniqueConstraint
+
+# 你的项目里 Declarative Base 一般在 app/db/base.py 或 app/db/session.py 暴露 Base/metadata
+# 这里按常见位置从 base 导入 Base，如果你在 session.py 暴露了 Base/metadata，可改为 from app.db.session import Base
+from app.db.base import Base  # 确保 Base.metadata 可用
+
+
+# 用户-角色 关联（多对多）
 user_role = Table(
-    "user_roles",
+    "user_role",
     Base.metadata,
-    mapped_column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    mapped_column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    UniqueConstraint("user_id", "role_id", name="uq_user_role_user_role"),
 )
 
-# 角色 ↔ 权限 多对多
+# 角色-权限 关联（多对多）
 role_permission = Table(
-    "role_permissions",
+    "role_permission",
     Base.metadata,
-    mapped_column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
-    mapped_column("permission_id", ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission_id", Integer, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+    UniqueConstraint("role_id", "permission_id", name="uq_role_permission_role_perm"),
 )

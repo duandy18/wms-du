@@ -105,6 +105,7 @@ class StockService:
                AND s.location_id=:loc
                AND COALESCE(s.qty,0) > 0
         """
+        # 允许过期开关控制 FEFO 候选集
         if not allow_expired:
             sql += " AND (b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE)\n"
         sql += " ORDER BY b.expiry_date NULLS LAST, s.batch_code LIMIT 1"
@@ -176,7 +177,7 @@ class StockService:
                 )
             return res
 
-        # 入库
+        # 入库：生产日/到期统一从门面透传到 InventoryAdjust，由下层按口径计算或直接使用
         if not batch_code:
             batch_code = f"AUTO-{item_id}-{location_id}"
 
@@ -392,7 +393,6 @@ class StockService:
             "available": int(m["available"] or 0),
         }
 
-    # ---------- 盘点对账 ----------
     async def reconcile_inventory(
         self,
         *,
@@ -403,11 +403,49 @@ class StockService:
         apply: bool = True,
         ref: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return await ReconcileService.reconcile_inventory(
-            session=session,
-            item_id=item_id,
-            location_id=location_id,
-            counted_qty=counted_qty,
-            apply=apply,
-            ref=ref,
-        )
+        """
+        兼容包装：
+        - 新口径：ReconcileService.reconcile_inventory(session,item_id,location_id,counted_qty,apply,ref)
+        - 旧口径（无 apply）：ReconcileService.reconcile_inventory(session,item_id,location_id,counted_qty,ref)
+        - 其他变体：dry_run/commit 等参数名
+        """
+        try:
+            return await ReconcileService.reconcile_inventory(
+                session=session,
+                item_id=item_id,
+                location_id=location_id,
+                counted_qty=counted_qty,
+                apply=apply,
+                ref=ref,
+            )
+        except TypeError:
+            # 回退 1：旧签名（无 apply）
+            try:
+                return await ReconcileService.reconcile_inventory(
+                    session=session,
+                    item_id=item_id,
+                    location_id=location_id,
+                    counted_qty=counted_qty,
+                    ref=ref,
+                )
+            except TypeError:
+                # 回退 2：dry_run = not apply
+                try:
+                    return await ReconcileService.reconcile_inventory(
+                        session=session,
+                        item_id=item_id,
+                        location_id=location_id,
+                        counted_qty=counted_qty,
+                        dry_run=not apply,
+                        ref=ref,
+                    )
+                except TypeError:
+                    # 回退 3：commit = apply
+                    return await ReconcileService.reconcile_inventory(
+                        session=session,
+                        item_id=item_id,
+                        location_id=location_id,
+                        counted_qty=counted_qty,
+                        commit=apply,
+                        ref=ref,
+                    )

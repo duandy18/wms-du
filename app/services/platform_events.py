@@ -15,7 +15,7 @@ from app.models.event_error_log import EventErrorLog
 from app.metrics import EVENTS, ERRS  # 指标：事件/错误
 
 # ---------------------------------------------------------------------
-# 适配器注册（平台小写）
+# 适配器注册(平台小写)
 # ---------------------------------------------------------------------
 _ADAPTERS: Dict[str, PlatformAdapter] = {
     "pdd": PDDAdapter(),
@@ -33,7 +33,7 @@ def _get_adapter(platform: str) -> PlatformAdapter:
     return ad
 
 # ---------------------------------------------------------------------
-# 抽取字段（适配“原始”事件的兜底）
+# 抽取字段(适配“原始”事件的兜底)
 # ---------------------------------------------------------------------
 def _extract_ref(raw: Dict[str, Any]) -> str:
     return str(
@@ -97,8 +97,8 @@ async def _log_error_isolated(session: AsyncSession, platform: str, raw: Dict[st
 
 async def _has_outbound_ledger(session: Optional[AsyncSession], ref: str) -> bool:
     """
-    校验是否已经写入 OUTBOUND 台账（防重复/兜底重试用）。
-    约定 ref：优先使用 “{shop_id}:{ref}”，否则使用 ref 本身（与 Outbound 侧一致）。
+    校验是否已经写入 OUTBOUND 台账(防重复/兜底重试用)。
+    约定 ref：优先使用 “{shop_id}:{ref}”，否则使用 ref 本身(与 Outbound 侧一致)。
     """
     if session is None:
         return True
@@ -109,11 +109,11 @@ async def _has_outbound_ledger(session: Optional[AsyncSession], ref: str) -> boo
     return (cnt or 0) > 0
 
 # ---------------------------------------------------------------------
-# 状态 → 动作映射（v1.0 强契约）
-#   - PAID/CREATED/NEW  -> reserve（+reserved）
-// - CANCELED/VOID      -> cancel （-reserved）
-// - SHIPPED/DELIVERED  -> ship    （扣减 stocks + 写台账 + 释放 reserved + 刷新 visible）
-// 其它状态只记指标/日志，不抛错（例如平台自定义子状态）
+# 状态 → 动作映射(v1.0 强契约)
+#   - PAID/CREATED/NEW  -> reserve(+reserved)
+# - CANCELED/VOID      -> cancel (-reserved)
+# - SHIPPED/DELIVERED  -> ship    (扣减 stocks + 写台账 + 释放 reserved + 刷新 visible)
+# 其它状态只记指标/日志，不抛错(例如平台自定义子状态)
 # ---------------------------------------------------------------------
 _PAID_ALIASES = {"PAID", "PAID_OK", "NEW", "CREATED", "WAIT_SELLER_SEND_GOODS"}
 _CANCEL_ALIASES = {"CANCELED", "CANCELLED", "VOID", "TRADE_CLOSED"}
@@ -137,7 +137,7 @@ async def handle_event_batch(
     session: Optional[AsyncSession] = None,
 ) -> None:
     """
-    多平台事件批处理（无外层事务）：
+    多平台事件批处理(无外层事务)：
     - 使用适配器解析/映射为标准任务 {platform, shop_id, ref, state, lines}
     - 按状态映射到 reserve/cancel/ship 三步流
     - 每条事件前先 rollback 清理潜在 savepoint 残留
@@ -174,13 +174,13 @@ async def handle_event_batch(
                 log_event("event_ignored", f"{platform}:{task['ref']}", extra={"state": task["state"]})
                 continue
 
-            # RESERVE：下单占用（不动 stocks / 不写台账）
+            # RESERVE：下单占用(不动 stocks / 不写台账)
             if action == "RESERVE":
                 if not task["ref"]:
                     raise ValueError("Missing ref for RESERVE")
                 lines = [{"item_id": int(x["item_id"]), "qty": int(x["qty"])} for x in task["lines"] or [] if "item_id" in x and "qty" in x]
                 if not lines:
-                    # 没有明细也允许走 reserve（常见平台“已付无明细”通知）
+                    # 没有明细也允许走 reserve(常见平台“已付无明细”通知)
                     lines = [{"item_id": int(task["payload"].get("item_id", 0)), "qty": int(task["payload"].get("qty", 0))}]
                 await OrderService.reserve(
                     session,
@@ -209,7 +209,7 @@ async def handle_event_batch(
                 log_event("event_canceled", f"{platform}:{task['ref']}", extra={"lines": len(lines)})
                 continue
 
-            # SHIP：发货出库（扣减 stocks + 写台账 + 释放占用 + 刷新可见量）
+            # SHIP：发货出库(扣减 stocks + 写台账 + 释放占用 + 刷新可见量)
             if action == "SHIP":
                 if not task["ref"]:
                     raise ValueError("Missing ref for SHIP")

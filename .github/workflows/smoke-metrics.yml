@@ -1,18 +1,49 @@
-name: Smoke - Metrics
+name: Smoke · Metrics
 
 on:
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 18 * * *"  # 每天 02:30 CST
+
+env:
+  PYTHON_VERSION: "3.12"
+  DATABASE_URL: postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms
 
 jobs:
   smoke-metrics:
-    # 默认不跑；仅当手动触发或 PR 打了 'run-legacy-ci' 标签时才运行
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-legacy-ci'))
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports: [ "5433:5432" ]
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
     steps:
-      - name: Legacy smoke-metrics gated by label
-        run: echo "Legacy smoke-metrics is gated by label 'run-legacy-ci' or manual dispatch."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: ${{ env.PYTHON_VERSION }} }
+      - name: Install test deps
+        run: pip install pytest httpx alembic asyncpg
+
+      - name: Migrate
+        env: { DATABASE_URL: ${{ env.DATABASE_URL }} }
+        run: alembic upgrade head
+
+      - name: Run minimal smoke
+        run: |
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_probe.py -s
+
+      - name: Collect quick metrics
+        run: |
+          echo "::group::metrics"
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "SELECT COUNT(*) AS events_24h FROM event_log WHERE occurred_at >= now()-interval '24 hours';"
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "SELECT COUNT(*) AS errors_24h FROM event_error_log WHERE occurred_at >= now()-interval '24 hours';"
+          echo "::endgroup::"

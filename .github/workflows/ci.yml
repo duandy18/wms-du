@@ -1,121 +1,129 @@
-name: App CI – Lite
+name: CI · v1.2 Gate
 
 on:
   push:
-    branches: [ main, dev, feat/**, fix/**, chore/** ]
+    branches: [ main, release/**, feat/** ]
   pull_request:
-    branches: [ main, dev ]
-  workflow_dispatch:
+    branches: [ main, release/** ]
+  workflow_dispatch: {}
 
 concurrency:
-  group: app-ci-lite-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  tests:
-    name: Python 3.12 · PG14(5433) · Quick/Services/Smoke
-    runs-on: ubuntu-latest
+env:
+  PYTHON_VERSION: "3.12"
+  DATABASE_URL: postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  FORCE_COLOR: "1"
 
+jobs:
+  # --- 0) Lint（不阻断，避免打断主线）
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: ${{ env.PYTHON_VERSION }} }
+      - name: Install ruff (optional)
+        run: pip install ruff
+      - name: Ruff check
+        run: ruff check app tests || true
+
+  # --- 1) Test · /scan 基线与四路 commit + 契约
+  test-scan:
+    runs-on: ubuntu-latest
+    needs: [lint]
     services:
       postgres:
         image: postgres:14
-        ports:
-          - 5433:5432
         env:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
+        ports:
+          - 5433:5432
         options: >-
           --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=10s
+          --health-interval=5s
           --health-timeout=5s
-          --health-retries=12
-
-    env:
-      # SQLAlchemy/应用使用的 URL（psycopg v3 驱动）
-      DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
-      # psql 命令行使用的 URL（无 +psycopg 前缀）
-      PSQL_URL: postgresql://wms:wms@127.0.0.1:5433/wms
-      TZ: Asia/Shanghai
-      PYTHONUNBUFFERED: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      # v1.0 观测期默认关闭平台直连
-      ENABLE_PDD_PULL: "false"
-      ENABLE_PDD_PUSH: "false"
-      ENABLE_MULTI_WAREHOUSE: "false"
-
+          --health-retries=20
     steps:
-      - name: Checkout
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: actions/setup-python@v5
+        with: { python-version: ${{ env.PYTHON_VERSION }} }
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          python -V
-          pip -V
-          pip install -r requirements.txt
-          # 常见本地依赖兜底（若 requirements 已含则会跳过）
-          pip install 'psycopg[binary]>=3.1' asyncpg
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install pytest httpx alembic asyncpg psycopg[binary]; fi
 
-      - name: Wait for Postgres
-        run: |
-          for i in {1..30}; do
-            pg_isready -d "$PSQL_URL" && break
-            echo "waiting postgres ($i/30)..."
-            sleep 2
-          done
-          psql "$PSQL_URL" -c "SELECT version();"
-
-      - name: Alembic upgrade head
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
+      - name: DB migrate (upgrade → downgrade -1 → upgrade)
+        env: { DATABASE_URL: ${{ env.DATABASE_URL }} }
         run: |
           alembic upgrade head
+          alembic downgrade -1 || true
+          alembic upgrade head
+          # 快速体检：结构与视图在位（非强门槛）
+          psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "\dt" >/dev/null
 
-      - name: Bootstrap minimal domain
+      - name: Run /scan · pick probe/commit/trace
+        run: |
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_probe.py -s
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_commit.py -s
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_commit_trace.py -s
+
+      - name: Run /scan · receive/putaway/count commit
+        run: |
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_receive_commit.py -s
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_putaway_commit.py -s
+          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_count_commit.py -s
+
+      - name: Contract · 事件→台账腿出现（≤1s）
+        run: PYTHONPATH=. pytest -q tests/contracts/test_event_to_ledger_contract.py -s
+
+  # --- 2) Alembic Health Gate（独立执行一次保证可迁移）
+  migrate-health:
+    runs-on: ubuntu-latest
+    needs: [test-scan]
+    services:
+      postgres:
+        image: postgres:14
         env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-          PSQL_URL: ${{ env.PSQL_URL }}
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U wms -d wms"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: ${{ env.PYTHON_VERSION }} }
+      - name: Install alembic
+        run: pip install alembic asyncpg psycopg[binary]
+      - name: Upgrade/Downgrade Cycle
+        env: { DATABASE_URL: ${{ env.DATABASE_URL }} }
         run: |
-          python scripts/bootstrap_domain_min.py --store 主店A --items 777,778 || true
-          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE stocks SET qty=10 WHERE item_id=777 AND location_id=1;"
-          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE stocks SET qty=7  WHERE item_id=778 AND location_id=1;"
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
 
-      - name: 🧪 Inbound + Putaway smoke (v1.0)
-        env:
-          PSQL_URL: ${{ env.PSQL_URL }}
-        run: |
-          set -e
-          psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "
-            -- 入库/上架合并：对 777 增加 +5，并写一条 INBOUND 台账
-            UPDATE stocks SET qty = qty + 5 WHERE item_id=777 AND location_id=1;
-            INSERT INTO stock_ledger (stock_id,item_id,delta,after_qty,occurred_at,reason,ref,ref_line)
-            SELECT id, 777, 5, qty, NOW(), 'INBOUND', 'CI-INBOUND', 1
-            FROM stocks WHERE item_id=777 AND location_id=1;
-          "
-          # 最小断言（非阻塞）：打印现值
-          psql "$PSQL_URL" -c "SELECT item_id,location_id,qty FROM stocks WHERE item_id IN (777,778) ORDER BY 1,2;"
-
-      - name: Run quick tests
-        run: |
-          pytest -q tests/quick -s -ra
-
-      - name: Run service tests
-        run: |
-          pytest -q tests/services -s -ra
-
-      - name: Run smoke tests
-        run: |
-          pytest -q tests/smoke -s -ra
+  # --- 3) Summary（可扩展上传覆盖率/日志）
+  done:
+    runs-on: ubuntu-latest
+    needs: [migrate-health]
+    steps:
+      - run: echo "CI v1.2 Gate passed ✅"

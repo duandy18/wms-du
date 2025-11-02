@@ -1,7 +1,7 @@
 # app/api/deps.py
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import Depends, Query
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from app.db.session import get_db
 
 
 def get_db_session(db: Session = Depends(get_db)) -> Session:
-    """统一对外暴露的 DB 会话依赖。"""
+    """统一对外暴露的同步 DB 会话依赖（用于同步 Service）。"""
     return db
 
 
@@ -31,7 +31,7 @@ def get_settings_dep():
 
 
 def get_stock_service(db: Session = Depends(get_db_session)):
-    # 延迟导入可避免启动期的循环依赖
+    """延迟导入可避免启动期循环依赖。"""
     from app.services.stock_service import StockService
 
     return StockService(db=db)
@@ -75,3 +75,34 @@ def get_current_user() -> dict[str, Any]:
     生产环境请用 JWT / 会话验证替换本函数（保持同名签名即可）。
     """
     return {"id": 0, "username": "local-dev", "roles": ["admin"]}
+
+
+# ---------------------------
+# 异步会话依赖（routers 使用）
+# ---------------------------
+
+
+try:
+    # 优先使用项目提供的异步会话工厂
+    from app.db.session import get_session as _project_get_async_session
+except Exception:
+    _project_get_async_session = None  # type: ignore
+
+
+async def get_session() -> AsyncGenerator["AsyncSession", None]:
+    """
+    统一给 routers 使用的异步会话依赖。
+    - 从 app.db.session.get_session 获取 AsyncSession
+    - 如无该工厂，则抛出明确错误提示
+    """
+    if _project_get_async_session is None:
+        raise RuntimeError(
+            "Async session factory not found. "
+            "Please ensure app.db.session.get_session (async) exists."
+        )
+    async for s in _project_get_async_session():
+        yield s
+
+
+# 历史别名兼容
+get_async_session = get_session

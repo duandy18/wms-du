@@ -2,20 +2,26 @@
 from __future__ import annotations
 
 import logging
-import os
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+# 统一装配口：仅从 app/api/router.py 引入总路由
+from app.api.router import api_router
+
+# 业务异常与处理器（来自 app/api/errors.py）
+try:
+    from app.api.errors import BizError, biz_error_handler  # 自定义业务异常与返回格式
+except Exception:  # 兼容无该模块的场景
+    BizError = None
+    biz_error_handler = None
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("wmsdu")
 
-app = FastAPI(title="WMS-DU API", version="1.0.0")
+app = FastAPI(title="WMS-DU API", version="1.1.0")
 
-# === CORS ===
+# CORS：按你的前端默认端口配置
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -24,70 +30,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === 全局异常兜底 ===
+# 全局异常兜底（未捕获异常 → 500）
 @app.exception_handler(Exception)
 async def _unhandled_exc(_req: Request, exc: Exception):
     logger.exception("UNHANDLED EXC: %s", exc)
     return JSONResponse(status_code=500, content={"detail": "INTERNAL_SERVER_ERROR"})
 
-# === 1) 初始化 async_sessionmaker 并挂到 app.state ===
-def _mount_async_sessionmaker() -> None:
-    db_url = os.environ.get("DATABASE_URL", "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms")
-    async_url = db_url.replace("+psycopg", "+asyncpg") if "+psycopg" in db_url else db_url
-    engine = create_async_engine(async_url, future=True, pool_pre_ping=True)
-    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    app.state.async_sessionmaker = maker
-    logger.info("async_sessionmaker mounted on app.state")
+# 只挂总路由（api_router 会统一 include app/api/routers/* 下的所有 router）
+app.include_router(api_router)
 
-# === 2) 显式导入所有模型，完成 ORM 映射注册（避免字符串关系名找不到） ===
-def _import_all_models() -> None:
-    # 把你项目内会参与关系映射的模型都导入一遍，顺序无所谓；失败不应静默
-    import importlib
+# 注册业务异常处理器（若存在）
+if BizError and biz_error_handler:
+    app.add_exception_handler(BizError, biz_error_handler)
 
-    model_modules = [
-        "app.models.item",
-        "app.models.order_item",       # 提供 OrderItem，解决 Item.relationship('OrderItem') 引用
-        "app.models.order",          # ✅ 新增
-        "app.models.location",
-        "app.models.warehouse",
-        "app.models.stock",
-        "app.models.batch",
-        "app.models.stock_ledger",
-        "app.models.stock_snapshot",
-        # 如有其它模型（users/roles/events 等），可按需补上：
-        # "app.models.user",
-        # "app.models.role",
-        # "app.models.event_error_log",
-        # "app.models.outbound_commit",
-    ]
-    for mod in model_modules:
-        try:
-            importlib.import_module(mod)
-        except Exception as e:
-            # 对于不存在的模块，仅记录告警，不让应用崩
-            logger.warning("Model import skipped or failed: %s (%s)", mod, e)
-
-# 挂载会话工厂与模型注册
-_mount_async_sessionmaker()
-_import_all_models()
-
-# === 3) 只用 routers：显式导入 + 显式挂载 ===
-from app.routers.stock_ledger import router as stock_ledger_router  # noqa: E402
-from app.routers.admin_snapshot import router as snapshot_router    # noqa: E402
-
-app.include_router(stock_ledger_router)
-app.include_router(snapshot_router)
-
-# === 探活 ===
+# 探活
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
-
-# === 启动时打印路由表 ===
-@app.on_event("startup")
-async def _print_routes():
-    for r in app.router.routes:
-        path = getattr(r, "path", None)
-        methods = getattr(r, "methods", None)
-        if path:
-            logger.info("ROUTE: %s %s", methods, path)

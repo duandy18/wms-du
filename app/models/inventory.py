@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SAEnum, Float, ForeignKey, Index, String, func
+from sqlalchemy import DateTime
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy import Float, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import MovementType  # 统一从集中枚举处导入
+from app.models.enum import MovementType  # 统一从集中枚举处导入
 
 
 class InventoryMovement(Base):
@@ -20,6 +22,7 @@ class InventoryMovement(Base):
     - 时间：timestamp（具时区，DB 默认 UTC via NOW()）
     说明：仅升级为现代声明式写法并补充索引，不触发迁移。
     """
+
     __tablename__ = "inventory_movements"
     __table_args__ = (
         # 常用检索：按 SKU + 时间线

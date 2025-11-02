@@ -7,7 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # 统一：使用项目内集中定义的业务枚举
-from app.models.enums import MovementType
+from app.models.enum import MovementType
 
 
 # ========= 通用基类（v1.0 统一） =========

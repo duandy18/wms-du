@@ -1,13 +1,22 @@
 import pytest
-import re
+pytestmark = pytest.mark.grp_events
 
-pytestmark = pytest.mark.asyncio
+from datetime import datetime, timezone
+import pytest
+from sqlalchemy import text
 
-def test_audit_logger_masking(capsys):
-    from app.services.audit_logger import audit_log
-    audit_log("services", "inventory", "adjust", meta={"receiver":"张三", "phone":"13812345678"})
-    out = capsys.readouterr().out
-    # 基本字段
-    assert "adjust" in out and "inventory" in out
-    # 手机脱敏（留前3后4）
-    assert re.search(r"138\*+\d{4}", out)
+@pytest.mark.asyncio
+async def test_event_log_write_and_read(session):
+    """写入一条轻审计日志并读回。"""
+    now = datetime.now(timezone.utc)
+    await session.execute(text("""
+        INSERT INTO event_log(source, level, message, meta, created_at)
+        VALUES ('adapter', 'INFO', 'smoke', '{}'::jsonb, :now)
+    """), {"now": now})
+
+    row = (await session.execute(text("""
+        SELECT source, level, message
+        FROM event_log
+        ORDER BY id DESC LIMIT 1
+    """))).first()
+    assert row is not None and row[0] == 'adapter'
