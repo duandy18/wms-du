@@ -4,17 +4,20 @@ Revision ID: 6869fc360d86
 Revises: 6077053642c5
 Create Date: 2025-10-29 19:10:00
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
 revision = "6869fc360d86"
-down_revision = "6077053642c5"  # 按你的 heads -v：当前 head 是 6077053642c5
+down_revision = "6077053642c5"
 branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
     # 仅做“只增不删”的关键索引；全部幂等（IF NOT EXISTS）
+
     # 1) order_items：常用过滤条件
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS ix_order_items_order_id ON public.order_items (order_id)"
@@ -35,6 +38,7 @@ def upgrade():
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS ix_locations_warehouse_id ON public.locations (warehouse_id)"
     ))
+    # 若历史曾用过另一个名称，保留幂等创建
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS ix_locations_wh ON public.locations (warehouse_id)"
     ))
@@ -52,6 +56,7 @@ def upgrade():
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS ix_batches_expiry_date ON public.batches (expiry_date)"
     ))
+    # 历史可能存在重复命名的索引，保留幂等
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS ix_batches_expiry ON public.batches (expiry_date)"
     ))
@@ -74,31 +79,58 @@ def upgrade():
         "ON public.channel_inventory (store_id, item_id)"
     ))
 
-    # 6) stock_snapshots：快照维度（仅新增索引，不触碰列与约束）
-    op.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_stock_snapshots_batch_id ON public.stock_snapshots (batch_id)"
-    ))
-    op.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_stock_snapshots_item_id ON public.stock_snapshots (item_id)"
-    ))
-    op.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_stock_snapshots_location_id ON public.stock_snapshots (location_id)"
-    ))
-    op.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_stock_snapshots_snapshot_date ON public.stock_snapshots (snapshot_date)"
-    ))
-    op.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_stock_snapshots_warehouse_id ON public.stock_snapshots (warehouse_id)"
+    # 6) stock_snapshots：快照维度索引（注意：先判定列是否存在再创建，避免 UndefinedColumn）
+    conn = op.get_bind()
+    conn.execute(sa.text(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='batch_id'
+          ) THEN
+            EXECUTE 'CREATE INDEX IF NOT EXISTS ix_stock_snapshots_batch_id ON public.stock_snapshots (batch_id)';
+          END IF;
+
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='item_id'
+          ) THEN
+            EXECUTE 'CREATE INDEX IF NOT EXISTS ix_stock_snapshots_item_id ON public.stock_snapshots (item_id)';
+          END IF;
+
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='location_id'
+          ) THEN
+            EXECUTE 'CREATE INDEX IF NOT EXISTS ix_stock_snapshots_location_id ON public.stock_snapshots (location_id)';
+          END IF;
+
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='snapshot_date'
+          ) THEN
+            EXECUTE 'CREATE INDEX IF NOT EXISTS ix_stock_snapshots_snapshot_date ON public.stock_snapshots (snapshot_date)';
+          END IF;
+
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='warehouse_id'
+          ) THEN
+            EXECUTE 'CREATE INDEX IF NOT EXISTS ix_stock_snapshots_warehouse_id ON public.stock_snapshots (warehouse_id)';
+          END IF;
+        END$$;
+        """
     ))
 
-    # 7) stock_ledger：四列唯一键（若你的现库暂无该唯一索引，这里不强加）
+    # 7) stock_ledger：四列唯一键（若现库暂无该唯一索引，这里以索引形式兜底；不影响 UQ 约束）
     op.execute(sa.text(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_reason_ref_refline_stock "
         "ON public.stock_ledger (reason, ref, ref_line, stock_id)"
     ))
 
 
-def downgrade():
+def downgrade() -> None:
     # 幂等删除这些索引（不会删除表/外键/数据）
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_order_id"))
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_item_id"))
@@ -121,6 +153,7 @@ def downgrade():
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_channel_inventory_store_id"))
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_channel_inventory_store_item"))
 
+    # stock_snapshots* 索引在降级时可直接 IF EXISTS 删除（即便列缺失也不报错）
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_stock_snapshots_batch_id"))
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_stock_snapshots_item_id"))
     op.execute(sa.text("DROP INDEX IF EXISTS public.ix_stock_snapshots_location_id"))
