@@ -23,7 +23,10 @@ def upgrade() -> None:
     目标形态：
       CONSTRAINT uq_ledger_reason_ref_refline_stock
       UNIQUE (reason, ref, ref_line, stock_id) DEFERRABLE INITIALLY DEFERRED
-    幂等：存在则先删；无则建；重复执行不报错。
+    幂等策略：
+      1) 若存在同名约束，先删
+      2) 若存在同名索引，先删（历史可能先建了 index）
+      3) 不存在时再添加 DEFERRABLE UQ
     """
     conn = op.get_bind()
     conn.execute(
@@ -31,7 +34,7 @@ def upgrade() -> None:
             f"""
             DO $$
             BEGIN
-              -- 如果已存在同名唯一约束，先删除
+              -- 1) 先删同名唯一约束（如果存在）
               IF EXISTS (
                 SELECT 1
                   FROM pg_constraint c
@@ -40,10 +43,21 @@ def upgrade() -> None:
                    AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
-                ALTER TABLE {TABLE} DROP CONSTRAINT {UQ};
+                EXECUTE 'ALTER TABLE {TABLE} DROP CONSTRAINT {UQ}';
               END IF;
 
-              -- 若当前不存在同名唯一约束，则以 DEFERRABLE 方式创建
+              -- 2) 再删同名索引（如果存在）
+              --    注意：唯一约束会创建同名索引；若历史只建了索引也会占用名字
+              IF EXISTS (
+                SELECT 1
+                  FROM pg_class
+                 WHERE relname = '{UQ}'
+                   AND relkind = 'i'  -- index
+              ) THEN
+                EXECUTE format('DROP INDEX %I', '{UQ}');
+              END IF;
+
+              -- 3) 若当前仍不存在唯一约束，则以 DEFERRABLE 方式创建
               IF NOT EXISTS (
                 SELECT 1
                   FROM pg_constraint c
@@ -52,10 +66,12 @@ def upgrade() -> None:
                    AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
-                ALTER TABLE {TABLE}
-                ADD CONSTRAINT {UQ}
-                UNIQUE (reason, ref, ref_line, stock_id)
-                DEFERRABLE INITIALLY DEFERRED;
+                EXECUTE '
+                  ALTER TABLE {TABLE}
+                  ADD CONSTRAINT {UQ}
+                  UNIQUE (reason, ref, ref_line, stock_id)
+                  DEFERRABLE INITIALLY DEFERRED
+                ';
               END IF;
             END$$;
             """
@@ -65,8 +81,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """
-    回滚：如果存在 DEFERRABLE 版本，则删除；再创建非 DEFERRABLE 的普通唯一约束，
-    以匹配旧版数据库形态。
+    回滚：删掉 DEFERRABLE 唯一约束；然后重建非 DEFERRABLE 的普通唯一约束。
     """
     conn = op.get_bind()
     conn.execute(
@@ -82,7 +97,13 @@ def downgrade() -> None:
                    AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
-                ALTER TABLE {TABLE} DROP CONSTRAINT {UQ};
+                EXECUTE 'ALTER TABLE {TABLE} DROP CONSTRAINT {UQ}';
+              END IF;
+              -- 若历史只留下了同名索引，顺手清理
+              IF EXISTS (
+                SELECT 1 FROM pg_class WHERE relname = '{UQ}' AND relkind = 'i'
+              ) THEN
+                EXECUTE format('DROP INDEX %I', '{UQ}');
               END IF;
             END$$;
             """
