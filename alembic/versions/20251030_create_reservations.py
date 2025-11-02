@@ -24,18 +24,6 @@ def _insp():
 def _has_table(name: str) -> bool:
     return _insp().has_table(name)
 
-def _has_index(table: str, name: str) -> bool:
-    try:
-        return any(ix["name"] == name for ix in _insp().get_indexes(table))
-    except Exception:
-        return False
-
-def _has_fk(table: str, name: str) -> bool:
-    try:
-        return any(fk["name"] == name for fk in _insp().get_foreign_keys(table))
-    except Exception:
-        return False
-
 def _has_column(table: str, column: str) -> bool:
     try:
         return any(c["name"] == column for c in _insp().get_columns(table))
@@ -72,72 +60,82 @@ def upgrade() -> None:
                 sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
             )
 
-    # 3) 仅对存在的列创建索引（幂等）
-    if _has_column("reservations", "order_id") and not _has_index("reservations", "ix_reservations_order_id"):
-        op.create_index("ix_reservations_order_id", "reservations", ["order_id"], unique=False)
+    # 3) 仅对“确实已存在”的列创建索引 —— 使用 DO $$ + information_schema 判定，避免反射缓存
+    conn = op.get_bind()
 
-    if _has_column("reservations", "item_id") and not _has_index("reservations", "ix_reservations_item_id"):
-        op.create_index("ix_reservations_item_id", "reservations", ["item_id"], unique=False)
+    # order_id
+    conn.execute(sa.text("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='reservations' AND column_name='order_id'
+      ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_order_id ON public.reservations (order_id)';
+      END IF;
+    END$$;"""))
 
-    if _has_column("reservations", "batch_id") and not _has_index("reservations", "ix_reservations_batch_id"):
-        op.create_index("ix_reservations_batch_id", "reservations", ["batch_id"], unique=False)
+    # item_id
+    conn.execute(sa.text("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='reservations' AND column_name='item_id'
+      ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_item_id ON public.reservations (item_id)';
+      END IF;
+    END$$;"""))
 
-    # 历史兼容：如曾创建过组合索引（item_id,batch_id），确保存在；否则跳过
-    if (
-        _has_column("reservations", "item_id")
-        and _has_column("reservations", "batch_id")
-        and not _has_index("reservations", "ix_reservations_item_batch")
-    ):
-        op.create_index("ix_reservations_item_batch", "reservations", ["item_id", "batch_id"], unique=False)
+    # batch_id
+    conn.execute(sa.text("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='reservations' AND column_name='batch_id'
+      ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_batch_id ON public.reservations (batch_id)';
+      END IF;
+    END$$;"""))
 
-    # 4) 外键（如需要；按需开启）
-    # if _has_column("reservations", "item_id") and not _has_fk("reservations", "fk_reservations_item"):
-    #     op.create_foreign_key("fk_reservations_item", "reservations", "items",
-    #                           ["item_id"], ["id"], onupdate="RESTRICT", ondelete="RESTRICT")
-    # if _has_column("reservations", "batch_id") and not _has_fk("reservations", "fk_reservations_batch"):
-    #     op.create_foreign_key("fk_reservations_batch", "reservations", "batches",
-    #                           ["batch_id"], ["id"], onupdate="RESTRICT", ondelete="SET NULL")
-    # if _has_column("reservations", "order_id") and not _has_fk("reservations", "fk_reservations_order"):
-    #     op.create_foreign_key("fk_reservations_order", "reservations", "orders",
-    #                           ["order_id"], ["id"], onupdate="RESTRICT", ondelete="SET NULL")
+    # 组合索引 (item_id, batch_id) —— 历史兼容
+    conn.execute(sa.text("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='reservations' AND column_name='item_id'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='reservations' AND column_name='batch_id'
+      )
+      THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_item_batch ON public.reservations (item_id, batch_id)';
+      END IF;
+    END$$;"""))
+
+    # 外键（如需要，可按需开启）
+    # …（略）
 
 
 def downgrade() -> None:
-    # 幂等删除索引（存在才删；否则用 IF EXISTS 兜底）
-    if _has_index("reservations", "ix_reservations_item_batch"):
-        op.drop_index("ix_reservations_item_batch", table_name="reservations")
-    else:
-        op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_batch"))
+    conn = op.get_bind()
 
-    if _has_index("reservations", "ix_reservations_batch_id"):
-        op.drop_index("ix_reservations_batch_id", table_name="reservations")
-    else:
-        op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_batch_id"))
+    # 幂等删除索引（用 IF EXISTS 兜底）
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_batch"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_batch_id"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_id"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_order_id"))
 
-    if _has_index("reservations", "ix_reservations_item_id"):
-        op.drop_index("ix_reservations_item_id", table_name="reservations")
-    else:
-        op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_id"))
+    # 外键删除（若升级时有）
+    for fk in ("fk_reservations_item", "fk_reservations_batch", "fk_reservations_order"):
+        try:
+            op.drop_constraint(fk, "reservations", type_="foreignkey")
+        except Exception:
+            pass
 
-    if _has_index("reservations", "ix_reservations_order_id"):
-        op.drop_index("ix_reservations_order_id", table_name="reservations")
-    else:
-        op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_order_id"))
-
-    # 外键删除（若升级时创建过）
-    try:
-        op.drop_constraint("fk_reservations_item", "reservations", type_="foreignkey")
-    except Exception:
-        pass
-    try:
-        op.drop_constraint("fk_reservations_batch", "reservations", type_="foreignkey")
-    except Exception:
-        pass
-    try:
-        op.drop_constraint("fk_reservations_order", "reservations", type_="foreignkey")
-    except Exception:
-        pass
-
-    # 最后删除表（存在才删）
+    # 删表（存在才删）
     if _has_table("reservations"):
         op.drop_table("reservations")
