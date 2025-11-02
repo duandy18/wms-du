@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock_service import StockService
-from app.utils.elog import log_event, log_error
+from app.utils.elog import log_error, log_event
 
 
 class _ProbeRollback(Exception):
@@ -21,7 +21,7 @@ class _ProbeRollback(Exception):
 class ScanCountInput:
     device_id: str
     operator: str
-    barcode: str            # 被盘点库位：LOC:<id>
+    barcode: str  # 被盘点库位：LOC:<id>
     item_id: Optional[int]
     counted_qty: float
     location_id: Optional[int] = None
@@ -51,10 +51,12 @@ def _parse_loc_id(barcode: str) -> Optional[int]:
 async def _resolve_item_id_by_barcode(session: AsyncSession, barcode: str) -> Optional[int]:
     if not barcode:
         return None
-    row = (await session.execute(
-        text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
-        {"bc": barcode},
-    )).first()
+    row = (
+        await session.execute(
+            text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
+            {"bc": barcode},
+        )
+    ).first()
     return int(row[0]) if row else None
 
 
@@ -118,7 +120,9 @@ async def scan_count_commit(session: AsyncSession, payload: Dict[str, Any]) -> D
         result = {"status": "ok", "reconciled": True, "diff": out.get("diff")}
         await session.flush()
         await session.commit()
-        await log_event("scan_count_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+        await log_event(
+            "scan_count_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+        )
     else:
         # 探活：试算差额，不落账（保存点回滚）
         try:
@@ -135,7 +139,9 @@ async def scan_count_commit(session: AsyncSession, payload: Dict[str, Any]) -> D
                 result = {"status": "probe_ok", "reconciled": False, "diff": out.get("diff")}
                 raise _ProbeRollback()
         except _ProbeRollback:
-            await log_event("scan_count_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+            await log_event(
+                "scan_count_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+            )
 
     return {
         "source": "scan_count_commit",

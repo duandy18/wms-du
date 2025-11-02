@@ -124,10 +124,14 @@ async def export_ledger(payload: LedgerQuery, session: AsyncSession = Depends(ge
 
     buf = StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["id", "stock_id", "batch_id", "delta", "reason", "ref", "created_at", "after_qty"])
+    writer.writerow(
+        ["id", "stock_id", "batch_id", "delta", "reason", "ref", "created_at", "after_qty"]
+    )
     for r in rows:
         ts = r.created_at.isoformat() if isinstance(r.created_at, datetime) else str(r.created_at)
-        writer.writerow([r.id, r.stock_id, r.batch_id, r.delta, r.reason, r.ref or "", ts, r.after_qty])
+        writer.writerow(
+            [r.id, r.stock_id, r.batch_id, r.delta, r.reason, r.ref or "", ts, r.after_qty]
+        )
 
     buf.seek(0)
     filename = f"stock_ledger_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"

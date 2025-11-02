@@ -1,15 +1,20 @@
 # app/api/routers/stock_maintenance.py
 from __future__ import annotations
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.session import get_session
 from app.schemas.stock import TransferExpiredIn, TransferExpiredMove, TransferExpiredOut
 from app.services.stock_service import StockService
 
 router = APIRouter(prefix="/stock/maintenance", tags=["stock"])
 
+
 @router.post("/expired/transfer", response_model=TransferExpiredOut)
-async def transfer_expired(body: TransferExpiredIn, session: AsyncSession = Depends(get_session)) -> TransferExpiredOut:
+async def transfer_expired(
+    body: TransferExpiredIn, session: AsyncSession = Depends(get_session)
+) -> TransferExpiredOut:
     svc = StockService()
     result = await svc.auto_transfer_expired(
         session=session,

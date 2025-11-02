@@ -1,8 +1,11 @@
 # app/api/routers/snapshot.py
 from __future__ import annotations
+
 from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.session import get_session
 from app.schemas.snapshot import SnapshotRunResult, StockSnapshotRead, TrendPoint
 from app.services.snapshot_service import SnapshotService
@@ -61,7 +64,9 @@ async def inventory_snapshot(
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
-    return await SnapshotService.query_inventory_snapshot_paged(session=session, q=q, offset=offset, limit=limit)
+    return await SnapshotService.query_inventory_snapshot_paged(
+        session=session, q=q, offset=offset, limit=limit
+    )
 
 
 @router.get("/trends", response_model=list[TrendPoint])

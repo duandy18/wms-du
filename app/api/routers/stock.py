@@ -44,6 +44,11 @@ def stock_query(
         qty_i = int(qty or 0)
         on_hand += qty_i
         out_rows.append(
-            {"item_id": int(item_id_val), "location_id": int(loc_id_val), "qty": qty_i, "available": qty_i}
+            {
+                "item_id": int(item_id_val),
+                "location_id": int(loc_id_val),
+                "qty": qty_i,
+                "available": qty_i,
+            }
         )
     return {"rows": out_rows, "summary": [{"item_id": item_id or 0, "on_hand": on_hand}]}

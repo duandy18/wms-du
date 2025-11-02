@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -30,11 +31,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # 全局异常兜底（未捕获异常 → 500）
 @app.exception_handler(Exception)
 async def _unhandled_exc(_req: Request, exc: Exception):
     logger.exception("UNHANDLED EXC: %s", exc)
     return JSONResponse(status_code=500, content={"detail": "INTERNAL_SERVER_ERROR"})
+
 
 # 只挂总路由（api_router 会统一 include app/api/routers/* 下的所有 router）
 app.include_router(api_router)
@@ -42,6 +45,7 @@ app.include_router(api_router)
 # 注册业务异常处理器（若存在）
 if BizError and biz_error_handler:
     app.add_exception_handler(BizError, biz_error_handler)
+
 
 # 探活
 @app.get("/ping")

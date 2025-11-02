@@ -8,7 +8,9 @@ from app.services.order_service import OrderService
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
-@router.post("", response_model=OrderOut, status_code=status.HTTP_201_CREATED, summary="创建一个新订单")
+@router.post(
+    "", response_model=OrderOut, status_code=status.HTTP_201_CREATED, summary="创建一个新订单"
+)
 def create_order(
     order_in: OrderCreate,
     order_service: OrderService = Depends(get_order_service),

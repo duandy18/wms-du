@@ -1,8 +1,9 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, Optional
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # 优先尝试注入真实库存服务；单测/无依赖时自动回退到占位服务
 try:
@@ -76,7 +77,9 @@ class PickService:
         device_id: Optional[str] = None,
         operator: Optional[str] = None,
     ) -> Dict[str, Any]:
-        line_id = await self._get_task_line_by_context(session, task_id, item_id, location_id, device_id)
+        line_id = await self._get_task_line_by_context(
+            session, task_id, item_id, location_id, device_id
+        )
         return await self.record_pick(
             session=session,
             task_line_id=line_id,
@@ -139,7 +142,9 @@ class PickService:
 
         # 3) 累加 picked_qty（触发行/头状态触发器）
         await session.execute(
-            text("UPDATE pick_task_lines SET picked_qty = picked_qty + :q, updated_at=now() WHERE id=:id"),
+            text(
+                "UPDATE pick_task_lines SET picked_qty = picked_qty + :q, updated_at=now() WHERE id=:id"
+            ),
             {"q": qty, "id": task_line_id},
         )
 

@@ -66,6 +66,7 @@ def _to_ref_line_int(ref_line: Any) -> int:
     if isinstance(ref_line, int):
         return ref_line
     import zlib
+
     return int(zlib.crc32(str(ref_line).encode("utf-8")) & 0x7FFFFFFF)
 
 

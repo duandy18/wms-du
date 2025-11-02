@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock_service import StockService
-from app.utils.elog import log_event, log_error
+from app.utils.elog import log_error, log_event
 
 
 class _ProbeRollback(Exception):
@@ -21,7 +21,7 @@ class _ProbeRollback(Exception):
 class ScanPickInput:
     device_id: str
     operator: str
-    barcode: str              # 取货位条码：LOC:<id>
+    barcode: str  # 取货位条码：LOC:<id>
     qty: int
     item_id: Optional[int] = None
     location_id: Optional[int] = None
@@ -51,10 +51,12 @@ def _parse_loc_id(barcode: str) -> Optional[int]:
 async def _resolve_item_id_by_barcode(session: AsyncSession, barcode: str) -> Optional[int]:
     if not barcode:
         return None
-    row = (await session.execute(
-        text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
-        {"bc": barcode},
-    )).first()
+    row = (
+        await session.execute(
+            text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
+            {"bc": barcode},
+        )
+    ).first()
     return int(row[0]) if row else None
 
 
@@ -120,7 +122,9 @@ async def scan_pick_commit(session: AsyncSession, payload: Dict[str, Any]) -> Di
         result = {"status": "ok", "picked": int(data.qty)}
         await session.flush()
         await session.commit()
-        await log_event("scan_pick_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+        await log_event(
+            "scan_pick_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+        )
     else:
         try:
             async with session.begin_nested():
@@ -137,7 +141,9 @@ async def scan_pick_commit(session: AsyncSession, payload: Dict[str, Any]) -> Di
                 raise _ProbeRollback()
         except _ProbeRollback:
             result = {"status": "probe_ok", "picked": int(data.qty)}
-            await log_event("scan_pick_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+            await log_event(
+                "scan_pick_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+            )
 
     return {
         "source": "scan_pick_commit",

@@ -8,12 +8,14 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.services.stock_service import StockService
-from app.utils.elog import log_event, log_error  # 独立连接写 event_log / event_error_log
+from app.utils.elog import log_error, log_event  # 独立连接写 event_log / event_error_log
 
 
 class _ProbeRollback(Exception):
     """内部异常：用于在保存点中回滚真动作（探活模式）。"""
+
     pass
 
 
@@ -60,10 +62,12 @@ async def _resolve_item_id_by_barcode(session: AsyncSession, barcode: str) -> Op
     """从 item_barcodes 解析条码到 item_id；找不到返回 None。"""
     if not barcode:
         return None
-    row = (await session.execute(
-        text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
-        {"bc": barcode},
-    )).first()
+    row = (
+        await session.execute(
+            text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
+            {"bc": barcode},
+        )
+    ).first()
     return int(row[0]) if row else None
 
 
@@ -132,7 +136,7 @@ async def scan_receive_commit(session: AsyncSession, payload: Dict[str, Any]) ->
             session=session,
             item_id=data.item_id,
             location_id=data.location_id,
-            delta=data.qty,         # 门面使用 delta
+            delta=data.qty,  # 门面使用 delta
             reason="INBOUND",
             ref=ref,
             batch_code=data.batch_code,
@@ -142,12 +146,16 @@ async def scan_receive_commit(session: AsyncSession, payload: Dict[str, Any]) ->
         result = {
             "received": int(data.qty),
             "status": "ok",
-            "idempotent": bool(adjust_res.get("idempotent", False)) if isinstance(adjust_res, dict) else False,
+            "idempotent": (
+                bool(adjust_res.get("idempotent", False)) if isinstance(adjust_res, dict) else False
+            ),
         }
         # 提交，确保台账/库存落库
         await session.flush()
         await session.commit()
-        await log_event("scan_receive_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+        await log_event(
+            "scan_receive_commit", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+        )
     else:
         try:
             async with session.begin_nested():  # SAVEPOINT
@@ -155,7 +163,7 @@ async def scan_receive_commit(session: AsyncSession, payload: Dict[str, Any]) ->
                     session=session,
                     item_id=data.item_id,
                     location_id=data.location_id,
-                    delta=data.qty,     # 门面使用 delta
+                    delta=data.qty,  # 门面使用 delta
                     reason="INBOUND",
                     ref=ref,
                     batch_code=data.batch_code,
@@ -164,7 +172,9 @@ async def scan_receive_commit(session: AsyncSession, payload: Dict[str, Any]) ->
                 raise _ProbeRollback()
         except _ProbeRollback:
             result = {"received": int(data.qty), "status": "probe_ok", "idempotent": False}
-            await log_event("scan_receive_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__})
+            await log_event(
+                "scan_receive_probe", ref, {"in": payload, "out": result, "ctx": data.__dict__}
+            )
 
     return {
         "source": "scan_receive_commit",

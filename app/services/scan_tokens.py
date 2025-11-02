@@ -1,12 +1,14 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 # 允许两种来源：
 # 1) 前端直接传 {"barcode": "TASK:123 LOC:900 ITEM:3001 QTY:2"} 或只传单一字符串
 # 2) 前端已拆好的 tokens: {"task": "TASK:123", "loc": "LOC:900", "item": "ITEM:3001", "qty": "QTY:2"}
 
 PREFIXES = ("TASK:", "LOC:", "ITEM:", "QTY:")
+
 
 @dataclass
 class ScanContext:
@@ -20,6 +22,7 @@ class ScanContext:
     # 透传 extras（例如生产日/保质期天数，供 receive 使用）
     extras: Dict[str, Any] = None
 
+
 def _split_barcode(s: str) -> Iterable[str]:
     # 允许多段以空格/逗号/分号/竖线分隔
     seps = [" ", ",", ";", "|"]
@@ -27,11 +30,13 @@ def _split_barcode(s: str) -> Iterable[str]:
         s = s.replace(sep, " ")
     return [tok for tok in s.split() if tok]
 
+
 def _parse_token(tok: str) -> tuple[str, str] | None:
     for p in PREFIXES:
         if tok.startswith(p):
-            return p[:-1].lower(), tok[len(p):]
+            return p[:-1].lower(), tok[len(p) :]
     return None
+
 
 def _coerce_int(val: Optional[str]) -> Optional[int]:
     if val is None or val == "":
@@ -40,6 +45,7 @@ def _coerce_int(val: Optional[str]) -> Optional[int]:
         return int(val)
     except ValueError:
         return None
+
 
 def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     """

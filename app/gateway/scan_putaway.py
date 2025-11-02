@@ -4,17 +4,18 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock_service import StockService
-from app.utils.elog import log_event, log_error
+from app.utils.elog import log_error, log_event
 
 
 class _ProbeRollback(Exception):
     """用于保存点回滚（探活）。"""
+
     pass
 
 
@@ -22,7 +23,7 @@ class _ProbeRollback(Exception):
 class ScanPutawayInput:
     device_id: str
     operator: str
-    barcode: str            # 目标库位条码：LOC:<id>
+    barcode: str  # 目标库位条码：LOC:<id>
     item_id: int
     qty: int
     from_location_id: Optional[int] = None
@@ -53,14 +54,18 @@ def _parse_loc_id(barcode: str) -> Optional[int]:
 async def _resolve_item_id_by_barcode(session: AsyncSession, barcode: str) -> Optional[int]:
     if not barcode:
         return None
-    row = (await session.execute(
-        text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
-        {"bc": barcode},
-    )).first()
+    row = (
+        await session.execute(
+            text("SELECT item_id FROM item_barcodes WHERE barcode=:bc AND active IS TRUE"),
+            {"bc": barcode},
+        )
+    ).first()
     return int(row[0]) if row else None
 
 
-async def _select_source_batches(session: AsyncSession, item_id: int, wh: int, src_loc: int) -> List[Tuple[str, int]]:
+async def _select_source_batches(
+    session: AsyncSession, item_id: int, wh: int, src_loc: int
+) -> List[Tuple[str, int]]:
     """
     选出源位可用批次：[(batch_code, qty), ...]
     优先按有到期日的 FEFO，其次按批次代码排序。
@@ -119,7 +124,9 @@ async def scan_putaway_commit(session: AsyncSession, payload: Dict[str, Any]) ->
     if data.to_location_id is None:
         dst = _parse_loc_id(data.barcode)
         if dst is None:
-            await log_error("scan_putaway_error", "invalid_target_location_barcode", {"in": payload})
+            await log_error(
+                "scan_putaway_error", "invalid_target_location_barcode", {"in": payload}
+            )
             raise ValueError("invalid_target_location_barcode")
         data.to_location_id = dst
 
@@ -184,7 +191,7 @@ async def scan_putaway_commit(session: AsyncSession, payload: Dict[str, Any]) ->
             await svc.adjust(
                 session=session,
                 item_id=data.item_id,
-                location_id=data.to_location_id,    # 目标
+                location_id=data.to_location_id,  # 目标
                 delta=+q,
                 reason="PUTAWAY",
                 ref=f"{ref}:DST",
@@ -198,7 +205,9 @@ async def scan_putaway_commit(session: AsyncSession, payload: Dict[str, Any]) ->
         # 提交，确保双腿台账与库存落库
         await session.flush()
         await session.commit()
-        await log_event("scan_putaway_commit", ref_base, {"in": payload, "moves": moves, "ctx": data.__dict__})
+        await log_event(
+            "scan_putaway_commit", ref_base, {"in": payload, "moves": moves, "ctx": data.__dict__}
+        )
     else:
         try:
             async with session.begin_nested():
@@ -206,7 +215,11 @@ async def scan_putaway_commit(session: AsyncSession, payload: Dict[str, Any]) ->
                 raise _ProbeRollback()
         except _ProbeRollback:
             status = "probe_ok"
-            await log_event("scan_putaway_probe", ref_base, {"in": payload, "moves": moves, "ctx": data.__dict__})
+            await log_event(
+                "scan_putaway_probe",
+                ref_base,
+                {"in": payload, "moves": moves, "ctx": data.__dict__},
+            )
 
     return {
         "source": "scan_putaway_commit",

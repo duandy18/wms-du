@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.deps import get_db
 from app.schemas.inventory import InventoryMovementCreate, InventoryMovementOut, StockOnHandOut
-from app.services.inventory_service import InventoryService
+from app.services.inventory_ops import InventoryOpsService as InventoryService
+
+
 from app.services.user_service import AuthorizationError, UserService
 
 router = APIRouter()
@@ -19,7 +21,9 @@ def get_user_service(db: Session = Depends(get_db)):
     return UserService(db)
 
 
-@router.post("/inventory/movements", response_model=InventoryMovementOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/inventory/movements", response_model=InventoryMovementOut, status_code=status.HTTP_201_CREATED
+)
 def create_inventory_movement(
     movement_in: InventoryMovementCreate,
     inv_service: InventoryService = Depends(get_inventory_service),
