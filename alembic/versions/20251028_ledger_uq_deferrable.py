@@ -19,46 +19,57 @@ UQ = "uq_ledger_reason_ref_refline_stock"
 
 
 def upgrade() -> None:
-    # 1) 若已存在同名约束，先删（避免重复），再以 DEFERRABLE 方式重建
-    op.execute(
+    """
+    目标形态：
+      CONSTRAINT uq_ledger_reason_ref_refline_stock
+      UNIQUE (reason, ref, ref_line, stock_id) DEFERRABLE INITIALLY DEFERRED
+    幂等：存在则先删；无则建；重复执行不报错。
+    """
+    conn = op.get_bind()
+    conn.execute(
         sa.text(
             f"""
             DO $$
             BEGIN
+              -- 如果已存在同名唯一约束，先删除
               IF EXISTS (
                 SELECT 1
                   FROM pg_constraint c
                   JOIN pg_class t ON t.oid = c.conrelid
-                 WHERE t.relname = :tbl
-                   AND c.conname = :cname
+                 WHERE t.relname = '{TABLE}'
+                   AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
                 ALTER TABLE {TABLE} DROP CONSTRAINT {UQ};
               END IF;
 
-              -- 以 DEFERRABLE INITIALLY DEFERRED 方式创建（若此前没有或刚删除）
+              -- 若当前不存在同名唯一约束，则以 DEFERRABLE 方式创建
               IF NOT EXISTS (
                 SELECT 1
                   FROM pg_constraint c
                   JOIN pg_class t ON t.oid = c.conrelid
-                 WHERE t.relname = :tbl
-                   AND c.conname = :cname
+                 WHERE t.relname = '{TABLE}'
+                   AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
                 ALTER TABLE {TABLE}
                 ADD CONSTRAINT {UQ}
-                UNIQUE (reason, ref, ref_line, stock_id) DEFERRABLE INITIALLY DEFERRED;
+                UNIQUE (reason, ref, ref_line, stock_id)
+                DEFERRABLE INITIALLY DEFERRED;
               END IF;
             END$$;
             """
-        ),
-        {"tbl": TABLE, "cname": UQ},
+        )
     )
 
 
 def downgrade() -> None:
-    # 回滚：若存在则删除，再以非 DEFERRABLE 的普通唯一约束重建
-    op.execute(
+    """
+    回滚：如果存在 DEFERRABLE 版本，则删除；再创建非 DEFERRABLE 的普通唯一约束，
+    以匹配旧版数据库形态。
+    """
+    conn = op.get_bind()
+    conn.execute(
         sa.text(
             f"""
             DO $$
@@ -67,17 +78,16 @@ def downgrade() -> None:
                 SELECT 1
                   FROM pg_constraint c
                   JOIN pg_class t ON t.oid = c.conrelid
-                 WHERE t.relname = :tbl
-                   AND c.conname = :cname
+                 WHERE t.relname = '{TABLE}'
+                   AND c.conname = '{UQ}'
                    AND c.contype = 'u'
               ) THEN
                 ALTER TABLE {TABLE} DROP CONSTRAINT {UQ};
               END IF;
             END$$;
             """
-        ),
-        {"tbl": TABLE, "cname": UQ},
+        )
     )
 
-    # 非 deferrable 的普通唯一（保持与历史降级一致）
+    # 旧形态（非 deferrable）
     op.create_unique_constraint(UQ, TABLE, ["reason", "ref", "ref_line", "stock_id"])
