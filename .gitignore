@@ -1,37 +1,85 @@
-.venv/
+# ---------------------------
+# Core Python / FastAPI ignores
+# ---------------------------
+
 __pycache__/
-*.pyc
-.pytest_cache/
-.coverage*
-htmlcov/
-pgdata/
-data/postgres/
-.env
-.env.*
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
 
-# Coverage & cache
-.coverage
-tests/.coverage
-htmlcov/
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
 
-# Local/Temp DB
+# Bytecode caches
+**/__pycache__/
+**/*.py[cod]
+
+# SQLite / Postgres local data
 *.db
+*.sqlite3
 *.sqlite
-tmp_upgrade.db
-.schema_snapshot_tmp/
-# --- wms-fe (vite+react) ---
+*.log
+
+# Alembic migration cache
+alembic/__pycache__/
+alembic/versions/__pycache__/
+
+# Pytest / Coverage / MyPy
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.cache/
+
+# VSCode / PyCharm / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Frontend artifacts (for wms-fe or local dashboards)
 node_modules/
 dist/
-.vite/
+build/
+*.lock
 *.log
-.env*
-coverage/
-*.local
-pnpm-lock.yaml
-# VSCode workspace
-.vscode/
 
-# local downloads
-micro-linux-amd64.tar.gz
-var/reconcile/*.csv
-*.patch
+# Mac / Windows OS junk
+.DS_Store
+Thumbs.db
+
+# ---------------------------
+# Project specific ignores
+# ---------------------------
+
+# Local docker / compose logs
+docker-data/
+*.pid
+
+# Exported Canvas or documentation builds
+home/Downloads/wms-du-canvas/
+WMS-DU-*.md
+*.pdf
+*.docx
+*.xlsx
+*.csv
+*.tmp
+*.bak
+*.bak.*
+
+# Test outputs and temporary results
+tests/output/
+logs/
+run.log
+.env
+ops/compose/.env
+
+# local db
+*.db
+app/db/db.sqlite
+scratch_probe.py

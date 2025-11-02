@@ -1,0 +1,14 @@
+# systemd --user 单元：每日对账生成 CSV（使用你现有脚本）
+[Unit]
+Description=WMS Reconcile L2 (daily CSV)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment="TZ=Asia/Shanghai"
+Environment="PYTHONPATH=%h/wms-du"
+Environment="DATABASE_URL=postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
+WorkingDirectory=%h/wms-du
+ExecStart=%h/wms-du/.venv/bin/python scripts/reconcile_pdd_daily.py --store-id 1
+StandardOutput=append:%h/wms-du/var/reconcile/run.log
+StandardError=append:%h/wms-du/var/reconcile/run.log

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily WMS Reconcile CSV generator (23:30)
+
+[Timer]
+OnCalendar=*-*-* 23:30:00
+Persistent=true
+Unit=wms-reconcile.service
+
+[Install]
+WantedBy=timers.target

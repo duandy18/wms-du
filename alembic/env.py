@@ -2,89 +2,107 @@
 from __future__ import annotations
 
 import os
+import re
 from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config, pool
+from typing import Any
 
 from alembic import context
+from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 
-# 读取 alembic.ini 配置
+# ---- Alembic Config & logging ------------------------------------------------
 config = context.config
-
-# 日志配置（可选）
-if config.config_file_name is not None:
+if config and config.config_file_name:
     fileConfig(config.config_file_name)
 
-# ---- 关键：引入项目 Base，并把 metadata 交给 Alembic ----
-# 只需 import Base；各模型会由 app.db.base 内部集中导入注册
-from app.db.base import Base  # noqa: E402
+# ---- Load project metadata (scan app.models) ---------------------------------
+# 维持你原有的做法：初始化并收集 Base.metadata
+from app.db.base import Base, init_models  # type: ignore
 
+init_models()
 target_metadata = Base.metadata
 
 
-def _resolve_sqlalchemy_url() -> str:
+# ---- Helpers -----------------------------------------------------------------
+_ASYNCPG_RE = re.compile(r"\+asyncpg\b", flags=re.IGNORECASE)
+
+
+def _sync_url(url: str | None) -> str:
     """
-    统一解析数据库 URL：
-    1) 优先环境变量 DATABASE_URL
-    2) 其次 alembic.ini 中的 sqlalchemy.url
-    3) 都没有则给出清晰报错
+    统一把异步驱动切换为同步驱动：
+      postgresql+asyncpg://...  → postgresql+psycopg://...
+    迁移阶段必须走同步连接，避免 MissingGreenlet。
     """
-    env_url = (os.getenv("DATABASE_URL") or "").strip()
-    if env_url:
-        return env_url
-
-    ini_url = (config.get_main_option("sqlalchemy.url") or "").strip()
-    if ini_url:
-        return ini_url
-
-    raise RuntimeError(
-        "Alembic: missing DB URL.\n"
-        "请设置环境变量 DATABASE_URL（例如：postgresql+psycopg://wms:wms@127.0.0.1:5433/wms），"  # pragma: allowlist secret
-        "或在 alembic.ini 的 [alembic] 区块中配置 sqlalchemy.url。"
-    )
+    if not url:
+        return ""
+    # 优先把 +asyncpg 标记换掉
+    if _ASYNCPG_RE.search(url):
+        url = _ASYNCPG_RE.sub("+psycopg", url)
+    return url
 
 
+def _resolve_url() -> str:
+    """
+    解析数据库连接串优先级：
+      1) 环境变量 DATABASE_URL
+      2) alembic.ini -> sqlalchemy.url
+    并做同步化处理。
+    """
+    url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    if not url:
+        raise RuntimeError("No DATABASE_URL or sqlalchemy.url configured for Alembic")
+    return _sync_url(url)
+
+
+def _include_object(
+    obj: Any, name: str, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """
+    Autogenerate 过滤策略：
+      * 若对象仅存在于 DB（reflected=True）且模型元数据中不存在（compare_to is None），
+        则跳过它，避免生成 DROP 语句。
+    """
+    if reflected and compare_to is None and type_ in {
+        "table",
+        "index",
+        "unique_constraint",
+        "foreign_key_constraint",
+    }:
+        return False
+    return True
+
+
+# ---- Offline / Online runners ------------------------------------------------
 def run_migrations_offline() -> None:
-    """Offline 模式：不连数据库，直接渲染 SQL。"""
-    url = _resolve_sqlalchemy_url()
+    """Run migrations in 'offline' mode."""
+    url = _resolve_url()
     context.configure(
-        url=sqlalchemy_url,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,  # 对比列类型差异（如 INTEGER → BIGINT / identity 等）
-        compare_server_default=True,  # 对比 server_default 差异（如 now() / DEFAULT 0 等）
+        compare_type=True,
+        compare_server_default=True,
+        include_object=_include_object,
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    """Online 模式：连接数据库并执行迁移。"""
-    url = _resolve_sqlalchemy_url()
-
-    # 确保传给 engine_from_config 的 dict 内含 'sqlalchemy.url'
-    section = config.get_section(config.config_ini_section) or {}
-    section = dict(section)  # 复制，避免影响全局 config
-    section["sqlalchemy.url"] = url
-
-    connectable = engine_from_config(
-        configuration=section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-        future=True,
-    )
+    """Run migrations in 'online' mode (同步引擎)."""
+    url = _resolve_url()
+    connectable = create_engine(url, poolclass=NullPool, future=True)
 
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            compare_server_default=True,
-            render_as_batch=False,  # 针对 SQLite 可设 True；PG 下保持 False 更安全
+            compare_server_default=True,  # 修正为标准参数名
+            render_as_batch=False,        # SQLite 需要时再改 True
+            include_object=_include_object,
         )
-
         with context.begin_transaction():
             context.run_migrations()
 

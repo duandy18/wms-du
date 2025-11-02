@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    # 仅用于类型提示，避免循环导入
+    from app.models.stock import Stock
+    from app.models.item import Item
 
 
 class StockLedger(Base):
@@ -14,6 +20,7 @@ class StockLedger(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
+    # === 主轴：stock_id（与幂等键配合） ===
     stock_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("stocks.id", onupdate="CASCADE", ondelete="RESTRICT"),
@@ -21,23 +28,31 @@ class StockLedger(Base):
         index=True,
     )
 
-    # 与数据库保持一致的类型/长度
-    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    # === 强契约：直接落库 item_id，便于聚合与查询 ===
+    item_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("items.id", onupdate="RESTRICT", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
 
-    # 建议数量使用 Numeric(18,6)，与你当前 DB 一致
+    # === 业务语义字段 ===
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
     after_qty: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     delta: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    # 具时区时间；存库建议使用 UTC（展示层再转 Asia/Shanghai）
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    # ⚠️ 关键修复：ref 非空；ref_line 为 Integer（之前是 String 导致 PG 类型不匹配）
+    # 引用信息
     ref: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     ref_line: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
-    # 仅与 Stock 建关系（当前台账不含 batch_id 外键）
-    stock: Mapped[Stock] = relationship("Stock", back_populates="ledgers", lazy="selectin")
+    # 关系（轻量）
+    stock: Mapped["Stock"] = relationship("Stock", lazy="selectin")
+    item: Mapped["Item"] = relationship("Item", lazy="selectin")
 
     __table_args__ = (
-        # 与迁移保持一致的唯一索引： (reason, ref, ref_line, stock_id)
+        # 幂等唯一约束：(reason, ref, ref_line, stock_id)
         Index(
             "uq_ledger_reason_ref_refline_stock",
             "reason",
@@ -46,6 +61,10 @@ class StockLedger(Base):
             "stock_id",
             unique=True,
         ),
-        Index("ix_stock_ledger_stock_id", "stock_id"),
+        # 常见检索：时间线
         Index("ix_stock_ledger_occurred_at", "occurred_at"),
+        # 常见检索：按商品+时间
+        Index("ix_stock_ledger_item_time", "item_id", "occurred_at"),
+        # 快速定位 stock 维度
+        Index("ix_stock_ledger_stock_id", "stock_id"),
     )

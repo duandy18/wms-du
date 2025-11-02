@@ -1,30 +1,29 @@
-# app/schemas/users.py
+# app/schemas/user.py
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, ConfigDict, constr
 
 
-from pydantic import BaseModel, ConfigDict, EmailStr
-
-# 前向引用，以处理循环依赖
-from .role import RoleOut
-
-
-class UserBase(BaseModel):
-    full_name: str | None = None
-    email: EmailStr
-    is_active: bool | None = True
-    is_superuser: bool | None = False
+# -------- 输入模型 --------
+class UserCreate(BaseModel):
+    """创建用户入参"""
+    username: constr(strip_whitespace=True, min_length=3, max_length=64)
+    password: constr(min_length=6, max_length=128)
+    role_id: int = Field(..., ge=1)
 
 
-class UserCreate(UserBase):
-    email: EmailStr
-    password: str
+class UserLogin(BaseModel):
+    """登录入参"""
+    username: constr(strip_whitespace=True, min_length=3, max_length=64)
+    password: constr(min_length=1)
 
 
-class UserUpdate(UserBase):
-    password: str | None = None
+# -------- 输出模型 --------
+class UserOut(BaseModel):
+    """对外返回的用户模型"""
+    id: int
+    username: str
+    role_id: int
 
-
-class UserOut(UserBase):
-    id: str
-    roles: list[RoleOut] = []
-
+    # Pydantic v2 用 ConfigDict；等价于 v1 的 orm_mode = True
     model_config = ConfigDict(from_attributes=True)

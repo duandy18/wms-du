@@ -1,3 +1,7 @@
 # app/api/__init__.py
-# 留空，或者只放一些常量/版本号。不要 import endpoints/services。
-__all__ = []
+"""
+让旧代码可以 `from app.api import api_router`。
+"""
+from __future__ import annotations
+
+from .endpoints import api_router  # re-export
