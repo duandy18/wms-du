@@ -36,8 +36,15 @@ def _has_fk(table: str, name: str) -> bool:
     except Exception:
         return False
 
+def _has_column(table: str, column: str) -> bool:
+    try:
+        return any(c["name"] == column for c in _insp().get_columns(table))
+    except Exception:
+        return False
+
 
 def upgrade() -> None:
+    # 1) 表不存在则创建（标准形态）
     if not _has_table("reservations"):
         op.create_table(
             "reservations",
@@ -48,31 +55,58 @@ def upgrade() -> None:
             sa.Column("qty", sa.Numeric(18, 6), nullable=False),
             sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
         )
+    else:
+        # 2) 表已存在：逐列补齐缺失列（幂等）
+        if not _has_column("reservations", "order_id"):
+            op.add_column("reservations", sa.Column("order_id", sa.BigInteger, nullable=True))
+        if not _has_column("reservations", "item_id"):
+            op.add_column("reservations", sa.Column("item_id", sa.BigInteger, nullable=False))
+        if not _has_column("reservations", "batch_id"):
+            op.add_column("reservations", sa.Column("batch_id", sa.BigInteger, nullable=True))
+        if not _has_column("reservations", "qty"):
+            op.add_column("reservations", sa.Column("qty", sa.Numeric(18, 6), nullable=False, server_default=sa.text("0")))
+            op.alter_column("reservations", "qty", server_default=None)
+        if not _has_column("reservations", "created_at"):
+            op.add_column(
+                "reservations",
+                sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+            )
 
-    # 常用索引（幂等）
-    if not _has_index("reservations", "ix_reservations_order_id"):
+    # 3) 仅对存在的列创建索引（幂等）
+    if _has_column("reservations", "order_id") and not _has_index("reservations", "ix_reservations_order_id"):
         op.create_index("ix_reservations_order_id", "reservations", ["order_id"], unique=False)
-    if not _has_index("reservations", "ix_reservations_item_id"):
+
+    if _has_column("reservations", "item_id") and not _has_index("reservations", "ix_reservations_item_id"):
         op.create_index("ix_reservations_item_id", "reservations", ["item_id"], unique=False)
-    if not _has_index("reservations", "ix_reservations_batch_id"):
+
+    if _has_column("reservations", "batch_id") and not _has_index("reservations", "ix_reservations_batch_id"):
         op.create_index("ix_reservations_batch_id", "reservations", ["batch_id"], unique=False)
 
-    # 历史上可能创建过这个组合索引，保持向前兼容（幂等）
-    if not _has_index("reservations", "ix_reservations_item_batch"):
+    # 历史兼容：如曾创建过组合索引（item_id,batch_id），确保存在；否则跳过
+    if (
+        _has_column("reservations", "item_id")
+        and _has_column("reservations", "batch_id")
+        and not _has_index("reservations", "ix_reservations_item_batch")
+    ):
         op.create_index("ix_reservations_item_batch", "reservations", ["item_id", "batch_id"], unique=False)
 
-    # 外键（如需要，注意先判定存在性）
-    if not _has_fk("reservations", "fk_reservations_item"):
-        op.create_foreign_key("fk_reservations_item", "reservations", "items", ["item_id"], ["id"], onupdate="RESTRICT", ondelete="RESTRICT")
-    # 其它外键按你的需要增加（例如 batch_id -> batches.id / order_id -> orders.id），这里略
+    # 4) 外键（如需要；按需开启）
+    # if _has_column("reservations", "item_id") and not _has_fk("reservations", "fk_reservations_item"):
+    #     op.create_foreign_key("fk_reservations_item", "reservations", "items",
+    #                           ["item_id"], ["id"], onupdate="RESTRICT", ondelete="RESTRICT")
+    # if _has_column("reservations", "batch_id") and not _has_fk("reservations", "fk_reservations_batch"):
+    #     op.create_foreign_key("fk_reservations_batch", "reservations", "batches",
+    #                           ["batch_id"], ["id"], onupdate="RESTRICT", ondelete="SET NULL")
+    # if _has_column("reservations", "order_id") and not _has_fk("reservations", "fk_reservations_order"):
+    #     op.create_foreign_key("fk_reservations_order", "reservations", "orders",
+    #                           ["order_id"], ["id"], onupdate="RESTRICT", ondelete="SET NULL")
 
 
 def downgrade() -> None:
-    # 1) 幂等删除索引（存在才删；若历史命名差异，用 IF EXISTS 兜底）
+    # 幂等删除索引（存在才删；否则用 IF EXISTS 兜底）
     if _has_index("reservations", "ix_reservations_item_batch"):
         op.drop_index("ix_reservations_item_batch", table_name="reservations")
     else:
-        # 某些历史路径索引可能不存在；这里用 IF EXISTS 防止报错
         op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_batch"))
 
     if _has_index("reservations", "ix_reservations_batch_id"):
@@ -90,12 +124,20 @@ def downgrade() -> None:
     else:
         op.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_order_id"))
 
-    # 2) 外键（如升级时创建过，这里按名删除；不存在就跳过）
+    # 外键删除（若升级时创建过）
     try:
         op.drop_constraint("fk_reservations_item", "reservations", type_="foreignkey")
     except Exception:
         pass
+    try:
+        op.drop_constraint("fk_reservations_batch", "reservations", type_="foreignkey")
+    except Exception:
+        pass
+    try:
+        op.drop_constraint("fk_reservations_order", "reservations", type_="foreignkey")
+    except Exception:
+        pass
 
-    # 3) 最后删除表（存在才删）
+    # 最后删除表（存在才删）
     if _has_table("reservations"):
         op.drop_table("reservations")
