@@ -1,3 +1,4 @@
+# app/api/routers/scan.py
 from __future__ import annotations
 
 import json
@@ -132,7 +133,7 @@ async def scan_gateway(
                 "result": {"hint": f"{sc.mode} probe"},
             }
 
-        # -------- commit 真动作 --------
+        # -------- commit 真动作（串行执行） --------
         from app.services.stock_service import StockService
         svc = StockService()
 
@@ -169,7 +170,7 @@ async def scan_gateway(
         else:  # sc.mode == "count"
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
-            # ★ 修正：按 StockService.reconcile_inventory 的签名传参
+            # 严格按 StockService.reconcile_inventory 的签名传参
             result = await svc.reconcile_inventory(
                 session=session,
                 item_id=sc.item_id,
