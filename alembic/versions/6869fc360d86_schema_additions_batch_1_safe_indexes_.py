@@ -58,7 +58,7 @@ def downgrade() -> None:
               WHERE c.conindid = idx.oid
            )
       ) THEN
-        EXECUTE 'DROP INDEX IF EXISTS public.uq_ledger_reason_ref_refline_stock';
+        EXECUTE 'ALTER TABLE stock_ledger DROP CONSTRAINT IF EXISTS uq_ledger_reason_ref_refline_stock';
       END IF;
     END$$;
     """))

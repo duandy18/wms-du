@@ -213,7 +213,7 @@ def downgrade():
           END IF;
         END$$;
     """)
-    op.execute("DROP INDEX IF EXISTS public.uq_batches_item_wh_loc_code")
+    op.execute("ALTER TABLE batches DROP CONSTRAINT IF EXISTS uq_batches_item_wh_loc_code")
 
     # 解除外键
     op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
