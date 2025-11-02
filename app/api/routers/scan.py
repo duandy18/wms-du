@@ -156,13 +156,13 @@ async def scan_gateway(
                 raise HTTPException(status_code=400, detail="putaway requires from_location_id")
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
+            # 注意：transfer 当前签名不接受 reason 参数
             result = await svc.transfer(
                 session=session,
                 item_id=sc.item_id,
                 from_location_id=int(from_loc),
                 to_location_id=loc_id,
                 qty=int(sc.qty),
-                reason="PUTAWAY",
                 ref=scan_ref,
             )
             source = "scan_putaway_commit"
@@ -170,12 +170,12 @@ async def scan_gateway(
         else:  # sc.mode == "count"
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
-            # 严格按 StockService.reconcile_inventory 的签名传参
+            # 注意：reconcile_inventory 当前签名使用 qty，而不是 counted_qty
             result = await svc.reconcile_inventory(
                 session=session,
                 item_id=sc.item_id,
                 location_id=loc_id,
-                counted_qty=int(sc.qty),
+                qty=int(sc.qty),
                 apply=True,
                 ref=scan_ref,
             )
