@@ -13,7 +13,7 @@ from app.api.deps import get_session
 router = APIRouter()
 
 
-# --------- 扫码上下文解析 ---------
+# ---------- 扫码上下文 ----------
 class ScanContext:
     def __init__(
         self,
@@ -62,7 +62,7 @@ def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     )
 
 
-# ---------- 事件写入（最简实现） ----------
+# ---------- 事件写入（极简） ----------
 async def _insert_event_raw(
     session: AsyncSession,
     source: str,
@@ -77,12 +77,7 @@ async def _insert_event_raw(
             VALUES (:src, :ref, :msg, :ts)
             """
         ),
-        {
-            "src": source,
-            "ref": ref,
-            "msg": meta_base.get("input", {}),
-            "ts": occurred_at,
-        },
+        {"src": source, "ref": ref, "msg": meta_base.get("input", {}), "ts": occurred_at},
     )
 
 
@@ -201,7 +196,7 @@ async def scan_gateway(
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
 
-            # 关键修正：transfer 不接收 reason
+            # 注意：transfer 不接收 reason
             result = await svc.transfer(
                 session=session,
                 item_id=sc.item_id,
@@ -216,7 +211,8 @@ async def scan_gateway(
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
 
-            # 关键修正：reconcile_inventory 接收 counted_qty（不是 qty）
+
+            # 注意：reconcile_inventory 接收 counted_qty，而非 qty
             result = await svc.reconcile_inventory(
                 session=session,
                 item_id=sc.item_id,
