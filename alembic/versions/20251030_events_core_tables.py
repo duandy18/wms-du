@@ -4,6 +4,8 @@ Revision ID: 20251030_events_core_tables
 Revises: 20251030_channel_inventory_add_visible
 Create Date: 2025-10-30
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -107,10 +109,9 @@ def upgrade():
         # 历史表：逐列补齐
         if not _has_column("event_error_log", "dedup_key"):
             op.add_column("event_error_log", sa.Column("dedup_key", sa.Text, nullable=False, server_default=sa.text("''")))
-            # 去掉默认以允许后续正常插入
             op.alter_column("event_error_log", "dedup_key", server_default=None)
         if not _has_column("event_error_log", "stage"):
-            op.add_column("event_error_log", sa.Column("stage", sa.Text, nullable=False, server_default=sa.text("'ingest'")))
+            op.add_column("event_error_log", sa.Column("stage", sa.Text, nullable=False, server_default=sa.text("'engest'")))
             op.alter_column("event_error_log", "stage", server_default=None)
         if not _has_column("event_error_log", "error"):
             op.add_column("event_error_log", sa.Column("error", sa.Text, nullable=False, server_default=sa.text("''")))
@@ -120,11 +121,7 @@ def upgrade():
                 "event_error_log",
                 sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
             )
-            # 通常可保留默认；若你不想默认，可在后续独立迁移取消
 
-        # 历史表缺少 CHECK 约束时不强行补（不同 PG 版本命名复杂）；必要时另起小迁移加 ck。
-
-    # 索引兜底（此时相关列已存在）
     if not _has_index("event_error_log", "ix_event_error_occurred"):
         op.create_index("ix_event_error_occurred", "event_error_log", ["occurred_at"], unique=False)
     if not _has_index("event_error_log", "ix_event_error_stage"):
@@ -149,6 +146,26 @@ def upgrade():
 
 def downgrade():
     # 注意：若线上已有数据，回滚会删表，请谨慎执行。
+    conn = op.get_bind()
+
+    # 0) 先删除依赖 event_error_log 的所有“普通视图”（不含物化视图），再删表
+    conn.execute(sa.text("""
+    DO $$
+    DECLARE v RECORD;
+    BEGIN
+      FOR v IN
+        SELECT n.nspname AS schema_name, c.relname AS view_name
+          FROM pg_depend d
+          JOIN pg_rewrite r ON r.oid = d.objid
+          JOIN pg_class   c ON c.oid = r.ev_class AND c.relkind = 'v'
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE d.refobjid = 'event_error_log'::regclass
+      LOOP
+        EXECUTE format('DROP VIEW IF EXISTS %I.%I', v.schema_name, v.view_name);
+      END LOOP;
+    END$$;
+    """))
+
     if _has_index("event_replay_cursor", "ix_event_replay_cursor_platform"):
         op.drop_index("ix_event_replay_cursor_platform", table_name="event_replay_cursor")
     if _has_table("event_replay_cursor"):
