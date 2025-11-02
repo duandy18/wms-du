@@ -14,7 +14,6 @@ from app.api.deps import get_session
 router = APIRouter()
 
 
-# ---------- 扫码上下文 ----------
 class ScanContext:
     def __init__(
         self,
@@ -63,17 +62,12 @@ def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     )
 
 
-# ---------- 事件写入（无 ref 列版） ----------
 async def _insert_event_raw(
     session: AsyncSession,
     source: str,
     meta_input: Dict[str, Any],
     occurred_at: datetime,
 ) -> int:
-    """
-    直接向 event_log(source, message, occurred_at) 插入，并返回事件ID。
-    注意：不要在 SQL 中写 :msg::text，否则会与 asyncpg 的占位符混用报错。
-    """
     msg = json.dumps(meta_input or {}, ensure_ascii=False)
     row = await session.execute(
         text(
@@ -91,8 +85,9 @@ async def _insert_event_raw(
 
 
 def _format_ref(ts: datetime, device_id: str, loc_id: Optional[int]) -> str:
+    """测试要求 scan_ref 以 'scan:' 开头，这里统一小写。"""
     loc = loc_id if loc_id is not None else 0
-    return f"SCAN:scan:{device_id}:{ts.isoformat()}:LOC:{loc}"
+    return f"scan:{device_id}:{ts.isoformat()}:loc:{loc}"
 
 
 def _fallback_loc_id_from_barcode(payload: Dict[str, Any]) -> Optional[int]:
@@ -160,7 +155,6 @@ async def scan_gateway(
                 "result": {"hint": f"{sc.mode} probe"},
             }
 
-        # commit 真动作
         from app.services.stock_service import StockService
         svc = StockService()
 
@@ -183,7 +177,6 @@ async def scan_gateway(
                 raise HTTPException(status_code=400, detail="putaway requires from_location_id")
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
-            # 注意：transfer 不接收 reason
             result = await svc.transfer(
                 session=session,
                 item_id=sc.item_id,
@@ -197,7 +190,6 @@ async def scan_gateway(
         else:  # count
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
-            # 注意：reconcile_inventory 接收 counted_qty，而非 qty
             result = await svc.reconcile_inventory(
                 session=session,
                 item_id=sc.item_id,
