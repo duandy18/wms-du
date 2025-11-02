@@ -16,7 +16,7 @@ branch_labels = None
 depends_on = None
 
 
-# ---------------- helpers: idempotent checks ----------------
+# ---------------- helpers: idempotent checks (仅供 upgrade 使用) ----------------
 def _insp():
     bind = op.get_bind()
     return sa.inspect(bind)
@@ -121,21 +121,23 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """
+    仅执行 DDL 且全部带 IF EXISTS，避免在事务失败态下再触发反射查询。
+    """
     conn = op.get_bind()
 
-    # 幂等删除索引（用 IF EXISTS 兜底）
+    # 1) 幂等删除索引
     conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_batch"))
     conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_batch_id"))
     conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_item_id"))
     conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_reservations_order_id"))
 
-    # 外键删除（若升级时有）
+    # 2) 外键（若升级时曾创建，这里用 try 兜底）
     for fk in ("fk_reservations_item", "fk_reservations_batch", "fk_reservations_order"):
         try:
             op.drop_constraint(fk, "reservations", type_="foreignkey")
         except Exception:
             pass
 
-    # 删表（存在才删）
-    if _has_table("reservations"):
-        op.drop_table("reservations")
+    # 3) 删表：不做 Inspector 查询，直接 IF EXISTS
+    conn.execute(sa.text("DROP TABLE IF EXISTS public.reservations"))
