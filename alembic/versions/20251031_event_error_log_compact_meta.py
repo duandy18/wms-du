@@ -4,6 +4,8 @@ Revision ID: 20251031_event_error_log_compact_meta
 Revises: 20251030_events_core_tables
 Create Date: 2025-10-31
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -89,7 +91,6 @@ def upgrade():
         if _has_column("event_error_log", c):
             deps = _dependent_views_for_column("event_error_log", c)
             if deps:
-                # 标注为废弃，便于后续治理（COMMENT 不会影响性能）
                 op.execute(sa.text(
                     f"COMMENT ON COLUMN event_error_log.{c} IS 'DEPRECATED: moved into meta; referenced by views: {', '.join(deps)}';"
                 ))
@@ -107,14 +108,15 @@ def downgrade():
         return
 
     # 1) 还原列（可空）
-    ts_cols = ["created_at", "updated_at", "next_retry_at"]
+    ts_cols   = ["created_at", "updated_at", "next_retry_at"]
+    json_cols = ["payload_json"]   # ★ JSONB 类型
     text_cols = [
         "error_code", "error_type", "error_msg", "message",
         "event_id", "order_no", "shop_id", "platform",
         "from_state", "to_state", "idempotency_key",
-        "payload", "payload_json",
+        "payload",
     ]
-    int_cols = ["retry_count", "max_retries"]
+    int_cols  = ["retry_count", "max_retries"]
 
     for c in ts_cols:
         if not _has_column("event_error_log", c):
@@ -122,18 +124,24 @@ def downgrade():
     for c in text_cols:
         if not _has_column("event_error_log", c):
             op.add_column("event_error_log", sa.Column(c, sa.Text, nullable=True))
+    for c in json_cols:
+        if not _has_column("event_error_log", c):
+            op.add_column("event_error_log", sa.Column(c, postgresql.JSONB(astext_type=sa.Text()), nullable=True))
     for c in int_cols:
         if not _has_column("event_error_log", c):
             op.add_column("event_error_log", sa.Column(c, sa.Integer, nullable=True))
 
-    # 2) 从 meta 回填（存在键才覆盖）
+    # 2) 从 meta 回填（存在键才覆盖）——★ 类型匹配的 COALESCE ★
     sets = []
     for k in text_cols:
-        sets.append(f"""{k} = COALESCE(meta->>'{k}', {k})""")
+        sets.append(f"""{k} = COALESCE(meta->>'{k}', {k})""")  # text vs text
+    for k in json_cols:
+        sets.append(f"""{k} = COALESCE(meta->'{k}', {k})""")   # jsonb vs jsonb
     for k in int_cols:
         sets.append(f"""{k} = COALESCE(NULLIF(meta->>'{k}','')::int, {k})""")
     for k in ts_cols:
         sets.append(f"""{k} = COALESCE(NULLIF(meta->>'{k}','')::timestamptz, {k})""")
+
     if sets and _has_column("event_error_log", "meta"):
         op.execute(sa.text(f"UPDATE event_error_log SET {', '.join(sets)}"))
 
