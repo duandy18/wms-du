@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+__all__ = [
+    "get_session",
+    "get_current_user",
+    "get_order_service",
+    # 若其它路由需要，按需在此补充导出
+]
+
 # ======================================================
-#  Database: per-request AsyncSession with NullPool
+# Database: per-request AsyncSession with NullPool
 # ======================================================
 
 DATABASE_URL = os.getenv(
@@ -20,7 +27,7 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms",
 )
 
-# 关键：使用 NullPool 防止在 pytest+httpx.ASGITransport 多事件循环下复用连接
+# 关键：使用 NullPool，避免在 pytest + httpx.ASGITransport 多事件循环下复用连接
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
@@ -58,27 +65,27 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 # ======================================================
-#  Stubs for other routers (orders 等) 的依赖
-#  仅为解决导入期依赖，测试不会真正调用这些函数。
-#  如将来在路由里用到，再替换为真实实现即可。
+# Stubs for other routers (orders 等) 的依赖
+# 仅为解决导入期依赖；如路由后续真的调用，再替换为真实实现。
 # ======================================================
 
 class _FakeUser(dict):
     """最小化的用户对象占位，满足 Depends 注入。"""
     @property
-    def id(self) -> str:  # 兼容可能的属性访问
+    def id(self) -> str:
         return str(self.get("id", "test-user"))
 
-async def get_current_user() -> _FakeUser:  # 可异步/同步均可，这里用异步以便通用
-    # 在测试里不做鉴权，返回一个固定用户占位
+async def get_current_user() -> _FakeUser:
+    """测试环境不做鉴权，返回固定用户占位。"""
     return _FakeUser(id="test-user", name="Test User")
 
 class _OrderServiceStub:
-    """最小化的订单服务占位，避免在应用启动时 ImportError。"""
+    """最小化的订单服务占位，避免应用启动时 ImportError。"""
     def __getattr__(self, name: str) -> Any:
-        # 如果某路由真的调用到了这里的未实现方法，抛出更清晰的错误
-        raise NotImplementedError(f"OrderService method '{name}' is not implemented in test stub.")
+        raise NotImplementedError(
+            f"OrderService method '{name}' is not implemented in test stub."
+        )
 
 def get_order_service() -> _OrderServiceStub:
-    # 作为 Depends 的工厂函数即可
+    """作为 Depends 工厂函数返回占位服务。"""
     return _OrderServiceStub()
