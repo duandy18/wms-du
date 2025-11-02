@@ -1,3 +1,9 @@
+"""Lock-A finalize schema: strong uniques + warehouse_id/batch_code wiring (CI-safe)
+
+Revision ID: 20251029_lockA_finalize_schema
+Revises: 63af7f94ad50
+Create Date: 2025-10-29
+"""
 from __future__ import annotations
 
 from alembic import op
@@ -13,7 +19,8 @@ def upgrade():
     conn = op.get_bind()
 
     # ========= 0) 预检查：locations.warehouse_id 必须存在 =========
-    conn.exec_driver_sql("""
+    conn.exec_driver_sql(
+        """
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -23,22 +30,26 @@ def upgrade():
             RAISE EXCEPTION 'locations.warehouse_id is required by Lock-A migration.';
           END IF;
         END $$;
-    """)
+        """
+    )
 
     # ========= 1) stocks.warehouse_id：ADD IF NOT EXISTS → 回填 → NOT NULL → 外键 =========
     op.execute("ALTER TABLE public.stocks ADD COLUMN IF NOT EXISTS warehouse_id INTEGER")
 
-    # 从 locations 回填（幂等：仅 NULL 时更新）
-    conn.exec_driver_sql("""
+    # 从 locations 回填（仅 NULL 时更新）
+    conn.exec_driver_sql(
+        """
         UPDATE public.stocks s
            SET warehouse_id = l.warehouse_id
           FROM public.locations l
          WHERE l.id = s.location_id
            AND s.warehouse_id IS NULL;
-    """)
+        """
+    )
 
     # MAIN 仓兜底（幂等）
-    conn.exec_driver_sql("""
+    conn.exec_driver_sql(
+        """
         INSERT INTO public.warehouses (name)
         SELECT 'MAIN'
         WHERE NOT EXISTS (SELECT 1 FROM public.warehouses WHERE name='MAIN');
@@ -47,13 +58,15 @@ def upgrade():
         UPDATE public.stocks s
            SET warehouse_id = (SELECT id FROM mainw)
          WHERE s.warehouse_id IS NULL;
-    """)
+        """
+    )
 
-    # 设为 NOT NULL（幂等）
+    # 设为 NOT NULL
     op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id SET NOT NULL")
 
     # 外键（若不存在则创建；DEFERRABLE）
-    op.execute("""
+    op.execute(
+        """
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -66,14 +79,16 @@ def upgrade():
               DEFERRABLE INITIALLY DEFERRED;
           END IF;
         END $$;
-    """)
+        """
+    )
 
     # ========= 2) batches.qty 收紧为 NOT NULL（先清 NULL） =========
     conn.exec_driver_sql("UPDATE public.batches SET qty = 0 WHERE qty IS NULL;")
     op.execute("ALTER TABLE public.batches ALTER COLUMN qty SET NOT NULL")
 
     # ========= 3) stocks.batch_code：ADD IF NOT EXISTS → 回填 → 合成批次 → DROP DEFAULT =========
-    op.execute("""
+    op.execute(
+        """
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -84,10 +99,12 @@ def upgrade():
               ADD COLUMN batch_code VARCHAR(64) NOT NULL DEFAULT 'MIG-UNSPEC';
           END IF;
         END $$;
-    """)
+        """
+    )
 
-    # “一地一批” → 用真批次码回填（幂等）
-    conn.exec_driver_sql("""
+    # “一地一批” → 用真批次码回填
+    conn.exec_driver_sql(
+        """
         WITH one AS (
           SELECT item_id, warehouse_id, location_id, MIN(batch_code) AS batch_code
             FROM public.batches
@@ -101,10 +118,12 @@ def upgrade():
            AND s.warehouse_id = o.warehouse_id
            AND s.location_id = o.location_id
            AND s.batch_code = 'MIG-UNSPEC';
-    """)
+        """
+    )
 
     # 为剩余未回填的 stocks 生成“合成批次”（幂等；batches 有唯一索引兜底）
-    conn.exec_driver_sql("""
+    conn.exec_driver_sql(
+        """
         INSERT INTO public.batches (item_id, warehouse_id, location_id, batch_code, expiry_date, qty)
         SELECT s.item_id,
                s.warehouse_id,
@@ -121,14 +140,17 @@ def upgrade():
          WHERE s.batch_code = 'MIG-UNSPEC'
            AND b.item_id IS NULL
         ON CONFLICT DO NOTHING;
-    """)
+        """
+    )
 
     # 将剩余 MIG-UNSPEC 回填为合成批次码（幂等）
-    conn.exec_driver_sql("""
+    conn.exec_driver_sql(
+        """
         UPDATE public.stocks s
            SET batch_code = CONCAT('MIG-', s.item_id, '-', s.warehouse_id, '-', s.location_id)
          WHERE s.batch_code = 'MIG-UNSPEC';
-    """)
+        """
+    )
 
     # 确保 NOT NULL
     op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code SET NOT NULL")
@@ -136,7 +158,8 @@ def upgrade():
     # 在单独事务块里 DROP DEFAULT（若存在）
     ctx = op.get_context()
     with ctx.autocommit_block():
-        op.execute("""
+        op.execute(
+            """
             DO $$
             BEGIN
               IF EXISTS (
@@ -146,25 +169,31 @@ def upgrade():
                 ALTER TABLE public.stocks ALTER COLUMN batch_code DROP DEFAULT;
               END IF;
             END $$;
-        """)
+            """
+        )
 
     # ========= 4) 约束与索引：删旧 UQ → 建索引 → 唯一约束（USING INDEX） =========
     op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_location")
 
     # batches UQ 索引（若不存在则创建）
-    op.execute("""
+    op.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS uq_batches_item_wh_loc_code
           ON public.batches (item_id, warehouse_id, location_id, batch_code)
-    """)
+        """
+    )
 
     # stocks 非唯一查询索引
-    op.execute("""
+    op.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_stocks_item_wh_loc_batch
           ON public.stocks (item_id, warehouse_id, location_id, batch_code)
-    """)
+        """
+    )
 
     # stocks 唯一索引 + 绑定唯一约束
-    op.execute("""
+    op.execute(
+        """
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -174,8 +203,10 @@ def upgrade():
               ON public.stocks (item_id, warehouse_id, location_id, batch_code);
           END IF;
         END $$;
-    """)
-    op.execute("""
+        """
+    )
+    op.execute(
+        """
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -186,19 +217,41 @@ def upgrade():
               UNIQUE USING INDEX uq_stocks_item_wh_loc_code_idx;
           END IF;
         END $$;
-    """)
+        """
+    )
 
 
 def downgrade():
     conn = op.get_bind()
 
-    # 先删 stocks 上的唯一约束/索引/普通索引
+    # ========= A) 先清理依赖于 stocks.batch_code 的视图，避免 DependentObjectsStillExist =========
+    # 目前已知：v_putaway_ledger_recent（如后续新增依赖视图，可按需补充列表）
+    conn.exec_driver_sql(
+        """
+        DO $$
+        DECLARE v RECORD;
+        BEGIN
+          FOR v IN
+            SELECT table_schema AS schema_name, table_name AS view_name
+              FROM information_schema.views
+             WHERE table_schema = 'public'
+               AND table_name IN ('v_putaway_ledger_recent')
+          LOOP
+            EXECUTE format('DROP VIEW IF EXISTS %I.%I CASCADE', v.schema_name, v.view_name);
+          END LOOP;
+        END $$;
+        """
+    )
+
+    # ========= B) 先删 stocks 上的唯一约束/索引/普通索引（若存在） =========
     op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS uq_stocks_item_wh_loc_code")
     op.execute("DROP INDEX IF EXISTS public.uq_stocks_item_wh_loc_code_idx")
     op.execute("DROP INDEX IF EXISTS public.idx_stocks_item_wh_loc_batch")
 
-    # 先删 batches 上的唯一约束，再删同名索引（避免 DependentObjectsStillExist）
-    op.execute("""
+    # ========= C) 再处理 batches 侧唯一约束/唯一索引 =========
+    # 若存在以约束形式绑定的同名 UQ，则先删约束
+    op.execute(
+        """
         DO $$
         BEGIN
           IF EXISTS (
@@ -211,18 +264,22 @@ def downgrade():
           ) THEN
             ALTER TABLE public.batches DROP CONSTRAINT uq_batches_item_wh_loc_code;
           END IF;
-        END$$;
-    """)
-    op.execute("ALTER TABLE batches DROP CONSTRAINT IF EXISTS uq_batches_item_wh_loc_code")
+        END $$;
+        """
+    )
+    # 再删除唯一索引（若存在）
+    op.execute("DROP INDEX IF EXISTS public.uq_batches_item_wh_loc_code")
 
-    # 解除外键
+    # ========= D) 解除外键 & 回滚列属性 =========
     op.execute("ALTER TABLE public.stocks DROP CONSTRAINT IF EXISTS fk_stocks_warehouse")
 
-    # 回滚列的约束与列本身
+    # batches.qty 放宽
     op.execute("ALTER TABLE public.batches ALTER COLUMN qty DROP NOT NULL")
 
+    # stocks.batch_code 回滚（先 DROP NOT NULL，再 DROP 列）
     op.execute("ALTER TABLE public.stocks ALTER COLUMN batch_code DROP NOT NULL")
     op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS batch_code")
 
+    # stocks.warehouse_id 回滚
     op.execute("ALTER TABLE public.stocks ALTER COLUMN warehouse_id DROP NOT NULL")
     op.execute("ALTER TABLE public.stocks DROP COLUMN IF EXISTS warehouse_id")
