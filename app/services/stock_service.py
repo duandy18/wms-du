@@ -1,3 +1,4 @@
+# app/services/stock_service.py
 from __future__ import annotations
 
 from datetime import date
