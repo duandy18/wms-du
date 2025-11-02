@@ -36,7 +36,7 @@ def upgrade():
     # ========= 1) stocks.warehouse_id：ADD IF NOT EXISTS → 回填 → NOT NULL → 外键 =========
     op.execute("ALTER TABLE public.stocks ADD COLUMN IF NOT EXISTS warehouse_id INTEGER")
 
-    -- 回填仓库
+    # 回填仓库
     conn.exec_driver_sql(
         """
         UPDATE public.stocks s
@@ -47,7 +47,7 @@ def upgrade():
         """
     )
 
-    -- 兜底 MAIN 仓（幂等）
+    # 兜底 MAIN 仓（幂等）
     conn.exec_driver_sql(
         """
         INSERT INTO public.warehouses (name)
