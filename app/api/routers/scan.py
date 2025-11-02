@@ -72,14 +72,14 @@ async def _insert_event_raw(
 ) -> int:
     """
     直接向 event_log(source, message, occurred_at) 插入，并返回事件ID。
-    注意：message 写入 TEXT，使用 JSON 字符串序列化。
+    注意：不要在 SQL 中写 :msg::text，否则会与 asyncpg 的占位符混用报错。
     """
     msg = json.dumps(meta_input or {}, ensure_ascii=False)
     row = await session.execute(
         text(
             """
             INSERT INTO event_log(source, message, occurred_at)
-            VALUES (:src, :msg::text, :ts)
+            VALUES (:src, :msg, :ts)
             RETURNING id
             """
         ),
@@ -162,7 +162,6 @@ async def scan_gateway(
 
         # commit 真动作
         from app.services.stock_service import StockService
-
         svc = StockService()
 
         if sc.mode == "receive":
@@ -184,7 +183,6 @@ async def scan_gateway(
                 raise HTTPException(status_code=400, detail="putaway requires from_location_id")
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
-
             # 注意：transfer 不接收 reason
             result = await svc.transfer(
                 session=session,
@@ -199,8 +197,6 @@ async def scan_gateway(
         else:  # count
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
-
-
             # 注意：reconcile_inventory 接收 counted_qty，而非 qty
             result = await svc.reconcile_inventory(
                 session=session,
