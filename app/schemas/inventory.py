@@ -17,6 +17,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段，兼容旧客户端
     - populate_by_name: 支持别名/字段名互填（便于未来演进）
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -33,6 +34,7 @@ class InventoryMovementCreate(_Base):
     - quantity: 变动数量（正数；具体方向由 movement_type 决定）
     - movement_type: RECEIPT/SHIPMENT/TRANSFER/ADJUSTMENT
     """
+
     item_sku: Annotated[str, Field(min_length=1, max_length=128)]
     from_location_id: str | None = None
     to_location_id: str | None = None
@@ -61,6 +63,7 @@ class InventoryMovementOut(InventoryMovementCreate):
     """
     库存移动记录（只读输出）
     """
+
     id: str
     timestamp: datetime
 
@@ -85,6 +88,7 @@ class StockOnHandOut(_Base):
     """
     库存现存量（按 SKU + 库位汇总）
     """
+
     item_sku: Annotated[str, Field(min_length=1, max_length=128)]
     location_id: Annotated[str, Field(min_length=1, max_length=128)]
     quantity: Annotated[float, Field(ge=0)]
