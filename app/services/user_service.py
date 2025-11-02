@@ -6,7 +6,7 @@ from typing import List, Optional
 from sqlalchemy import exc
 from sqlalchemy.orm import Session, joinedload
 
-from .security import (
+from app.core.security import (
     create_access_token,
     decode_access_token,
     hash_password,

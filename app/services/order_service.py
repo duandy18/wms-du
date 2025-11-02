@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import text
@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
 
-
 _TWO = Decimal("0.01")
 
 
 # ================================ 金额与行规范化 ================================
+
 
 def _to_decimal(val: Any, *, nonneg: bool = True) -> Decimal:
     """
@@ -34,7 +34,9 @@ def _to_decimal(val: Any, *, nonneg: bool = True) -> Decimal:
     return d.quantize(_TWO, rounding=ROUND_HALF_UP)
 
 
-def _normalize_lines_with_money(lines: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Decimal]:
+def _normalize_lines_with_money(
+    lines: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], Decimal]:
     """
     规范化行：
       - qty: int > 0
@@ -63,6 +65,7 @@ def _normalize_lines_with_money(lines: List[Dict[str, Any]]) -> Tuple[List[Dict[
 
 
 # ================================== 服务主体 ==================================
+
 
 class OrderService:
     """
@@ -217,14 +220,17 @@ class OrderService:
                     )
 
                     allocations.append(
-                        {"item_id": int(item_id), "batch_id": bid, "location_id": loc, "qty": int(take)}
+                        {
+                            "item_id": int(item_id),
+                            "batch_id": bid,
+                            "location_id": loc,
+                            "qty": int(take),
+                        }
                     )
                     remaining -= take
 
                 if remaining > 0:
-                    raise ValueError(
-                        f"insufficient stock for item_id={item_id}, need={req_qty}"
-                    )
+                    raise ValueError(f"insufficient stock for item_id={item_id}, need={req_qty}")
 
         await session.commit()
         return {

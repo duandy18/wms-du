@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from datetime import date, timedelta
+
 
 class ExpiryError(ValueError):
     pass
+
 
 def calc_expire_at(
     production_date: date | None,

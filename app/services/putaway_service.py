@@ -224,7 +224,13 @@ class PutawayService:
                     RETURNING id, qty
                     """
                 ),
-                {"q": qty, "item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
+                {
+                    "q": qty,
+                    "item": item_id,
+                    "wh": warehouse_id,
+                    "loc": from_location_id,
+                    "bc": batch_code,
+                },
             )
         ).first()
         if not from_row:
@@ -254,7 +260,13 @@ class PutawayService:
                         RETURNING id, qty
                         """
                     ),
-                    {"q": qty, "item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
+                    {
+                        "q": qty,
+                        "item": item_id,
+                        "wh": warehouse_id,
+                        "loc": from_location_id,
+                        "bc": batch_code,
+                    },
                 )
             ).first()
             if not from_row:
@@ -294,7 +306,13 @@ class PutawayService:
                     RETURNING id, qty
                     """
                 ),
-                {"item": item_id, "wh": warehouse_id, "loc": to_location_id, "bc": batch_code, "q": qty},
+                {
+                    "item": item_id,
+                    "wh": warehouse_id,
+                    "loc": to_location_id,
+                    "bc": batch_code,
+                    "q": qty,
+                },
             )
         ).first()
         to_stock_id, to_after = int(to_row[0]), int(to_row[1])

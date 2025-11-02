@@ -1,18 +1,25 @@
 # app/services/platform_events.py
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, List, Optional
+
 from sqlalchemy import insert, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.metrics import ERRS, EVENTS  # 指标：事件/错误
+from app.models.event_error_log import EventErrorLog
 from app.services.audit_logger import log_event
-from app.services.platform_adapter import (
-    PDDAdapter, TaobaoAdapter, TmallAdapter, JDAdapter, DouyinAdapter, XHSAdapter, PlatformAdapter
-)
 from app.services.order_service import OrderService
 from app.services.outbound_service import OutboundService
-from app.models.event_error_log import EventErrorLog
-from app.metrics import EVENTS, ERRS  # 指标：事件/错误
+from app.services.platform_adapter import (
+    DouyinAdapter,
+    JDAdapter,
+    PDDAdapter,
+    PlatformAdapter,
+    TaobaoAdapter,
+    TmallAdapter,
+    XHSAdapter,
+)
 
 # ---------------------------------------------------------------------
 # 适配器注册(平台小写)
@@ -26,31 +33,43 @@ _ADAPTERS: Dict[str, PlatformAdapter] = {
     "xhs": XHSAdapter(),
 }
 
+
 def _get_adapter(platform: str) -> PlatformAdapter:
     ad = _ADAPTERS.get((platform or "").lower())
     if not ad:
         raise ValueError(f"Unsupported platform: {platform}")
     return ad
 
+
 # ---------------------------------------------------------------------
 # 抽取字段(适配“原始”事件的兜底)
 # ---------------------------------------------------------------------
 def _extract_ref(raw: Dict[str, Any]) -> str:
     return str(
-        raw.get("order_sn") or raw.get("tid") or raw.get("orderId")
-        or raw.get("order_id") or raw.get("id") or ""
+        raw.get("order_sn")
+        or raw.get("tid")
+        or raw.get("orderId")
+        or raw.get("order_id")
+        or raw.get("id")
+        or ""
     )
 
+
 def _extract_state(raw: Dict[str, Any]) -> str:
-    return str(
-        raw.get("status") or raw.get("trade_status") or raw.get("orderStatus") or ""
-    )
+    return str(raw.get("status") or raw.get("trade_status") or raw.get("orderStatus") or "")
+
 
 def _extract_shop_id(raw: Dict[str, Any]) -> str:
     return str(
-        raw.get("shop_id") or raw.get("shop") or raw.get("store_id")
-        or raw.get("seller_id") or raw.get("author_id") or raw.get("shopId") or ""
+        raw.get("shop_id")
+        or raw.get("shop")
+        or raw.get("store_id")
+        or raw.get("seller_id")
+        or raw.get("author_id")
+        or raw.get("shopId")
+        or ""
     )
+
 
 # ---------------------------------------------------------------------
 # 观测与落错
@@ -59,10 +78,14 @@ def _inc_event_metric(platform: str, shop_id: str, state: str) -> None:
     st = (state or "").upper() or "UNKNOWN"
     EVENTS.labels((platform or "").lower(), shop_id or "", st).inc()
 
+
 def _inc_error_metric(platform: str, shop_id: str, code: str) -> None:
     ERRS.labels((platform or "").lower(), shop_id or "", code or "ERROR").inc()
 
-async def _log_error_isolated(session: AsyncSession, platform: str, raw: Dict[str, Any], err: Exception) -> None:
+
+async def _log_error_isolated(
+    session: AsyncSession, platform: str, raw: Dict[str, Any], err: Exception
+) -> None:
     """
     与 EventErrorLog 模型对齐：order_no / error_code / error_msg / payload_json / shop_id …
     使用保存点，不污染外层事务；异常时静默吞掉。
@@ -95,6 +118,7 @@ async def _log_error_isolated(session: AsyncSession, platform: str, raw: Dict[st
     except Exception:
         pass
 
+
 async def _has_outbound_ledger(session: Optional[AsyncSession], ref: str) -> bool:
     """
     校验是否已经写入 OUTBOUND 台账(防重复/兜底重试用)。
@@ -102,11 +126,14 @@ async def _has_outbound_ledger(session: Optional[AsyncSession], ref: str) -> boo
     """
     if session is None:
         return True
-    cnt = (await session.execute(
-        text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
-        {"r": ref},
-    )).scalar_one()
+    cnt = (
+        await session.execute(
+            text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
+            {"r": ref},
+        )
+    ).scalar_one()
     return (cnt or 0) > 0
+
 
 # ---------------------------------------------------------------------
 # 状态 → 动作映射(v1.0 强契约)
@@ -119,6 +146,7 @@ _PAID_ALIASES = {"PAID", "PAID_OK", "NEW", "CREATED", "WAIT_SELLER_SEND_GOODS"}
 _CANCEL_ALIASES = {"CANCELED", "CANCELLED", "VOID", "TRADE_CLOSED"}
 _SHIPPED_ALIASES = {"SHIPPED", "DELIVERED", "WAIT_BUYER_CONFIRM_GOODS", "TRADE_FINISHED"}
 
+
 def _classify(state: str) -> str:
     u = (state or "").upper()
     if u in _PAID_ALIASES:
@@ -128,6 +156,7 @@ def _classify(state: str) -> str:
     if u in _SHIPPED_ALIASES:
         return "SHIP"
     return "IGNORE"
+
 
 # ---------------------------------------------------------------------
 # 统一处理入口
@@ -171,17 +200,28 @@ async def handle_event_batch(
 
             action = _classify(task["state"])
             if action == "IGNORE":
-                log_event("event_ignored", f"{platform}:{task['ref']}", extra={"state": task["state"]})
+                log_event(
+                    "event_ignored", f"{platform}:{task['ref']}", extra={"state": task["state"]}
+                )
                 continue
 
             # RESERVE：下单占用(不动 stocks / 不写台账)
             if action == "RESERVE":
                 if not task["ref"]:
                     raise ValueError("Missing ref for RESERVE")
-                lines = [{"item_id": int(x["item_id"]), "qty": int(x["qty"])} for x in task["lines"] or [] if "item_id" in x and "qty" in x]
+                lines = [
+                    {"item_id": int(x["item_id"]), "qty": int(x["qty"])}
+                    for x in task["lines"] or []
+                    if "item_id" in x and "qty" in x
+                ]
                 if not lines:
                     # 没有明细也允许走 reserve(常见平台“已付无明细”通知)
-                    lines = [{"item_id": int(task["payload"].get("item_id", 0)), "qty": int(task["payload"].get("qty", 0))}]
+                    lines = [
+                        {
+                            "item_id": int(task["payload"].get("item_id", 0)),
+                            "qty": int(task["payload"].get("qty", 0)),
+                        }
+                    ]
                 await OrderService.reserve(
                     session,
                     platform=platform,
@@ -189,16 +229,27 @@ async def handle_event_batch(
                     ref=task["ref"],
                     lines=lines,
                 )
-                log_event("event_reserved", f"{platform}:{task['ref']}", extra={"lines": len(lines)})
+                log_event(
+                    "event_reserved", f"{platform}:{task['ref']}", extra={"lines": len(lines)}
+                )
                 continue
 
             # CANCEL：取消占用
             if action == "CANCEL":
                 if not task["ref"]:
                     raise ValueError("Missing ref for CANCEL")
-                lines = [{"item_id": int(x["item_id"]), "qty": int(x["qty"])} for x in task["lines"] or [] if "item_id" in x and "qty" in x]
+                lines = [
+                    {"item_id": int(x["item_id"]), "qty": int(x["qty"])}
+                    for x in task["lines"] or []
+                    if "item_id" in x and "qty" in x
+                ]
                 if not lines:
-                    lines = [{"item_id": int(task["payload"].get("item_id", 0)), "qty": int(task["payload"].get("qty", 0))}]
+                    lines = [
+                        {
+                            "item_id": int(task["payload"].get("item_id", 0)),
+                            "qty": int(task["payload"].get("qty", 0)),
+                        }
+                    ]
                 await OrderService.cancel(
                     session,
                     platform=platform,
@@ -206,7 +257,9 @@ async def handle_event_batch(
                     ref=task["ref"],
                     lines=lines,
                 )
-                log_event("event_canceled", f"{platform}:{task['ref']}", extra={"lines": len(lines)})
+                log_event(
+                    "event_canceled", f"{platform}:{task['ref']}", extra={"lines": len(lines)}
+                )
                 continue
 
             # SHIP：发货出库(扣减 stocks + 写台账 + 释放占用 + 刷新可见量)
@@ -214,7 +267,11 @@ async def handle_event_batch(
                 if not task["ref"]:
                     raise ValueError("Missing ref for SHIP")
                 lines = [
-                    {"item_id": int(x["item_id"]), "location_id": int(x["location_id"]), "qty": int(x["qty"])}
+                    {
+                        "item_id": int(x["item_id"]),
+                        "location_id": int(x["location_id"]),
+                        "qty": int(x["qty"]),
+                    }
                     for x in (task["lines"] or [])
                     if {"item_id", "location_id", "qty"}.issubset(x.keys())
                 ]
@@ -233,7 +290,9 @@ async def handle_event_batch(
                 log_event("event_shipped", f"{platform}:{task['ref']}", extra={"lines": len(lines)})
 
                 # 一次性校验 Ledger；未落账再重试一次
-                ref_for_check = f"{task['shop_id']}:{task['ref']}" if task["shop_id"] else task["ref"]
+                ref_for_check = (
+                    f"{task['shop_id']}:{task['ref']}" if task["shop_id"] else task["ref"]
+                )
                 if not await _has_outbound_ledger(session, ref_for_check):
                     await OutboundService.commit(
                         session,
@@ -243,7 +302,9 @@ async def handle_event_batch(
                         lines=lines,
                         refresh_visible=True,
                     )
-                    log_event("event_shipped_retry", f"{platform}:{task['ref']}", extra={"retry": True})
+                    log_event(
+                        "event_shipped_retry", f"{platform}:{task['ref']}", extra={"retry": True}
+                    )
 
         except Exception as e:
             log_event("event_error", f"{platform}: {e}", extra={"raw": raw})
