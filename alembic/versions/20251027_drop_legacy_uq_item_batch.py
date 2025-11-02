@@ -17,19 +17,25 @@ branch_labels = None
 depends_on = None
 
 TABLE = "batches"
-LEGACY_UQ_NAME = "uq_batches_item_batch"  # 常见旧名，仍做列集合兜底
+LEGACY_UQ_NAME = "uq_batches_item_batch"  # 旧名，仍做列集合兜底
+
+
+def _literal_text_array(cols: list[str]) -> tuple[str, dict]:
+    """
+    把 ['a','b'] 变成 ("ARRAY[:c0,:c1]::text[]", {"c0":"a","c1":"b"})
+    用于避免 `unnest(:cols::text[])` 的参数化数组语法在 CI 上报错。
+    """
+    params = {f"c{i}": col for i, col in enumerate(cols)}
+    fragment = "ARRAY[" + ",".join([f":c{i}" for i in range(len(cols))]) + "]::text[]"
+    return fragment, params
 
 
 def _find_constraints_on_cols(conn, table: str, cols: List[str]) -> List[str]:
     """
     返回表上“恰好覆盖 cols 这组列”的唯一约束名列表。
-    注意：不能写 unnest(:cols::text[])；须在 SQL 内构造数组字面量，
-    同时列名作为标量参数绑定，避免 SQL 注入与语法错误。
+    注意：两边数组类型需一致，这里统一转成 text[] 再比较。
     """
-    # 组装 ARRAY[:c0,:c1,...]::text[]
-    arr_params = {f"c{i}": col for i, col in enumerate(cols)}
-    arr_literal = "ARRAY[" + ",".join([f":c{i}" for i in range(len(cols))]) + "]::text[]"
-
+    arr_sql, arr_params = _literal_text_array(cols)
     sql = sa.text(
         f"""
         SELECT c.conname
@@ -38,17 +44,16 @@ def _find_constraints_on_cols(conn, table: str, cols: List[str]) -> List[str]:
          WHERE t.relname = :table
            AND c.contype = 'u'
            AND (
-                SELECT ARRAY_AGG(att.attname ORDER BY att.attname)
+                SELECT ARRAY_AGG(att.attname::text ORDER BY att.attname::text)
                   FROM unnest(c.conkey) AS key(attnum)
                   JOIN pg_attribute att
                     ON att.attrelid = c.conrelid AND att.attnum = key.attnum
                ) = (
-                SELECT ARRAY_AGG(col ORDER BY col)
-                  FROM unnest({arr_literal}) AS s(col)
+                SELECT ARRAY_AGG(col::text ORDER BY col::text)
+                  FROM unnest({arr_sql}) AS s(col)
                )
         """
     )
-
     params = {"table": table}
     params.update(arr_params)
     rows = conn.execute(sql, params).fetchall()
