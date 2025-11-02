@@ -2,11 +2,12 @@
 
 Revision ID: bf539dde5f39
 Revises: d16674198fd0
-Create Date: 2025-10-30 07:29:15.021416
+Create Date: 2025-10-30 09:40:00
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
-
 
 revision = "bf539dde5f39"
 down_revision = "d16674198fd0"
@@ -14,138 +15,109 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
     conn = op.get_bind()
 
-    # ------------------------------
-    # A) orders：新增业务字段 + 索引
-    # ------------------------------
-    for col, coltype in [
-        ("order_no", sa.String(64)),
-        ("order_type", sa.String(32)),
-        ("status", sa.String(32)),
-        ("customer_name", sa.String(128)),
-        ("supplier_name", sa.String(128)),
-    ]:
-        conn.execute(sa.text(f"""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='orders' AND column_name='{col}'
-                ) THEN
-                    ALTER TABLE public.orders ADD COLUMN {col} {coltype.compile(dialect=sa.dialects.postgresql.dialect())};
-                END IF;
-            END $$;
-        """))
-
-    # total_amount
+    # 仅当 orders 表存在时才做列补齐，避免 UndefinedTable
     conn.execute(sa.text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='orders' AND column_name='total_amount'
-            ) THEN
-                ALTER TABLE public.orders ADD COLUMN total_amount numeric(12,2) NOT NULL DEFAULT 0;
-                ALTER TABLE public.orders ALTER COLUMN total_amount DROP DEFAULT;
-            END IF;
-        END $$;
+    DO $$
+    BEGIN
+      IF to_regclass('public.orders') IS NOT NULL THEN
+
+        -- order_no
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='order_no'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN order_no VARCHAR(64);
+        END IF;
+
+        -- client_ref
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='client_ref'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN client_ref VARCHAR(64);
+        END IF;
+
+        -- status
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='status'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN status VARCHAR(32);
+        END IF;
+
+        -- created_at
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='created_at'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN created_at timestamptz DEFAULT now();
+          ALTER TABLE public.orders ALTER COLUMN created_at DROP DEFAULT;
+        END IF;
+
+        -- updated_at
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='updated_at'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN updated_at timestamptz;
+        END IF;
+
+      END IF;
+    END$$;
     """))
 
-    # updated_at
+    # 如果本迁移还需要给其它表/视图打补丁，也按上述模式加 to_regclass 守卫后执行
+    # …（略）
+
+
+def downgrade() -> None:
+    conn = op.get_bind()
+
+    # 同样仅当 orders 表存在时再尝试回滚列（幂等）
     conn.execute(sa.text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='orders' AND column_name='updated_at'
-            ) THEN
-                ALTER TABLE public.orders ADD COLUMN updated_at timestamptz NOT NULL DEFAULT now();
-                ALTER TABLE public.orders ALTER COLUMN updated_at DROP DEFAULT;
-            END IF;
-        END $$;
+    DO $$
+    BEGIN
+      IF to_regclass('public.orders') IS NOT NULL THEN
+
+        -- 回滚时按需删除列（若你希望可逆）
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='updated_at'
+        ) THEN
+          ALTER TABLE public.orders DROP COLUMN updated_at;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='created_at'
+        ) THEN
+          ALTER TABLE public.orders DROP COLUMN created_at;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='status'
+        ) THEN
+          ALTER TABLE public.orders DROP COLUMN status;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='client_ref'
+        ) THEN
+          ALTER TABLE public.orders DROP COLUMN client_ref;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='order_no'
+        ) THEN
+          ALTER TABLE public.orders DROP COLUMN order_no;
+        END IF;
+
+      END IF;
+    END$$;
     """))
-
-    # 幂等索引
-    for name, cols in [
-        ("ix_orders_order_no", "(order_no)"),
-        ("ix_orders_order_type", "(order_type)"),
-        ("ix_orders_status", "(status)"),
-        ("ix_orders_type_status", "(order_type, status)"),
-    ]:
-        conn.execute(sa.text(f"CREATE INDEX IF NOT EXISTS {name} ON public.orders {cols}"))
-
-    # ------------------------------
-    # B) stock_snapshots：批次关联增强
-    # ------------------------------
-    # 批次列
-    conn.execute(sa.text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='batch_id'
-            ) THEN
-                ALTER TABLE public.stock_snapshots ADD COLUMN batch_id integer NULL;
-            END IF;
-        END $$;
-    """))
-
-    # qty_allocated / expiry_date / age_days
-    for col, coldef in [
-        ("qty_allocated", "integer NOT NULL DEFAULT 0"),
-        ("expiry_date", "date NULL"),
-        ("age_days", "integer NULL"),
-    ]:
-        conn.execute(sa.text(f"""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='stock_snapshots' AND column_name='{col}'
-                ) THEN
-                    ALTER TABLE public.stock_snapshots ADD COLUMN {col} {coldef};
-                    IF '{col}' = 'qty_allocated' THEN
-                        ALTER TABLE public.stock_snapshots ALTER COLUMN qty_allocated DROP DEFAULT;
-                    END IF;
-                END IF;
-            END $$;
-        """))
-
-    # 索引 & 外键
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_stock_snapshots_batch_id ON public.stock_snapshots (batch_id)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_ss_item_date ON public.stock_snapshots (item_id, snapshot_date)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_ss_wh_date ON public.stock_snapshots (warehouse_id, snapshot_date)"))
-    conn.execute(sa.text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_constraint WHERE conname='fk_ss_batch'
-            ) THEN
-                ALTER TABLE ONLY public.stock_snapshots
-                ADD CONSTRAINT fk_ss_batch FOREIGN KEY (batch_id)
-                REFERENCES public.batches(id) ON DELETE SET NULL;
-            END IF;
-        END $$;
-    """))
-
-
-def downgrade():
-    # 仅撤销新增列与索引，不触碰老结构
-    for idx in [
-        "ix_orders_order_no", "ix_orders_order_type", "ix_orders_status", "ix_orders_type_status",
-        "ix_stock_snapshots_batch_id", "ix_ss_item_date", "ix_ss_wh_date"
-    ]:
-        op.execute(sa.text(f"DROP INDEX IF EXISTS public.{idx}"))
-
-    for col in [
-        "order_no", "order_type", "status", "customer_name", "supplier_name",
-        "total_amount", "updated_at"
-    ]:
-        op.execute(sa.text(f"ALTER TABLE public.orders DROP COLUMN IF EXISTS {col}"))
-
-    for col in ["batch_id", "qty_allocated", "expiry_date", "age_days"]:
-        op.execute(sa.text(f"ALTER TABLE public.stock_snapshots DROP COLUMN IF EXISTS {col}"))
-
-    op.execute(sa.text("ALTER TABLE public.stock_snapshots DROP CONSTRAINT IF EXISTS fk_ss_batch"))

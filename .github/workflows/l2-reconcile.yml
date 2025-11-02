@@ -3,7 +3,7 @@ name: L2 · Reconcile & Views
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 19 * * *"  # 每天 03:00 CST
+    - cron: "0 19 * * *"   # 每天 03:00 CST
 
 env:
   PYTHON_VERSION: "3.12"
@@ -11,7 +11,9 @@ env:
 
 jobs:
   l2-reconcile:
+    name: L2 · Reconcile & Views
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:14
@@ -19,7 +21,8 @@ jobs:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
           POSTGRES_DB: wms
-        ports: [ "5433:5432" ]
+        ports:
+          - "5433:5432"
         options: >-
           --health-cmd="pg_isready -U wms -d wms"
           --health-interval=5s
@@ -27,17 +30,25 @@ jobs:
           --health-retries=20
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: ${{ env.PYTHON_VERSION }} }
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Install runtime deps
-        run: pip install alembic asyncpg psycopg[binary]
+        run: |
+          pip install alembic asyncpg psycopg[binary]
 
-      - name: Migrate
-        env: { DATABASE_URL: ${{ env.DATABASE_URL }} }
-        run: alembic upgrade head
+      - name: Migrate to head
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          alembic upgrade head
 
-      - name: DB Health Gate · 三账一致 & 视图抽样
+      - name: DB Health Gate · snapshot & views
         run: |
           psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "CALL snapshot_today();" || true
           psql "postgresql://wms:wms@127.0.0.1:5433/wms" -c "TABLE v_three_books;" || true

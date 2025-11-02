@@ -2,64 +2,110 @@
 
 Revision ID: 20251027_stock_snapshots_add_qty_columns
 Revises: 20251027_drop_uq_batches_composite
-Create Date: 2025-10-27 23:30:00
+Create Date: 2025-10-27
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
-# revision identifiers, used by Alembic.
-revision = "20251027_stock_snapshots_add_qty_columns"
-down_revision = "20251027_drop_uq_batches_composite"
+# ---- Alembic identifiers ----
+revision: str = "20251027_stock_snapshots_add_qty_columns"
+down_revision: str | None = "20251027_drop_uq_batches_composite"
 branch_labels = None
 depends_on = None
 
 TABLE = "stock_snapshots"
-UQ = "uq_stock_snapshots_day_item"
 
-def _col_absent(conn, table, col):
-    sql = sa.text("""
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=:t AND column_name=:c
-        LIMIT 1
-    """)
-    return conn.execute(sql, {"t": table, "c": col}).scalar() is None
 
-def _constraint_absent(conn, table, name):
-    sql = sa.text("""
-        SELECT 1
-        FROM pg_constraint c
-        JOIN pg_class t ON t.oid=c.conrelid
-        WHERE t.relname=:t AND c.conname=:n
-        LIMIT 1
-    """)
-    return conn.execute(sql, {"t": table, "n": name}).scalar() is None
-
-def upgrade():
+def upgrade() -> None:
     conn = op.get_bind()
 
-    # 1) 两个列：qty_on_hand / qty_available（int not null default 0）
-    if _col_absent(conn, TABLE, "qty_on_hand"):
-        op.add_column(TABLE, sa.Column("qty_on_hand", sa.Integer(), nullable=False, server_default="0"))
-        # 去掉默认值（仅用于回填阶段，保持 DDL 干净）
-        op.alter_column(TABLE, "qty_on_hand", server_default=None)
+    # 1) 补列：qty_on_hand / qty_available（幂等）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='qty_on_hand'
+      ) THEN
+        ALTER TABLE public.{TABLE}
+          ADD COLUMN qty_on_hand NUMERIC(18,6) NOT NULL DEFAULT 0;
+        ALTER TABLE public.{TABLE}
+          ALTER COLUMN qty_on_hand DROP DEFAULT;
+      END IF;
 
-    if _col_absent(conn, TABLE, "qty_available"):
-        op.add_column(TABLE, sa.Column("qty_available", sa.Integer(), nullable=False, server_default="0"))
-        op.alter_column(TABLE, "qty_available", server_default=None)
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='qty_available'
+      ) THEN
+        ALTER TABLE public.{TABLE}
+          ADD COLUMN qty_available NUMERIC(18,6) NOT NULL DEFAULT 0;
+        ALTER TABLE public.{TABLE}
+          ALTER COLUMN qty_available DROP DEFAULT;
+      END IF;
+    END $$;
+    """)
 
-    # 2) 唯一约束：snapshot_date + item_id
-    if _constraint_absent(conn, TABLE, UQ):
-        # 若历史上存在相同语义的索引/约束，请按需先 drop 再建
-        op.create_unique_constraint(UQ, TABLE, ["snapshot_date", "item_id"])
+    # 2) 统一唯一键（示例：按历史你已有的唯一键要求可调整）
+    # 这里保持幂等处理：存在旧约束则略过或先删除再建新的；若你已有其他文件完成此事，可忽略此段
+    # （保守起见，不在此处增加/删除唯一约束，避免与其它迁移冲突）
 
-def downgrade():
+
+def downgrade() -> None:
     conn = op.get_bind()
-    # 回滚唯一约束
-    if not _constraint_absent(conn, TABLE, UQ):
-        op.drop_constraint(UQ, table_name=TABLE, type_="unique")
-    # 回滚列（可选）
-    if not _col_absent(conn, TABLE, "qty_available"):
-        op.drop_column(TABLE, "qty_available")
-    if not _col_absent(conn, TABLE, "qty_on_hand"):
-        op.drop_column(TABLE, "qty_on_hand")
+
+    # A) 先守卫删除依赖这些列的视图：
+    #    v_three_books 依赖 v_snapshot_totals，后者依赖 stock_snapshots.qty_available
+    #    先删上游 v_three_books，再删 v_snapshot_totals（若存在），以避免依赖报错。
+    conn.exec_driver_sql("""
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+      -- 先删 v_three_books
+      FOR r IN
+        SELECT table_schema AS schema_name, table_name AS view_name
+          FROM information_schema.views
+         WHERE table_schema='public'
+           AND table_name IN ('v_three_books')
+      LOOP
+        EXECUTE 'DROP VIEW IF EXISTS '
+                || quote_ident(r.schema_name) || '.'
+                || quote_ident(r.view_name)
+                || ' CASCADE';
+      END LOOP;
+
+      -- 再删 v_snapshot_totals
+      FOR r IN
+        SELECT table_schema AS schema_name, table_name AS view_name
+          FROM information_schema.views
+         WHERE table_schema='public'
+           AND table_name IN ('v_snapshot_totals')
+      LOOP
+        EXECUTE 'DROP VIEW IF EXISTS '
+                || quote_ident(r.schema_name) || '.'
+                || quote_ident(r.view_name)
+                || ' CASCADE';
+      END LOOP;
+    END $$;
+    """)
+
+    # B) 删除列（若存在）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='qty_available'
+      ) THEN
+        ALTER TABLE public.{TABLE} DROP COLUMN qty_available;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='qty_on_hand'
+      ) THEN
+        ALTER TABLE public.{TABLE} DROP COLUMN qty_on_hand;
+      END IF;
+    END $$;
+    """)

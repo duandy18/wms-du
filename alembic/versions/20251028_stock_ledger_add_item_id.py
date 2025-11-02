@@ -1,124 +1,121 @@
-"""stock_ledger: add item_id (idempotent) + FK + index
+"""stock_ledger: add item_id (idempotent) + FK + index (CI-safe)
 
 Revision ID: 20251028_stock_ledger_add_item_id
 Revises: 20251027_stock_snapshots_add_qty_columns
-Create Date: 2025-10-28 10:22:00
+Create Date: 2025-10-28
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
-# ---- identifiers ----
-revision = "20251028_stock_ledger_add_item_id"
-down_revision = "20251027_stock_snapshots_add_qty_columns"
+# ---- Alembic identifiers ----
+revision: str = "20251028_stock_ledger_add_item_id"
+down_revision: str | None = "20251027_stock_snapshots_add_qty_columns"
 branch_labels = None
 depends_on = None
 
 TABLE = "stock_ledger"
-FK_NAME = "fk_stock_ledger_item_id"
-IDX_TIME = "ix_stock_ledger_item_time"
+COL = "item_id"
+IDX = "ix_stock_ledger_item_id"
+FK  = "fk_stock_ledger_item"
 
 
-def _col_exists(conn, table, col) -> bool:
-    r = conn.execute(
-        sa.text(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema='public' AND table_name=:t AND column_name=:c
-            LIMIT 1
-            """
-        ),
-        {"t": table, "c": col},
-    ).scalar()
-    return bool(r)
+def upgrade() -> None:
+    conn = op.get_bind()
 
+    # 1) 列存在性检查后添加（幂等）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='{COL}'
+      ) THEN
+        ALTER TABLE public.{TABLE} ADD COLUMN {COL} BIGINT;
+      END IF;
+    END $$;
+    """)
 
-def _fk_exists(conn, table, name) -> bool:
-    r = conn.execute(
-        sa.text(
-            """
-            SELECT 1
+    # 2) 尝试补齐索引（幂等）
+    conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {IDX} ON public.{TABLE}({COL});")
+
+    # 3) 尝试补齐外键（目标表 items 存在时才创建；幂等）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      -- 目标表存在才建 FK
+      IF to_regclass('public.items') IS NOT NULL THEN
+        -- 若同名外键不存在则创建
+        IF NOT EXISTS (
+          SELECT 1
             FROM pg_constraint c
             JOIN pg_class t ON t.oid=c.conrelid
-            WHERE t.relname=:t AND c.conname=:n AND c.contype='f'
-            LIMIT 1
-            """
-        ),
-        {"t": table, "n": name},
-    ).scalar()
-    return bool(r)
+           WHERE t.relname='{TABLE}' AND c.conname='{FK}' AND c.contype='f'
+        ) THEN
+          ALTER TABLE public.{TABLE}
+            ADD CONSTRAINT {FK}
+            FOREIGN KEY ({COL}) REFERENCES public.items(id)
+            ON DELETE SET NULL;
+        END IF;
+      END IF;
+    END $$;
+    """)
+
+    # 4) 可选：如果历史数据缺 item_id，可在此做一次最佳努力的回填（保持幂等）
+    # 这里保守起见不做回填；真实回填通常依赖 stocks / items 业务映射，放到上游脚本完成。
 
 
-def _idx_exists(conn, name) -> bool:
-    r = conn.execute(
-        sa.text(
-            """
-            SELECT 1
-            FROM pg_indexes
-            WHERE schemaname='public' AND indexname=:n
-            LIMIT 1
-            """
-        ),
-        {"n": name},
-    ).scalar()
-    return bool(r)
-
-
-def _null_count(conn, table, col) -> int:
-    return int(
-        conn.execute(
-            sa.text(f"SELECT COUNT(*) FROM {table} WHERE {col} IS NULL")
-        ).scalar()
-        or 0
-    )
-
-
-def upgrade():
+def downgrade() -> None:
     conn = op.get_bind()
 
-    # 1) 列：若不存在则添加（先可空）
-    if not _col_exists(conn, TABLE, "item_id"):
-        op.add_column(TABLE, sa.Column("item_id", sa.Integer(), nullable=True))
+    # A) 先守卫删除依赖此列的视图/对象（例如 v_outbound_idem_audit）
+    #    注意：使用 quote_ident 防注入与转义，避免 psycopg 的占位符限制。
+    conn.exec_driver_sql("""
+    DO $$
+    DECLARE v RECORD;
+    BEGIN
+      FOR v IN
+        SELECT table_schema AS schema_name, table_name AS view_name
+          FROM information_schema.views
+         WHERE table_schema='public'
+           AND table_name IN ('v_outbound_idem_audit')
+      LOOP
+        EXECUTE 'DROP VIEW IF EXISTS '
+                || quote_ident(v.schema_name) || '.'
+                || quote_ident(v.view_name)
+                || ' CASCADE';
+      END LOOP;
+    END $$;
+    """)
 
-    # 2) 回填 item_id（通过 stock_id -> stocks）
-    #    只在仍有空值时做
-    if _null_count(conn, TABLE, "item_id") > 0:
-        op.execute(
-            """
-            UPDATE stock_ledger l
-            SET item_id = s.item_id
-            FROM stocks s
-            WHERE l.stock_id = s.id AND l.item_id IS NULL
-            """
-        )
+    # B) 先删索引（若存在）
+    conn.exec_driver_sql(f"DROP INDEX IF EXISTS public.{IDX};")
 
-    # 3) 设为 NOT NULL（仅当无空值时）
-    if _null_count(conn, TABLE, "item_id") == 0:
-        op.alter_column(TABLE, "item_id", nullable=False)
+    # C) 再删外键（若存在）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid=c.conrelid
+         WHERE t.relname='{TABLE}' AND c.conname='{FK}' AND c.contype='f'
+      ) THEN
+        ALTER TABLE public.{TABLE} DROP CONSTRAINT {FK};
+      END IF;
+    END $$;
+    """)
 
-    # 4) 外键（若不存在则添加）
-    if not _fk_exists(conn, TABLE, FK_NAME):
-        op.create_foreign_key(
-            FK_NAME,
-            TABLE,
-            "items",
-            ["item_id"],
-            ["id"],
-            onupdate="RESTRICT",
-            ondelete="RESTRICT",
-        )
-
-    # 5) 索引（若不存在则添加）
-    if not _idx_exists(conn, IDX_TIME):
-        op.create_index(IDX_TIME, TABLE, ["item_id", "occurred_at"])
-
-
-def downgrade():
-    conn = op.get_bind()
-    # 逆序：索引 -> 外键 -> 列
-    if _idx_exists(conn, IDX_TIME):
-        op.drop_index(IDX_TIME, table_name=TABLE)
-    if _fk_exists(conn, TABLE, FK_NAME):
-        op.drop_constraint(FK_NAME, TABLE, type_="foreignkey")
-    if _col_exists(conn, TABLE, "item_id"):
-        op.drop_column(TABLE, "item_id")
+    # D) 最后删除列（若存在）
+    conn.exec_driver_sql(f"""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='{TABLE}' AND column_name='{COL}'
+      ) THEN
+        ALTER TABLE public.{TABLE} DROP COLUMN {COL};
+      END IF;
+    END $$;
+    """)

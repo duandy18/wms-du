@@ -89,7 +89,44 @@ def upgrade():
 
 
 def downgrade():
-    # 回滚：删索引 + 删列（幂等）
+    """回滚：必须先删除依赖视图，再删除索引与列（幂等、安全）"""
+    conn = op.get_bind()
+
+    # 0) 先删依赖视图（视图依赖 event_error_log.occurred_at）
+    #    - v_scan_errors_recent
+    #    - v_event_errors_pending
+    conn.execute(sa.text(
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.v_scan_errors_recent') IS NOT NULL THEN
+            EXECUTE 'DROP VIEW IF EXISTS public.v_scan_errors_recent';
+          END IF;
+          IF to_regclass('public.v_event_errors_pending') IS NOT NULL THEN
+            EXECUTE 'DROP VIEW IF EXISTS public.v_event_errors_pending';
+          END IF;
+        END$$;
+        """
+    ))
+
+    # 1) 删索引（若存在）
     for tbl in ("event_log", "event_error_log"):
-        op.execute(f"DROP INDEX IF EXISTS ix_{tbl}_occurred_at")
-        op.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS occurred_at")
+        conn.execute(sa.text(f"DROP INDEX IF EXISTS public.ix_{tbl}_occurred_at"))
+
+    # 2) 删列（若存在）
+    for tbl in ("event_log", "event_error_log"):
+        conn.execute(sa.text(f"""
+        DO $$
+        BEGIN
+          IF to_regclass('public.{tbl}') IS NOT NULL THEN
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public'
+                 AND table_name='{tbl}'
+                 AND column_name='occurred_at'
+            ) THEN
+              EXECUTE 'ALTER TABLE public.{tbl} DROP COLUMN IF EXISTS occurred_at';
+            END IF;
+          END IF;
+        END$$;
+        """))

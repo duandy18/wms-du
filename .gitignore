@@ -83,3 +83,4 @@ ops/compose/.env
 *.db
 app/db/db.sqlite
 scratch_probe.py
+scratch_probe.py

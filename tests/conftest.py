@@ -1,4 +1,3 @@
-# tests/conftest.py
 from __future__ import annotations
 
 import asyncio
@@ -120,7 +119,9 @@ async def _db_clean(async_engine: AsyncEngine):
 async def _baseline_seed(_db_clean, async_engine: AsyncEngine):
     """
     基线回种（Lock-A 合法最小域）。
-    注意：locations 现已规范化，必须显式提供 code（与 name 等值亦可）。
+    注意：
+      - locations 现已规范化，必须显式提供 code（与 name 等值亦可）；
+      - 避免显式插入自增 id，插入后同步序列到 MAX(id)。
     """
     async with async_engine.begin() as conn:
         # ---- 基础仓 ----
@@ -131,17 +132,16 @@ async def _baseline_seed(_db_clean, async_engine: AsyncEngine):
             )
         )
 
-        # ---- 标准库位（显式 code）----
-        # 兼容旧测试：保留 id=1 的最小位；name 与 code 同值
+        # ---- 标准库位（不显式写 id，依赖序列/identity；name 与 code 同值）----
         await conn.execute(
             text(
-                "INSERT INTO locations (id, name, code, warehouse_id) "
-                "VALUES (1, 'LOC-1', 'LOC-1', 1) "
-                "ON CONFLICT (id) DO NOTHING"
+                "INSERT INTO locations (name, code, warehouse_id) "
+                "VALUES ('LOC-1', 'LOC-1', 1) "
+                "ON CONFLICT (warehouse_id, code) DO NOTHING"
             )
         )
 
-        # 可选：提供两个系统位（接收入库位 / 暂存位），便于扫码通路专项用例复用
+        # 可选：提供两个系统位（接收入库位 / 暂存位）
         await conn.execute(
             text(
                 "INSERT INTO locations (name, code, warehouse_id) VALUES "
@@ -151,12 +151,28 @@ async def _baseline_seed(_db_clean, async_engine: AsyncEngine):
             )
         )
 
+        # ★ 同步 locations.id 序列到当前 MAX(id)（避免下一次 nextval() 撞主键）
+        await conn.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('locations','id'), "
+                "       COALESCE((SELECT MAX(id) FROM locations), 0), true)"
+            )
+        )
+
         # ---- 最小商品 ----
         await conn.execute(
             text(
                 "INSERT INTO items (id, sku, name, shelf_life_days) "
                 "VALUES (1, 'UT-ITEM-1', 'UT-ITEM', 0) "
                 "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+
+        # ★ 同步 items.id 序列到当前 MAX(id)（与上面同理，防止后续插入再用到 1）
+        await conn.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('items','id'), "
+                "       COALESCE((SELECT MAX(id) FROM items), 0), true)"
             )
         )
 
