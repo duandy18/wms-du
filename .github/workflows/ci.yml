@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ruff
-        run: pip install ruff
+        run: python -m pip install -U pip ruff
       - name: Ruff check
         run: ruff check app tests || true
 
@@ -75,12 +75,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install deps
+      # 关键：无条件安装 pytest 及运行所需最小依赖（即使 requirements.txt 存在也强制安装）
+      - name: Install test deps (force)
         run: |
+          python -m pip install -U pip
+          python -m pip install -U pytest pytest-asyncio httpx alembic asyncpg "psycopg[binary]" SQLAlchemy
+
+          # 如项目使用 requirements.txt，再补充安装其余依赖
           if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install pytest httpx alembic asyncpg psycopg[binary]
+            # 不覆盖已装版本，按需补齐
+            python -m pip install -r requirements.txt || true
           fi
 
       - name: Alembic upgrade/downgrade health
@@ -132,7 +136,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install alembic
-        run: pip install alembic asyncpg psycopg[binary]
+        run: python -m pip install -U alembic asyncpg "psycopg[binary]"
       - name: Upgrade/Downgrade cycle
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
