@@ -1,10 +1,8 @@
 # app/api/routers/count.py
 from __future__ import annotations
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, conint, confloat
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -13,50 +11,49 @@ from app.services.stock_service import StockService
 router = APIRouter(prefix="/count", tags=["count"])
 
 
-class CountIn(BaseModel):
-    item_id: int = Field(..., ge=1)
-    location_id: int = Field(..., ge=0)
-    counted_qty: int = Field(..., ge=0, description="实盘数量")
-    ref: str = Field(..., description="扫描/审计引用号")
-    apply: bool = Field(False, description="True=真动作落账；False=探活（不落账）")
+class CountCommitIn(BaseModel):
+    item_id: conint(gt=0) = Field(..., description="被盘点的物料 ID")
+    location_id: conint(gt=0) = Field(..., description="被盘点的库位 ID")
+    counted_qty: confloat(ge=0) = Field(..., description="实盘数量（非差额）")
+    apply: bool = Field(False, description="是否真实落账（False=探活试算）")
+    ref: str | None = Field(None, description="幂等/追踪用引用号，可选")
 
 
-class CountOut(BaseModel):
-    item_id: int
-    location_id: int
-    delta: int
-    after_qty: Optional[int] = None
-    applied: bool
+class CountCommitOut(BaseModel):
+    ref: str
+    diff: float | None = None
+    reconciled: bool
+    message: str | None = None
 
 
-@router.post("", response_model=CountOut)
-async def count_reconcile(
-    body: CountIn,
+@router.post("/commit", response_model=CountCommitOut)
+async def count_commit(
+    body: CountCommitIn,
     session: AsyncSession = Depends(get_session),
-):
+) -> CountCommitOut:
     """
     盘点：对某库位/物料执行 reconcile_inventory()
-    - apply=False 探活（回滚，不留痕）
-    - apply=True 真动作（提交，写台账）
+    - apply=False：只试算差额，不落账
+    - apply=True ：按差额调整库存并记账
     """
     svc = StockService()
-    res = await svc.reconcile_inventory(
-        session=session,
-        item_id=body.item_id,
-        location_id=body.location_id,
-        counted_qty=body.counted_qty,
-        apply=body.apply,
-        ref=body.ref,
-    )
-    if body.apply:
-        await session.commit()
-    else:
-        await session.rollback()
 
-    return CountOut(
-        item_id=body.item_id,
-        location_id=body.location_id,
-        delta=int(res.get("delta", 0)),
-        after_qty=(int(res["after_qty"]) if res.get("after_qty") is not None else None),
-        applied=bool(body.apply),
+    # 直接按新签名调用：counted_qty（不是 qty），其余参数保持一致
+    try:
+        res = await svc.reconcile_inventory(
+            session=session,
+            item_id=body.item_id,
+            location_id=body.location_id,
+            counted_qty=float(body.counted_qty),
+            apply=bool(body.apply),
+            ref=body.ref,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"reconcile failed: {e!s}")
+
+    return CountCommitOut(
+        ref=res.get("ref") or (body.ref or ""),
+        diff=res.get("diff"),
+        reconciled=bool(res.get("reconciled") or body.apply),
+        message=res.get("message"),
     )
