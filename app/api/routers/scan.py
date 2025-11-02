@@ -13,7 +13,7 @@ from app.api.deps import get_session
 router = APIRouter()
 
 
-# --------- 简单的扫码上下文解析 ---------
+# --------- 扫码上下文解析 ---------
 class ScanContext:
     def __init__(
         self,
@@ -38,7 +38,6 @@ class ScanContext:
 def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     tokens = payload.get("tokens") or {}
     barcode = tokens.get("barcode") or ""
-    # 支持 "LOC:1 ITEM:3001 QTY:2" 这种键值对
     kv: Dict[str, str] = {}
     for part in str(barcode).replace(",", " ").split():
         if ":" in part:
@@ -63,7 +62,7 @@ def extract_scan_context(payload: Dict[str, Any]) -> ScanContext:
     )
 
 
-# ---------- 事件记录（简化实现） ----------
+# ---------- 事件写入（最简实现） ----------
 async def _insert_event_raw(
     session: AsyncSession,
     source: str,
@@ -76,12 +75,11 @@ async def _insert_event_raw(
             """
             INSERT INTO event_log(source, ref, message, occurred_at)
             VALUES (:src, :ref, :msg, :ts)
-        """
+            """
         ),
         {
             "src": source,
             "ref": ref,
-            # 这里 message 只做最小化信息存储；完整信息通常放 meta/jsonb
             "msg": meta_base.get("input", {}),
             "ts": occurred_at,
         },
@@ -96,7 +94,7 @@ async def _commit_and_get_event_id(session: AsyncSession, ref: str, source: str)
             SELECT id FROM event_log
              WHERE ref=:ref AND source=:src
              ORDER BY id DESC LIMIT 1
-        """
+            """
         ),
         {"ref": ref, "src": source},
     )
@@ -105,13 +103,11 @@ async def _commit_and_get_event_id(session: AsyncSession, ref: str, source: str)
 
 
 def _format_ref(ts: datetime, device_id: str, loc_id: Optional[int]) -> str:
-    # 统一的扫描参考号：SCAN-<MODE>:scan:<DEVICE>:<ISO8601>:LOC:<id>
     loc = loc_id if loc_id is not None else 0
     return f"SCAN:scan:{device_id}:{ts.isoformat()}:LOC:{loc}"
 
 
 def _fallback_loc_id_from_barcode(payload: Dict[str, Any]) -> Optional[int]:
-    # 兜底从 tokens.barcode 拆 LOC:xx
     tokens = payload.get("tokens") or {}
     barcode = tokens.get("barcode") or ""
     for part in str(barcode).replace(",", " ").split():
@@ -164,7 +160,7 @@ async def scan_gateway(
             "result": {"hint": "pick probe"},
         }
 
-    # === receive/putaway/count：probe 或 commit ===
+    # receive / putaway / count
     if sc.mode in {"receive", "putaway", "count"}:
         if probe:
             source = f"scan_{sc.mode}_probe"
@@ -180,7 +176,7 @@ async def scan_gateway(
                 "result": {"hint": f"{sc.mode} probe"},
             }
 
-        # -------- commit 真动作（串行执行） --------
+        # commit 真动作
         from app.services.stock_service import StockService
 
         svc = StockService()
@@ -205,7 +201,7 @@ async def scan_gateway(
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
 
-            # 注意：transfer 当前签名**不接受** reason 参数
+            # 关键修正：transfer 不接收 reason
             result = await svc.transfer(
                 session=session,
                 item_id=sc.item_id,
@@ -216,11 +212,11 @@ async def scan_gateway(
             )
             source = "scan_putaway_commit"
 
-        else:  # sc.mode == "count"
+        else:  # count
             if sc.item_id is None or loc_id is None or sc.qty is None:
                 raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
 
-            # StockService.reconcile_inventory 的包装更偏好 counted_qty 参数名（内部已做向后兼容）
+            # 关键修正：reconcile_inventory 接收 counted_qty（不是 qty）
             result = await svc.reconcile_inventory(
                 session=session,
                 item_id=sc.item_id,
@@ -231,7 +227,6 @@ async def scan_gateway(
             )
             source = "scan_count_commit"
 
-        # 写事件 + 返回
         await _insert_event_raw(session, source, scan_ref, meta_base, occurred_at)
         ev_id = await _commit_and_get_event_id(session, scan_ref, source)
         return {
@@ -244,5 +239,4 @@ async def scan_gateway(
             "result": result,
         }
 
-    # 不应到达
     raise HTTPException(status_code=400, detail="unsupported mode")
