@@ -1,5 +1,6 @@
-import pytest
 from datetime import date, timedelta
+
+import pytest
 from sqlalchemy import text
 
 pytestmark = pytest.mark.asyncio
@@ -26,11 +27,13 @@ async def _seed(session, item_id=1, wh=1, loc=1):
     for code, exp, qty in plan:
         bid = (
             await session.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO batches(item_id, warehouse_id, location_id, batch_code, expire_at)
                     VALUES (:item, :wh, :loc, :code, :exp)
                     RETURNING id
-                """),
+                """
+                ),
                 {"item": item_id, "wh": wh, "loc": loc, "code": code, "exp": exp},
             )
         ).scalar_one()
@@ -39,10 +42,12 @@ async def _seed(session, item_id=1, wh=1, loc=1):
     # 2) 以六列完整写入 onhand（避免 NOT NULL 违反）
     for code, _, qty in plan:
         await session.execute(
-            text("""
+            text(
+                """
                 INSERT INTO stocks(item_id, warehouse_id, location_id, batch_id, batch_code, qty)
                 VALUES (:item, :wh, :loc, :bid, :code, :qty)
-            """),
+            """
+            ),
             {
                 "item": item_id,
                 "wh": wh,
@@ -60,13 +65,15 @@ async def _seed(session, item_id=1, wh=1, loc=1):
 async def _reservations_by_batch(session, order_id: int):
     rows = (
         await session.execute(
-            text("""
+            text(
+                """
                 SELECT batch_id, SUM(qty) AS q
                 FROM reservations
                 WHERE order_id = :oid
                 GROUP BY batch_id
                 ORDER BY batch_id
-            """),
+            """
+            ),
             {"oid": order_id},
         )
     ).all()
@@ -80,11 +87,13 @@ async def _sum_onhand(session, item_id: int) -> int:
     return int(
         (
             await session.execute(
-                text("""
+                text(
+                    """
                     SELECT COALESCE(SUM(qty),0)
                     FROM stocks
                     WHERE item_id = :item
-                """),
+                """
+                ),
                 {"item": item_id},
             )
         ).scalar()
@@ -100,7 +109,8 @@ async def _sum_available(session, item_id: int) -> int:
     return int(
         (
             await session.execute(
-                text("""
+                text(
+                    """
                     WITH onhand AS (
                       SELECT COALESCE(SUM(s.qty),0) AS q
                       FROM stocks s
@@ -113,7 +123,8 @@ async def _sum_available(session, item_id: int) -> int:
                       WHERE b.item_id=:item
                     )
                     SELECT (SELECT q FROM onhand) - (SELECT q FROM reserved)
-                """),
+                """
+                ),
                 {"item": item_id},
             )
         ).scalar()

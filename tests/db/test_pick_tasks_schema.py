@@ -5,11 +5,13 @@ pytestmark = pytest.mark.grp_scan
 
 
 async def _exists(session, table: str) -> bool:
-    sql = text("""
+    sql = text(
+        """
       SELECT 1
       FROM information_schema.tables
       WHERE table_schema='public' AND table_name=:t
-    """)
+    """
+    )
     return (await session.execute(sql, {"t": table})).first() is not None
 
 
@@ -31,11 +33,13 @@ async def test_pickline_status_autoupdate(session):
 
     # 建任务行
     res2 = await session.execute(
-        text("""
+        text(
+            """
             INSERT INTO pick_task_lines (task_id, item_id, req_qty, picked_qty)
             VALUES (:tid, 3001, 5, 0)
             RETURNING id, status
-        """),
+        """
+        ),
         {"tid": task_id},
     )
     line_id, status = res2.first()
@@ -65,8 +69,6 @@ async def test_pickline_status_autoupdate(session):
 
     # 检查任务头状态是否被聚合更新（允许多种状态口径）
     head_status = (
-        await session.execute(
-            text("SELECT status FROM pick_tasks WHERE id=:id"), {"id": task_id}
-        )
+        await session.execute(text("SELECT status FROM pick_tasks WHERE id=:id"), {"id": task_id})
     ).scalar_one()
     assert head_status in ("READY", "ASSIGNED", "PICKING", "DONE")
