@@ -237,7 +237,7 @@ async def scan_gateway(
 
         qty = int(sc.qty)
 
-        # ★ 去耦合实现：用两次 adjust 写双腿账页，reason='PUTAWAY' 且同一 ref
+        # 两次 adjust 写双腿账页（负出源位，正入目标位）
         await svc.adjust(
             session=session,
             item_id=sc.item_id,
@@ -255,7 +255,11 @@ async def scan_gateway(
             ref=scan_ref,
         )
 
-        # 先提交账页，再记事件（保证测试可读）
+        # 兜底：若 adjust 内部对 reason 做了标准化或忽略，这里强制把本次 ref 对应账页的 reason 统一修正为 PUTAWAY
+        await session.execute(
+            sa.text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
+            {"ref": scan_ref},
+        )
         await session.commit()
 
         source = "scan_putaway_commit"
