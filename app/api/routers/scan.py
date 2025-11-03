@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
+
 import json
 import re
-
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
@@ -19,6 +20,7 @@ router = APIRouter()
 def _format_ref(ts: datetime, device_id: Optional[str], location_id: Optional[int]) -> str:
     did = (device_id or "unknown").lower()
     loc = f"{location_id}" if location_id is not None else "unknown"
+    # 测试断言期望以 "scan:" 开头，统一小写
     return f"scan:{did}:{ts.isoformat()}:loc:{loc}".lower()
 
 
@@ -50,67 +52,66 @@ async def _commit_and_get_event_id(
     return ev_id
 
 
-class ScanCtx(Dict[str, Any]):
-    __slots__ = ()
+# ---------- request schema (Pydantic) ----------
 
-    @property
-    def mode(self) -> str:  # type: ignore[override]
-        return (self.get("mode") or "").lower()
+ScanMode = Literal["pick", "receive", "putaway", "count"]
 
-    @property
-    def device_id(self) -> Optional[str]:
-        ctx = self.get("ctx") or {}
-        return ctx.get("device_id")
 
-    @property
-    def operator(self) -> Optional[str]:
-        ctx = self.get("ctx") or {}
-        return ctx.get("operator")
+class ScanCtxModel(BaseModel):
+    device_id: Optional[str] = None
+    operator: Optional[str] = None
 
-    @property
-    def task_id(self) -> Optional[int]:
-        return self.get("task_id")
 
-    @property
-    def item_id(self) -> Optional[int]:
-        return self.get("item_id")
-
-    @property
-    def qty(self) -> Optional[int]:
-        return self.get("qty")
-
-    @property
-    def location_id(self) -> Optional[int]:
-        return self.get("location_id")
+class ScanTokensModel(BaseModel):
+    barcode: Optional[str] = None
 
 
 _BARCODE_INT = re.compile(r"\b(\w+):([-\w\.]+)\b", re.I)
 
-def extract_scan_context(payload: Dict[str, Any]) -> ScanCtx:
-    out: Dict[str, Any] = {
-        "mode": (payload.get("mode") or "").lower(),
-        "ctx": payload.get("ctx") or {},
-    }
-    tokens = payload.get("tokens") or {}
-    barcode = tokens.get("barcode") or ""
-    if isinstance(barcode, str) and barcode:
+class ScanRequest(BaseModel):
+    mode: ScanMode
+    tokens: ScanTokensModel = Field(default_factory=ScanTokensModel)
+    ctx: ScanCtxModel = Field(default_factory=ScanCtxModel)
+
+    # 直给场景（不依赖条码）
+    task_line_id: Optional[int] = None
+    task_id: Optional[int] = None
+    item_id: Optional[int] = None
+    qty: Optional[int] = None
+    location_id: Optional[int] = None
+    from_location_id: Optional[int] = None
+
+    # 行为
+    probe: bool = False
+
+    @field_validator("task_id", "item_id", "qty", "location_id", mode="before")
+    @classmethod
+    def fill_from_barcode(cls, v, info):
+        """
+        若 body 未直给，尝试从 tokens.barcode 解析
+        """
+        # info.data 是已解析字段字典；拿到 tokens
+        tokens = info.data.get("tokens") or {}
+        barcode = tokens.get("barcode") or ""
+        if v is not None or not isinstance(barcode, str) or not barcode:
+            return v
+
         kv = {m.group(1).upper(): m.group(2) for m in _BARCODE_INT.finditer(barcode)}
-        if "TASK" in kv:
-            try: out["task_id"] = int(kv["TASK"])
-            except ValueError: pass
-        if "LOC" in kv:
-            try: out["location_id"] = int(kv["LOC"])
-            except ValueError: pass
-        if "ITEM" in kv:
-            try: out["item_id"] = int(kv["ITEM"])
-            except ValueError: pass
-        if "QTY" in kv:
-            try: out["qty"] = int(kv["QTY"])
-            except ValueError: pass
-    for k in ("task_id", "location_id", "item_id", "qty"):
-        if k in payload and payload[k] is not None:
-            out[k] = payload[k]
-    return ScanCtx(out)
+        key = info.field_name
+        mapping = {
+            "task_id": "TASK",
+            "item_id": "ITEM",
+            "qty": "QTY",
+            "location_id": "LOC",
+        }
+        tag = mapping.get(key)
+        if tag and tag in kv:
+            raw = kv[tag]
+            try:
+                return int(raw)
+            except ValueError:
+                return v
+        return v
 
 
 def _fallback_loc_id_from_barcode(payload: Dict[str, Any]) -> Optional[int]:
@@ -122,37 +123,36 @@ def _fallback_loc_id_from_barcode(payload: Dict[str, Any]) -> Optional[int]:
             return int(m.group(1))
     return None
 
+
 # ---------- endpoint ----------
 
 @router.post("/scan")
 async def scan_gateway(
-    payload: Dict[str, Any], session: AsyncSession = Depends(get_session)
+    req: ScanRequest, session: AsyncSession = Depends(get_session)
 ) -> Dict[str, Any]:
-    sc = extract_scan_context(payload)
-    if sc.mode not in {"pick", "receive", "putaway", "count"}:
-        raise HTTPException(status_code=400, detail="unsupported mode")
-
+    """
+    统一 /scan 网关（pick / receive / putaway / count）：
+    - 使用 Pydantic 校验必填字段
+    - 写事件：pick（probe/commit）message 写纯文本 scan_ref；其它模式写 JSON
+    - putaway 采用“原子事务”两腿 adjust，reason 统一为 PUTAWAY
+    """
+    # 兜底 location
+    loc_id = req.location_id if req.location_id is not None else _fallback_loc_id_from_barcode(req.model_dump())
     occurred_at = datetime.now(timezone.utc)
-    probe = bool(payload.get("probe", False))
-    loc_id = sc.location_id if sc.location_id is not None else _fallback_loc_id_from_barcode(payload)
-    scan_ref = _format_ref(occurred_at, sc.device_id, loc_id)
+    scan_ref = _format_ref(occurred_at, req.ctx.device_id, loc_id)
 
-    meta_base: Dict[str, Any] = {
-        "occurred_at": occurred_at.isoformat(),
-        "ctx": {"device_id": sc.device_id, "operator": sc.operator},
-        "input": {
-            "mode": sc.mode,
-            "task_id": sc.task_id,
-            "item_id": sc.item_id,
-            "qty": sc.qty,
-            "location_id": loc_id,
-        },
-        "ref": scan_ref,
+    meta_input: Dict[str, Any] = {
+        "mode": req.mode,
+        "task_id": req.task_id,
+        "item_id": req.item_id,
+        "qty": req.qty,
+        "location_id": loc_id,
     }
 
     # ---------- pick ----------
-    if sc.mode == "pick":
-        if probe:
+    if req.mode == "pick":
+        if req.probe:
+            # probe：写文本 ref
             source = "scan_pick_probe"
             ev_id = await _commit_and_get_event_id(session, source, scan_ref, occurred_at)
             return {
@@ -165,26 +165,27 @@ async def scan_gateway(
                 "result": {"hint": "pick probe"},
             }
         else:
+            # commit：延迟导入 pick 服务；测试里会注入假的 PickService
             try:
                 from app.services.pick_service import PickService  # type: ignore
             except Exception as e:  # pragma: no cover
                 raise HTTPException(status_code=500, detail=f"pick service missing: {e}")
 
-            svc = PickService()
-            task_line_id = payload.get("task_line_id")
-            if sc.item_id is None or loc_id is None or sc.qty is None:
+            if req.item_id is None or loc_id is None or req.qty is None:
                 raise HTTPException(status_code=400, detail="pick requires TASK/ITEM/LOC/QTY")
 
+            svc = PickService()
             result = await svc.record_pick(
                 session=session,
-                task_line_id=int(task_line_id) if task_line_id is not None else (sc.task_id or 0),
+                task_line_id=int(req.task_line_id) if req.task_line_id is not None else (req.task_id or 0),
                 from_location_id=loc_id,
-                item_id=sc.item_id,
-                qty=int(sc.qty),
+                item_id=req.item_id,
+                qty=int(req.qty),
                 scan_ref=scan_ref,
-                operator=sc.operator,
+                operator=req.ctx.operator,
             )
             source = "scan_pick_commit"
+            # commit：也写文本 ref（与测试断言一致）
             ev_id = await _commit_and_get_event_id(session, source, scan_ref, occurred_at)
             return {
                 "scan_ref": scan_ref,
@@ -197,8 +198,9 @@ async def scan_gateway(
             }
 
     # ---------- receive / putaway / count ----------
-    if probe:
-        source = f"scan_{sc.mode}_probe"
+    # probe：写文本 ref
+    if req.probe:
+        source = f"scan_{req.mode}_probe"
         ev_id = await _commit_and_get_event_id(session, source, scan_ref, occurred_at)
         return {
             "scan_ref": scan_ref,
@@ -207,64 +209,66 @@ async def scan_gateway(
             "occurred_at": occurred_at.isoformat(),
             "committed": False,
             "event_id": ev_id,
-            "result": {"hint": f"{sc.mode} probe"},
+            "result": {"hint": f"{req.mode} probe"},
         }
 
     # 真动作
     from app.services.stock_service import StockService
     svc = StockService()
 
-    if sc.mode == "receive":
-        if sc.item_id is None or loc_id is None or sc.qty is None:
+    if req.mode == "receive":
+        if req.item_id is None or loc_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="receive requires ITEM, LOC, QTY")
+        # 单腿正向
         result = await svc.adjust(
             session=session,
-            item_id=sc.item_id,
+            item_id=req.item_id,
             location_id=loc_id,
-            delta=+int(sc.qty),
+            delta=+int(req.qty),
             reason="INBOUND",
             ref=scan_ref,
         )
         source = "scan_receive_commit"
-        msg: str | Dict[str, Any] = {**meta_base["input"], "ref": scan_ref}
+        msg: str | Dict[str, Any] = {**meta_input, "ref": scan_ref}
 
-    elif sc.mode == "putaway":
-        from_loc = payload.get("from_location_id")
-        if from_loc is None:
-            raise HTTPException(status_code=400, detail="putaway requires from_location_id")
-        if sc.item_id is None or loc_id is None or sc.qty is None:
-            raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY")
+    elif req.mode == "putaway":
+        if req.item_id is None or loc_id is None or req.qty is None or req.from_location_id is None:
+            raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY and from_location_id")
 
-        qty = int(sc.qty)
-
-        # 两次 adjust 写双腿账页（负出源位，正入目标位）
-        await svc.adjust(
-            session=session,
-            item_id=sc.item_id,
-            location_id=int(from_loc),
-            delta=-qty,
-            reason="PUTAWAY",
-            ref=scan_ref,
-        )
-        await svc.adjust(
-            session=session,
-            item_id=sc.item_id,
-            location_id=loc_id,
-            delta=+qty,
-            reason="PUTAWAY",
-            ref=scan_ref,
-        )
-
-        # 兜底：若 adjust 内部对 reason 做了标准化或忽略，这里强制把本次 ref 对应账页的 reason 统一修正为 PUTAWAY
-        await session.execute(
-            sa.text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
-            {"ref": scan_ref},
-        )
-        await session.commit()
+        qty = int(req.qty)
+        # 两腿原子事务（避免“只出不入”）
+        async with session.begin():
+            # 源位负出
+            await svc.adjust(
+                session=session,
+                item_id=req.item_id,
+                location_id=int(req.from_location_id),
+                delta=-qty,
+                reason="PUTAWAY",
+                ref=scan_ref,
+            )
+            # 目标正入
+            await svc.adjust(
+                session=session,
+                item_id=req.item_id,
+                location_id=loc_id,
+                delta=+qty,
+                reason="PUTAWAY",
+                ref=scan_ref,
+            )
+            # 兜底：将本 ref 的 reason 统一回填为 PUTAWAY
+            await session.execute(
+                sa.text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
+                {"ref": scan_ref},
+            )
 
         source = "scan_putaway_commit"
-        msg = {**meta_base["input"], "ref": scan_ref}
-        result = {"moved": qty, "from_location_id": int(from_loc), "to_location_id": loc_id}
+        msg = {**meta_input, "ref": scan_ref}
+        result = {
+            "moved": qty,
+            "from_location_id": int(req.from_location_id),
+            "to_location_id": loc_id,
+        }
 
         ev_id = await _commit_and_get_event_id(session, source, msg, occurred_at)
         return {
@@ -277,19 +281,19 @@ async def scan_gateway(
             "result": result,
         }
 
-    else:  # sc.mode == "count"
-        if sc.item_id is None or loc_id is None or sc.qty is None:
+    else:  # req.mode == "count"
+        if req.item_id is None or loc_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
         result = await svc.reconcile_inventory(
             session=session,
-            item_id=sc.item_id,
+            item_id=req.item_id,
             location_id=loc_id,
-            counted_qty=int(sc.qty),
+            counted_qty=int(req.qty),  # 注意：这里是 counted_qty
             apply=True,
             ref=scan_ref,
         )
         source = "scan_count_commit"
-        msg = {**meta_base["input"], "ref": scan_ref}
+        msg = {**meta_input, "ref": scan_ref}
 
     ev_id = await _commit_and_get_event_id(session, source, msg, occurred_at)
     return {
