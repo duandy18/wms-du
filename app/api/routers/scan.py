@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,30 +22,29 @@ class ScanRequest(BaseModel):
     ctx: Dict[str, Any] | None = None
     probe: bool = False
 
-    # 解析后落地字段（validator 中填充）
+    # 解析后落地字段（通过 model_validator 在 tokens.barcode 中补齐）
     item_id: Optional[int] = None
     location_id: Optional[int] = None
     qty: Optional[int] = None
     task_id: Optional[int] = None
     from_location_id: Optional[int] = None
 
-    @field_validator("tokens", mode="after")
-    def fill_from_barcode(cls, v, values):
-        """从 tokens.barcode 里解析 item/location/qty/task 等字段，补到模型上。"""
-        if not isinstance(v, dict):
-            return v
-        bc = v.get("barcode")
-        if not isinstance(bc, str) or not bc.strip():
-            return v
-
-        parsed = parse_barcode(bc)
-        # 根据 parse_barcode 的返回结构，按需补齐
-        # 允许已有显式入参覆盖条码解析结果
-        values.setdefault("item_id", parsed.get("item_id"))
-        values.setdefault("location_id", parsed.get("location_id"))
-        values.setdefault("qty", parsed.get("qty"))
-        values.setdefault("task_id", parsed.get("task_id"))
-        return v
+    @model_validator(mode="after")
+    def autofill_from_tokens(self) -> "ScanRequest":
+        """在模型完成解析后，从 tokens.barcode 里解析并回填缺失字段。"""
+        if isinstance(self.tokens, dict):
+            bc = self.tokens.get("barcode")
+            if isinstance(bc, str) and bc.strip():
+                parsed = parse_barcode(bc)
+                if self.item_id is None:
+                    self.item_id = parsed.get("item_id")
+                if self.location_id is None:
+                    self.location_id = parsed.get("location_id")
+                if self.qty is None:
+                    self.qty = parsed.get("qty")
+                if self.task_id is None:
+                    self.task_id = parsed.get("task_id")
+        return self
 
 
 # ---------- 内部工具 ----------
@@ -273,9 +272,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             # 如果仍查不到任何该 ref 的账页（例如 adjust 内部静默失败），就合成两腿账页
             leg_rows = (
                 await session.execute(
-                    text(
-                        "SELECT id FROM stock_ledger WHERE ref=:ref LIMIT 1"
-                    ),
+                    text("SELECT id FROM stock_ledger WHERE ref=:ref LIMIT 1"),
                     {"ref": scan_ref},
                 )
             ).all()
