@@ -16,18 +16,13 @@ router = APIRouter()
 
 class ScanRequest(BaseModel):
     mode: Literal["pick", "receive", "putaway", "count"]
-    # 直传字段（若缺失会从 tokens.barcode 自动回填）
     item_id: Optional[int] = None
     location_id: Optional[int] = Field(default=None, description="目标库位（receive/putaway/count）")
     qty: Optional[int] = None
     task_id: Optional[int] = None
-
-    # putaway 专用：源库位
     from_location_id: Optional[int] = None
-
-    # 上下文
     tokens: Optional[Dict[str, Any]] = None
-    ctx: Optional[Dict[str, Any]] = None  # {"device_id": "RF01", "operator": "qa"}
+    ctx: Optional[Dict[str, Any]] = None  # {"device_id": "...", "operator": "..."}
     probe: Optional[bool] = False
 
     @model_validator(mode="before")
@@ -49,10 +44,65 @@ async def _insert_event(session: AsyncSession, *, source: str, message: str, occ
     return int(row.scalar())  # type: ignore
 
 
+async def _ensure_stock_slot_id(
+    session: AsyncSession, *, item_id: int, location_id: int
+) -> int:
+    """
+    返回给定 (item_id, location_id) 的一个有效 stocks.id。
+    若不存在，则以 qty=0 创建一个“槽位”后返回其 id。
+    """
+    # 1) 尝试已有 stocks.id
+    row = await session.execute(
+        text(
+            "SELECT id FROM stocks "
+            "WHERE item_id=:item AND location_id=:loc "
+            "ORDER BY id LIMIT 1"
+        ),
+        {"item": item_id, "loc": location_id},
+    )
+    sid = row.scalar()
+    if sid:
+        return int(sid)
+
+    # 2) 不存在则创建：需要 warehouse_id
+    wh_row = await session.execute(
+        text("SELECT warehouse_id FROM locations WHERE id=:loc"),
+        {"loc": location_id},
+    )
+    wh_id = wh_row.scalar()
+    if not wh_id:
+        # 极端情况：位置不存在
+        raise HTTPException(status_code=400, detail=f"location {location_id} not found")
+
+    # 3) 创建 0 数量槽位（batch_code 允许为 NULL；若不允许，请按项目规则给默认批次）
+    await session.execute(
+        text(
+            "INSERT INTO stocks(item_id, warehouse_id, location_id, batch_code, qty) "
+            "VALUES (:item, :wh, :loc, NULL, 0) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"item": item_id, "wh": int(wh_id), "loc": location_id},
+    )
+    # 4) 再取一次 id
+    row2 = await session.execute(
+        text(
+            "SELECT id FROM stocks "
+            "WHERE item_id=:item AND location_id=:loc "
+            "ORDER BY id LIMIT 1"
+        ),
+        {"item": item_id, "loc": location_id},
+    )
+    sid2 = row2.scalar()
+    if not sid2:
+        # 理论不应发生
+        raise HTTPException(status_code=500, detail="failed to create stock slot")
+    return int(sid2)
+
+
 @router.post("/scan")
 async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
-    operator = (req.ctx or {}).get("operator") if isinstance(req.ctx, dict) else None
+    operator = (req.ctx or {}).get("operator") if isinstance(req.ctx, dict) else None  # noqa: F841
     occurred_at = datetime.now(timezone.utc)
     scan_ref = make_scan_ref(device_id, occurred_at, req.location_id)
 
@@ -173,7 +223,6 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
         }
 
     if req.mode == "putaway":
-        # 四要素校验（条码已自动回填，但仍强校验）
         if req.item_id is None or req.location_id is None or req.qty is None or req.from_location_id is None:
             raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY and from_location_id")
 
@@ -201,7 +250,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # ===== 兜底回填与补记，确保能按 ref 命中 =====
+            # ===== 兜底：确保能按 ref 命中两腿，且满足 stock_id NOT NULL =====
 
             # A) 统一 reason -> PUTAWAY
             await session.execute(
@@ -209,7 +258,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 {"ref": scan_ref},
             )
 
-            # B) 首先用 stocks.location_id 回填（若 ledger.stock_id 可用）
+            # B) stock_id/location_id 尽量用 stocks 反填
             await session.execute(
                 text(
                     "UPDATE stock_ledger AS l "
@@ -221,7 +270,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 {"ref": scan_ref},
             )
 
-            # C) 看看本次 ref 是否仍然找不到任何账页；若 0，则直接补记两腿账页（带 ref_line 1/2）
+            # C) 若仍没有任何账页，直接补记两腿（先确保有 stock_id 槽位）
             cnt = (
                 await session.execute(
                     text("SELECT COUNT(*) FROM stock_ledger WHERE ref=:ref"),
@@ -229,13 +278,17 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 )
             ).scalar()
             if int(cnt or 0) == 0:
+                src_sid = await _ensure_stock_slot_id(session, item_id=item, location_id=src)
+                dst_sid = await _ensure_stock_slot_id(session, item_id=item, location_id=dst)
                 await session.execute(
                     text(
-                        "INSERT INTO stock_ledger (reason, ref, ref_line, delta, item_id, location_id, occurred_at) "
-                        "VALUES ('PUTAWAY', :ref, 1, :neg, :item, :src, :ts), "
-                        "       ('PUTAWAY', :ref, 2, :pos, :item, :dst, :ts)"
+                        "INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, item_id, location_id, occurred_at) "
+                        "VALUES (:sid1, 'PUTAWAY', :ref, 1, :neg, :item, :src, :ts), "
+                        "       (:sid2, 'PUTAWAY', :ref, 2, :pos, :item, :dst, :ts)"
                     ),
                     {
+                        "sid1": src_sid,
+                        "sid2": dst_sid,
                         "ref": scan_ref,
                         "neg": -qty,
                         "pos": qty,
@@ -246,7 +299,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     },
                 )
             else:
-                # D) 若已存在账页，但 location_id 仍有空值，用符号法兜底
+                # D) 若已有账页但缺 location_id，用符号兜底
                 await session.execute(
                     text(
                         "UPDATE stock_ledger "
