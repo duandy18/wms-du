@@ -1,17 +1,19 @@
-# app/api/routers/scan.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Literal
 
 import json
-import re
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
+from app.api.routers.scan_utils import (
+    try_fill_int_from_barcode,
+    fallback_loc_id_from_barcode,
+)
 
 router = APIRouter()
 
@@ -66,8 +68,6 @@ class ScanTokensModel(BaseModel):
     barcode: Optional[str] = None
 
 
-_BARCODE_INT = re.compile(r"\b(\w+):([-\w\.]+)\b", re.I)
-
 class ScanRequest(BaseModel):
     mode: ScanMode
     tokens: ScanTokensModel = Field(default_factory=ScanTokensModel)
@@ -86,42 +86,9 @@ class ScanRequest(BaseModel):
 
     @field_validator("task_id", "item_id", "qty", "location_id", mode="before")
     @classmethod
-    def fill_from_barcode(cls, v, info):
-        """
-        若 body 未直给，尝试从 tokens.barcode 解析
-        """
-        # info.data 是已解析字段字典；拿到 tokens
-        tokens = info.data.get("tokens") or {}
-        barcode = tokens.get("barcode") or ""
-        if v is not None or not isinstance(barcode, str) or not barcode:
-            return v
-
-        kv = {m.group(1).upper(): m.group(2) for m in _BARCODE_INT.finditer(barcode)}
-        key = info.field_name
-        mapping = {
-            "task_id": "TASK",
-            "item_id": "ITEM",
-            "qty": "QTY",
-            "location_id": "LOC",
-        }
-        tag = mapping.get(key)
-        if tag and tag in kv:
-            raw = kv[tag]
-            try:
-                return int(raw)
-            except ValueError:
-                return v
-        return v
-
-
-def _fallback_loc_id_from_barcode(payload: Dict[str, Any]) -> Optional[int]:
-    tokens = payload.get("tokens") or {}
-    barcode = tokens.get("barcode") or ""
-    if isinstance(barcode, str):
-        m = re.search(r"\bloc:(\d+)\b", barcode, re.I)
-        if m:
-            return int(m.group(1))
-    return None
+    def _fill_from_barcode(cls, v, info):
+        tokens_obj = info.data.get("tokens") if isinstance(info.data, dict) else None
+        return try_fill_int_from_barcode(v, info.field_name, tokens_obj)
 
 
 # ---------- endpoint ----------
@@ -132,12 +99,12 @@ async def scan_gateway(
 ) -> Dict[str, Any]:
     """
     统一 /scan 网关（pick / receive / putaway / count）：
-    - 使用 Pydantic 校验必填字段
-    - 写事件：pick（probe/commit）message 写纯文本 scan_ref；其它模式写 JSON
+    - 使用 Pydantic 校验+条码解析填充必要字段
+    - 写事件：pick（probe/commit）message 写纯文本 scan_ref；其它模式写 JSON 输入
     - putaway 采用“原子事务”两腿 adjust，reason 统一为 PUTAWAY
     """
     # 兜底 location
-    loc_id = req.location_id if req.location_id is not None else _fallback_loc_id_from_barcode(req.model_dump())
+    loc_id = req.location_id if req.location_id is not None else fallback_loc_id_from_barcode(req)
     occurred_at = datetime.now(timezone.utc)
     scan_ref = _format_ref(occurred_at, req.ctx.device_id, loc_id)
 
