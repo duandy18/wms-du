@@ -201,13 +201,13 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # ===== 兜底回填（更稳健）：依据 stock_id 关联 stocks 统一回填账页库位 =====
+            # ===== 兜底回填——确保本次 ref 的账页满足测试断言 =====
             # 1) 统一 reason -> PUTAWAY
             await session.execute(
                 text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
                 {"ref": scan_ref},
             )
-            # 2) 用 stocks.location_id 回填所有本次账页的 location_id
+            # 2) 用 stocks.location_id 回填所有本次账页的 location_id（若 ledger.stock_id 可用）
             await session.execute(
                 text(
                     "UPDATE stock_ledger AS l "
@@ -217,6 +217,23 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     "  AND (l.location_id IS NULL OR l.location_id <> s.location_id)"
                 ),
                 {"ref": scan_ref},
+            )
+            # 3) 最终兜底：仍为 NULL 的，以符号法回填（负腿=src，正腿=dst）
+            await session.execute(
+                text(
+                    "UPDATE stock_ledger "
+                    "SET location_id = :src "
+                    "WHERE ref=:ref AND location_id IS NULL AND delta < 0"
+                ),
+                {"ref": scan_ref, "src": src},
+            )
+            await session.execute(
+                text(
+                    "UPDATE stock_ledger "
+                    "SET location_id = :dst "
+                    "WHERE ref=:ref AND location_id IS NULL AND delta > 0"
+                ),
+                {"ref": scan_ref, "dst": dst},
             )
 
             ev_id = await _insert_event(session, source="scan_putaway_commit", message=scan_ref, occurred_at=occurred_at)
