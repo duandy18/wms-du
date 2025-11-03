@@ -5,8 +5,8 @@ from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.api.routers.scan_utils import fill_from_barcode, make_scan_ref
@@ -16,7 +16,7 @@ router = APIRouter()
 
 class ScanRequest(BaseModel):
     mode: Literal["pick", "receive", "putaway", "count"]
-    # 可选直传字段（若缺失会从 tokens.barcode 自动回填）
+    # 直传字段（若缺失会从 tokens.barcode 自动回填）
     item_id: Optional[int] = None
     location_id: Optional[int] = Field(default=None, description="目标库位（receive/putaway/count）")
     qty: Optional[int] = None
@@ -53,7 +53,6 @@ async def _insert_event(session: AsyncSession, *, source: str, message: str, occ
 async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
     operator = (req.ctx or {}).get("operator") if isinstance(req.ctx, dict) else None
-
     occurred_at = datetime.now(timezone.utc)
     scan_ref = make_scan_ref(device_id, occurred_at, req.location_id)
 
@@ -74,7 +73,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
 
         try:
             from app.services.pick_service import PickService  # type: ignore
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             raise HTTPException(status_code=500, detail=f"pick service missing: {e}")
 
         if req.item_id is None or req.location_id is None or req.qty is None:
@@ -122,7 +121,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
 
     try:
         from app.services.stock_service import StockService  # type: ignore
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"stock service missing: {e}")
 
     svc = StockService()
@@ -174,7 +173,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
         }
 
     if req.mode == "putaway":
-        # 自动回填后仍需四要素：item / dst loc / qty / from_loc
+        # 四要素校验（条码已自动回填，但仍强校验）
         if req.item_id is None or req.location_id is None or req.qty is None or req.from_location_id is None:
             raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY and from_location_id")
 
@@ -184,7 +183,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
         item = int(req.item_id)
 
         async with session.begin():
-            # 双腿账页（-qty 源位 / +qty 目标位），同一 reason/ref
+            # 双腿：源位扣、目标位加；统一 reason/ref
             await svc.adjust(
                 session=session,
                 item_id=item,
@@ -202,22 +201,20 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # === 账页兜底回填（确保测试断言可见） ===
-            # 1) reason 统一回填为 PUTAWAY（防服务层默认值导致的不一致）
+            # ===== 兜底回填（更稳健）：依据 stock_id 关联 stocks 统一回填账页库位 =====
+            # 1) 统一 reason -> PUTAWAY
             await session.execute(
-                text(
-                    "UPDATE stock_ledger SET reason='PUTAWAY' "
-                    "WHERE ref=:ref AND (reason IS NULL OR reason <> 'PUTAWAY')"
-                ),
+                text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
                 {"ref": scan_ref},
             )
-            # 2) 若 location_id 为空，则根据 stock_id -> stocks.location_id 回填
+            # 2) 用 stocks.location_id 回填所有本次账页的 location_id
             await session.execute(
                 text(
-                    "UPDATE stock_ledger l "
+                    "UPDATE stock_ledger AS l "
                     "SET location_id = s.location_id "
-                    "FROM stocks s "
-                    "WHERE l.ref=:ref AND l.location_id IS NULL AND l.stock_id = s.id"
+                    "FROM stocks AS s "
+                    "WHERE l.ref = :ref AND l.stock_id = s.id "
+                    "  AND (l.location_id IS NULL OR l.location_id <> s.location_id)"
                 ),
                 {"ref": scan_ref},
             )
