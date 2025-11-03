@@ -226,7 +226,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             "result": {"accepted": int(req.qty)},
         }
 
-    # -------- count（差额账 + 兜底把 reason 统一成 COUNT）--------
+    # -------- count（差额账 + 兜底把 reason 统一成 COUNT；若无账页则合成一条）--------
     if req.mode == "count":
         if req.item_id is None or req.location_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
@@ -258,11 +258,46 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     reason="COUNT",
                     ref=scan_ref,
                 )
-                # —— 兜底：把该 ref 的账页理由统一回填为 COUNT（避免服务/触发器覆盖）
+                # —— 统一回填为 COUNT（避免服务内部覆盖）
                 await session.execute(
                     text("UPDATE stock_ledger SET reason='COUNT' WHERE ref=:r"),
                     {"r": scan_ref},
                 )
+
+                # —— 若该 ref 仍无账页（某些实现可能没落账），兜底直接合成一条 COUNT 账页
+                have = (
+                    await session.execute(
+                        text("SELECT 1 FROM stock_ledger WHERE ref=:r LIMIT 1"),
+                        {"r": scan_ref},
+                    )
+                ).first()
+                if not have:
+                    wid = await _warehouse_id_of_location(session, int(req.location_id))
+                    sid = await _ensure_stock_slot(
+                        session,
+                        item_id=int(req.item_id),
+                        location_id=int(req.location_id),
+                        warehouse_id=wid,
+                        batch_code="AUTO",
+                    )
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO stock_ledger
+                                (stock_id, reason, ref, ref_line, delta, item_id, location_id, occurred_at)
+                            VALUES
+                                (:sid, 'COUNT', :ref, 1, :d, :item, :loc, :ts)
+                            """
+                        ),
+                        {
+                            "sid": sid,
+                            "ref": scan_ref,
+                            "d": delta,
+                            "item": int(req.item_id),
+                            "loc": int(req.location_id),
+                            "ts": occurred_at,
+                        },
+                    )
 
             ev_id = await _insert_event(session, source="scan_count_commit", message=scan_ref, occurred_at=occurred_at)
 
