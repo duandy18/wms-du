@@ -226,7 +226,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             "result": {"accepted": int(req.qty)},
         }
 
-    # -------- count（路由内直接“算差额 + adjust”，不再调用服务的 reconcile_inventory 以避免形参不一致）--------
+    # -------- count（差额账 + 兜底把 reason 统一成 COUNT）--------
     if req.mode == "count":
         if req.item_id is None or req.location_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
@@ -248,7 +248,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             # 2) 计算差额：实盘 - 账面
             delta = int(req.qty) - on_hand
 
-            # 3) 有差额才写账（理由 COUNT；让 service/触发器负责 stock_id/after_qty 等回填）
+            # 3) 有差额才写账
             if delta != 0:
                 await svc.adjust(
                     session=session,
@@ -257,6 +257,11 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     delta=delta,
                     reason="COUNT",
                     ref=scan_ref,
+                )
+                # —— 兜底：把该 ref 的账页理由统一回填为 COUNT（避免服务/触发器覆盖）
+                await session.execute(
+                    text("UPDATE stock_ledger SET reason='COUNT' WHERE ref=:r"),
+                    {"r": scan_ref},
                 )
 
             ev_id = await _insert_event(session, source="scan_count_commit", message=scan_ref, occurred_at=occurred_at)
@@ -295,7 +300,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # 2) 若 ref 下仍无账页（极端情况下），兜底合成两腿，满足 NOT NULL(stock_id) 等约束
+            # 2) 若 ref 下仍无账页，兜底合成两腿，满足 NOT NULL(stock_id)
             rows_by_ref = (
                 await session.execute(text("SELECT id FROM stock_ledger WHERE ref=:r LIMIT 1"), {"r": scan_ref})
             ).all()
