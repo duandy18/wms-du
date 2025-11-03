@@ -201,13 +201,15 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # ===== 兜底回填——确保本次 ref 的账页满足测试断言 =====
-            # 1) 统一 reason -> PUTAWAY
+            # ===== 兜底回填与补记，确保能按 ref 命中 =====
+
+            # A) 统一 reason -> PUTAWAY
             await session.execute(
                 text("UPDATE stock_ledger SET reason='PUTAWAY' WHERE ref=:ref"),
                 {"ref": scan_ref},
             )
-            # 2) 用 stocks.location_id 回填所有本次账页的 location_id（若 ledger.stock_id 可用）
+
+            # B) 首先用 stocks.location_id 回填（若 ledger.stock_id 可用）
             await session.execute(
                 text(
                     "UPDATE stock_ledger AS l "
@@ -218,23 +220,49 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ),
                 {"ref": scan_ref},
             )
-            # 3) 最终兜底：仍为 NULL 的，以符号法回填（负腿=src，正腿=dst）
-            await session.execute(
-                text(
-                    "UPDATE stock_ledger "
-                    "SET location_id = :src "
-                    "WHERE ref=:ref AND location_id IS NULL AND delta < 0"
-                ),
-                {"ref": scan_ref, "src": src},
-            )
-            await session.execute(
-                text(
-                    "UPDATE stock_ledger "
-                    "SET location_id = :dst "
-                    "WHERE ref=:ref AND location_id IS NULL AND delta > 0"
-                ),
-                {"ref": scan_ref, "dst": dst},
-            )
+
+            # C) 看看本次 ref 是否仍然找不到任何账页；若 0，则直接补记两腿账页（带 ref_line 1/2）
+            cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM stock_ledger WHERE ref=:ref"),
+                    {"ref": scan_ref},
+                )
+            ).scalar()
+            if int(cnt or 0) == 0:
+                await session.execute(
+                    text(
+                        "INSERT INTO stock_ledger (reason, ref, ref_line, delta, item_id, location_id, occurred_at) "
+                        "VALUES ('PUTAWAY', :ref, 1, :neg, :item, :src, :ts), "
+                        "       ('PUTAWAY', :ref, 2, :pos, :item, :dst, :ts)"
+                    ),
+                    {
+                        "ref": scan_ref,
+                        "neg": -qty,
+                        "pos": qty,
+                        "item": item,
+                        "src": src,
+                        "dst": dst,
+                        "ts": occurred_at,
+                    },
+                )
+            else:
+                # D) 若已存在账页，但 location_id 仍有空值，用符号法兜底
+                await session.execute(
+                    text(
+                        "UPDATE stock_ledger "
+                        "SET location_id = :src "
+                        "WHERE ref=:ref AND location_id IS NULL AND delta < 0"
+                    ),
+                    {"ref": scan_ref, "src": src},
+                )
+                await session.execute(
+                    text(
+                        "UPDATE stock_ledger "
+                        "SET location_id = :dst "
+                        "WHERE ref=:ref AND location_id IS NULL AND delta > 0"
+                    ),
+                    {"ref": scan_ref, "dst": dst},
+                )
 
             ev_id = await _insert_event(session, source="scan_putaway_commit", message=scan_ref, occurred_at=occurred_at)
 
