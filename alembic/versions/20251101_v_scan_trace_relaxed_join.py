@@ -1,69 +1,104 @@
-"""v_scan_trace: relax join to tolerate ref variants (prefix match)
+"""v_scan_trace: relaxed join by extracting ref from event_log.message (column-guarded)
 
 Revision ID: 20251101_v_scan_trace_relaxed_join
-Revises: 13caaa2af6ea
-Create Date: 2025-11-02 00:10:00
+Revises: 20251031_merge_scan_views_and_loc_trigger
+Create Date: 2025-11-01 09:30:00
 """
-from alembic import op
 
+from __future__ import annotations
+
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers, used by Alembic.
 revision = "20251101_v_scan_trace_relaxed_join"
-down_revision = "13caaa2af6ea"
+down_revision = "20251031_merge_scan_views_and_loc_trigger"
 branch_labels = None
 depends_on = None
 
-VIEW_SQL = r"""
-CREATE OR REPLACE VIEW v_scan_trace AS
-WITH e AS (
-  SELECT
-    el.id AS event_id,
-    el.occurred_at,
-    el.source,
-    COALESCE(el.meta->>'ref', el.message) AS scan_ref,
-    el.meta->>'device_id'            AS device_id,
-    el.meta->'context'->>'operator'  AS operator,
-    el.meta->'input'->>'mode'        AS mode,
-    el.meta->'input'->>'barcode'     AS barcode,
-    el.meta->'input'                 AS input_json,
-    el.meta->'result'                AS output_json
-  FROM event_log el
-  WHERE el.source LIKE 'scan_%'
-),
-l AS (
-  SELECT
-    sl.id               AS ledger_id,
-    sl.ref              AS raw_ref,
-    sl.ref_line,
-    sl.reason,
-    sl.delta,
-    sl.after_qty,
-    sl.item_id,
-    s.location_id       AS location_id,
-    COALESCE(loc.warehouse_id, s.warehouse_id) AS warehouse_id,
-    COALESCE(s.batch_id, b.id)  AS batch_id,
-    COALESCE(s.batch_code, b.batch_code) AS batch_code,
-    sl.occurred_at      AS ledger_occurred_at
-  FROM stock_ledger sl
-  LEFT JOIN stocks    s   ON s.id = sl.stock_id
-  LEFT JOIN locations loc ON loc.id = s.location_id
-  LEFT JOIN batches   b   ON b.id = s.batch_id
-  WHERE sl.ref LIKE 'scan:%'
-)
-SELECT
-  e.scan_ref,
-  e.event_id, e.occurred_at, e.source, e.device_id, e.operator, e.mode, e.barcode,
-  e.input_json, e.output_json,
-  l.ledger_id, l.ref_line, l.reason, l.delta, l.after_qty,
-  l.item_id, l.warehouse_id, l.location_id, l.batch_id, l.batch_code, l.ledger_occurred_at
-FROM e
-LEFT JOIN l
-  ON l.raw_ref LIKE e.scan_ref || '%'
-ORDER BY e.occurred_at, l.ref_line NULLS FIRST;
-"""
 
-DROP_SQL = "DROP VIEW IF EXISTS v_scan_trace;"
+def upgrade() -> None:
+    # 先安全删除旧视图（若存在）
+    op.execute("DROP VIEW IF EXISTS public.v_scan_trace CASCADE")
 
-def upgrade():
-    op.execute(VIEW_SQL)
+    # 使用列探测 + 动态 SQL：若 stock_ledger 有 location_id，则选择该列；否则用 NULL::int 占位
+    op.execute(
+        """
+        DO $$
+        DECLARE
+          has_loc bool;
+          sql     text;
+        BEGIN
+          SELECT EXISTS (
+            SELECT 1
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='stock_ledger'
+               AND column_name='location_id'
+          ) INTO has_loc;
 
-def downgrade():
-    op.execute(DROP_SQL)
+          IF has_loc THEN
+            sql := $v$
+              CREATE VIEW public.v_scan_trace AS
+              SELECT
+                  e.id            AS event_id,
+                  e.source        AS source,
+                  e.occurred_at   AS occurred_at,
+                  e.message       AS message_raw,
+                  CASE
+                      WHEN e.message IS NOT NULL AND left(e.message, 1) = '{'
+                          THEN (e.message::jsonb ->> 'ref')
+                      ELSE e.message
+                  END             AS scan_ref,
+                  l.id            AS ledger_id,
+                  l.reason        AS reason,
+                  l.item_id       AS item_id,
+                  l.location_id   AS location_id,
+                  l.delta         AS delta
+              FROM public.event_log e
+              LEFT JOIN public.stock_ledger l
+                     ON l.ref = CASE
+                                   WHEN e.message IS NOT NULL AND left(e.message, 1) = '{'
+                                       THEN (e.message::jsonb ->> 'ref')
+                                   ELSE e.message
+                                END
+              WHERE e.source LIKE 'scan_%';
+            $v$;
+          ELSE
+            sql := $v$
+              CREATE VIEW public.v_scan_trace AS
+              SELECT
+                  e.id            AS event_id,
+                  e.source        AS source,
+                  e.occurred_at   AS occurred_at,
+                  e.message       AS message_raw,
+                  CASE
+                      WHEN e.message IS NOT NULL AND left(e.message, 1) = '{'
+                          THEN (e.message::jsonb ->> 'ref')
+                      ELSE e.message
+                  END             AS scan_ref,
+                  l.id            AS ledger_id,
+                  l.reason        AS reason,
+                  l.item_id       AS item_id,
+                  NULL::int       AS location_id,
+                  l.delta         AS delta
+              FROM public.event_log e
+              LEFT JOIN public.stock_ledger l
+                     ON l.ref = CASE
+                                   WHEN e.message IS NOT NULL AND left(e.message, 1) = '{'
+                                       THEN (e.message::jsonb ->> 'ref')
+                                   ELSE e.message
+                                END
+              WHERE e.source LIKE 'scan_%';
+            $v$;
+          END IF;
+
+          EXECUTE sql;
+        END$$;
+        """
+    )
+
+
+def downgrade() -> None:
+    # 回滚时只需删除该视图；具体旧版视图由前一迁移负责
+    op.execute("DROP VIEW IF EXISTS public.v_scan_trace CASCADE")
