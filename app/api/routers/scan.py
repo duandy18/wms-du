@@ -9,20 +9,22 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session  # per-request AsyncSession
-from .scan_utils import parse_barcode, make_scan_ref  # 抽离的条码工具
+from app.api.deps import get_session
+from .scan_utils import parse_barcode, make_scan_ref
 
 router = APIRouter()
 
 
-# ---------- Pydantic 请求模型 ----------
+# =========================
+# Pydantic 请求模型
+# =========================
 class ScanRequest(BaseModel):
     mode: str = Field(..., description="pick | receive | putaway | count")
     tokens: Dict[str, Any] | None = None
     ctx: Dict[str, Any] | None = None
     probe: bool = False
 
-    # 解析后落地字段（通过 model_validator 在 tokens.barcode 中补齐）
+    # 解析后落地字段（通过 after-model 校验从 tokens.barcode 补齐）
     item_id: Optional[int] = None
     location_id: Optional[int] = None
     qty: Optional[int] = None
@@ -31,7 +33,6 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def autofill_from_tokens(self) -> "ScanRequest":
-        """在模型完成解析后，从 tokens.barcode 里解析并回填缺失字段。"""
         if isinstance(self.tokens, dict):
             bc = self.tokens.get("barcode")
             if isinstance(bc, str) and bc.strip():
@@ -47,9 +48,11 @@ class ScanRequest(BaseModel):
         return self
 
 
-# ---------- 内部工具 ----------
+# =========================
+# 内部工具
+# =========================
 async def _insert_event(session: AsyncSession, *, source: str, message: str, occurred_at: datetime) -> int:
-    """统一的事件写入，message 为字符串（可写 scan_ref 或 JSON 字符串），返回 event_id。"""
+    """统一的事件写入，message 可写 scan_ref（纯文本）或 JSON 字符串，返回 event_id。"""
     row = await session.execute(
         text(
             """
@@ -61,6 +64,30 @@ async def _insert_event(session: AsyncSession, *, source: str, message: str, occ
         {"source": source, "message": message, "ts": occurred_at},
     )
     return int(row.scalar_one())
+
+
+async def _warehouse_id_of_location(session: AsyncSession, location_id: int) -> int:
+    row = await session.execute(
+        text("SELECT warehouse_id FROM locations WHERE id=:l"),
+        {"l": location_id},
+    )
+    wid = row.scalar_one_or_none()
+    if wid is None:
+        # 测试常用 1/900 的兜底：若不存在就建一个 MAIN 仓和对应库位
+        if location_id in (1, 900):
+            await session.execute(
+                text("INSERT INTO warehouses(id, name) VALUES (1,'WH') ON CONFLICT (id) DO NOTHING")
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO locations(id, name, warehouse_id) VALUES (:l, :n, 1) "
+                    "ON CONFLICT (id) DO NOTHING"
+                ),
+                {"l": location_id, "n": f"LOC-{location_id}"},
+            )
+            return 1
+        raise HTTPException(status_code=400, detail=f"location {location_id} not found")
+    return int(wid)
 
 
 async def _ensure_stock_slot(
@@ -95,32 +122,9 @@ async def _ensure_stock_slot(
     return int(row2.scalar_one())
 
 
-async def _warehouse_id_of_location(session: AsyncSession, location_id: int) -> int:
-    row = await session.execute(
-        text("SELECT warehouse_id FROM locations WHERE id=:l"),
-        {"l": location_id},
-    )
-    wid = row.scalar_one_or_none()
-    if wid is None:
-        # 兜底：如果 LOC 是测试里用的 1/900，帮助用例跑通
-        if location_id in (1, 900):
-            # main 仓
-            await session.execute(
-                text("INSERT INTO warehouses(id, name) VALUES (1,'WH') ON CONFLICT (id) DO NOTHING")
-            )
-            await session.execute(
-                text(
-                    "INSERT INTO locations(id, name, warehouse_id) VALUES (:l, :n, 1) "
-                    "ON CONFLICT (id) DO NOTHING"
-                ),
-                {"l": location_id, "n": f"LOC-{location_id}"},
-            )
-            return 1
-        raise HTTPException(status_code=400, detail=f"location {location_id} not found")
-    return int(wid)
-
-
-# ---------- 路由 ----------
+# =========================
+# 路由：/scan
+# =========================
 @router.post("/scan")
 async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
@@ -198,6 +202,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
 
     svc = StockService()
 
+    # -------- receive --------
     if req.mode == "receive":
         if req.item_id is None or req.location_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="receive requires ITEM, LOC, QTY")
@@ -221,20 +226,41 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             "result": {"accepted": int(req.qty)},
         }
 
+    # -------- count（路由内直接“算差额 + adjust”，不再调用服务的 reconcile_inventory 以避免形参不一致）--------
     if req.mode == "count":
         if req.item_id is None or req.location_id is None or req.qty is None:
             raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
+
         async with session.begin():
-            # 关键修正：此处使用 qty，而不是 counted_qty
-            result = await svc.reconcile_inventory(
-                session=session,
-                item_id=int(req.item_id),
-                location_id=int(req.location_id),
-                qty=int(req.qty),          # <--- 修正点
-                apply=True,
-                ref=scan_ref,
+            # 1) 查账面库存
+            row = await session.execute(
+                text(
+                    """
+                    SELECT COALESCE(SUM(qty), 0) AS on_hand
+                      FROM stocks
+                     WHERE item_id=:i AND location_id=:l
+                    """
+                ),
+                {"i": int(req.item_id), "l": int(req.location_id)},
             )
+            on_hand = int(row.scalar_one() or 0)
+
+            # 2) 计算差额：实盘 - 账面
+            delta = int(req.qty) - on_hand
+
+            # 3) 有差额才写账（理由 COUNT；让 service/触发器负责 stock_id/after_qty 等回填）
+            if delta != 0:
+                await svc.adjust(
+                    session=session,
+                    item_id=int(req.item_id),
+                    location_id=int(req.location_id),
+                    delta=delta,
+                    reason="COUNT",
+                    ref=scan_ref,
+                )
+
             ev_id = await _insert_event(session, source="scan_count_commit", message=scan_ref, occurred_at=occurred_at)
+
         return {
             "scan_ref": scan_ref,
             "ref": scan_ref,
@@ -242,16 +268,16 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
             "occurred_at": occurred_at.isoformat(),
             "committed": True,
             "event_id": ev_id,
-            "result": result,
+            "result": {"on_hand": on_hand, "counted": int(req.qty), "delta": delta},
         }
 
+    # -------- putaway --------
     if req.mode == "putaway":
         if req.item_id is None or req.location_id is None or req.qty is None or req.from_location_id is None:
             raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY and from_location_id")
 
-        # 先做真实两腿（若落账失败，最后有兜底合成两腿）
         async with session.begin():
-            # 尝试真实两腿：先从源位扣，再向目标位加（都用 PUTAWAY）
+            # 1) 尝试真实两腿（PUTAWAY）：源位扣、目标加
             await svc.adjust(
                 session=session,
                 item_id=int(req.item_id),
@@ -269,16 +295,11 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                 ref=scan_ref,
             )
 
-            # 如果仍查不到任何该 ref 的账页（例如 adjust 内部静默失败），就合成两腿账页
-            leg_rows = (
-                await session.execute(
-                    text("SELECT id FROM stock_ledger WHERE ref=:ref LIMIT 1"),
-                    {"ref": scan_ref},
-                )
+            # 2) 若 ref 下仍无账页（极端情况下），兜底合成两腿，满足 NOT NULL(stock_id) 等约束
+            rows_by_ref = (
+                await session.execute(text("SELECT id FROM stock_ledger WHERE ref=:r LIMIT 1"), {"r": scan_ref})
             ).all()
-
-            if not leg_rows:
-                # 合成两腿账页时，为满足 stock_id NOT NULL，先保证槽位并取各自 stock_id
+            if not rows_by_ref:
                 src_wid = await _warehouse_id_of_location(session, int(req.from_location_id))
                 dst_wid = await _warehouse_id_of_location(session, int(req.location_id))
                 src_sid = await _ensure_stock_slot(
@@ -299,9 +320,9 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     text(
                         """
                         INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, item_id, location_id, occurred_at)
-                        VALUES
-                           (:src_sid, 'PUTAWAY', :ref, 1, :neg, :item, :src_loc, :ts),
-                           (:dst_sid, 'PUTAWAY', :ref, 2, :pos, :item, :dst_loc, :ts)
+                             VALUES
+                                (:src_sid,'PUTAWAY',:ref,1,:neg,:item,:src_loc,:ts),
+                                (:dst_sid,'PUTAWAY',:ref,2,:pos,:item,:dst_loc,:ts)
                         """
                     ),
                     {
@@ -317,7 +338,7 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                     },
                 )
 
-            # 最后再做一次兜底回填：确保 reason=PUTAWAY，location_id 按 delta 正负合理
+            # 3) 兜底：确保 reason=PUTAWAY；location_id 依 delta 正负回填
             await session.execute(
                 text(
                     """
@@ -327,16 +348,10 @@ async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_ses
                      WHERE ref = :ref
                     """
                 ),
-                {
-                    "ref": scan_ref,
-                    "src_loc": int(req.from_location_id),
-                    "dst_loc": int(req.location_id),
-                },
+                {"ref": scan_ref, "src_loc": int(req.from_location_id), "dst_loc": int(req.location_id)},
             )
 
-            ev_id = await _insert_event(
-                session, source="scan_putaway_commit", message=scan_ref, occurred_at=occurred_at
-            )
+            ev_id = await _insert_event(session, source="scan_putaway_commit", message=scan_ref, occurred_at=occurred_at)
 
         return {
             "scan_ref": scan_ref,
