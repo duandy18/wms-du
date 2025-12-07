@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
@@ -20,6 +20,7 @@ except Exception:  # noqa: BLE001
     try:
         from app.db import get_async_session as _get_session  # type: ignore
     except Exception:  # noqa: BLE001
+
         async def _get_session(request: Request) -> AsyncSession:  # type: ignore[override]
             maker = getattr(request.app.state, "async_sessionmaker", None)
             if maker is None:
@@ -41,6 +42,7 @@ def _normalize_events(platform: str, raw: Any) -> List[Dict[str, Any]]:
       - 表单/字符串：JSON 字符串
     统一转成 List[dict]，并补 platform 字段。
     """
+
     def _ensure_dict(x: Any) -> Dict[str, Any]:
         if isinstance(x, dict):
             return x
@@ -90,6 +92,7 @@ async def webhook_platform(
 
 
 # ---- 语义化别名：/webhook/pdd /webhook/taobao …（可选） ----
+
 
 @router.post("/pdd")
 async def webhook_pdd(

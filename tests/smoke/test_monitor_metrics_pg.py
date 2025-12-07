@@ -1,13 +1,15 @@
+import json
 import os
+import shlex
+import subprocess
 import time
 import urllib.request
-import json
-import subprocess
-import shlex
 from urllib.parse import urlparse
+
 import pytest
 
 API = os.getenv("API_BASE", "http://127.0.0.1:8000")
+
 
 def _http_json(url: str, method="GET", body=None, timeout=5):
     req = urllib.request.Request(url, method=method)
@@ -19,9 +21,11 @@ def _http_json(url: str, method="GET", body=None, timeout=5):
         txt = r.read().decode("utf-8")
         return json.loads(txt) if "application/json" in ctype else txt
 
+
 def _http_text(url: str, timeout=5) -> str:
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return r.read().decode("utf-8")
+
 
 def _ensure_api_up():
     try:
@@ -43,18 +47,22 @@ def _ensure_api_up():
             continue
     raise RuntimeError("Failed to start API for smoke tests")
 
+
 def _redis_ready() -> bool:
     def _can(url: str) -> bool:
         try:
             import redis  # from celery[redis]
+
             r = redis.Redis.from_url(url, socket_connect_timeout=1)
             r.ping()
             return True
         except Exception:
             return False
+
     broker = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
     return _can(broker) and _can(backend)
+
 
 def test_metrics_smoke_and_event_counter():
     _ensure_api_up()
@@ -64,11 +72,15 @@ def test_metrics_smoke_and_event_counter():
         pytest.skip("Redis broker/backend unavailable; skip Celery smoke.")
 
     from app.worker import celery
-    order_no = f"SMK-{int(time.time()*1000)}"
+
+    order_no = f"SMK-{int(time.time() * 1000)}"
     r = celery.send_task(
         "wms.process_event",
-        kwargs={"platform":"tmall","shop_id":"smoke-1",
-                "payload":{"order_no":order_no,"to_state":"PAID"}}
+        kwargs={
+            "platform": "tmall",
+            "shop_id": "smoke-1",
+            "payload": {"order_no": order_no, "to_state": "PAID"},
+        },
     )
     assert r.get(timeout=60) == "OK"
 

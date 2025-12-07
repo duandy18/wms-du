@@ -1,0 +1,17 @@
+                                                                   Table "public.reservation_lines"
+     Column     |           Type           | Collation | Nullable |                    Default                    | Storage | Compression | Stats target | Description
+----------------+--------------------------+-----------+----------+-----------------------------------------------+---------+-------------+--------------+-------------
+ id             | bigint                   |           | not null | nextval('reservation_lines_id_seq'::regclass) | plain   |             |              |
+ reservation_id | bigint                   |           | not null |                                               | plain   |             |              |
+ ref_line       | integer                  |           | not null |                                               | plain   |             |              |
+ item_id        | integer                  |           | not null |                                               | plain   |             |              |
+ qty            | integer                  |           | not null |                                               | plain   |             |              |
+ batch_id       | bigint                   |           |          |                                               | plain   |             |              |
+ created_at     | timestamp with time zone |           | not null | now()                                         | plain   |             |              |
+Indexes:
+    "reservation_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_reservation_lines_res_refline" UNIQUE, btree (reservation_id, ref_line)
+    "ix_reservation_lines_reservation_id" btree (reservation_id)
+Foreign-key constraints:
+    "reservation_lines_reservation_id_fkey" FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE
+Access method: heap

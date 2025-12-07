@@ -6,8 +6,6 @@ from app.api.deps import get_current_user
 from app.db.deps import get_db
 from app.schemas.inventory import InventoryMovementCreate, InventoryMovementOut, StockOnHandOut
 from app.services.inventory_ops import InventoryOpsService as InventoryService
-
-
 from app.services.user_service import AuthorizationError, UserService
 
 router = APIRouter()

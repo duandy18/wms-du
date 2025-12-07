@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Dict, Any
+
 from datetime import datetime, timezone
+from typing import Any, Dict
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.ports import StockOpsPort, EventLogPort
+from app.domain.ports import EventLogPort, StockOpsPort
+
 
 class PutawayCommitUseCase:
     def __init__(self, stock_ops: StockOpsPort, event_log: EventLogPort) -> None:

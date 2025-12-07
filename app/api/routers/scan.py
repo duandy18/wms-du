@@ -1,407 +1,388 @@
-# app/api/routers/scan.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from .scan_utils import parse_barcode, make_scan_ref
+from app.gateway.scan_orchestrator import ingest as ingest_scan
+from app.models.enums import MovementType
+from app.services.stock_service import StockService
 
-router = APIRouter()
+router = APIRouter(tags=["scan"])
 
 
-# =========================
-# Pydantic 请求模型
-# =========================
+def _to_date_str(v: Any) -> Optional[str]:
+    """
+    将 date / datetime / str 统一转为 'YYYY-MM-DD' 字符串，其他类型兜底为 str(v)。
+    用于 ScanResponse 的 production_date / expiry_date，避免 Pydantic 类型错误。
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s or None
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    try:
+        iso = getattr(v, "isoformat", None)
+        if callable(iso):
+            return iso()
+    except Exception:
+        pass
+    return str(v)
+
+
+# ==========================
+# Request / Response models
+# ==========================
+
+
 class ScanRequest(BaseModel):
-    mode: str = Field(..., description="pick | receive | putaway | count")
-    tokens: Dict[str, Any] | None = None
-    ctx: Dict[str, Any] | None = None
-    probe: bool = False
+    """
+    v2 通用 Scan 请求体（与前端 ScanRequest 对齐）：
 
-    # 解析后落地字段（通过 after-model 校验从 tokens.barcode 补齐）
-    item_id: Optional[int] = None
-    location_id: Optional[int] = None
-    qty: Optional[int] = None
-    task_id: Optional[int] = None
-    from_location_id: Optional[int] = None
+    - mode: "receive" | "pick" | "count"
+    - item_id + qty: 主参数
+    - warehouse_id: 仓库维度（当前版本已无 scan-level location 概念）
+    - batch_code / production_date / expiry_date: 猫粮批次/保质期信息
+    - task_line_id: 拣货任务行（mode=pick 时可用）
+    - probe: 探针模式，只试算不落账
+    - ctx: 扩展上下文（device_id / operator 等），用于生成 scan_ref 与审计
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    mode: str = Field(..., description="receive | pick | count")
+
+    item_id: Optional[int] = Field(None, description="商品 ID")
+    qty: Optional[int] = Field(1, ge=0, description="本次扫描数量，缺省为 1")
+
+    # 原始条码内容（可选；可传 GS1 串）
+    barcode: Optional[str] = Field(None, description="原始扫码内容（可选）")
+
+    # v2：只认仓库，不认库位
+    warehouse_id: Optional[int] = Field(None, description="仓库 ID（缺省时由后端兜底为 1）")
+
+    # 猫粮批次 / 日期信息
+    batch_code: Optional[str] = Field(None, description="批次编码（可选）")
+    production_date: Optional[str] = Field(
+        None, description="生产日期，建议 YYYY-MM-DD 或 YYYYMMDD"
+    )
+    expiry_date: Optional[str] = Field(None, description="到期日期，建议 YYYY-MM-DD 或 YYYYMMDD")
+
+    # 拣货任务行
+    task_line_id: Optional[int] = Field(None, description="拣货任务行 ID（mode=pick 时可用）")
+
+    # 探针模式：只试算不落账
+    probe: bool = Field(False, description="探针模式，仅试算不落账")
+
+    # 扩展上下文
+    ctx: Optional[Dict[str, Any]] = Field(
+        default=None, description="扩展上下文（device_id/operator 等）"
+    )
+
+
+# ========== 旧模型：仅用于 legacy 接口 / 测试兼容，/scan 已不再使用 ==========
+
+
+class ScanReceiveRequest(BaseModel):
+    """
+    LEGACY：旧版 /scan（receive）专用模型，带 location_id/ref/occurred_at。
+    新架构下，/scan 已使用 ScanRequest，不再依赖本模型。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    mode: str = Field(..., description="固定 'receive'")
+    item_id: int
+    location_id: int
+    qty: int = Field(..., ge=0)
+    ref: str
+    batch_code: str
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+    warehouse_id: Optional[int] = None
 
     @model_validator(mode="after")
-    def autofill_from_tokens(self) -> "ScanRequest":
-        if isinstance(self.tokens, dict):
-            bc = self.tokens.get("barcode")
-            if isinstance(bc, str) and bc.strip():
-                parsed = parse_barcode(bc)
-                if self.item_id is None:
-                    self.item_id = parsed.get("item_id")
-                if self.location_id is None:
-                    self.location_id = parsed.get("location_id")
-                if self.qty is None:
-                    self.qty = parsed.get("qty")
-                if self.task_id is None:
-                    self.task_id = parsed.get("task_id")
+    def _check(self) -> "ScanReceiveRequest":
+        if self.mode.lower() != "receive":
+            raise ValueError("unsupported scan mode; only 'receive' is allowed here")
+        if not self.batch_code:
+            raise ValueError("猫粮收货必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮收货必须提供 production_date 或 expiry_date（至少一项）。")
+        if self.occurred_at.tzinfo is None:
+            self.occurred_at = self.occurred_at.replace(tzinfo=timezone.utc)
         return self
 
 
-# =========================
-# 内部工具
-# =========================
-async def _insert_event(session: AsyncSession, *, source: str, message: str, occurred_at: datetime) -> int:
-    """统一的事件写入，message 可写 scan_ref（纯文本）或 JSON 字符串，返回 event_id。"""
-    row = await session.execute(
-        text(
-            """
-            INSERT INTO event_log(source, message, occurred_at)
-            VALUES (:source, :message, :ts)
-            RETURNING id
-            """
-        ),
-        {"source": source, "message": message, "ts": occurred_at},
+class ScanPutawayCommitRequest(BaseModel):
+    """
+    LEGACY：基于 location 的上架 / 移库请求。
+    当前无 scan-level location 概念，putaway 功能在扫描通路中已禁用。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    item_id: int
+    from_location_id: int
+    to_location_id: int
+    qty: int = Field(..., ge=1)
+    ref: str
+    batch_code: str
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+    # 兼容历史/不同命名
+    start_ref_line: Optional[int] = None
+    left_ref_line: Optional[int] = None
+    warehouse_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScanPutawayCommitRequest":
+        if not self.batch_code:
+            raise ValueError("猫粮搬运必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮搬运必须提供 production_date 或 expiry_date（至少一项）。")
+        return self
+
+
+class ScanCountCommitRequest(BaseModel):
+    """
+    LEGACY：基于 location 的盘点请求。
+    当前 /scan/count/commit 仍按旧合同工作，未来可并入 /scan + ScanRequest(mode='count')。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    item_id: int
+    location_id: int
+    qty: int = Field(..., ge=0, description="盘点后的绝对量")
+    ref: str
+    batch_code: str
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScanCountCommitRequest":
+        if not self.batch_code:
+            raise ValueError("猫粮盘点必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮盘点必须提供 production_date 或 expiry_date（至少一项）。")
+        if self.occurred_at.tzinfo is None:
+            self.occurred_at = self.occurred_at.replace(tzinfo=timezone.utc)
+        return self
+
+
+class ScanResponse(BaseModel):
+    ok: bool = True
+    committed: bool = True
+    scan_ref: str
+    event_id: Optional[int] = None
+    source: str
+    # 可选回显
+    item_id: Optional[int] = None
+    location_id: Optional[int] = None
+    qty: Optional[int] = None
+    batch_code: Optional[str] = None
+
+    # v2：盘点 / 收货 enriched 字段（按仓库 + 商品 + 批次）
+    warehouse_id: Optional[int] = None
+    actual: Optional[int] = None
+    before: Optional[int] = None
+    before_qty: Optional[int] = None
+    after: Optional[int] = None
+    after_qty: Optional[int] = None
+    delta: Optional[int] = None
+    production_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+
+    # v2：承接 orchestrator 的审计信息
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ==========================
+# /scan（统一入口 → orchestrator）
+# ==========================
+
+
+@router.post("/scan", response_model=ScanResponse, status_code=status.HTTP_200_OK)
+async def scan_entrypoint(
+    req: ScanRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ScanResponse:
+    """
+    v2 统一 /scan 入口：
+
+    - 前端提交 ScanRequest（mode + item_id + qty + warehouse_id + 批次/日期 + ctx）
+    - 由 scan_orchestrator.ingest 解析并路由到对应 handler（receive/pick/count）
+    - 不再直接调用 InboundService.receive，也不再依赖 location_id/ref/occurred_at
+    """
+    result = await ingest_scan(req.model_dump(), session)
+
+    # ★ item_id：优先 orchestrator，其次请求体
+    item_id = result.get("item_id") or req.item_id
+
+    # qty / batch_code 仍以请求体为主（count 模式下 actual 单独返回）
+    qty = req.qty
+    batch_code = req.batch_code
+
+    # enriched 字段（count / receive）
+    warehouse_id = result.get("warehouse_id") or req.warehouse_id
+    actual = result.get("actual")
+    before = result.get("before")
+    after = result.get("after")
+    delta = result.get("delta")
+
+    before_qty = result.get("before_qty") or before
+    after_qty = result.get("after_qty") or after
+
+    # 日期：优先 orchestrator，再回落到请求体，统一转为字符串
+    raw_prod = result.get("production_date")
+    if raw_prod is None:
+        raw_prod = req.production_date
+    prod = _to_date_str(raw_prod)
+
+    raw_exp = result.get("expiry_date")
+    if raw_exp is None:
+        raw_exp = req.expiry_date
+    exp = _to_date_str(raw_exp)
+
+    return ScanResponse(
+        ok=bool(result.get("ok", False)),
+        committed=bool(result.get("committed", False)),
+        scan_ref=result.get("scan_ref") or "",
+        event_id=result.get("event_id"),
+        source=result.get("source") or "scan_orchestrator",
+        item_id=item_id,
+        # 现阶段 scan 层无库位概念
+        location_id=None,
+        qty=qty,
+        batch_code=batch_code,
+        warehouse_id=warehouse_id,
+        actual=actual,
+        before=before,
+        before_qty=before_qty,
+        after=after,
+        after_qty=after_qty,
+        delta=delta,
+        production_date=prod,
+        expiry_date=exp,
+        evidence=result.get("evidence") or [],
+        errors=result.get("errors") or [],
     )
-    return int(row.scalar_one())
 
 
-async def _warehouse_id_of_location(session: AsyncSession, location_id: int) -> int:
-    row = await session.execute(
-        text("SELECT warehouse_id FROM locations WHERE id=:l"),
-        {"l": location_id},
-    )
-    wid = row.scalar_one_or_none()
-    if wid is None:
-        # 测试常用 1/900 的兜底：若不存在就建一个 MAIN 仓和对应库位
-        if location_id in (1, 900):
-            await session.execute(
-                text("INSERT INTO warehouses(id, name) VALUES (1,'WH') ON CONFLICT (id) DO NOTHING")
-            )
-            await session.execute(
-                text(
-                    "INSERT INTO locations(id, name, warehouse_id) VALUES (:l, :n, 1) "
-                    "ON CONFLICT (id) DO NOTHING"
-                ),
-                {"l": location_id, "n": f"LOC-{location_id}"},
-            )
-            return 1
-        raise HTTPException(status_code=400, detail=f"location {location_id} not found")
-    return int(wid)
+# ==========================
+# /scan/putaway/commit（LEGACY：已禁用）
+# ==========================
 
 
-async def _ensure_stock_slot(
-    session: AsyncSession, *, item_id: int, location_id: int, warehouse_id: int, batch_code: str
-) -> int:
-    """确保 (item,loc,batch) 槽位存在，返回 stocks.id。"""
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT id FROM stocks
-                 WHERE item_id=:i AND location_id=:l AND batch_code=:b
-                 LIMIT 1
-                """
-            ),
-            {"i": item_id, "l": location_id, "b": batch_code},
-        )
-    ).first()
-    if row:
-        return int(row[0])
-
-    row2 = await session.execute(
-        text(
-            """
-            INSERT INTO stocks(item_id, warehouse_id, location_id, batch_code, qty)
-            VALUES (:i, :w, :l, :b, 0)
-            RETURNING id
-            """
-        ),
-        {"i": item_id, "w": warehouse_id, "l": location_id, "b": batch_code},
-    )
-    return int(row2.scalar_one())
-
-
-# =========================
-# 路由：/scan
-# =========================
-@router.post("/scan")
-async def scan_gateway(req: ScanRequest, session: AsyncSession = Depends(get_session)) -> Dict[str, Any]:
-    device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
-    operator = (req.ctx or {}).get("operator") if isinstance(req.ctx, dict) else None  # noqa: F841
-    occurred_at = datetime.now(timezone.utc)
-    scan_ref = make_scan_ref(device_id, occurred_at, req.location_id)
-
-    # ---------- pick ----------
-    if req.mode == "pick":
-        if req.probe:
-            async with session.begin():
-                ev_id = await _insert_event(session, source="scan_pick_probe", message=scan_ref, occurred_at=occurred_at)
-            return {
-                "scan_ref": scan_ref,
-                "ref": scan_ref,
-                "source": "scan_pick_probe",
-                "occurred_at": occurred_at.isoformat(),
-                "committed": False,
-                "event_id": ev_id,
-                "result": {"hint": "pick probe"},
+@router.post("/scan/putaway/commit", response_model=ScanResponse, status_code=status.HTTP_200_OK)
+async def scan_putaway_commit(
+    req: ScanPutawayCommitRequest,  # noqa: ARG001
+    session: AsyncSession = Depends(get_session),  # noqa: ARG001
+) -> ScanResponse:
+    """
+    业务上 scan 通路已无 location 概念，putaway 功能在扫描通路中禁用。
+    保留该路由仅为兼容历史调用，统一返回 FEATURE_DISABLED。
+    """
+    return ScanResponse(
+        ok=False,
+        committed=False,
+        scan_ref="",
+        event_id=None,
+        source="scan_putaway_disabled",
+        errors=[
+            {
+                "stage": "putaway",
+                "error": "FEATURE_DISABLED: putaway is not supported on /scan without locations",
             }
+        ],
+    )
 
-        try:
-            from app.services.pick_service import PickService  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"pick service missing: {e}")
 
-        if req.item_id is None or req.location_id is None or req.qty is None:
-            raise HTTPException(status_code=400, detail="pick requires ITEM, LOC, QTY")
-        task_line_id = (req.tokens or {}).get("task_line_id") or req.task_id or 0
+# ==========================
+# /scan/count/commit（legacy → 未来可并入 /scan）
+# ==========================
 
-        svc = PickService()
-        async with session.begin():
-            result = await svc.record_pick(
-                session=session,
-                task_line_id=int(task_line_id),
-                from_location_id=int(req.location_id),
-                item_id=int(req.item_id),
-                qty=int(req.qty),
-                scan_ref=scan_ref,
-                operator=operator,
-            )
-            ev_id = await _insert_event(session, source="scan_pick_commit", message=scan_ref, occurred_at=occurred_at)
 
-        return {
-            "scan_ref": scan_ref,
-            "ref": scan_ref,
-            "source": "scan_pick_commit",
-            "occurred_at": occurred_at.isoformat(),
-            "committed": True,
-            "event_id": ev_id,
-            "result": result,
-        }
-
-    # ---------- receive / putaway / count ----------
-    if req.probe:
-        async with session.begin():
-            ev_id = await _insert_event(
-                session, source=f"scan_{req.mode}_probe", message=scan_ref, occurred_at=occurred_at
-            )
-        return {
-            "scan_ref": scan_ref,
-            "ref": scan_ref,
-            "source": f"scan_{req.mode}_probe",
-            "occurred_at": occurred_at.isoformat(),
-            "committed": False,
-            "event_id": ev_id,
-            "result": {"hint": f"{req.mode} probe"},
-        }
-
-    try:
-        from app.services.stock_service import StockService  # type: ignore
-    except Exception as e:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"stock service missing: {e}")
-
+@router.post("/scan/count/commit", response_model=ScanResponse, status_code=status.HTTP_200_OK)
+async def scan_count_commit(
+    req: ScanCountCommitRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ScanResponse:
+    """
+    LEGACY：基于 location 的盘点接口。
+    当前仍按旧实现工作，未来可迁移到 /scan + ScanRequest(mode='count')，并改用 warehouse_id 粒度。
+    """
     svc = StockService()
 
-    # -------- receive --------
-    if req.mode == "receive":
-        if req.item_id is None or req.location_id is None or req.qty is None:
-            raise HTTPException(status_code=400, detail="receive requires ITEM, LOC, QTY")
-        async with session.begin():
-            await svc.adjust(
-                session=session,
-                item_id=int(req.item_id),
-                location_id=int(req.location_id),
-                delta=+int(req.qty),
-                reason="INBOUND",
-                ref=scan_ref,
-            )
-            ev_id = await _insert_event(session, source="scan_receive_commit", message=scan_ref, occurred_at=occurred_at)
-        return {
-            "scan_ref": scan_ref,
-            "ref": scan_ref,
-            "source": "scan_receive_commit",
-            "occurred_at": occurred_at.isoformat(),
-            "committed": True,
-            "event_id": ev_id,
-            "result": {"accepted": int(req.qty)},
-        }
+    # 1) 解析/幂等建档 → batch_id
+    try:
+        batch_id = await svc._resolve_batch_id(
+            session=session,
+            item_id=req.item_id,
+            location_id=req.location_id,
+            batch_code=req.batch_code,
+            production_date=req.production_date,
+            expiry_date=req.expiry_date,
+            warehouse_id=None,
+            created_at=req.occurred_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"resolve batch failed: {e}")
 
-    # -------- count（差额账 + 兜底把 reason 统一成 COUNT；若无账页则合成一条）--------
-    if req.mode == "count":
-        if req.item_id is None or req.location_id is None or req.qty is None:
-            raise HTTPException(status_code=400, detail="count requires ITEM, LOC, QTY(actual)")
+    # 2) 以 (item,loc,batch_id) 读取 current（分支避免 asyncpg 类型歧义）
+    if batch_id is None:
+        sql = text(
+            "SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND location_id=:l AND batch_id IS NULL"
+        )
+        params = {"i": req.item_id, "l": req.location_id}
+    else:
+        sql = text(
+            "SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND location_id=:l AND batch_id=:b"
+        )
+        params = {"i": req.item_id, "l": req.location_id, "b": int(batch_id)}
+    current_row = await session.execute(sql, params)
+    current = int(current_row.scalar() or 0)
 
-        async with session.begin():
-            # 1) 查账面库存
-            row = await session.execute(
-                text(
-                    """
-                    SELECT COALESCE(SUM(qty), 0) AS on_hand
-                      FROM stocks
-                     WHERE item_id=:i AND location_id=:l
-                    """
-                ),
-                {"i": int(req.item_id), "l": int(req.location_id)},
-            )
-            on_hand = int(row.scalar_one() or 0)
+    # 3) delta = 目标 - 当前；落 COUNT 台账（即使 delta==0 也落，便于审计）
+    delta = int(req.qty) - current
+    try:
+        await svc.adjust(
+            session=session,
+            item_id=req.item_id,
+            location_id=req.location_id,
+            delta=delta,
+            reason=MovementType.COUNT,
+            ref=req.ref,
+            ref_line=1,
+            occurred_at=req.occurred_at,
+            batch_code=req.batch_code,
+            production_date=req.production_date,
+            expiry_date=req.expiry_date,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"scan(count) failed: {e}")
 
-            # 2) 计算差额：实盘 - 账面
-            delta = int(req.qty) - on_hand
-
-            # 3) 有差额才写账
-            if delta != 0:
-                await svc.adjust(
-                    session=session,
-                    item_id=int(req.item_id),
-                    location_id=int(req.location_id),
-                    delta=delta,
-                    reason="COUNT",
-                    ref=scan_ref,
-                )
-                # —— 统一回填为 COUNT（避免服务内部覆盖）
-                await session.execute(
-                    text("UPDATE stock_ledger SET reason='COUNT' WHERE ref=:r"),
-                    {"r": scan_ref},
-                )
-
-                # —— 若该 ref 仍无账页（某些实现可能没落账），兜底直接合成一条 COUNT 账页
-                have = (
-                    await session.execute(
-                        text("SELECT 1 FROM stock_ledger WHERE ref=:r LIMIT 1"),
-                        {"r": scan_ref},
-                    )
-                ).first()
-                if not have:
-                    wid = await _warehouse_id_of_location(session, int(req.location_id))
-                    sid = await _ensure_stock_slot(
-                        session,
-                        item_id=int(req.item_id),
-                        location_id=int(req.location_id),
-                        warehouse_id=wid,
-                        batch_code="AUTO",
-                    )
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO stock_ledger
-                                (stock_id, reason, ref, ref_line, delta, item_id, location_id, occurred_at)
-                            VALUES
-                                (:sid, 'COUNT', :ref, 1, :d, :item, :loc, :ts)
-                            """
-                        ),
-                        {
-                            "sid": sid,
-                            "ref": scan_ref,
-                            "d": delta,
-                            "item": int(req.item_id),
-                            "loc": int(req.location_id),
-                            "ts": occurred_at,
-                        },
-                    )
-
-            ev_id = await _insert_event(session, source="scan_count_commit", message=scan_ref, occurred_at=occurred_at)
-
-        return {
-            "scan_ref": scan_ref,
-            "ref": scan_ref,
-            "source": "scan_count_commit",
-            "occurred_at": occurred_at.isoformat(),
-            "committed": True,
-            "event_id": ev_id,
-            "result": {"on_hand": on_hand, "counted": int(req.qty), "delta": delta},
-        }
-
-    # -------- putaway --------
-    if req.mode == "putaway":
-        if req.item_id is None or req.location_id is None or req.qty is None or req.from_location_id is None:
-            raise HTTPException(status_code=400, detail="putaway requires ITEM, LOC, QTY and from_location_id")
-
-        async with session.begin():
-            # 1) 尝试真实两腿（PUTAWAY）：源位扣、目标加
-            await svc.adjust(
-                session=session,
-                item_id=int(req.item_id),
-                location_id=int(req.from_location_id),
-                delta=-int(req.qty),
-                reason="PUTAWAY",
-                ref=scan_ref,
-            )
-            await svc.adjust(
-                session=session,
-                item_id=int(req.item_id),
-                location_id=int(req.location_id),
-                delta=+int(req.qty),
-                reason="PUTAWAY",
-                ref=scan_ref,
-            )
-
-            # 2) 若 ref 下仍无账页，兜底合成两腿，满足 NOT NULL(stock_id)
-            rows_by_ref = (
-                await session.execute(text("SELECT id FROM stock_ledger WHERE ref=:r LIMIT 1"), {"r": scan_ref})
-            ).all()
-            if not rows_by_ref:
-                src_wid = await _warehouse_id_of_location(session, int(req.from_location_id))
-                dst_wid = await _warehouse_id_of_location(session, int(req.location_id))
-                src_sid = await _ensure_stock_slot(
-                    session,
-                    item_id=int(req.item_id),
-                    location_id=int(req.from_location_id),
-                    warehouse_id=src_wid,
-                    batch_code="AUTO",
-                )
-                dst_sid = await _ensure_stock_slot(
-                    session,
-                    item_id=int(req.item_id),
-                    location_id=int(req.location_id),
-                    warehouse_id=dst_wid,
-                    batch_code="AUTO",
-                )
-                await session.execute(
-                    text(
-                        """
-                        INSERT INTO stock_ledger (stock_id, reason, ref, ref_line, delta, item_id, location_id, occurred_at)
-                             VALUES
-                                (:src_sid,'PUTAWAY',:ref,1,:neg,:item,:src_loc,:ts),
-                                (:dst_sid,'PUTAWAY',:ref,2,:pos,:item,:dst_loc,:ts)
-                        """
-                    ),
-                    {
-                        "src_sid": src_sid,
-                        "dst_sid": dst_sid,
-                        "ref": scan_ref,
-                        "neg": -int(req.qty),
-                        "pos": +int(req.qty),
-                        "item": int(req.item_id),
-                        "src_loc": int(req.from_location_id),
-                        "dst_loc": int(req.location_id),
-                        "ts": occurred_at,
-                    },
-                )
-
-            # 3) 兜底：确保 reason=PUTAWAY；location_id 依 delta 正负回填
-            await session.execute(
-                text(
-                    """
-                    UPDATE stock_ledger
-                       SET reason     = 'PUTAWAY',
-                           location_id = CASE WHEN delta < 0 THEN :src_loc ELSE :dst_loc END
-                     WHERE ref = :ref
-                    """
-                ),
-                {"ref": scan_ref, "src_loc": int(req.from_location_id), "dst_loc": int(req.location_id)},
-            )
-
-            ev_id = await _insert_event(session, source="scan_putaway_commit", message=scan_ref, occurred_at=occurred_at)
-
-        return {
-            "scan_ref": scan_ref,
-            "ref": scan_ref,
-            "source": "scan_putaway_commit",
-            "occurred_at": occurred_at.isoformat(),
-            "committed": True,
-            "event_id": ev_id,
-            "result": {"moved": int(req.qty), "from": int(req.from_location_id), "to": int(req.location_id)},
-        }
-
-    # 其它不支持的 mode
-    raise HTTPException(status_code=400, detail="unsupported mode")
+    scan_ref = f"scan:api:{req.occurred_at.isoformat(timespec='minutes')}"
+    return ScanResponse(
+        ok=True,
+        committed=True,
+        scan_ref=scan_ref,
+        event_id=None,
+        source="scan_count_commit",
+        item_id=req.item_id,
+        location_id=req.location_id,
+        qty=req.qty,
+        batch_code=req.batch_code,
+    )

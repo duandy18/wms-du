@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 # ★ 集中导入 & 映射校验
 from app.db.base import init_models
+
 init_models()
 
 from app.services.store_service import StoreService

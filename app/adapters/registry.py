@@ -1,10 +1,10 @@
 # app/adapters/registry.py
 from __future__ import annotations
+
 from typing import Dict
 
 from app.adapters.base import ChannelAdapter
 from app.adapters.pdd import PddAdapter
-
 
 # 简单注册表：按 platform 选择适配器
 _ADAPTERS: Dict[str, ChannelAdapter] = {

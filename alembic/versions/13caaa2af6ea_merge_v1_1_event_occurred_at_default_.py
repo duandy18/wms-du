@@ -5,15 +5,16 @@ Revises: 20251101_event_occurred_at_default, 20251101_pick_tasks_tables
 Create Date: 2025-11-01 10:30:40.497950
 
 """
-from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
+from typing import Sequence, Union
 
 
 # revision identifiers, used by Alembic.
-revision: str = '13caaa2af6ea'
-down_revision: Union[str, Sequence[str], None] = ('20251101_event_occurred_at_default', '20251101_pick_tasks_tables')
+revision: str = "13caaa2af6ea"
+down_revision: Union[str, Sequence[str], None] = (
+    "20251101_event_occurred_at_default",
+    "20251101_pick_tasks_tables",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

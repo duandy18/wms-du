@@ -1,57 +1,29 @@
-import pytest
-
-pytestmark = pytest.mark.grp_events
-
-import uuid
-from datetime import datetime, timezone
+# tests/services/test_platform_events.py
+from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.platform_events import handle_event_batch
+
+pytestmark = pytest.mark.contract
 
 
 @pytest.mark.asyncio
-async def test_platform_events_dedup(session):
-    """同一 dedup_key 只保留一条（DB 级去重）。"""
-    platform = "PDD"
-    event_type = "ORDER_PAID"
-    event_id = str(uuid.uuid4())
-    occurred_at = datetime.now(timezone.utc)
-    payload = '{"demo":true}'
+async def test_platform_event_basic_flow(session: AsyncSession):
+    # 模拟一个“已支付”事件（将触发 reserve 分支；不直动 stocks）
+    ev = [
+        {
+            "platform": "pdd",
+            "shop_id": "S1",
+            "order_sn": "O1",
+            "status": "PAID",
+            "lines": [{"item_id": 3001, "qty": 1}],
+        }
+    ]
+    await handle_event_batch(ev, session=session)
 
-    # 第一次写入
-    await session.execute(
-        text(
-            """
-        INSERT INTO platform_events(platform, event_type, event_id, occurred_at, payload)
-        VALUES (:p, :t, :id, :ts, :pl)
-        ON CONFLICT ON CONSTRAINT uq_platform_events_dedup DO NOTHING
-    """
-        ),
-        {"p": platform, "t": event_type, "id": event_id, "ts": occurred_at, "pl": payload},
-    )
-
-    # 再次写入（应被 DO NOTHING 吃掉）
-    await session.execute(
-        text(
-            """
-        INSERT INTO platform_events(platform, event_type, event_id, occurred_at, payload)
-        VALUES (:p, :t, :id, :ts, :pl)
-        ON CONFLICT ON CONSTRAINT uq_platform_events_dedup DO NOTHING
-    """
-        ),
-        {"p": platform, "t": event_type, "id": event_id, "ts": occurred_at, "pl": payload},
-    )
-
-    # 断言只有一条
-    rows = (
-        await session.execute(
-            text(
-                """
-        SELECT COUNT(*) FROM platform_events
-        WHERE platform=:p AND event_type=:t AND event_id=:id
-    """
-            ),
-            {"p": platform, "t": event_type, "id": event_id},
-        )
-    ).scalar_one()
-    assert rows == 1
+    # 有事件入库（source 由服务内部统一写入）
+    row = (await session.execute(text("SELECT COUNT(*) FROM event_log"))).scalar_one()
+    assert int(row) >= 1

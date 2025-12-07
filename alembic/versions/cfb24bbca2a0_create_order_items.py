@@ -4,6 +4,7 @@ Revision ID: cfb24bbca2a0
 Revises: 20251029_merge_heads_lockA_single_head
 Create Date: 2025-10-29 11:40:00
 """
+
 from __future__ import annotations
 
 from alembic import op

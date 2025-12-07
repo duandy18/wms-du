@@ -1,4 +1,3 @@
-# app/services/barcode.py
 from __future__ import annotations
 
 import re
@@ -18,6 +17,7 @@ class ParsedBarcode:
     - raw:       原始输入
     - kind:      码制/来源：'SKU','GS1','EAN8','UPC12','EAN13','KV','UNKNOWN'
     """
+
     sku: Optional[str]
     gtin: Optional[str]
     batch: Optional[str]
@@ -75,7 +75,9 @@ class BarcodeResolver:
         if "(" in s and ")" in s:
             gs1 = self._parse_gs1(s)
             if gs1:
-                sku = gs1.sku or (self._gtin_to_sku(gs1.gtin) if (self._gtin_to_sku and gs1.gtin) else None)
+                sku = gs1.sku or (
+                    self._gtin_to_sku(gs1.gtin) if (self._gtin_to_sku and gs1.gtin) else None
+                )
                 return ParsedBarcode(
                     sku=sku, gtin=gs1.gtin, batch=gs1.batch, expiry=gs1.expiry, raw=code, kind="GS1"
                 )
@@ -198,8 +200,15 @@ class BarcodeResolver:
             return False
         digits = [int(c) for c in gtin]
         checksum = digits[-1]
-        s = (3 * digits[0] + 1 * digits[1] + 3 * digits[2] + 1 * digits[3] +
-             3 * digits[4] + 1 * digits[5] + 3 * digits[6])
+        s = (
+            3 * digits[0]
+            + 1 * digits[1]
+            + 3 * digits[2]
+            + 1 * digits[3]
+            + 3 * digits[4]
+            + 1 * digits[5]
+            + 3 * digits[6]
+        )
         return (10 - (s % 10)) % 10 == checksum
 
     @staticmethod
@@ -210,10 +219,14 @@ class BarcodeResolver:
         # 支持 YYYYMMDD 或 YYMMDD
         try:
             if len(s) == 8 and s.isdigit():
-                y = int(s[0:4]); m = int(s[4:6]); d = int(s[6:8])
+                y = int(s[0:4])
+                m = int(s[4:6])
+                d = int(s[6:8])
                 return date(y, m, d)
             if len(s) == 6 and s.isdigit():
-                y = int(s[0:2]); m = int(s[2:4]); d = int(s[4:6])
+                y = int(s[0:2])
+                m = int(s[2:4])
+                d = int(s[4:6])
                 # GS1 (17) 是 YYMMDD：以 2000 为世纪（常见做法）
                 return date(2000 + y, m, d)
         except ValueError:

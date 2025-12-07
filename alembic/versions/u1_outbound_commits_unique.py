@@ -4,6 +4,7 @@ Revision ID: u1_outbound_commits_unique
 Revises: e1e0g01
 Create Date: 2024-10-24
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -27,7 +28,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 先删可能遗留的历史索引/唯一索引（名称不定，全部用 IF EXISTS 兜底）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.outbound_commits') IS NULL THEN
@@ -76,7 +78,8 @@ def upgrade() -> None:
         END IF;
       END IF;
     END $$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
@@ -84,7 +87,8 @@ def downgrade() -> None:
     回滚仅做“安全删除唯一约束/索引”（若存在），不再假设任何结构。
     """
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.outbound_commits') IS NULL THEN
@@ -101,4 +105,5 @@ def downgrade() -> None:
       BEGIN EXECUTE 'DROP INDEX IF EXISTS public.ix_outbound_commits_ref'; EXCEPTION WHEN OTHERS THEN END;
       BEGIN EXECUTE 'DROP INDEX IF EXISTS public.uq_outbound_ref_item_loc'; EXCEPTION WHEN OTHERS THEN END;
     END $$;
-    """))
+    """)
+    )

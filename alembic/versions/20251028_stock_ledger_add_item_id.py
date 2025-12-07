@@ -4,10 +4,10 @@ Revision ID: 20251028_stock_ledger_add_item_id
 Revises: 20251027_stock_snapshots_add_qty_columns
 Create Date: 2025-10-28
 """
+
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
 
 # ---- Alembic identifiers ----
 revision: str = "20251028_stock_ledger_add_item_id"
@@ -18,7 +18,7 @@ depends_on = None
 TABLE = "stock_ledger"
 COL = "item_id"
 IDX = "ix_stock_ledger_item_id"
-FK  = "fk_stock_ledger_item"
+FK = "fk_stock_ledger_item"
 
 
 def upgrade() -> None:

@@ -1,59 +1,54 @@
+# app/services/reconcile_service.py
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.inventory_adjust import InventoryAdjust
+from app.models.enums import MovementType
+from app.services.stock_service import StockService
 
 
 class ReconcileService:
     """
-    盘点对账：counted - on_hand = diff
-      - diff > 0 → 上调（CYCLE_COUNT_UP）
-      - diff < 0 → 下调（CYCLE_COUNT_DOWN，走 FEFO）
+    盘点/对账服务（统一走 StockService，不直连 SQL）：
+    - 不控事务；外层决定事务边界；
+    - 结构化返回，纯业务字段；
+    - 幂等与原子性由 StockService 内部的“ref + 行锁/唯一键”保障。
     """
 
-    @staticmethod
-    async def reconcile_inventory(
-        *,
+    def __init__(self, stock: StockService | None = None) -> None:
+        self.stock = stock or StockService()
+
+    async def reconcile(
+        self,
         session: AsyncSession,
+        *,
         item_id: int,
         location_id: int,
-        counted_qty: int,
-        ref: str | None = None,
-    ) -> Dict:
-        row = await session.execute(
-            text("SELECT qty FROM stocks WHERE item_id=:iid AND location_id=:loc LIMIT 1"),
-            {"iid": item_id, "loc": location_id},
+        actual_qty: int,
+        ref: str,
+    ) -> Dict[str, Any]:
+        on_hand = await self.stock.get_on_hand(
+            session=session, item_id=item_id, location_id=location_id
         )
-        on_hand = int(row.scalar() or 0)
-        diff = int(counted_qty) - on_hand
-        if diff == 0:
-            return {"ok": True, "delta": 0, "after": on_hand}
+        delta = int(actual_qty) - int(on_hand)
 
-        if diff > 0:
-            res = await InventoryAdjust.inbound(
+        result: Dict[str, Any] = {
+            "on_hand_before": on_hand,
+            "actual": int(actual_qty),
+            "delta": delta,
+        }
+        if delta != 0:
+            adj = await self.stock.adjust(
                 session=session,
                 item_id=item_id,
                 location_id=location_id,
-                delta=diff,
-                reason="CYCLE_COUNT_UP",
-                ref=ref or f"CC-UP-{item_id}-{location_id}",
-                batch_code=f"CC-{item_id}-{location_id}",
-                production_date=None,
-                expiry_date=None,
+                delta=delta,
+                reason=MovementType.COUNT,
+                ref=ref,
             )
-            return {"ok": True, "delta": diff, **res}
+            result.update({"on_hand_after": adj.get("on_hand_after", on_hand + delta)})
         else:
-            res = await InventoryAdjust.fefo_outbound(
-                session=session,
-                item_id=item_id,
-                location_id=location_id,
-                delta=diff,  # 负数
-                reason="CYCLE_COUNT_DOWN",
-                ref=ref or f"CC-DN-{item_id}-{location_id}",
-                allow_expired=True,
-            )
-            return {"ok": True, "delta": diff, **res}
+            result.update({"on_hand_after": on_hand})
+        return result

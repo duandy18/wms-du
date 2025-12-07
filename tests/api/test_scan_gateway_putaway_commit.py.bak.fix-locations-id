@@ -1,0 +1,118 @@
+# tests/api/test_scan_gateway_putaway_commit.py
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.main import app
+
+pytestmark = pytest.mark.grp_flow
+
+
+@pytest.mark.asyncio
+async def test_scan_putaway_commit(async_session_maker):
+    """
+    1) /scan/count/commit → 暂存位(0) = 10
+    2) /scan/putaway/commit → 搬 7 到库位 101
+    断言：HTTP 200、committed=True、最终 (0)=3、(101)=7
+    """
+    BATCH = "B-API-PUT"
+
+    # 读取一个可用的 item_id
+    async with async_session_maker() as s:  # type: AsyncSession
+        await s.execute(text("SET search_path TO public"))
+        item_id = (await s.execute(text("select id from items where sku='SKU-001'"))).scalar()
+        assert item_id, "SKU-001 not found"
+
+        # 确保暂存位(0)与目标位(101)存在
+        await s.execute(
+            text(
+                """
+                INSERT INTO locations(id, name, warehouse_id)
+                VALUES (0, 'STAGE-0', 1)
+                ON CONFLICT (id) DO NOTHING;
+            """
+            )
+        )
+        await s.execute(
+            text(
+                """
+                INSERT INTO locations(id, name, warehouse_id)
+                VALUES (101, 'LOC-101', 1)
+                ON CONFLICT (id) DO NOTHING;
+            """
+            )
+        )
+        await s.commit()
+
+    # 统一审计时间与日期（UTC）
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(days=365)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Step 1: 盘点校正 → 暂存位(0) = 10
+        r_cnt = await ac.post(
+            "/scan/count/commit",
+            json={
+                "item_id": int(item_id),
+                "location_id": 0,
+                "qty": 10,
+                "batch_code": BATCH,
+                "ref": "API-PW-PREP-1",
+                "occurred_at": now.isoformat(),
+                "expiry_date": exp.isoformat(),  # ← 审计契约：日期至少一项
+            },
+        )
+        assert r_cnt.status_code == 200, r_cnt.text
+        body_cnt = {}
+        try:
+            body_cnt = r_cnt.json()
+        except Exception:
+            pass
+        if isinstance(body_cnt, dict) and "committed" in body_cnt:
+            assert body_cnt.get("committed") is True, r_cnt.text
+
+        # Step 2: 搬 7 → 101
+        r_pw = await ac.post(
+            "/scan/putaway/commit",
+            json={
+                "item_id": int(item_id),
+                "from_location_id": 0,
+                "to_location_id": 101,
+                "qty": 7,
+                "ref": "API-PW-1",
+                "batch_code": BATCH,
+                "production_date": now.isoformat(),  # 亦可仅给 expiry_date；此处两者其一即可
+                "expiry_date": exp.isoformat(),
+                "start_ref_line": 1,  # 左腿=1，右腿=2
+            },
+        )
+        assert r_pw.status_code == 200, r_pw.text
+        body_pw = {}
+        try:
+            body_pw = r_pw.json()
+        except Exception:
+            pass
+        if isinstance(body_pw, dict) and "committed" in body_pw:
+            assert body_pw.get("committed") is True, r_pw.text
+
+    # 最后验证数量：0 → 3，101 → 7
+    async with async_session_maker() as s2:
+        await s2.execute(text("SET search_path TO public"))
+        qty_0 = (
+            await s2.execute(
+                text("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND location_id=:l"),
+                {"i": item_id, "l": 0},
+            )
+        ).scalar()
+        qty_101 = (
+            await s2.execute(
+                text("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND location_id=:l"),
+                {"i": item_id, "l": 101},
+            )
+        ).scalar()
+
+        assert int(qty_0 or 0) == 3, f"expected loc0=3, got {qty_0}"
+        assert int(qty_101 or 0) == 7, f"expected loc101=7, got {qty_101}"

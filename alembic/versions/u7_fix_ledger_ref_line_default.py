@@ -7,8 +7,8 @@ Revision ID: u7_fix_ledger_ref_line_default
 Revises: u6_fix_ledger_trigger_after_qty
 Create Date: 2025-10-21
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 # --- Alembic identifiers ---
 revision = "u7_fix_ledger_ref_line_default"

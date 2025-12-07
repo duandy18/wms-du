@@ -5,15 +5,16 @@ Revises: 20251101_batches_expiry_constraints, 20251101_batches_add_expiry_column
 Create Date: 2025-11-01 07:56:00.269288
 
 """
-from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
+from typing import Sequence, Union
 
 
 # revision identifiers, used by Alembic.
-revision: str = '29ee69c580ea'
-down_revision: Union[str, Sequence[str], None] = ('20251101_batches_expiry_constraints', '20251101_batches_add_expiry_columns_and_constraints')
+revision: str = "29ee69c580ea"
+down_revision: Union[str, Sequence[str], None] = (
+    "20251101_batches_expiry_constraints",
+    "20251101_batches_add_expiry_columns_and_constraints",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

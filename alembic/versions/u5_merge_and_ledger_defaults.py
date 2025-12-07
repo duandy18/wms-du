@@ -8,8 +8,8 @@ Revision ID: u5_merge_and_ledger_defaults
 Revises: u4_event_error_log_shop_id, u0_widen_alembic_version_num
 Create Date: 2025-10-21
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 # --- Alembic identifiers ---
 revision = "u5_merge_and_ledger_defaults"

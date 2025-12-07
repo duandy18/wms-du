@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 # ===== 常量（对齐原文件风格） =====
 MIN_USERNAME_LENGTH = 3
@@ -26,6 +26,7 @@ class RegisterIn(_Base):
     """
     用户注册入参
     """
+
     username: Annotated[str, Field(min_length=MIN_USERNAME_LENGTH, max_length=MAX_USERNAME_LENGTH)]
     email: EmailStr
     password: Annotated[str, Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)]
@@ -62,6 +63,7 @@ class LoginIn(_Base):
     """
     用户登录入参（username 或 email 至少提供其一）
     """
+
     username: str | None = None
     email: EmailStr | None = None
     password: Annotated[str, Field(min_length=1)]
@@ -96,6 +98,7 @@ class TokenOut(_Base):
     """
     JWT 令牌输出
     """
+
     access_token: str
     token_type: Annotated[str, Field(default="bearer")] = "bearer"
 
@@ -117,6 +120,7 @@ class TokenData(_Base):
     - username: 用户名（可选）
     - is_admin: 是否管理员（可选）
     """
+
     sub: str | None = None
     username: str | None = None
     is_admin: bool | None = False

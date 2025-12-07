@@ -4,6 +4,7 @@ Revision ID: bf539dde5f39
 Revises: d16674198fd0
 Create Date: 2025-10-30 09:40:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -19,7 +20,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 仅当 orders 表存在时才做列补齐，避免 UndefinedTable
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -67,7 +69,8 @@ def upgrade() -> None:
 
       END IF;
     END$$;
-    """))
+    """)
+    )
 
     # 如果本迁移还需要给其它表/视图打补丁，也按上述模式加 to_regclass 守卫后执行
     # …（略）
@@ -77,7 +80,8 @@ def downgrade() -> None:
     conn = op.get_bind()
 
     # 同样仅当 orders 表存在时再尝试回滚列（幂等）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -120,4 +124,5 @@ def downgrade() -> None:
 
       END IF;
     END$$;
-    """))
+    """)
+    )

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+
+import argparse
+import asyncio
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.db.base import init_models
+
 init_models()
 
 from app.services.store_service import StoreService
@@ -32,6 +36,7 @@ INSERT INTO stocks(item_id, location_id, qty)
 VALUES (:item_id, :loc, 0)
 ON CONFLICT (item_id, location_id) DO NOTHING;
 """
+
 
 async def _run(store_name: str, item_ids: list[int], db_url: str):
     engine = create_async_engine(db_url, future=True)
@@ -60,14 +65,18 @@ async def _run(store_name: str, item_ids: list[int], db_url: str):
 
     await engine.dispose()
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Bootstrap minimal domain: wh/loc/items/stocks/store/bind + shadow refresh")
+    ap = argparse.ArgumentParser(
+        description="Bootstrap minimal domain: wh/loc/items/stocks/store/bind + shadow refresh"
+    )
     ap.add_argument("--store", default="主店A")
     ap.add_argument("--items", default="777,778")
     ap.add_argument("--db", default="postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms")
     a = ap.parse_args()
     ids = [int(x) for x in a.items.split(",") if x.strip()]
     asyncio.run(_run(a.store, ids, a.db))
+
 
 if __name__ == "__main__":
     main()

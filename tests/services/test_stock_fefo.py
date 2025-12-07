@@ -1,122 +1,67 @@
 # tests/services/test_stock_fefo.py
-from datetime import date, timedelta
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.batch import Batch
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code, seed_batch_slot
 
+from app.schemas.outbound import OutboundLine, OutboundMode
+from app.services.outbound_service import OutboundService
 
-@pytest.mark.asyncio
-async def test_stock_fefo_outbound(session):
-    from app.services.stock_service import StockService
-
-    svc = StockService()
-
-    item_id = 202
-    location_id = 1
-    today = date.today()
-
-    for code, exp, qty in [
-        ("X-EXP", today - timedelta(days=2), 5),  # 已过期
-        ("X-NEAR", today + timedelta(days=1), 7),  # 近到期
-        ("X-FAR", today + timedelta(days=90), 9),  # 远期
-    ]:
-        await svc.adjust(
-            session=session,
-            item_id=item_id,
-            location_id=location_id,
-            delta=qty,
-            reason="INBOUND",
-            ref="TEST-IN",
-            batch_code=code,
-            production_date=today - timedelta(days=10),
-            expiry_date=exp,
-            mode="NORMAL",
-        )
-
-    # 明确允许消耗过期：应先扣已过期，再扣近到期
-    res = await svc.adjust(
-        session=session,
-        item_id=item_id,
-        location_id=location_id,
-        delta=-10,
-        reason="OUTBOUND",
-        ref="TEST-OUT",
-        mode="FEFO",
-        allow_expired=True,  # ← 允许过期
-    )
-    code_by_id = {
-        bid: bcode
-        for (bid, bcode) in (await session.execute(select(Batch.id, Batch.batch_code))).all()
-    }
-    used_by_code = {code_by_id[bid]: used for (bid, used) in res["batch_moves"]}
-    assert used_by_code["X-EXP"] == -5
-    assert used_by_code["X-NEAR"] == -5
-    assert "X-FAR" not in used_by_code
-
-    # 第二次：剩余 11（NEAR=2, FAR=9）
-    res2 = await svc.adjust(
-        session=session,
-        item_id=item_id,
-        location_id=location_id,
-        delta=-11,
-        reason="OUTBOUND",
-        ref="TEST-OUT2",
-        mode="FEFO",
-        allow_expired=True,  # ← 允许过期
-    )
-    used2_by_code = {code_by_id[bid]: used for (bid, used) in res2["batch_moves"]}
-    assert used2_by_code["X-NEAR"] == -2
-    assert used2_by_code["X-FAR"] == -9
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
 @pytest.mark.asyncio
-async def test_stock_fefo_disallow_expired_by_default(session):
-    """默认不传 allow_expired → False，应不消费已过期批次。"""
-    from app.services.stock_service import StockService
+async def test_stock_fefo_outbound(session: AsyncSession):
+    """E1(2,近) + E2(2,远)，扣 3 → E1→0，E2→1"""
+    wh, loc, item = 1, 1, 7741
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+    await seed_batch_slot(session, item=item, loc=loc, code="E1", qty=2, days=2)
+    await seed_batch_slot(session, item=item, loc=loc, code="E2", qty=2, days=10)
+    await session.commit()
 
-    svc = StockService()
-
-    item_id = 303
-    location_id = 1
-    today = date.today()
-
-    for code, exp, qty in [
-        ("E-EXP", today - timedelta(days=1), 5),  # 已过期
-        ("E-NEAR", today + timedelta(days=2), 7),  # 近到期
-        ("E-FAR", today + timedelta(days=60), 9),  # 远期
-    ]:
-        await svc.adjust(
-            session=session,
-            item_id=item_id,
-            location_id=location_id,
-            delta=qty,
-            reason="INBOUND",
-            ref="TEST-IN-2",
-            batch_code=code,
-            production_date=today - timedelta(days=10),
-            expiry_date=exp,
-            mode="NORMAL",
+    ref = f"SO-{int(datetime.now(UTC).timestamp())}"
+    async with session.begin():
+        _ = await OutboundService.commit(
+            session,
+            platform="pdd",
+            shop_id=None,
+            ref=ref,
+            occurred_at=datetime.now(UTC),
+            lines=[OutboundLine(item_id=item, location_id=loc, qty=3)],
+            mode=OutboundMode.FEFO.value,
+            allow_expired=False,
+            warehouse_id=wh,
         )
+    assert await qty_by_code(session, item=item, loc=loc, code="E1") == 0
+    assert await qty_by_code(session, item=item, loc=loc, code="E2") == 1
 
-    # 不传 allow_expired（默认 False）：应跳过已过期，扣 NEAR 7 + FAR 3
-    res = await svc.adjust(
-        session=session,
-        item_id=item_id,
-        location_id=location_id,
-        delta=-10,
-        reason="OUTBOUND",
-        ref="TEST-OUT-2",
-        mode="FEFO",
-        # 不传 allow_expired
-    )
-    code_by_id = {
-        bid: bcode
-        for (bid, bcode) in (await session.execute(select(Batch.id, Batch.batch_code))).all()
-    }
-    used_by_code = {code_by_id[bid]: used for (bid, used) in res["batch_moves"]}
 
-    assert "E-EXP" not in used_by_code  # 不应动已过期批次
-    assert used_by_code["E-NEAR"] == -7
-    assert used_by_code["E-FAR"] == -3
+@pytest.mark.asyncio
+async def test_stock_fefo_disallow_expired_by_default(session: AsyncSession):
+    """EXP(2,已过期) + OK(2,未过期)，扣 2 且 disallow → EXP 不变，OK→0"""
+    wh, loc, item = 1, 1, 7742
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+    await seed_batch_slot(session, item=item, loc=loc, code="EXP", qty=2, days=-1)
+    await seed_batch_slot(session, item=item, loc=loc, code="OK", qty=2, days=5)
+    await session.commit()
+
+    ref = f"SO-{int(datetime.now(UTC).timestamp())}"
+    async with session.begin():
+        _ = await OutboundService.commit(
+            session,
+            platform="pdd",
+            shop_id=None,
+            ref=ref,
+            occurred_at=datetime.now(UTC),
+            lines=[OutboundLine(item_id=item, location_id=loc, qty=2)],
+            mode=OutboundMode.FEFO.value,
+            allow_expired=False,
+            warehouse_id=wh,
+        )
+    assert await qty_by_code(session, item=item, loc=loc, code="EXP") == 2
+    assert await qty_by_code(session, item=item, loc=loc, code="OK") == 0

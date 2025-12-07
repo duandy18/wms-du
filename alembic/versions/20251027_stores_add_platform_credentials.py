@@ -4,6 +4,7 @@ Revision ID: 20251027_stores_add_platform_credentials
 Revises: 20251026_outbound_ship_ops
 Create Date: 2025-10-27 09:00:00
 """
+
 from alembic import op
 import sqlalchemy as sa
 

@@ -4,6 +4,7 @@ Revision ID: 6869fc360d86
 Revises: 6077053642c5
 Create Date: 2025-10-29 19:10:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -27,7 +28,8 @@ def downgrade() -> None:
     conn = op.get_bind()
 
     # 1) 若 stock_ledger 上存在 UQ 约束，则先删除约束
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -41,10 +43,12 @@ def downgrade() -> None:
         EXECUTE 'ALTER TABLE public.stock_ledger DROP CONSTRAINT uq_ledger_reason_ref_refline_stock';
       END IF;
     END$$;
-    """))
+    """)
+    )
 
     # 2) 再删除同名索引（确保它不是某个约束的 backing index）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -61,7 +65,8 @@ def downgrade() -> None:
         EXECUTE 'ALTER TABLE stock_ledger DROP CONSTRAINT IF EXISTS uq_ledger_reason_ref_refline_stock';
       END IF;
     END$$;
-    """))
+    """)
+    )
 
     # 3) 若你在 upgrade() 里创建过其它普通索引，也可在此用 IF EXISTS 幂等删除
     # 示例（按需启用）：

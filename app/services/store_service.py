@@ -1,273 +1,222 @@
-# app/services/store_service.py
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence
+from typing import Optional
 
-from sqlalchemy import select, func, insert, update
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.store import Store, StoreItem, ChannelInventory
-from app.models.stock import Stock  # 物理库存（单仓阶段：全仓总和）
 
 
 class StoreService:
     """
-    渠道侧薄服务（Phase 0 / v1.0）：
-    - 读核心域（stocks）计算店铺可见量（A 策略），并可选择将结果落回 channel_inventory.visible_qty
-    - 维护店铺/内品的绑定关系
-    - 预留 warehouse_id 形参（单仓阶段忽略；多仓时启用）
+    店铺档案与仓库绑定服务。
+
+    目前提供四个静态方法：
+
+    - ensure_store:
+        按 (platform, shop_id) UPSERT 店铺，返回 store_id。
+
+    - bind_warehouse:
+        绑定店铺与仓库（支持 is_default / is_top / priority），
+        保证每个店铺最多只有一个“主仓”（is_top = true）。
+
+    - resolve_default_warehouse:
+        按 store_id 解析“默认仓”（优先主仓，再看 is_default，再看 priority）。
+
+    - resolve_default_warehouse_for_platform_shop:
+        按 (platform, shop_id) 解析默认仓（内部会自动 ensure_store）。
     """
 
-    # ---------------------------------------------------------------------
-    # Store / StoreItem 基础维护
-    # ---------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # 店铺 UPSERT
+    # ------------------------------------------------------------------
     @staticmethod
     async def ensure_store(
-        session: AsyncSession, *, name: str, platform: str = "pdd", active: bool = True
-    ) -> int:
-        """按 (platform, name) 确保店铺存在，返回 store_id。"""
-        row = (
-            await session.execute(
-                select(Store.id).where(Store.platform == platform, Store.name == name)
-            )
-        ).scalar_one_or_none()
-        if row:
-            return int(row)
-
-        rid = (
-            await session.execute(
-                insert(Store)
-                .values(name=name, platform=platform, active=active)
-                .returning(Store.id)
-            )
-        ).scalar_one()
-        await session.commit()
-        return int(rid)
-
-    @staticmethod
-    async def upsert_store_item(
         session: AsyncSession,
         *,
-        store_id: int,
-        item_id: int,
-        pdd_sku_id: Optional[str] = None,
-        outer_id: Optional[str] = None,
+        platform: str,
+        shop_id: str,
+        name: Optional[str] = None,
     ) -> int:
-        """确保 (store_id, item_id) 的映射存在；可更新平台侧 sku/outer_id。"""
-        existed = (
-            await session.execute(
-                select(StoreItem.id).where(
-                    StoreItem.store_id == store_id, StoreItem.item_id == item_id
-                )
-            )
-        ).scalar_one_or_none()
-        if existed:
-            await session.execute(
-                update(StoreItem)
-                .where(StoreItem.id == int(existed))
-                .values(pdd_sku_id=pdd_sku_id, outer_id=outer_id)
-            )
-            await session.commit()
-            return int(existed)
+        """
+        按 (platform, shop_id) UPSERT 店铺，返回 store_id。
 
-        rid = (
-            await session.execute(
-                insert(StoreItem)
-                .values(
-                    store_id=store_id, item_id=item_id, pdd_sku_id=pdd_sku_id, outer_id=outer_id
-                )
-                .returning(StoreItem.id)
-            )
-        ).scalar_one()
-        await session.commit()
-        return int(rid)
+        约定：
+        - platform 一律大写存储；
+        - name 允许为空，若未指定，则使用 "{PLAT}-{shop_id}"。
+        """
+        plat = platform.upper()
 
-    # ---------------------------------------------------------------------
-    # A 策略：计算与影子刷新
-    #   available_total = Σ(stocks.qty) - Σ(all stores reserved_qty)
-    #   headroom = ∞ if cap is NULL else (cap - reserved_of_this_store)
-    #   visible = max(0, min(available_total, headroom))
-    # ---------------------------------------------------------------------
-
-    @staticmethod
-    async def _sum_physical_qty(session: AsyncSession, *, item_id: int) -> int:
-        """全仓物理数量总和：SUM(stocks.qty)"""
-        q = select(func.coalesce(func.sum(Stock.qty), 0)).where(Stock.item_id == item_id)
-        return int((await session.execute(q)).scalar_one() or 0)
-
-    @staticmethod
-    async def _sum_reserved_all_stores(session: AsyncSession, *, item_id: int) -> int:
-        """所有店对该 item 的占用总和：SUM(channel_inventory.reserved_qty)"""
-        q = select(func.coalesce(func.sum(ChannelInventory.reserved_qty), 0)).where(
-            ChannelInventory.item_id == item_id
+        # 先查是否已存在
+        rec = await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM stores
+                 WHERE platform = :p
+                   AND shop_id  = :s
+                 LIMIT 1
+                """
+            ),
+            {"p": plat, "s": shop_id},
         )
-        return int((await session.execute(q)).scalar_one() or 0)
+        row = rec.first()
+        if row is not None:
+            return int(row[0])
 
+        # UPSERT（有 uq_stores_platform_shop 保护）
+        ins = await session.execute(
+            text(
+                """
+                INSERT INTO stores (platform, shop_id, name)
+                VALUES (:p, :s, :n)
+                ON CONFLICT (platform, shop_id) DO UPDATE
+                SET name = COALESCE(EXCLUDED.name, stores.name)
+                RETURNING id
+                """
+            ),
+            {"p": plat, "s": shop_id, "n": name or f"{plat}-{shop_id}"},
+        )
+        new_id = ins.scalar()
+        return int(new_id)
+
+    # ------------------------------------------------------------------
+    # 店 ↔ 仓 绑定
+    # ------------------------------------------------------------------
     @staticmethod
-    async def _ensure_ci_row(session: AsyncSession, *, store_id: int, item_id: int) -> int:
-        """确保 channel_inventory 行存在，返回其 id。"""
-        rid = (
-            await session.execute(
-                select(ChannelInventory.id).where(
-                    ChannelInventory.store_id == store_id,
-                    ChannelInventory.item_id == item_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if rid:
-            return int(rid)
-
-        rid = (
-            await session.execute(
-                insert(ChannelInventory)
-                .values(store_id=store_id, item_id=item_id, reserved_qty=0, visible_qty=0)
-                .returning(ChannelInventory.id)
-            )
-        ).scalar_one()
-        await session.commit()
-        return int(rid)
-
-    @staticmethod
-    async def _get_ci_tuple(
-        session: AsyncSession, *, store_id: int, item_id: int
-    ) -> tuple[Optional[int], int]:
-        """返回 (cap_qty, reserved_qty_of_store)。"""
-        row = (
-            await session.execute(
-                select(ChannelInventory.cap_qty, ChannelInventory.reserved_qty).where(
-                    ChannelInventory.store_id == store_id,
-                    ChannelInventory.item_id == item_id,
-                )
-            )
-        ).first()
-        if row is None:
-            return (None, 0)
-        cap = row[0] if row[0] is not None else None
-        reserved_store = int(row[1] or 0)
-        return (cap, reserved_store)
-
-    @staticmethod
-    def _compute_visible(
-        *,
-        physical_total: int,
-        reserved_all_stores: int,
-        cap_qty: Optional[int],
-        reserved_of_store: int,
-    ) -> int:
-        available_total = max(0, int(physical_total) - int(reserved_all_stores))
-        if cap_qty is None:
-            headroom = available_total
-        else:
-            headroom = max(0, int(cap_qty) - int(reserved_of_store))
-        return max(0, min(available_total, headroom))
-
-    @staticmethod
-    async def refresh_channel_inventory_for_store(
+    async def bind_warehouse(
         session: AsyncSession,
         *,
         store_id: int,
-        item_ids: Sequence[int] | None = None,
-        dry_run: bool = False,
-        warehouse_id: int | None = None,  # 预留（v1.0 忽略）
-    ) -> dict:
+        warehouse_id: int,
+        is_default: bool = False,
+        priority: int = 100,
+        is_top: Optional[bool] = None,
+    ) -> None:
         """
-        影子刷新：计算店内各 item 的 visible。
-        dry_run=True 仅返回计算结果；False 时把 visible_qty 落表。
-        返回 {store_id, items:[{item_id, physical, reserved_all, cap, reserved_store, visible}], updated, dry_run}
+        幂等绑定店铺与仓库。
+
+        参数：
+        - store_id     : 店铺 ID
+        - warehouse_id : 仓库 ID
+        - is_default   : 是否“默认仓”（历史字段，仍然保留）
+        - priority     : 路由优先级，数字越小越靠前
+        - is_top       : 是否“主仓”；若为 None，则默认等同于 is_default
+
+        规则（C.1 收口）：
+        - is_top 为 True 时，保证同一 store 仅有一个 is_top = True：
+            先把该 store 所有记录 is_top 置为 False，再 upsert 当前记录为 True。
+        - is_default 为 True 时，同时复用 is_top 语义（即默认同时是主仓）；
+        - 老数据场景：
+            若历史上只有 is_default，没有 is_top，仍能正常工作：
+            - 本方法第一次被调用时会把这条记录的 is_top 设置为 True。
         """
-        # 选出该店已绑定的内品集合
-        q = select(StoreItem.item_id).where(StoreItem.store_id == store_id)
-        if item_ids:
-            q = q.where(StoreItem.item_id.in_(list(item_ids)))
-        bound = [int(r[0]) for r in (await session.execute(q)).all()]
-        if not bound:
-            return {"store_id": store_id, "items": [], "updated": 0, "dry_run": dry_run}
+        if is_top is None:
+            # 默认策略：跟随 is_default
+            is_top = is_default
 
-        out_items: list[dict] = []
-        updated = 0
-
-        for iid in bound:
-            # 确保有 CI 行（便于读取 cap/reserved）
-            await StoreService._ensure_ci_row(session, store_id=store_id, item_id=iid)
-
-            physical = await StoreService._sum_physical_qty(session, item_id=iid)
-            reserved_all = await StoreService._sum_reserved_all_stores(session, item_id=iid)
-            cap, reserved_store = await StoreService._get_ci_tuple(session, store_id=store_id, item_id=iid)
-
-            visible = StoreService._compute_visible(
-                physical_total=physical,
-                reserved_all_stores=reserved_all,
-                cap_qty=cap,
-                reserved_of_store=reserved_store,
+        # 若要设置主仓 / 默认仓，先清空同店其他记录的 is_top
+        if is_top or is_default:
+            await session.execute(
+                text(
+                    """
+                    UPDATE store_warehouse
+                       SET is_top = FALSE,
+                           -- 只有在本次也是默认仓时，才清空其他记录的 is_default
+                           is_default = CASE WHEN :def THEN FALSE ELSE is_default END,
+                           updated_at = now()
+                     WHERE store_id = :sid
+                    """
+                ),
+                {"sid": store_id, "def": is_default},
             )
 
-            out_items.append(
-                {
-                    "item_id": iid,
-                    "physical": physical,
-                    "reserved_all": reserved_all,
-                    "cap": cap,
-                    "reserved_store": reserved_store,
-                    "visible": visible,
-                }
-            )
+        # 幂等 UPSERT 当前绑定
+        await session.execute(
+            text(
+                """
+                INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+                VALUES (:sid, :wid, :top, :def, :pri)
+                ON CONFLICT (store_id, warehouse_id) DO UPDATE
+                SET is_top     = EXCLUDED.is_top,
+                    is_default = EXCLUDED.is_default,
+                    priority   = EXCLUDED.priority,
+                    updated_at = now()
+                """
+            ),
+            {
+                "sid": store_id,
+                "wid": warehouse_id,
+                "top": bool(is_top),
+                "def": bool(is_default),
+                "pri": int(priority),
+            },
+        )
 
-            if not dry_run:
-                await session.execute(
-                    update(ChannelInventory)
-                    .where(
-                        ChannelInventory.store_id == store_id,
-                        ChannelInventory.item_id == iid,
-                    )
-                    .values(visible_qty=visible)
-                )
-                updated += 1
+    # ------------------------------------------------------------------
+    # 默认仓解析
+    # ------------------------------------------------------------------
+    @staticmethod
+    async def resolve_default_warehouse(
+        session: AsyncSession,
+        *,
+        store_id: int,
+    ) -> Optional[int]:
+        """
+        解析“默认仓”（可用于路由/默认选仓）。
 
-        if not dry_run:
-            await session.commit()
+        排序规则（C.1 定稿）：
+        1. 优先 is_top = TRUE 的记录（主仓）
+        2. 其次 is_default = TRUE 的记录
+        3. 再按 priority 升序
+        4. 再按 warehouse_id 升序
 
-        return {"store_id": store_id, "items": out_items, "updated": updated, "dry_run": dry_run}
-
-    # ---------------------------------------------------------------------
-    # 影子对比：把已落表的 visible_qty 与实时计算结果对齐（用于日常体检）
-    # ---------------------------------------------------------------------
+        返回：
+        - 若存在记录：返回 warehouse_id
+        - 若不存在：返回 None
+        """
+        rec = await session.execute(
+            text(
+                """
+                SELECT warehouse_id
+                  FROM store_warehouse
+                 WHERE store_id = :sid
+                 ORDER BY is_top DESC,
+                          is_default DESC,
+                          priority ASC,
+                          warehouse_id ASC
+                 LIMIT 1
+                """
+            ),
+            {"sid": store_id},
+        )
+        row = rec.first()
+        return int(row[0]) if row else None
 
     @staticmethod
-    async def shadow_compare_with_snapshot(
-        session: AsyncSession, *, store_id: int
-    ) -> list[dict]:
+    async def resolve_default_warehouse_for_platform_shop(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+    ) -> Optional[int]:
         """
-        对比 channel_inventory.visible_qty 与 A 策略实时计算的结果。
-        返回 [{item_id, expected, channel, delta}]
+        按 (platform, shop_id) 解析默认仓。
+
+        行为：
+        - 若店铺不存在：
+            自动 ensure_store（不 commit，由调用方控制事务），然后无绑定则返回 None。
+        - 若有 store_warehouse 绑定：
+            走 resolve_default_warehouse 的排序逻辑。
+        - 若无绑定：
+            返回 None，由调用方决定是否兜底到某个仓。
         """
-        items = [
-            int(r[0])
-            for r in (
-                await session.execute(
-                    select(StoreItem.item_id).where(StoreItem.store_id == store_id)
-                )
-            ).all()
-        ]
-        out: list[dict] = []
-        for iid in items:
-            physical = await StoreService._sum_physical_qty(session, item_id=iid)
-            reserved_all = await StoreService._sum_reserved_all_stores(session, item_id=iid)
-            cap, reserved_store = await StoreService._get_ci_tuple(session, store_id=store_id, item_id=iid)
-            expected = StoreService._compute_visible(
-                physical_total=physical,
-                reserved_all_stores=reserved_all,
-                cap_qty=cap,
-                reserved_of_store=reserved_store,
-            )
-            channel_v = (
-                await session.execute(
-                    select(ChannelInventory.visible_qty).where(
-                        ChannelInventory.store_id == store_id,
-                        ChannelInventory.item_id == iid,
-                    )
-                )
-            ).scalar_one_or_none()
-            channel_v = int(channel_v or 0)
-            out.append({"item_id": iid, "expected": expected, "channel": channel_v, "delta": channel_v - expected})
-        return out
+        plat = platform.upper()
+
+        store_id = await StoreService.ensure_store(
+            session,
+            platform=plat,
+            shop_id=shop_id,
+            name=f"{plat}-{shop_id}",
+        )
+
+        return await StoreService.resolve_default_warehouse(session, store_id=store_id)

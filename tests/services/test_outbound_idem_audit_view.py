@@ -1,57 +1,24 @@
+"""
+Legacy: outbound 幂等 +审计视图（v1 FEFO + platform/mode 接口）测试。
+
+原合同依赖：
+  - OutboundService.commit(session, platform, shop_id, ref, lines=[OutboundLine(item_id, location_id, qty)], mode='FEFO', ...);
+  - 通过旧视图/表结构检查审计与幂等。
+
+当前实现：
+  - OutboundService v2 以 (order_id, warehouse_id, item_id, batch_code) 粒度工作【commit(order_id, lines=..., occurred_at)】；
+  - 旧的 platform/mode/location_id 入口已退役；
+  - v2 行为由 test_outbound_service_adjust_path.py 等测试覆盖。
+
+本文件保留为历史合同文档，现标记为 legacy。
+"""
+
 import pytest
 
-pytestmark = pytest.mark.grp_flow
-
-import pytest
-from sqlalchemy import text
-
-pytestmark = pytest.mark.asyncio
-
-
-async def seed_inbound(session, item, loc, qty):
-    from app.services.stock_service import StockService
-
-    await StockService().adjust(
-        session=session, item_id=item, location_id=loc, delta=qty, reason="INBOUND", ref="IA-SEED"
+pytestmark = pytest.mark.skip(
+    reason=(
+        "legacy outbound idempotency/audit tests based on OutboundService.commit("
+        "platform, shop_id, location_id, mode='FEFO'); "
+        "superseded by v2 outbound_service tests using (order_id, warehouse, batch_code)."
     )
-
-
-async def test_outbound_idem_audit(session):
-    from app.services.outbound_service import OutboundService
-
-    engine = session.bind
-    item, loc = 85001, 1
-
-    await seed_inbound(session, item, loc, 8)
-    await session.commit()
-
-    ref = "IA-001"
-    # 第一次扣 8
-    await OutboundService.commit(
-        session,
-        platform="pdd",
-        shop_id="",
-        ref=ref,
-        warehouse_id=1,
-        lines=[{"line_no": "1", "item_id": item, "location_id": loc, "qty": 8}],
-    )
-    await session.commit()
-    # 第二次重放
-    await OutboundService.commit(
-        session,
-        platform="pdd",
-        shop_id="",
-        ref=ref,
-        warehouse_id=1,
-        lines=[{"line_no": "1", "item_id": item, "location_id": loc, "qty": 8}],
-    )
-    await session.commit()
-
-    row = await (await engine.begin()).execute(
-        text(
-            "SELECT outbound_rows, ledger_rows FROM v_outbound_idem_audit WHERE ref=:r AND item_id=:i AND location_id=:l"
-        ),
-        {"r": ref, "i": item, "l": loc},
-    )
-    m = row.first()
-    assert m is not None and int(m[0]) == 1 and int(m[1]) >= 1
+)

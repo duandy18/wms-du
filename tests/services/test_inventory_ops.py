@@ -1,122 +1,109 @@
+# tests/services/test_inventory_ops.py
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.grp_core
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code, seed_batch_slot
 
-from datetime import date, timedelta
+from app.services.inbound_service import InboundService
+from app.services.putaway_service import PutawayService
 
-import pytest
-from sqlalchemy import text
-
-pytestmark = pytest.mark.asyncio
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
-async def _seed(session, item=3101, loc=1, code="IO-MOVE"):
-    """重新建立固定基线库存 10。"""
-    await session.begin()
-    await session.execute(text("DELETE FROM stock_ledger WHERE item_id=:i"), {"i": item})
-    for sql in [
-        "DELETE FROM batches WHERE item_id=:i AND location_id=:l AND batch_code=:c",
-        "DELETE FROM stocks  WHERE item_id=:i AND location_id=:l AND batch_code=:c",
-    ]:
-        await session.execute(text(sql), {"i": item, "l": loc, "c": code})
+@pytest.mark.asyncio
+async def test_transfer_basic(session: AsyncSession):
+    wh, src, dst, item, code = 1, 900, 1, 7201, "MV-7201"
+    await ensure_wh_loc_item(session, wh=wh, loc=src, item=item, code="SRC-900")
+    await ensure_wh_loc_item(session, wh=wh, loc=dst, item=item, code="DST-001")
+
+    # 源位先收货 5
+    inb = InboundService()
     await session.commit()
+    async with session.begin():
+        await inb.receive(
+            session=session,
+            item_id=item,
+            location_id=src,
+            qty=5,
+            ref="IN-MV-1",
+            occurred_at=datetime.now(UTC),
+            batch_code=code,
+            expiry_date=(date.today() + timedelta(days=365)),
+        )
+    assert await qty_by_code(session, item=item, loc=src, code=code) == 5
 
-    from app.services.stock_service import StockService
-
-    exp = date.today() + timedelta(days=30)
-    await session.begin()
-    await StockService().adjust(
-        session=session,
-        item_id=item,
-        location_id=loc,
-        batch_code=code,
-        expiry_date=exp,
-        delta=10,
-        reason="INBOUND",
-    )
+    # 搬运 3 到目标
+    pa = PutawayService()
     await session.commit()
+    async with session.begin():
+        res = await pa.putaway(
+            session=session,
+            item_id=item,
+            from_location_id=src,
+            to_location_id=dst,
+            qty=3,
+            ref="PA-MV-1",
+            batch_code=code,
+            left_ref_line=1,
+        )
+    assert res["moved"] == 3
+    assert await qty_by_code(session, item=item, loc=src, code=code) == 2
+    assert await qty_by_code(session, item=item, loc=dst, code=code) == 3
 
 
-async def _sum(session, item):
-    r = await session.execute(
-        text("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i"), {"i": item}
-    )
-    return int(r.scalar() or 0)
+@pytest.mark.asyncio
+async def test_transfer_idempotent(session: AsyncSession):
+    wh, src, dst, item, code = 1, 901, 2, 7202, "MV-7202"
+    await ensure_wh_loc_item(session, wh=wh, loc=src, item=item, code="SRC-901")
+    await ensure_wh_loc_item(session, wh=wh, loc=dst, item=item, code="DST-002")
 
-
-async def test_transfer_basic(session):
-    from app.services.inventory_ops import InventoryOpsService
-
-    item, from_loc, to_loc = 3101, 1, 2
-    await _seed(session, item=item, loc=from_loc)
-
-    svc = InventoryOpsService()
-    await session.begin()
-    await svc.transfer(
-        session=session,
-        item_id=item,
-        from_location_id=from_loc,
-        to_location_id=to_loc,
-        qty=6,
-        reason="MOVE",
-    )
+    inb = InboundService()
     await session.commit()
+    async with session.begin():
+        await inb.receive(
+            session=session,
+            item_id=item,
+            location_id=src,
+            qty=4,
+            ref="IN-MV-2",
+            occurred_at=datetime.now(UTC),
+            batch_code=code,
+            expiry_date=(date.today() + timedelta(days=365)),
+        )
+    assert await qty_by_code(session, item=item, loc=src, code=code) == 4
 
-    # 总量守恒
-    assert await _sum(session, item) == 10
-
-    a = await session.execute(
-        text("SELECT qty FROM stocks WHERE item_id=:i AND location_id=:l"),
-        {"i": item, "l": from_loc},
-    )
-    b = await session.execute(
-        text("SELECT qty FROM stocks WHERE item_id=:i AND location_id=:l"),
-        {"i": item, "l": to_loc},
-    )
-    assert int(a.scalar() or 0) == 4
-    assert int(b.scalar() or 0) == 6
-
-
-async def test_transfer_idempotent(session):
-    from app.services.inventory_ops import InventoryOpsService
-
-    item, from_loc, to_loc = 3102, 1, 3
-    await _seed(session, item=item, loc=from_loc)
-
-    svc = InventoryOpsService()
-    ref = "MOVE-REF-1"
-
-    await session.begin()
-    await svc.transfer(
-        session=session,
-        item_id=item,
-        from_location_id=from_loc,
-        to_location_id=to_loc,
-        qty=5,
-        reason="MOVE",
-        ref=ref,
-    )
+    pa = PutawayService()
     await session.commit()
-
-    await session.begin()
-    await svc.transfer(
-        session=session,
-        item_id=item,
-        from_location_id=from_loc,
-        to_location_id=to_loc,
-        qty=5,
-        reason="MOVE",
-        ref=ref,
-    )
+    # 第一次
+    async with session.begin():
+        _ = await pa.putaway(
+            session=session,
+            item_id=item,
+            from_location_id=src,
+            to_location_id=dst,
+            qty=2,
+            ref="PA-MV-2",
+            batch_code=code,
+            left_ref_line=1,
+        )
+    # 第二次（同 ref/line → 幂等）
     await session.commit()
+    async with session.begin():
+        _ = await pa.putaway(
+            session=session,
+            item_id=item,
+            from_location_id=src,
+            to_location_id=dst,
+            qty=2,
+            ref="PA-MV-2",
+            batch_code=code,
+            left_ref_line=1,
+        )
 
-    a = await session.execute(
-        text("SELECT SUM(delta) FROM stock_ledger WHERE reason='MOVE' AND ref=:r"),
-        {"r": ref},
-    )
-    assert int(a.scalar() or 0) == 0
-    c = await session.execute(
-        text("SELECT COUNT(*) FROM stock_ledger WHERE reason='MOVE' AND ref=:r"),
-        {"r": ref},
-    )
-    assert int(c.scalar() or 0) == 2
+    assert await qty_by_code(session, item=item, loc=src, code=code) == 2
+    assert await qty_by_code(session, item=item, loc=dst, code=code) == 2

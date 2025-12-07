@@ -13,6 +13,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段（对旧客户端更宽容）
     - populate_by_name: 支持别名/字段名互填（便于未来演进）
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -23,7 +24,9 @@ class _Base(BaseModel):
 # ========= 仓库（Warehouse） =========
 class WarehouseCreate(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128, description="仓库名称")]
-    address: Annotated[str | None, Field(default=None, max_length=256, description="地址（可选）")] = None
+    address: Annotated[
+        str | None, Field(default=None, max_length=256, description="地址（可选）")
+    ] = None
 
     @field_validator("name", "address", mode="before")
     @classmethod
@@ -63,14 +66,18 @@ class WarehouseOut(_Base):
     address: Annotated[str | None, Field(default=None, max_length=256)] = None
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {"example": {"id": "wh_01", "name": "上海一号仓", "address": "浦东新区川沙路 123 号"}}
+        "json_schema_extra": {
+            "example": {"id": "wh_01", "name": "上海一号仓", "address": "浦东新区川沙路 123 号"}
+        }
     }
 
 
 # ========= 库位（Location） =========
 class LocationCreate(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128, description="库位名称/编码")]
-    warehouse_id: Annotated[str, Field(min_length=1, max_length=64, description="所属仓库ID（字符串）")]
+    warehouse_id: Annotated[
+        str, Field(min_length=1, max_length=64, description="所属仓库ID（字符串）")
+    ]
 
     @field_validator("name", "warehouse_id", mode="before")
     @classmethod
@@ -99,9 +106,7 @@ class LocationUpdate(_Base):
     def _trim_text(cls, v):
         return v.strip() if isinstance(v, str) else v
 
-    model_config = _Base.model_config | {
-        "json_schema_extra": {"example": {"name": "A-01-02"}}
-    }
+    model_config = _Base.model_config | {"json_schema_extra": {"example": {"name": "A-01-02"}}}
 
 
 class LocationOut(_Base):
@@ -110,7 +115,9 @@ class LocationOut(_Base):
     warehouse_id: Annotated[str, Field(min_length=1, max_length=64)]
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {"example": {"id": "loc_1001", "name": "A-01-01", "warehouse_id": "wh_01"}}
+        "json_schema_extra": {
+            "example": {"id": "loc_1001", "name": "A-01-01", "warehouse_id": "wh_01"}
+        }
     }
 
 

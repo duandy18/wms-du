@@ -17,6 +17,7 @@ Create Date: 2025-10-?? ??
 - 在无依赖对象时，尝试删除 platform / shop_id / state（三列分别独立判定）
 - 有依赖则跳过并给 NOTICE，不做强制 CASCADE
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -33,7 +34,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 表不存在时直接跳过（兼容精简链路）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.outbound_commits') IS NULL THEN
@@ -93,13 +95,15 @@ def upgrade() -> None:
         RAISE NOTICE 'skip: not creating ux_outbound_commits_4cols because some columns are missing';
       END IF;
     END $$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
 
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     DECLARE
       dep_count int;
@@ -172,4 +176,5 @@ def downgrade() -> None:
         END IF;
       END IF;
     END $$;
-    """))
+    """)
+    )

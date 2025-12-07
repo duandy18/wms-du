@@ -5,15 +5,16 @@ Revises: u8_items_unit_default, 2_7_010_create_platform_shops
 Create Date: 2025-10-22 16:22:36.618340
 
 """
-from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
+from typing import Sequence, Union
 
 
 # revision identifiers, used by Alembic.
-revision: str = '4075f8906b87'
-down_revision: Union[str, Sequence[str], None] = ('u8_items_unit_default', '2_7_010_create_platform_shops')
+revision: str = "4075f8906b87"
+down_revision: Union[str, Sequence[str], None] = (
+    "u8_items_unit_default",
+    "2_7_010_create_platform_shops",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

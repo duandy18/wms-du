@@ -1,26 +1,53 @@
+# tests/services/test_batch_service.py
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
-from datetime import date, timedelta
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.asyncio
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code, seed_batch_slot
 
-async def _seed(session):
-    from app.services.stock_service import StockService
+from app.schemas.outbound import OutboundLine, OutboundMode
+from app.services.outbound_service import OutboundService
+
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
+
+
+@pytest.mark.asyncio
+async def test_pick_by_fefo_excludes_expired(session: AsyncSession):
+    """
+    目标：FEFO + 禁止过期
+      - 过期批次 E(2) + 未过期批次 N(2)
+      - 出库 1，allow_expired=False
+      - 应选择 N，E 不应被扣
+    """
+    wh, loc, item = 1, 1, 7701
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+
+    # 过期 & 未过期（helpers）
     today = date.today()
-    rows = [
-        ("B-EXPIRED", today - timedelta(days=1), 3),
-        ("B-NEAR",    today + timedelta(days=2), 4),
-        ("B-LATE",    today + timedelta(days=30), 5),
-    ]
-    for code, exp, qty in rows:
-        await StockService().adjust(session=session, item_id=3201, location_id=1,
-                                    batch_code=code, expiry_date=exp, delta=qty, reason="seed")
+    await seed_batch_slot(session, item=item, loc=loc, code="E", qty=2, days=-1)  # 已过期
+    await seed_batch_slot(session, item=item, loc=loc, code="N", qty=2, days=10)  # 未来
+    await session.commit()  # 造数完成，关闭隐式事务
 
-async def test_pick_by_fefo_excludes_expired(session):
-    from app.services.batch_service import BatchService
-    await _seed(session)
-    picked = await BatchService().pick_by_fefo(session=session, item_id=3201, location_id=1, qty=6)
-    codes = [p["batch_code"] for p in picked]
-    assert "B-EXPIRED" not in codes
-    # 应优先用近效期
-    assert codes[0] == "B-NEAR"
+    ref = f"SO-{int(datetime.now(UTC).timestamp())}"
+    occurred_at = datetime.now(UTC)
+
+    async with session.begin():
+        _ = await OutboundService.commit(
+            session,
+            platform="pdd",
+            shop_id=None,
+            ref=ref,
+            occurred_at=occurred_at,
+            lines=[OutboundLine(item_id=item, location_id=loc, qty=1)],
+            mode=OutboundMode.FEFO.value,
+            allow_expired=False,
+            warehouse_id=wh,
+        )
+
+    # 未过期 N 应被扣 1，过期 E 保持 2
+    assert await qty_by_code(session, item=item, loc=loc, code="N") == 1
+    assert await qty_by_code(session, item=item, loc=loc, code="E") == 2

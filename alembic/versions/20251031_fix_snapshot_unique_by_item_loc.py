@@ -4,13 +4,14 @@ Revision ID: 20251031_fix_snapshot_unique_by_item_loc
 Revises: 20251031_event_error_log_drop_legacy_columns
 Create Date: 2025-10-31
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 revision = "20251031_fix_snapshot_unique_by_item_loc"
 down_revision = "20251031_event_error_log_drop_legacy_columns"
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     # 1) drop legacy wide unique (day + item)
@@ -29,9 +30,12 @@ def upgrade():
     END $$;
     """)
 
+
 def downgrade():
     # best-effort: restore legacy unique (day + item), drop the new one
-    op.execute("ALTER TABLE stock_snapshots DROP CONSTRAINT IF EXISTS uq_stock_snapshots_cut_item_loc;")
+    op.execute(
+        "ALTER TABLE stock_snapshots DROP CONSTRAINT IF EXISTS uq_stock_snapshots_cut_item_loc;"
+    )
     op.execute("""
     DO $$
     BEGIN

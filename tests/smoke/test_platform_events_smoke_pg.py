@@ -1,9 +1,10 @@
 # tests/smoke/test_platform_events_smoke_pg.py
 import os
+
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.services.platform_events import handle_event_batch
 
@@ -28,27 +29,41 @@ async def test_smoke_multi_platform_end2end():
 
     async with Session() as s:
         # ---------- 1) 维度与初始库存 ----------
-        await s.execute(text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"))
-        await s.execute(text("""
+        await s.execute(
+            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
+        )
+        await s.execute(
+            text(
+                """
             INSERT INTO items (id, sku, name, unit)
             VALUES
               (1, 'SKU-1', 'ITEM-1', 'PCS'),
               (2, 'SKU-2', 'ITEM-2', 'PCS'),
               (3, 'SKU-3', 'ITEM-3', 'PCS')
             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, unit = EXCLUDED.unit
-        """))
-        await s.execute(text("""
+        """
+            )
+        )
+        await s.execute(
+            text(
+                """
             INSERT INTO locations (id, warehouse_id, name)
             VALUES (1, 1, 'L-1')
             ON CONFLICT (id) DO NOTHING
-        """))
-        await s.execute(text("""
+        """
+            )
+        )
+        await s.execute(
+            text(
+                """
             INSERT INTO stocks (item_id, location_id, qty) VALUES
               (1, 1, 10),
               (2, 1, 20),
               (3, 1,  5)
             ON CONFLICT (item_id, location_id) DO UPDATE SET qty = EXCLUDED.qty
-        """))
+        """
+            )
+        )
         await s.commit()
 
         # ---------- 2) 多平台事件 ----------
@@ -81,51 +96,67 @@ async def test_smoke_multi_platform_end2end():
         await s.commit()
 
         # ---------- 3) 校验扣减与记账 ----------
-        rows = (await s.execute(
-            text("SELECT item_id, qty FROM stocks WHERE location_id=1 AND item_id IN (1,2,3)")
-        )).all()
+        rows = (
+            await s.execute(
+                text("SELECT item_id, qty FROM stocks WHERE location_id=1 AND item_id IN (1,2,3)")
+            )
+        ).all()
         qtys = {r[0]: r[1] for r in rows}
-        assert qtys[1] == 8   # 10 - 2
+        assert qtys[1] == 8  # 10 - 2
         assert qtys[2] == 15  # 20 - 5
-        assert qtys[3] == 4   #  5 - 1
+        assert qtys[3] == 4  #  5 - 1
 
         for ref in (ref_p, ref_t, ref_j):
-            cnt = (await s.execute(
-                text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
-                {"r": ref},
-            )).scalar_one()
+            cnt = (
+                await s.execute(
+                    text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
+                    {"r": ref},
+                )
+            ).scalar_one()
             assert cnt == 1
 
         # ---------- 4) 重放相同事件 → 幂等 ----------
         await handle_event_batch(events, session=s)
         await s.commit()
 
-        rows2 = (await s.execute(
-            text("SELECT item_id, qty FROM stocks WHERE location_id=1 AND item_id IN (1,2,3)")
-        )).all()
+        rows2 = (
+            await s.execute(
+                text("SELECT item_id, qty FROM stocks WHERE location_id=1 AND item_id IN (1,2,3)")
+            )
+        ).all()
         qtys2 = {r[0]: r[1] for r in rows2}
         assert qtys2[1] == 8
         assert qtys2[2] == 15
         assert qtys2[3] == 4
 
         for ref in (ref_p, ref_t, ref_j):
-            cnt2 = (await s.execute(
-                text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
-                {"r": ref},
-            )).scalar_one()
+            cnt2 = (
+                await s.execute(
+                    text("SELECT COUNT(1) FROM stock_ledger WHERE reason='OUTBOUND' AND ref=:r"),
+                    {"r": ref},
+                )
+            ).scalar_one()
             assert cnt2 == 1  # 未新增
 
         # ---------- 5) 异常日志写入（兼容新旧列名） ----------
         # 尝试新列 error_code；如失败再回退到旧列 error_type
         row = None
         try:
-            row = (await s.execute(
-                text("SELECT platform, error_code AS code FROM event_error_log ORDER BY id DESC LIMIT 1")
-            )).first()
+            row = (
+                await s.execute(
+                    text(
+                        "SELECT platform, error_code AS code FROM event_error_log ORDER BY id DESC LIMIT 1"
+                    )
+                )
+            ).first()
         except Exception:
-            row = (await s.execute(
-                text("SELECT platform, error_type AS code FROM event_error_log ORDER BY id DESC LIMIT 1")
-            )).first()
+            row = (
+                await s.execute(
+                    text(
+                        "SELECT platform, error_type AS code FROM event_error_log ORDER BY id DESC LIMIT 1"
+                    )
+                )
+            ).first()
         assert row is not None
         platform, code = row[0], row[1]
         assert platform in ("mcr", "mystery", "unknown") or isinstance(platform, str)

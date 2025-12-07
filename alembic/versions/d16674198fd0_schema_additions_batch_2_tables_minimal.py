@@ -4,6 +4,7 @@ Revision ID: d16674198fd0
 Revises: 6869fc360d86
 Create Date: 2025-10-??:??:??
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -20,7 +21,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 这里保留“最小建表 + 索引”逻辑；均做 IF NOT EXISTS 守卫，避免重复执行
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       -- parties
@@ -85,14 +87,16 @@ def upgrade() -> None:
         CREATE INDEX ix_inventory_movements_type_time ON public.inventory_movements (movement_type, timestamp);
       END IF;
     END$$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
 
     # 逐个资源做“有才删”；优先删索引，再删表；任何异常均吞并并 NOTICE
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     DECLARE
       ix TEXT;
@@ -166,4 +170,5 @@ def downgrade() -> None:
       END IF;
 
     END$$;
-    """))
+    """)
+    )

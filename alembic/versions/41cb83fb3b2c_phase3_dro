@@ -1,0 +1,90 @@
+"""phase3: drop stocks qty_on_hand and sync trigger; slim ledger uq (optional)"""
+
+from alembic import op
+import sqlalchemy as sa
+
+# 你的 head 之前一版
+revision = "20251112_drop_qty_on_hand_and_trigger"
+down_revision = "20251111_sync_qty_columns"
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # A) 拆除过渡触发器与函数（若存在）
+    op.execute("""
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_stocks_qty_sync') THEN
+        DROP TRIGGER trg_stocks_qty_sync ON stocks;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE p.proname='stocks_qty_sync' AND n.nspname=current_schema()
+      ) THEN
+        DROP FUNCTION stocks_qty_sync();
+      END IF;
+    END $$;
+    """)
+
+    # B) 删除 stocks.qty_on_hand（若存在）
+    op.execute("""
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='stocks' AND column_name='qty_on_hand'
+      ) THEN
+        ALTER TABLE stocks DROP COLUMN qty_on_hand;
+      END IF;
+    END $$;
+    """)
+
+    # C) （可选）瘦身 ledger 唯一约束：只保留幂等键那条
+    #   你的库里当前至少有这两条：
+    #     - uq_ledger_idem_reason_refline_item_code_wh (reason, ref, ref_line, item_id, batch_code, warehouse_id)
+    #     - uq_ledger_wh_batch_item_reason_ref_line    (warehouse_id, batch_code, item_id, reason, ref, ref_line)
+    #   如果想只保留后一条（或前一条），请按需 DROP 另一条。默认不动，安全起见。
+    # 示例（需要时取消注释）：
+    # op.execute("ALTER TABLE stock_ledger DROP CONSTRAINT IF EXISTS uq_ledger_idem_reason_refline_item_code_wh;")
+
+
+def downgrade():
+    # 回滚：加回 qty_on_hand（默认 0），并重新创建过渡触发器（只保证可回滚，不建议再启用）
+    op.execute("""
+    DO $$
+    BEGIN
+      -- 1) 补回列
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='stocks' AND column_name='qty_on_hand'
+      ) THEN
+        ALTER TABLE stocks ADD COLUMN qty_on_hand INTEGER NOT NULL DEFAULT 0;
+        -- 用 qty 回填
+        UPDATE stocks SET qty_on_hand = COALESCE(qty, 0);
+        ALTER TABLE stocks ALTER COLUMN qty_on_hand DROP DEFAULT;
+      END IF;
+
+      -- 2) 复原函数与触发器
+      CREATE OR REPLACE FUNCTION stocks_qty_sync() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.qty IS NULL AND NEW.qty_on_hand IS NOT NULL THEN
+          NEW.qty := NEW.qty_on_hand;
+        ELSIF NEW.qty_on_hand IS NULL AND NEW.qty IS NOT NULL THEN
+          NEW.qty_on_hand := NEW.qty;
+        END IF;
+        IF NEW.qty IS NOT NULL THEN
+          NEW.qty_on_hand := NEW.qty;
+        END IF;
+        RETURN NEW;
+      END
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_stocks_qty_sync ON stocks;
+      CREATE TRIGGER trg_stocks_qty_sync
+        BEFORE INSERT OR UPDATE ON stocks
+        FOR EACH ROW
+        EXECUTE FUNCTION stocks_qty_sync();
+    END $$;
+    """)

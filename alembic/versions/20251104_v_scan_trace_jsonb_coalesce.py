@@ -4,6 +4,7 @@ Revision ID: 20251104_v_scan_trace_jsonb_coalesce
 Revises: ed9ef423378f
 Create Date: 2025-11-04 14:30:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -23,7 +24,8 @@ def upgrade() -> None:
       - probe 事件（字符串）回退为 btrim(message::text, '"')
       - JOIN stock_ledger 时也使用同样的规范化，确保能联到 commit 对应腿
     """
-    op.execute(text("""
+    op.execute(
+        text("""
     CREATE OR REPLACE VIEW public.v_scan_trace AS
     SELECT
         e.id           AS event_id,
@@ -48,7 +50,8 @@ def upgrade() -> None:
             btrim(e.message::text, '"')
          )
     WHERE e.source LIKE 'scan_%';
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

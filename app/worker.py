@@ -1,6 +1,8 @@
 # app/worker.py
 from __future__ import annotations
+
 import os
+
 from celery import Celery
 
 # 配置 Broker/Result Backend（容器里用 redis 服务，宿主机运行时可用 REDIS_URL/CELERY_RESULT_BACKEND 覆盖）
@@ -12,16 +14,18 @@ celery = Celery(
     "wms",
     broker=BROKER_URL,
     backend=RESULT_URL,
-    include=["app.tasks"],           # ← 关键：显式注册任务模块
+    include=["app.tasks"],  # ← 关键：显式注册任务模块
 )
+
 
 def _route_by_shop(name, args, kwargs, options, task=None, **kw):
     """按 (platform, shop_id) 分区路由，保证同分区顺序消费。"""
     p = (kwargs.get("platform") or "").lower()
-    s = (kwargs.get("shop_id") or "")
+    s = kwargs.get("shop_id") or ""
     if p and s:
         return {"queue": f"events.{p}.{s}"}
     return None
+
 
 # 一些推荐的运行期配置
 celery.conf.task_routes = (_route_by_shop,)

@@ -4,6 +4,7 @@ Revision ID: 20251030_events_core_tables
 Revises: 20251030_channel_inventory_add_visible
 Create Date: 2025-10-30
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -22,8 +23,10 @@ def _insp():
     bind = op.get_bind()
     return sa.inspect(bind)
 
+
 def _has_table(name: str) -> bool:
     return _insp().has_table(name)
+
 
 def _has_index(table: str, name: str) -> bool:
     try:
@@ -31,11 +34,13 @@ def _has_index(table: str, name: str) -> bool:
     except Exception:
         return False
 
+
 def _has_unique(table: str, name: str) -> bool:
     try:
         return any(uc["name"] == name for uc in _insp().get_unique_constraints(table))
     except Exception:
         return False
+
 
 def _has_column(table: str, column: str) -> bool:
     try:
@@ -82,12 +87,25 @@ def upgrade():
         op.create_table(
             "event_log",
             sa.Column("id", sa.BigInteger, primary_key=True),
-            sa.Column("source", sa.Text, nullable=False),  # ingest|normalize|dispatch|persist|gateway|adapter...
+            sa.Column(
+                "source", sa.Text, nullable=False
+            ),  # ingest|normalize|dispatch|persist|gateway|adapter...
             sa.Column("level", sa.Text, nullable=False, server_default=sa.text("'INFO'")),
             sa.Column("message", sa.Text, nullable=False),
-            sa.Column("meta", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb")),
-            sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
-            sa.CheckConstraint("level in ('DEBUG','INFO','WARN','ERROR')", name="ck_event_log_level"),
+            sa.Column(
+                "meta",
+                postgresql.JSONB(astext_type=sa.Text()),
+                server_default=sa.text("'{}'::jsonb"),
+            ),
+            sa.Column(
+                "created_at",
+                sa.TIMESTAMP(timezone=True),
+                nullable=False,
+                server_default=sa.text("now()"),
+            ),
+            sa.CheckConstraint(
+                "level in ('DEBUG','INFO','WARN','ERROR')", name="ck_event_log_level"
+            ),
         )
     if not _has_index("event_log", "ix_event_log_created_at"):
         op.create_index("ix_event_log_created_at", "event_log", ["created_at"], unique=False)
@@ -102,24 +120,45 @@ def upgrade():
             sa.Column("dedup_key", sa.Text, nullable=False),
             sa.Column("stage", sa.Text, nullable=False),  # ingest|normalize|dispatch|persist
             sa.Column("error", sa.Text, nullable=False),
-            sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
-            sa.CheckConstraint("stage in ('ingest','normalize','dispatch','persist')", name="ck_event_error_stage"),
+            sa.Column(
+                "occurred_at",
+                sa.TIMESTAMP(timezone=True),
+                nullable=False,
+                server_default=sa.text("now()"),
+            ),
+            sa.CheckConstraint(
+                "stage in ('ingest','normalize','dispatch','persist')", name="ck_event_error_stage"
+            ),
         )
     else:
         # 历史表：逐列补齐
         if not _has_column("event_error_log", "dedup_key"):
-            op.add_column("event_error_log", sa.Column("dedup_key", sa.Text, nullable=False, server_default=sa.text("''")))
+            op.add_column(
+                "event_error_log",
+                sa.Column("dedup_key", sa.Text, nullable=False, server_default=sa.text("''")),
+            )
             op.alter_column("event_error_log", "dedup_key", server_default=None)
         if not _has_column("event_error_log", "stage"):
-            op.add_column("event_error_log", sa.Column("stage", sa.Text, nullable=False, server_default=sa.text("'engest'")))
+            op.add_column(
+                "event_error_log",
+                sa.Column("stage", sa.Text, nullable=False, server_default=sa.text("'engest'")),
+            )
             op.alter_column("event_error_log", "stage", server_default=None)
         if not _has_column("event_error_log", "error"):
-            op.add_column("event_error_log", sa.Column("error", sa.Text, nullable=False, server_default=sa.text("''")))
+            op.add_column(
+                "event_error_log",
+                sa.Column("error", sa.Text, nullable=False, server_default=sa.text("''")),
+            )
             op.alter_column("event_error_log", "error", server_default=None)
         if not _has_column("event_error_log", "occurred_at"):
             op.add_column(
                 "event_error_log",
-                sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+                sa.Column(
+                    "occurred_at",
+                    sa.TIMESTAMP(timezone=True),
+                    nullable=False,
+                    server_default=sa.text("now()"),
+                ),
             )
 
     if not _has_index("event_error_log", "ix_event_error_occurred"):
@@ -141,7 +180,9 @@ def upgrade():
             ),
         )
     if not _has_index("event_replay_cursor", "ix_event_replay_cursor_platform"):
-        op.create_index("ix_event_replay_cursor_platform", "event_replay_cursor", ["platform"], unique=False)
+        op.create_index(
+            "ix_event_replay_cursor_platform", "event_replay_cursor", ["platform"], unique=False
+        )
 
 
 def downgrade():
@@ -149,7 +190,8 @@ def downgrade():
     conn = op.get_bind()
 
     # 0) 先删除依赖 event_error_log 的所有“普通视图”（不含物化视图），再删表
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     DECLARE v RECORD;
     BEGIN
@@ -164,7 +206,8 @@ def downgrade():
         EXECUTE format('DROP VIEW IF EXISTS %I.%I', v.schema_name, v.view_name);
       END LOOP;
     END$$;
-    """))
+    """)
+    )
 
     if _has_index("event_replay_cursor", "ix_event_replay_cursor_platform"):
         op.drop_index("ix_event_replay_cursor_platform", table_name="event_replay_cursor")

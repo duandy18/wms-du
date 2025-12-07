@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 from pydantic.config import ConfigDict
 
+
 # 统一：允许 ORM 对象、忽略多余字段、支持字段名/别名互填（便于兼容旧客户端）
 class _Base(BaseModel):
     model_config = ConfigDict(
@@ -15,9 +16,11 @@ class _Base(BaseModel):
         populate_by_name=True,
     )
 
+
 # ---------- 入库（/inbound/receive） ----------
 
 SKU = Annotated[str, Field(min_length=1, max_length=128, description="商品 SKU")]
+
 
 class ReceiveIn(_Base):
     """
@@ -25,9 +28,12 @@ class ReceiveIn(_Base):
     - 以 SKU 为主键进行入库；默认由服务层决定落地库位（例如收货暂存位）。
     - 幂等建议：服务层以 (ref, ref_line, sku, qty) 判定。
     """
+
     sku: SKU
     qty: Annotated[int, Field(gt=0, description="入库数量（正整数）")]
-    ref: Annotated[str, Field(min_length=1, max_length=128, description="业务参考号：采购单/入库单等")]
+    ref: Annotated[
+        str, Field(min_length=1, max_length=128, description="业务参考号：采购单/入库单等")
+    ]
     ref_line: int | str
 
     # 可选批次信息（保持接口兼容，服务层可透传/轻度校验）
@@ -62,14 +68,13 @@ class ReceiveOut(_Base):
     - accepted_qty：实际入库数量（可能与请求 qty 相同或经业务校正）
     - idempotent：若命中幂等，返回 True 便于 quick/smoke 断言
     """
+
     item_id: int
     accepted_qty: int
     idempotent: bool | None = None
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {"item_id": 1, "accepted_qty": 10, "idempotent": False}
-        }
+        "json_schema_extra": {"example": {"item_id": 1, "accepted_qty": 10, "idempotent": False}}
     }
 
 
@@ -80,6 +85,7 @@ class PutawayIn(_Base):
     - 常见流程：从收货暂存位搬至目标库位（服务层做 FEFO/约束检查）
     - 若未来需要“按批次搬运”，可启用 batch_code 字段
     """
+
     sku: SKU
     qty: Annotated[int, Field(gt=0, description="搬运数量（正整数）")]
     to_location_id: Annotated[int, Field(gt=0, description="目标库位 ID")]

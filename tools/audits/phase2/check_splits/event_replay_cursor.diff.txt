@@ -1,0 +1,6 @@
+225:  Index('ix_event_replay_cursor_platform', Column('platform', TEXT(),
+226:  table=<event_replay_cursor>, nullable=False))), ('remove_table',
+227:  Table('event_replay_cursor', MetaData(), Column('id', BIGINT(),
+228:  table=<event_replay_cursor>, primary_key=True, nullable=False),
+229:  Column('platform', TEXT(), table=<event_replay_cursor>, nullable=False),
+231:  table=<event_replay_cursor>, nullable=False,

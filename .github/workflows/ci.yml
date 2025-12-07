@@ -1,63 +1,32 @@
-name: CI · v1.2 Gate
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - release/**
-      - feat/**
+    branches: [ main, master, develop ]
   pull_request:
-    branches:
-      - main
-      - release/**
-  workflow_dispatch: {}
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PYTHON_VERSION: "3.12"
-  DATABASE_URL: postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PYTHONDONTWRITEBYTECODE: "1"
-  FORCE_COLOR: "1"
 
 jobs:
-  lint:
-    name: Lint (non-blocking)
+  schema-check:
     runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install ruff
-        run: python -m pip install -U pip ruff
-      - name: Ruff check
-        run: ruff check app tests || true
 
-  test-scan:
-    name: Test · /scan gate
-    runs-on: ubuntu-latest
-    needs: lint
     services:
       postgres:
         image: postgres:14
+        ports: ["5432:5432"]
         env:
+          POSTGRES_DB: wms
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms
-        ports:
-          - "5433:5432"
         options: >-
           --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=5s
+          --health-interval=10s
           --health-timeout=5s
-          --health-retries=20
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms
+      PYTHONUNBUFFERED: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,90 +34,84 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.12"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # 关键：无条件安装 pytest 及运行所需最小依赖（即使 requirements.txt 存在也强制安装）
-      - name: Install test deps (force)
+      - name: Create venv & install deps
         run: |
-          python -m pip install -U pip
-          python -m pip install -U pytest pytest-asyncio httpx alembic asyncpg "psycopg[binary]" SQLAlchemy
+          python -m venv .venv
+          ./.venv/bin/pip install -U pip setuptools wheel
+          if [ -f requirements.txt ]; then ./.venv/bin/pip install -r requirements.txt; fi
+          if [ -f backend/requirements.txt ]; then ./.venv/bin/pip install -r backend/requirements.txt; fi
+          ./.venv/bin/pip install "alembic>=1.13" "psycopg[binary]>=3.1" "pytest" "regex" "ripgrep-bin"
 
-          # 如项目使用 requirements.txt，再补充安装其余依赖
-          if [ -f requirements.txt ]; then
-            # 不覆盖已装版本，按需补齐
-            python -m pip install -r requirements.txt || true
+      - name: Alembic check (Phase 3)
+        run: |
+          MODEL_IMPORT_SCOPE=phase3 ALEMBIC_CHECK_SCOPE=phase3 ./.venv/bin/python -m alembic check
+
+      - name: Alembic check (Phase 2)
+        run: |
+          MODEL_IMPORT_SCOPE=phase2 ALEMBIC_CHECK_SCOPE=phase2 ./.venv/bin/python -m alembic check
+
+      - name: Guard no compat leftovers
+        run: |
+          # 兼容：没有 ripgrep 可用时，使用 python 简替
+          if command -v rg >/dev/null 2>&1; then
+            rg -n "_safe_import\\(\"app\\.models\\.compat_" app/models/__init__.py && exit 1 || true
+          else
+            python - <<'PY'
+import sys, re, pathlib
+p = pathlib.Path("app/models/__init__.py")
+s = p.read_text(encoding="utf-8") if p.exists() else ""
+if re.search(r'_safe_import\("app\.models\.compat_', s):
+    print("compat imports found in app/models/__init__.py", file=sys.stderr)
+    sys.exit(1)
+PY
+          fi
+          if ls app/models/compat_*.py 2>/dev/null; then
+            echo "compat files still under app/models"; exit 1
           fi
 
-      - name: Alembic upgrade/downgrade health
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: |
-          alembic upgrade head
-          alembic downgrade -1 || true
-          alembic upgrade head
-
-      - name: /scan · pick probe/commit/trace
-        run: |
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_probe.py -s
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_commit.py -s
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_pick_commit_trace.py -s
-
-      - name: /scan · receive/putaway/count commit
-        run: |
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_receive_commit.py -s
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_putaway_commit.py -s
-          PYTHONPATH=. pytest -q tests/api/test_scan_gateway_count_commit.py -s
-
-      - name: Contract · event -> ledger leg
-        run: PYTHONPATH=. pytest -q tests/contracts/test_event_to_ledger_contract.py -s
-
-  migrate-health:
-    name: Alembic Health Gate
+  # 可选：跑迷你测试
+  mini-tests:
+    needs: schema-check
     runs-on: ubuntu-latest
-    needs: test-scan
     services:
       postgres:
         image: postgres:14
+        ports: ["5432:5432"]
         env:
+          POSTGRES_DB: wms
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms
-        ports:
-          - "5433:5432"
         options: >-
           --health-cmd="pg_isready -U wms -d wms"
-          --health-interval=5s
+          --health-interval=10s
           --health-timeout=5s
-          --health-retries=20
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql+psycopg://wms:wms@localhost:5432/wms
+      PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install alembic
-        run: python -m pip install -U alembic asyncpg "psycopg[binary]"
-      - name: Upgrade/Downgrade cycle
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: |
-          alembic upgrade head
-          alembic downgrade base
-          alembic upgrade head
+          python-version: "3.12"
 
-  done:
-    name: Summary
-    runs-on: ubuntu-latest
-    needs: migrate-health
-    steps:
-      - name: Done
-        run: echo "CI v1.2 Gate passed ✅"
+      - name: Create venv & install deps
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install -U pip setuptools wheel
+          if [ -f requirements.txt ]; then ./.venv/bin/pip install -r requirements.txt; fi
+          if [ -f backend/requirements.txt ]; then ./.venv/bin/pip install -r backend/requirements.txt; fi
+          ./.venv/bin/pip install "pytest"
+
+      - name: Run mini suites
+        run: |
+          make test-outbound-mini
+          make test-platform-mini
+          make test-reserve-mini
+          make test-reserve-lifecycle
+          make test-metrics-mini

@@ -4,6 +4,7 @@ Revision ID: 20251030_orders_updated_at_default_now
 Revises: 20251030_orders_total_amount_default_zero
 Create Date: 2025-10-30 10:20:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -21,7 +22,8 @@ def upgrade() -> None:
     说明：使用 to_regclass/ information_schema 守卫，避免 UndefinedTable/UndefinedColumn。
     """
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -42,7 +44,8 @@ def upgrade() -> None:
         -- 当前保留默认，方便后续写入
       END IF;
     END$$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
@@ -50,7 +53,8 @@ def downgrade() -> None:
     回滚：仅当 orders.updated_at 存在时，移除 DEFAULT（不删列）。
     """
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -62,4 +66,5 @@ def downgrade() -> None:
         END IF;
       END IF;
     END$$;
-    """))
+    """)
+    )

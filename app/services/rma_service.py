@@ -1,64 +1,162 @@
+# app/services/rma_service.py
 from __future__ import annotations
 
-from typing import Dict
+from datetime import UTC, datetime
+from typing import Optional
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.inventory_adjust import InventoryAdjust
+from app.models.stock import Stock
+from app.models.warehouse import WarehouseCode
+from app.services.ledger_writer import write_ledger
 
 
 class RMAService:
     """
-    逆向流程：
-      - 良品回库：正向入库（RETURN_IN）
-      - 次品隔离：从原位扣减（RMA_QUAR_OUT）→ 隔离位增加（RMA_QUAR_IN）
+    退货三段式：
+      1) RETURN_IN → RETURNS（净增退货池）
+      2) RECLASSIFY RETURNS→MAIN（净零迁移，可售量+）
+      3) RETURN_SCRAP@RETURNS（净减，报废）
     """
 
-    async def return_good(
-        self, *, session: AsyncSession, ref: str, item_id: int, location_id: int, qty: int
-    ) -> Dict:
-        return await InventoryAdjust.inbound(
-            session=session,
+    async def return_in(
+        self,
+        session: AsyncSession,
+        *,
+        item_id: int,
+        batch_code: str,
+        qty: int,
+        rma_ref: str,
+        occurred_at: Optional[datetime] = None,
+    ) -> None:
+        occurred_at = occurred_at or datetime.now(UTC)
+        wh = await self._wh_id(session, WarehouseCode.RETURNS)
+        stk = await self._lock_stock(session, wh, item_id, batch_code)
+        if stk is None:
+            stk = Stock(warehouse_id=wh, item_id=item_id, batch_code=batch_code, qty=0)
+            session.add(stk)
+        stk.qty += qty
+        await write_ledger(
+            session,
+            warehouse_id=wh,
             item_id=item_id,
-            location_id=location_id,
-            delta=abs(qty),
+            batch_code=batch_code,
             reason="RETURN_IN",
-            ref=ref,
-            batch_code=f"RMA-{item_id}-{location_id}",  # 可替换为来源批次码映射
-            production_date=None,
-            expiry_date=None,
+            delta=qty,
+            after_qty=stk.qty,
+            ref=rma_ref,
+            ref_line=1,
+            occurred_at=occurred_at,
         )
 
-    async def return_defect(
+    async def reclassify_to_main(
         self,
-        *,
         session: AsyncSession,
-        ref: str,
+        *,
         item_id: int,
-        from_location_id: int,
-        quarantine_location_id: int,
+        batch_code: str,
         qty: int,
-    ) -> Dict:
-        # 先从原位扣减（FEFO）
-        await InventoryAdjust.fefo_outbound(
-            session=session,
+        rma_ref: str,
+        occurred_at: Optional[datetime] = None,
+    ) -> None:
+        occurred_at = occurred_at or datetime.now(UTC)
+        wh_ret = await self._wh_id(session, WarehouseCode.RETURNS)
+        wh_main = await self._wh_id(session, WarehouseCode.MAIN)
+
+        # RETURNS 减
+        stk_ret = await self._lock_stock(session, wh_ret, item_id, batch_code)
+        if stk_ret is None or stk_ret.qty < qty:
+            raise ValueError("RETURNS pool insufficient")
+        stk_ret.qty -= qty
+        await write_ledger(
+            session,
+            warehouse_id=wh_ret,
             item_id=item_id,
-            location_id=from_location_id,
-            delta=-abs(qty),
-            reason="RMA_QUAR_OUT",
-            ref=ref,
-            allow_expired=True,
+            batch_code=batch_code,
+            reason="RETURN_RECLASSIFY",
+            delta=-qty,
+            after_qty=stk_ret.qty,
+            ref=rma_ref,
+            ref_line=2,
+            occurred_at=occurred_at,
         )
-        # 再入隔离位
-        res = await InventoryAdjust.inbound(
-            session=session,
+
+        # MAIN 加
+        stk_main = await self._lock_stock(session, wh_main, item_id, batch_code)
+        if stk_main is None:
+            stk_main = Stock(warehouse_id=wh_main, item_id=item_id, batch_code=batch_code, qty=0)
+            session.add(stk_main)
+        stk_main.qty += qty
+        await write_ledger(
+            session,
+            warehouse_id=wh_main,
             item_id=item_id,
-            location_id=quarantine_location_id,
-            delta=abs(qty),
-            reason="RMA_QUAR_IN",
-            ref=ref,
-            batch_code=f"QUAR-{item_id}-{quarantine_location_id}",
-            production_date=None,
-            expiry_date=None,
+            batch_code=batch_code,
+            reason="RETURN_RECLASSIFY",
+            delta=qty,
+            after_qty=stk_main.qty,
+            ref=rma_ref,
+            ref_line=3,
+            occurred_at=occurred_at,
         )
-        return res
+
+    async def scrap_in_returns(
+        self,
+        session: AsyncSession,
+        *,
+        item_id: int,
+        batch_code: str,
+        qty: int,
+        rma_ref: str,
+        occurred_at: Optional[datetime] = None,
+    ) -> None:
+        occurred_at = occurred_at or datetime.now(UTC)
+        wh = await self._wh_id(session, WarehouseCode.RETURNS)
+        stk = await self._lock_stock(session, wh, item_id, batch_code)
+        if stk is None or stk.qty < qty:
+            raise ValueError("RETURNS pool insufficient to scrap")
+        stk.qty -= qty
+        await write_ledger(
+            session,
+            warehouse_id=wh,
+            item_id=item_id,
+            batch_code=batch_code,
+            reason="RETURN_SCRAP",
+            delta=-qty,
+            after_qty=stk.qty,
+            ref=rma_ref,
+            ref_line=4,
+            occurred_at=occurred_at,
+        )
+
+    # helpers
+    @staticmethod
+    async def _wh_id(session: AsyncSession, code: str) -> int:
+        r = await session.execute(
+            sa.text("SELECT id FROM warehouses WHERE name=:n LIMIT 1"), {"n": code}
+        )
+        wid = r.scalar_one_or_none()
+        if wid is None:
+            ins = await session.execute(
+                sa.text(
+                    "INSERT INTO warehouses(name) VALUES(:n) ON CONFLICT (name) DO NOTHING RETURNING id"
+                ),
+                {"n": code},
+            )
+            wid = ins.scalar()
+            if wid is None:
+                r2 = await session.execute(
+                    sa.text("SELECT id FROM warehouses WHERE name=:n LIMIT 1"), {"n": code}
+                )
+                wid = r2.scalar_one()
+        return int(wid)
+
+    @staticmethod
+    async def _lock_stock(session: AsyncSession, wh: int, item: int, code: str) -> Stock | None:
+        row = await session.execute(
+            sa.select(Stock)
+            .where(Stock.warehouse_id == wh, Stock.item_id == item, Stock.batch_code == code)
+            .with_for_update()
+        )
+        return row.scalar_one_or_none()

@@ -1,72 +1,102 @@
 # app/api/routers/outbound.py
 from __future__ import annotations
 
-import os
-from collections import defaultdict
+from datetime import datetime
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select, tuple_
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field, constr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
-from app.models.stock import Stock
-from app.services.outbound_service import commit_outbound  # 复用服务层扣减/记账
+from app.api.deps import get_session
+from app.core.audit import new_trace
+from app.services.outbound_service import OutboundService
 
 router = APIRouter(prefix="/outbound", tags=["outbound"])
 
+PlatformStr = constr(min_length=1, max_length=32)
 
-class OutboundLine(BaseModel):
+
+class OutboundLineIn(BaseModel):
+    """出库行：按 (warehouse_id, item_id, batch_code) 粒度扣减。"""
+
+    warehouse_id: int
     item_id: int
-    location_id: int
-    qty: int = Field(ge=1)
-    ref_line: str | int | None = None
+    batch_code: str
+    qty: int = Field(gt=0)
 
 
-class OutboundCommitIn(BaseModel):
-    ref: str
-    lines: list[OutboundLine]
+class OutboundShipIn(BaseModel):
+    """
+    出库请求体（v2+v3 统一版）：
+
+      - platform / shop_id / ref：业务键，用于生成幂等用的 order_id
+      - external_order_ref：可选，挂渠道订单号（当前仅透传给审计/上层，不影响扣减）
+      - occurred_at：可选，不传则用当前时间
+      - lines：一组出库行
+    """
+
+    platform: PlatformStr
+    shop_id: constr(min_length=1)
+    ref: constr(min_length=1)
+
+    external_order_ref: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+    lines: List[OutboundLineIn]
 
 
-@router.post("/commit")
-async def outbound_commit(payload: OutboundCommitIn, session: AsyncSession = Depends(get_session)):
-    outbound_atomic = os.getenv("OUTBOUND_ATOMIC", "false").lower() == "true"
+class OutboundShipOut(BaseModel):
+    status: str
+    total_qty: int
+    trace_id: str
+    idempotent: bool = False
 
-    if outbound_atomic:
-        need: dict[tuple[int, int], int] = defaultdict(int)
-        pairs: set[tuple[int, int]] = set()
-        for ln in payload.lines:
-            key = (int(ln.item_id), int(ln.location_id))
-            need[key] += int(ln.qty)
-            pairs.add(key)
 
-        if pairs:
-            rows = await session.execute(
-                select(Stock.item_id, Stock.location_id, Stock.qty).where(
-                    tuple_(Stock.item_id, Stock.location_id).in_(list(pairs))
-                )
-            )
-            have_map: dict[tuple[int, int], int] = {
-                (int(item_id_val), int(loc_id_val)): int(q or 0)
-                for item_id_val, loc_id_val, q in rows.all()
-            }
-            for (item_id_val, loc_id_val), required in need.items():
-                have = have_map.get((item_id_val, loc_id_val), 0)
-                if have < required:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "code": "INSUFFICIENT_STOCK",
-                            "item_id": item_id_val,
-                            "location_id": loc_id_val,
-                            "required": required,
-                            "have": have,
-                        },
-                    )
+@router.post("/ship/commit", response_model=OutboundShipOut)
+async def outbound_ship_commit(
+    payload: OutboundShipIn,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    出库入口（统一版，真正扣库存）：
 
-    results = await commit_outbound(
+    - 每次调用都会生成一个 trace_id，用于串联订单 / 预占 / 出库 / ledger；
+    - 实际库存扣减与台账写入统一走 OutboundService → StockService.adjust；
+    - 幂等：以 (platform, shop_id, ref) 组成的 order_id 作为业务键，
+      OutboundService 会通过 stock_ledger 中已有 delta 判断“已扣数量”，
+      只扣“剩余需要扣”的部分；若 total_qty=0，则视为完全幂等。
+    """
+    trace = new_trace("http:/outbound/ship/commit")
+
+    svc = OutboundService()
+
+    # 业务幂等键：platform + shop_id + ref
+    order_id = f"{payload.platform.upper()}:{payload.shop_id}:{payload.ref}"
+
+    result = await svc.commit(
         session=session,
-        ref=payload.ref,
-        lines=[ln.model_dump() for ln in payload.lines],
+        order_id=order_id,
+        lines=[
+            {
+                "warehouse_id": ln.warehouse_id,
+                "item_id": ln.item_id,
+                "batch_code": ln.batch_code,
+                "qty": ln.qty,
+            }
+            for ln in payload.lines
+        ],
+        occurred_at=payload.occurred_at,
+        trace_id=trace.trace_id,
     )
-    return {"ref": payload.ref, "results": results}
+
+    await session.commit()
+
+    total_qty = int(result.get("total_qty", 0))
+    idempotent = total_qty == 0
+
+    return OutboundShipOut(
+        status=result.get("status", "OK"),
+        total_qty=total_qty,
+        trace_id=trace.trace_id,
+        idempotent=idempotent,
+    )

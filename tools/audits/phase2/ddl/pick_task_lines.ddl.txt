@@ -1,0 +1,34 @@
+                                                                      Table "public.pick_task_lines"
+       Column       |           Type           | Collation | Nullable |                   Default                   | Storage  | Compression | Stats target | Description
+--------------------+--------------------------+-----------+----------+---------------------------------------------+----------+-------------+--------------+-------------
+ id                 | bigint                   |           | not null | nextval('pick_task_lines_id_seq'::regclass) | plain    |             |              |
+ task_id            | bigint                   |           | not null |                                             | plain    |             |              |
+ order_id           | bigint                   |           |          |                                             | plain    |             |              |
+ order_line_id      | bigint                   |           |          |                                             | plain    |             |              |
+ item_id            | bigint                   |           | not null |                                             | plain    |             |              |
+ req_qty            | bigint                   |           | not null |                                             | plain    |             |              |
+ picked_qty         | bigint                   |           | not null | 0                                           | plain    |             |              |
+ status             | text                     |           | not null | 'OPEN'::text                                | extended |             |              |
+ prefer_pickface    | boolean                  |           | not null | true                                        | plain    |             |              |
+ target_location_id | bigint                   |           |          |                                             | plain    |             |              |
+ note               | text                     |           |          |                                             | extended |             |              |
+ created_at         | timestamp with time zone |           | not null | now()                                       | plain    |             |              |
+ updated_at         | timestamp with time zone |           | not null | now()                                       | plain    |             |              |
+Indexes:
+    "pick_task_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_pick_task_lines_item" btree (item_id)
+    "ix_pick_task_lines_status" btree (status)
+    "ix_pick_task_lines_task" btree (task_id)
+Check constraints:
+    "ck_pick_task_lines_status" CHECK (status = ANY (ARRAY['OPEN'::text, 'PARTIAL'::text, 'DONE'::text, 'CANCELLED'::text]))
+    "pick_task_lines_check" CHECK (picked_qty <= req_qty)
+    "pick_task_lines_picked_qty_check" CHECK (picked_qty >= 0)
+    "pick_task_lines_req_qty_check" CHECK (req_qty > 0)
+Foreign-key constraints:
+    "pick_task_lines_task_id_fkey" FOREIGN KEY (task_id) REFERENCES pick_tasks(id) ON DELETE CASCADE
+Referenced by:
+    TABLE "pick_task_line_reservations" CONSTRAINT "pick_task_line_reservations_task_line_id_fkey" FOREIGN KEY (task_line_id) REFERENCES pick_task_lines(id) ON DELETE CASCADE
+Triggers:
+    trg_pt_aggregate AFTER INSERT OR UPDATE OF status, picked_qty, req_qty ON pick_task_lines FOR EACH ROW EXECUTE FUNCTION pick_tasks_aggregate_status()
+    trg_ptl_autostatus BEFORE INSERT OR UPDATE OF picked_qty, req_qty ON pick_task_lines FOR EACH ROW EXECUTE FUNCTION pick_task_lines_auto_status()
+Access method: heap

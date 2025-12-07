@@ -4,10 +4,10 @@ Revision ID: 20251029_lockA_finalize_schema
 Revises: 63af7f94ad50
 Create Date: 2025-10-29
 """
+
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "20251029_lockA_finalize_schema"
 down_revision = "63af7f94ad50"

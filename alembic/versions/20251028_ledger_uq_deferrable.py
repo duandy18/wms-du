@@ -4,6 +4,7 @@ Revision ID: 20251028_ledger_uq_deferrable
 Revises: 20251028_batches_add_foreign_keys
 Create Date: 2025-10-28 12:05:00
 """
+
 from __future__ import annotations
 
 from alembic import op

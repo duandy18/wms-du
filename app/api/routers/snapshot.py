@@ -1,60 +1,13 @@
-# app/api/routers/snapshot.py
 from __future__ import annotations
 
-from datetime import date
-
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.schemas.snapshot import SnapshotRunResult, StockSnapshotRead, TrendPoint
+from app.schemas.snapshot_api import ItemDetailResponse
 from app.services.snapshot_service import SnapshotService
 
 router = APIRouter(prefix="/snapshot", tags=["snapshot"])
-
-
-@router.post("/run", response_model=SnapshotRunResult)
-async def run_snapshot(
-    d: date = Query(..., alias="date", description="对齐到当天的日期（YYYY-MM-DD）"),
-    session: AsyncSession = Depends(get_session),
-):
-    affected = await SnapshotService.run_for_date(session, d)
-    return SnapshotRunResult(date=d, affected_rows=affected)
-
-
-@router.post("/run-range", response_model=SnapshotRunResult)
-async def run_snapshot_range(
-    frm: date = Query(..., alias="from", description="起始日期（含）"),
-    to: date = Query(..., alias="to", description="结束日期（含）"),
-    session: AsyncSession = Depends(get_session),
-):
-    if to < frm:
-        raise HTTPException(status_code=400, detail="'to' must be >= 'from'")
-    affected = await SnapshotService.run_range(session, frm, to)
-    return SnapshotRunResult(date=to, affected_rows=affected)
-
-
-@router.get("", response_model=list[StockSnapshotRead])
-async def list_snapshots(
-    d: date | None = Query(None, alias="date", description="不填则为所有日期"),
-    item_id: int | None = Query(None, description="按商品过滤"),
-    warehouse_id: int | None = Query(None, description="按仓库过滤"),
-    location_id: int | None = Query(None, description="按库位过滤"),
-    batch_id: int | None = Query(None, description="按批次过滤"),
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    session: AsyncSession = Depends(get_session),
-):
-    return await SnapshotService.list_snapshots(
-        session=session,
-        d=d,
-        item_id=item_id,
-        warehouse_id=warehouse_id,
-        location_id=location_id,
-        batch_id=batch_id,
-        limit=limit,
-        offset=offset,
-    )
 
 
 @router.get("/inventory")
@@ -64,18 +17,53 @@ async def inventory_snapshot(
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
+    """
+    SnapshotPage 主列表接口（库存总览，实时视图）。
+
+    返回结构：
+    {
+      "total": int,
+      "offset": int,
+      "limit": int,
+      "rows": [
+        {
+          "item_id": int,
+          "item_name": str,
+          "total_qty": int,
+          "top2_locations": [
+            { "warehouse_id": int, "batch_code": str, "qty": int },
+            ...
+          ],
+          "earliest_expiry": "YYYY-MM-DD" | null,
+          "near_expiry": bool
+        }
+      ]
+    }
+    """
     return await SnapshotService.query_inventory_snapshot_paged(
-        session=session, q=q, offset=offset, limit=limit
+        session=session,
+        q=q,
+        offset=offset,
+        limit=limit,
     )
 
 
-@router.get("/trends", response_model=list[TrendPoint])
-async def trends(
-    item_id: int = Query(..., description="商品 ID"),
-    frm: date = Query(..., description="开始日期（含）"),
-    to: date = Query(..., description="结束日期（含）"),
+@router.get("/item-detail/{item_id}", response_model=ItemDetailResponse)
+async def item_detail(
+    item_id: int,
+    pools: str = Query(
+        "MAIN",
+        description="逗号分隔的库存池（预留参数，目前仅 MAIN 有效）",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
-    if to < frm:
-        raise HTTPException(status_code=400, detail="'to' must be >= 'from'")
-    return await SnapshotService.trends(session, item_id=item_id, frm=frm, to=to)
+    """
+    Drawer V2 使用的“单品仓+批次明细”接口。
+    """
+    pool_list = [p.strip().upper() for p in pools.split(",") if p.strip()] or ["MAIN"]
+
+    return await SnapshotService.query_item_detail(
+        session=session,
+        item_id=item_id,
+        pools=pool_list,
+    )

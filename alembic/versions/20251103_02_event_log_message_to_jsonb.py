@@ -4,10 +4,11 @@ Revision ID: 7f3b9a2c4d10
 Revises: c249625e0866
 Create Date: 2025-11-03 13:05:00.000000
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import List, Sequence, Tuple, Union
 
 from alembic import op
 from sqlalchemy import text
@@ -57,15 +58,15 @@ def _rewrite_text_funcs(defn: str) -> str:
     """
     s = defn
     # "left"(e.message, 1) / left(e.message, 1) → left((e.message)::text, 1)
-    s = re.sub(r'(?is)\b"left"\s*\(\s*e\.message\s*,', 'left((e.message)::text,', s)
-    s = re.sub(r'(?is)\bleft\s*\(\s*e\.message\s*,', 'left((e.message)::text,', s)
-    s = re.sub(r'(?is)\bleft\s*\(\s*e\.message\s*::\s*\w+\s*,', 'left((e.message)::text,', s)
+    s = re.sub(r'(?is)\b"left"\s*\(\s*e\.message\s*,', "left((e.message)::text,", s)
+    s = re.sub(r"(?is)\bleft\s*\(\s*e\.message\s*,", "left((e.message)::text,", s)
+    s = re.sub(r"(?is)\bleft\s*\(\s*e\.message\s*::\s*\w+\s*,", "left((e.message)::text,", s)
 
     # ELSE e.message → ELSE (e.message)::text
-    s = re.sub(r'(?is)\bELSE\s+e\.message\b', 'ELSE (e.message)::text', s)
+    s = re.sub(r"(?is)\bELSE\s+e\.message\b", "ELSE (e.message)::text", s)
 
     # e.message::jsonb 保持或简化成 e.message（列已为 jsonb）
-    s = re.sub(r'(?i)e\.message::jsonb', 'e.message', s)
+    s = re.sub(r"(?i)e\.message::jsonb", "e.message", s)
     return s
 
 
@@ -131,14 +132,16 @@ def upgrade() -> None:
         return
 
     # 0) 建一个 JSONB 兼容 shim：当 legacy 视图里用了 left(e.message, N) 时可继续工作
-    op.execute(text("""
+    op.execute(
+        text("""
         CREATE OR REPLACE FUNCTION public.left(jsonb, integer)
         RETURNS text
         LANGUAGE sql
         IMMUTABLE
         STRICT
         AS $$ SELECT left(($1)::text, $2) $$;
-    """))
+    """)
+    )
 
     # 1) 捕获并删除所有依赖视图
     deps = _dep_views(bind)
@@ -146,7 +149,8 @@ def upgrade() -> None:
         op.execute(text(f"DROP VIEW IF EXISTS {_q(schema)}.{_q(view)}"))
 
     # 2) 列类型 TEXT -> JSONB，CASE 分支统一返回 jsonb
-    op.execute(text(f"""
+    op.execute(
+        text(f"""
         ALTER TABLE {_q(SCHEMA)}.{_q(TABLE)}
         ALTER COLUMN {_q(COL)} TYPE jsonb
         USING
@@ -155,7 +159,8 @@ def upgrade() -> None:
           WHEN pg_typeof({_q(COL)}) = 'json'::regtype  THEN {_q(COL)}::jsonb
           ELSE to_jsonb({_q(COL)}::text)
         END
-    """))
+    """)
+    )
 
     # 3) 重建依赖视图：已知视图用 JSONB 版定义；其它按通用重写
     for schema, view, definition in deps:
@@ -176,11 +181,13 @@ def downgrade() -> None:
     for schema, view, _ in deps:
         op.execute(text(f"DROP VIEW IF EXISTS {_q(schema)}.{_q(view)}"))
 
-    op.execute(text(f"""
+    op.execute(
+        text(f"""
         ALTER TABLE {_q(SCHEMA)}.{_q(TABLE)}
         ALTER COLUMN {_q(COL)} TYPE text
         USING {_q(COL)}::text
-    """))
+    """)
+    )
 
     # 删除 shim
     op.execute(text("DROP FUNCTION IF EXISTS public.left(jsonb, integer)"))

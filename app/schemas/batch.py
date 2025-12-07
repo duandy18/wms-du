@@ -14,6 +14,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段（对旧客户端更宽容）
     - populate_by_name: 支持别名/字段名互填（便于未来演进）
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -26,6 +27,7 @@ class BatchBase(_Base):
     """
     批次基础字段（保持现有字段命名）
     """
+
     batch_number: Annotated[str, Field(min_length=1, max_length=100, description="批次编码")]
     production_date: datetime | None = Field(default=None, description="生产时间（可选）")
     expiration_date: datetime | None = Field(default=None, description="到期时间（可选）")
@@ -57,6 +59,7 @@ class BatchBase(_Base):
 # ========= 创建 =========
 class BatchCreate(BatchBase):
     """创建批次"""
+
     pass
 
 
@@ -65,6 +68,7 @@ class BatchUpdate(_Base):
     """
     更新批次信息：字段均为可选；至少提供一项
     """
+
     batch_number: Annotated[str | None, Field(default=None, min_length=1, max_length=100)] = None
     production_date: datetime | None = None
     expiration_date: datetime | None = None

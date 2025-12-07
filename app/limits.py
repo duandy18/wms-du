@@ -1,7 +1,8 @@
 # app/limits.py
 from __future__ import annotations
+
 import time
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class TokenBucket:
     """简单令牌桶：capacity=fill_rate（QPS），按秒补充"""
+
     def __init__(self, capacity: int, fill_rate: float):
         self.capacity = max(1, int(capacity))
         self.fill_rate = float(fill_rate)
@@ -28,6 +30,7 @@ class TokenBucket:
 # 进程内桶缓存：每个 (platform, shop_id) 一个
 _BUCKETS: Dict[Tuple[str, str], TokenBucket] = {}
 
+
 async def ensure_bucket(session: AsyncSession, platform: str, shop_id: str) -> TokenBucket:
     """
     按 (platform, shop_id) 返回一个令牌桶。
@@ -37,14 +40,18 @@ async def ensure_bucket(session: AsyncSession, platform: str, shop_id: str) -> T
     if key in _BUCKETS:
         return _BUCKETS[key]
 
-    q = sa.text("""
+    q = sa.text(
+        """
         SELECT COALESCE(rate_limit_qps,5)
         FROM platform_shops
         WHERE platform=:p AND shop_id=:s
         LIMIT 1
-    """)
+    """
+    )
     try:
-        qps: Optional[int] = (await session.execute(q, {"p": platform, "s": shop_id})).scalar_one_or_none()
+        qps: Optional[int] = (
+            await session.execute(q, {"p": platform, "s": shop_id})
+        ).scalar_one_or_none()
     except Exception:
         qps = None
     qps = qps if (qps and qps > 0) else 5

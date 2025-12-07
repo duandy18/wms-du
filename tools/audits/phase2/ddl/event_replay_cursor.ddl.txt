@@ -1,0 +1,11 @@
+                                                                     Table "public.event_replay_cursor"
+    Column     |           Type           | Collation | Nullable |                      Default                       | Storage  | Compression | Stats target | Description
+---------------+--------------------------+-----------+----------+----------------------------------------------------+----------+-------------+--------------+-------------
+ id            | bigint                   |           | not null | nextval('event_replay_cursor_id_seq'::regclass)    | plain    |             |              |
+ platform      | text                     |           | not null |                                                    | extended |             |              |
+ last_event_ts | timestamp with time zone |           | not null | '1970-01-01 00:00:00+00'::timestamp with time zone | plain    |             |              |
+Indexes:
+    "event_replay_cursor_pkey" PRIMARY KEY, btree (id)
+    "event_replay_cursor_platform_key" UNIQUE CONSTRAINT, btree (platform)
+    "ix_event_replay_cursor_platform" btree (platform)
+Access method: heap

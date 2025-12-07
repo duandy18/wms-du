@@ -1,0 +1,27 @@
+>>> Tables only in ORM (consider removing from code or adding migrations):
+  - parties
+  - permissions
+  - return_records
+  - role_permission
+  - roles
+  - user_role
+  - users
+
+>>> Tables only in DB (consider adding models or deprecating in DB):
+  - alembic_version
+  - audit_events
+  - channel_reserve_ops
+  - channel_reserved_idem
+  - event_log
+  - event_replay_cursor
+  - event_store
+  - item_barcodes
+  - order_lines
+  - order_state_snapshot
+  - outbound_commits
+  - outbound_ship_ops
+  - pick_task_line_reservations
+  - pick_task_lines
+  - pick_tasks
+  - platform_events
+  - reservation_lines

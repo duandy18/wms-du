@@ -1,0 +1,17 @@
+                                                          Table "public.pick_task_line_reservations"
+     Column     |  Type  | Collation | Nullable |                         Default                         | Storage | Compression | Stats target | Description
+----------------+--------+-----------+----------+---------------------------------------------------------+---------+-------------+--------------+-------------
+ id             | bigint |           | not null | nextval('pick_task_line_reservations_id_seq'::regclass) | plain   |             |              |
+ task_line_id   | bigint |           | not null |                                                         | plain   |             |              |
+ reservation_id | bigint |           | not null |                                                         | plain   |             |              |
+ qty            | bigint |           | not null |                                                         | plain   |             |              |
+Indexes:
+    "pick_task_line_reservations_pkey" PRIMARY KEY, btree (id)
+    "ix_ptlr_reservation" btree (reservation_id)
+    "ix_ptlr_task_line" btree (task_line_id)
+    "pick_task_line_reservations_task_line_id_reservation_id_key" UNIQUE CONSTRAINT, btree (task_line_id, reservation_id)
+Check constraints:
+    "pick_task_line_reservations_qty_check" CHECK (qty > 0)
+Foreign-key constraints:
+    "pick_task_line_reservations_task_line_id_fkey" FOREIGN KEY (task_line_id) REFERENCES pick_task_lines(id) ON DELETE CASCADE
+Access method: heap

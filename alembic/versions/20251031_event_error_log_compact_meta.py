@@ -4,6 +4,7 @@ Revision ID: 20251031_event_error_log_compact_meta
 Revises: 20251030_events_core_tables
 Create Date: 2025-10-31
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -20,7 +21,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 1) 确保 meta 列存在（JSONB）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -29,11 +31,13 @@ def upgrade() -> None:
       ) THEN
         ALTER TABLE public.event_error_log ADD COLUMN meta JSONB;
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 2) 将“冗余列”合并进 meta（仅当这些列存在时才采集）
     #   说明：这里尽量只聚合，不在此处删除；删除放到步骤 4 并带守卫
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_code') THEN
@@ -108,10 +112,15 @@ def upgrade() -> None:
         UPDATE public.event_error_log
            SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('next_retry_at', next_retry_at);
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 3) 为 meta 建 GIN 索引（如需）
-    op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_event_error_log_meta_gin ON event_error_log USING gin (meta)"))
+    op.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_event_error_log_meta_gin ON event_error_log USING gin (meta)"
+        )
+    )
 
     # 4) 删除已合并到 meta 的旧列（带守卫）
     cols = (
@@ -126,7 +135,8 @@ def downgrade() -> None:
     conn = op.get_bind()
 
     # 1) 先补回旧列（若缺）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_code') THEN
@@ -185,10 +195,12 @@ def downgrade() -> None:
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='next_retry_at') THEN
         ALTER TABLE public.event_error_log ADD COLUMN next_retry_at TIMESTAMPTZ;
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 2) 从 meta 回填各列（text/int/timestamptz 用 ->> 并显式强转）
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     UPDATE public.event_error_log
        SET error_code      = COALESCE(NULLIF(meta->>'error_code',''), error_code),
            error_type      = COALESCE(NULLIF(meta->>'error_type',''), error_type),
@@ -207,10 +219,12 @@ def downgrade() -> None:
            created_at      = COALESCE(NULLIF(meta->>'created_at','')::timestamptz, created_at),
            updated_at      = COALESCE(NULLIF(meta->>'updated_at','')::timestamptz, updated_at),
            next_retry_at   = COALESCE(NULLIF(meta->>'next_retry_at','')::timestamptz, next_retry_at)
-    """))
+    """)
+    )
 
     # 3) payload_json 回填：根据列真实类型选择 text / jsonb 两种路径，避免 COALESCE 类型不一致
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     DECLARE is_jsonb boolean;
     BEGIN
@@ -233,7 +247,8 @@ def downgrade() -> None:
              SET payload_json = COALESCE(NULLIF(meta->>'payload_json',''), payload_json)
         $SQL$;
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 4) 删 meta 索引（如果有）
     op.execute(sa.text("DROP INDEX IF EXISTS ix_event_error_log_meta_gin"))

@@ -56,7 +56,9 @@ def upgrade():
     if not insp.has_table(table_name):
         op.create_table(
             table_name,
-            sa.Column("id", sa.Integer if sqlite else sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column(
+                "id", sa.Integer if sqlite else sa.BigInteger, primary_key=True, autoincrement=True
+            ),
             sa.Column("platform", sa.String(32), nullable=False),
             sa.Column("shop_id", sa.String(64), nullable=False),
             sa.Column("access_token", sa.Text, nullable=True),

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.schemas.stock import StockTransferIn, StockTransferMove, StockTransferOut
+from app.schemas.stock import StockTransferIn, StockTransferOut
 from app.services.inventory_ops import InventoryOpsService
 
 router = APIRouter(prefix="/stock/transfer", tags=["stock"])

@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 from typing import Any, Dict, Optional
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_service import StockService
 from app.domain.ports import StockOpsPort
+from app.services.stock_service import StockService
+
 
 class StockOpsAdapter(StockOpsPort):
     """用最小实现把 StockService 暴露为领域端口。"""
+
     def __init__(self) -> None:
         self._svc = StockService()
 

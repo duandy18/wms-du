@@ -1,91 +1,101 @@
 # app/models/batch.py
 from __future__ import annotations
 
-from datetime import date
-from typing import Optional
+from datetime import date, datetime
 
 from sqlalchemy import (
-    CheckConstraint,
     Date,
+    DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
-    ForeignKey,
+    func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 
 class Batch(Base):
     """
-    批次（强契约·现代声明式）
-    - 物理列：id / item_id(FK) / batch_code / location_id(FK) / warehouse_id(FK) /
-              production_date / expiry_date / qty
-    - 唯一键：item_id + warehouse_id + location_id + batch_code
-    - 与 Item 建立双向关系（Item.batches <-> Batch.item）
+    Batch v3 业务模型（以 batch_code 为唯一主键业务维度）
+
+    批次主键维度：
+        (item_id, warehouse_id, batch_code)
+
+    批次属性：
+        - production_date   生产日期（可空）
+        - expiry_date       到期日期（FEFO 核心字段）
+        - supplier_lot      原厂批号（可选）
+        - created_at        首次出现时间（保留追溯能力）
+
+    已移除旧字段：
+        - qty                → 库存统一由 stocks 表承担
+        - expire_at          → 旧字段，与 expiry_date 重叠
+        - mfg_date           → 与 production_date 重叠
+        - shelf_life_days    → Item 层才负责保质期
     """
 
     __tablename__ = "batches"
 
+    # 主键（自动 ID）
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # 外键对齐数据库迁移
+    # 所属商品 / 仓库
     item_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("items.id", ondelete="RESTRICT", onupdate="RESTRICT"),
         nullable=False,
-        index=True,
     )
-
-    # 关键：物理列名为 batch_code
-    batch_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    # 兼容：旧代码使用 Batch.code
-    code = synonym("batch_code")
-
-    location_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("locations.id", ondelete="RESTRICT", onupdate="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-
     warehouse_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("warehouses.id", ondelete="RESTRICT", onupdate="RESTRICT"),
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
         nullable=False,
-        index=True,
     )
 
-    production_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    expiry_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
-
-    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # 关系（最关键的是与 Item 的反向关系，用于消除 NoForeignKeysError）
-    item: Mapped["Item"] = relationship(
-        "Item",
-        back_populates="batches",
-        lazy="selectin",
+    # 业务批次码（唯一 key）
+    batch_code: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
     )
-    # 如需也建立到 Location/Warehouse 的关系，可按需开启：
-    # location: Mapped["Location"] = relationship("Location", lazy="selectin")
-    # warehouse: Mapped["Warehouse"] = relationship("Warehouse", lazy="selectin")
+
+    # 批次属性：生产日期 & 到期日期
+    production_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # 供应商批号（有则填，无则空）
+    supplier_lot: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 创建时间
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
     __table_args__ = (
-        # 与现库对齐：四列唯一键（幂等）
+        # 批次业务层唯一约束：批次码在同商品同仓唯一
         UniqueConstraint(
-            "item_id", "warehouse_id", "location_id", "batch_code",
-            name="uq_batches_item_wh_loc_code",
+            "item_id",
+            "warehouse_id",
+            "batch_code",
+            name="uq_batches_item_wh_code",
         ),
-        CheckConstraint("qty >= 0", name="ck_batch_qty_nonneg"),
-        Index("ix_batches_code", "batch_code"),
-        Index("ix_batches_expiry", "expiry_date"),
+        Index("ix_batches_item_wh_code", "item_id", "warehouse_id", "batch_code"),
+        Index("ix_batches_item_id", "item_id"),
+        Index("ix_batches_item_code", "item_id", "batch_code"),
+        Index("ix_batches_batch_code", "batch_code"),
+        Index("ix_batches_expiry_date", "expiry_date"),
+        Index("ix_batches_production_date", "production_date"),
     )
 
     def __repr__(self) -> str:
         return (
-            f"<Batch id={self.id} item_id={self.item_id} wh={self.warehouse_id} "
-            f"loc={self.location_id} code={self.batch_code!r} qty={self.qty}>"
+            f"<Batch id={self.id} "
+            f"item={self.item_id} wh={self.warehouse_id} "
+            f"code={self.batch_code} prod={self.production_date} "
+            f"exp={self.expiry_date}>"
         )

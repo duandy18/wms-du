@@ -4,6 +4,7 @@ Revision ID: 20251104_v_scan_recent_jsonb_coalesce
 Revises: 20251104_v_scan_trace_jsonb_coalesce
 Create Date: 2025-11-04 16:30:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -23,7 +24,8 @@ def upgrade() -> None:
       - probe 事件（字符串）回退为 btrim(message::text,'"')
       - 最近 500 条扫描事件，按 occurred_at DESC
     """
-    op.execute(text("""
+    op.execute(
+        text("""
     CREATE OR REPLACE VIEW public.v_scan_recent AS
     SELECT
         e.id           AS event_id,
@@ -39,7 +41,8 @@ def upgrade() -> None:
     WHERE e.source LIKE 'scan_%'
     ORDER BY e.occurred_at DESC
     LIMIT 500;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

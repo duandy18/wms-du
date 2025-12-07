@@ -1,55 +1,58 @@
-# app/models/store.py
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
-    String,
-    Integer,
-    DateTime,
+    BigInteger,
     Boolean,
+    DateTime,
     ForeignKey,
-    UniqueConstraint,
     Index,
+    Integer,
+    String,
+    UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 
-# 统一使用项目全局 Base
 from app.db.base import Base
 
+if TYPE_CHECKING:
+    from app.models.warehouse import Warehouse
 
-# ========================================================================
-# stores —— 店铺主档
-# ========================================================================
 
 class Store(Base):
     __tablename__ = "stores"
     __table_args__ = (
-        # 同一平台下店铺名唯一（可按需调整为 seller_id 等）
-        UniqueConstraint("platform", "name", name="uq_stores_platform_name"),
-        # 常用检索索引
+        # 平台 + shop_id 全局唯一
+        UniqueConstraint("platform", "shop_id", name="uq_stores_platform_shop"),
+        # 常用查询：按平台+状态筛店
         Index("ix_stores_platform_active", "platform", "active"),
+        # 按 shop_id 查店铺（与 drift 中 ix_stores_shop 对齐）
+        Index("ix_stores_shop", "shop_id"),
+        # 手动维护索引/约束，不走 autogenerate
+        {"info": {"skip_autogen": True}},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # 平台标识（如 pdd / tb / jd），保持小写短码；默认 pdd
-    platform: Mapped[str] = mapped_column(String(16), nullable=False, default="pdd")
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-
-    # 可选：平台接入所需凭据（先明文存储，后续可接 KMS/加密）
-    app_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    app_secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    callback_url: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-
-    # 占位的 token（后续若改为密文/外管，这里换类型与列名即可）
-    api_token: Mapped[bytes | None] = mapped_column(nullable=True)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    # 已在迁移中强制 NOT NULL + 128 长度
+    shop_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 已在迁移中扩到 256
+    name: Mapped[str] = mapped_column(String(256), nullable=False, default="NO-STORE")
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    # 具时区时间；DB 层统一存 UTC，展示层再转 Asia/Shanghai
+    # ==== 新增：店铺主数据扩展字段 ====
+    # 邮箱（客服 / 对账 / 通知）
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # 联系人姓名
+    contact_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # 联系电话（手机 / 座机 / 分机）
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -62,25 +65,114 @@ class Store(Base):
         onupdate=func.now(),
     )
 
-    # 关系：店铺下的映射与渠道库存
-    items: Mapped[List["StoreItem"]] = relationship(
-        back_populates="store",
-        cascade="all, delete-orphan",
+    # 多仓关系（通过中间表 store_warehouse）
+    warehouses: Mapped[List["Warehouse"]] = relationship(
+        "Warehouse",
+        secondary="store_warehouse",
+        backref=backref(
+            "stores",
+            lazy="selectin",
+            overlaps="store_warehouses,store,warehouse",
+        ),
+        lazy="selectin",
         passive_deletes=True,
+        overlaps="store_warehouses,store,warehouse",
     )
-    inventories: Mapped[List["ChannelInventory"]] = relationship(
+
+    store_warehouses: Mapped[List["StoreWarehouse"]] = relationship(
+        "StoreWarehouse",
         back_populates="store",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
+        overlaps="warehouses,stores,warehouse",
+    )
+
+    items: Mapped[List["StoreItem"]] = relationship(
+        "StoreItem",
+        back_populates="store",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    inventories: Mapped[List["ChannelInventory"]] = relationship(
+        "ChannelInventory",
+        back_populates="store",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:
-        return f"<Store id={self.id} platform={self.platform} name={self.name!r} active={self.active}>"
+        return (
+            f"<Store id={self.id} platform={self.platform} "
+            f"shop_id={self.shop_id!r} active={self.active}>"
+        )
 
 
-# ========================================================================
-# store_items —— 店铺 SKU 映射表（平台 SKU ↔ 内部 item）
-# ========================================================================
+class StoreWarehouse(Base):
+    __tablename__ = "store_warehouse"
+    __table_args__ = (
+        # 一个店铺在同一仓只能映射一次
+        UniqueConstraint("store_id", "warehouse_id", name="uq_store_wh_unique"),
+        # 用于选择“默认仓/优先级”
+        Index("ix_store_wh_store_default", "store_id", "is_default", "priority"),
+        {"info": {"skip_autogen": True}},
+    )
+
+    # DB 当前 id 仍为 BIGINT（我们没有在迁移里改 id），这里保持 BigInteger
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    # store_id / warehouse_id 在迁移中已从 BIGINT 收缩为 INTEGER，这里显式对齐 Integer
+    store_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    warehouse_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Phase 3.9 新增，用于标记“主仓”
+    is_top: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 旧逻辑保留：is_default + priority 用于路由策略
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    store: Mapped["Store"] = relationship(
+        "Store",
+        back_populates="store_warehouses",
+        overlaps="warehouses,stores,warehouse",
+    )
+    warehouse: Mapped["Warehouse"] = relationship(
+        "Warehouse",
+        overlaps="stores,warehouses,store",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<StoreWarehouse id={self.id} store_id={self.store_id} "
+            f"warehouse_id={self.warehouse_id} "
+            f"default={self.is_default} top={self.is_top} prio={self.priority}>"
+        )
+
 
 class StoreItem(Base):
     __tablename__ = "store_items"
@@ -88,10 +180,10 @@ class StoreItem(Base):
         UniqueConstraint("store_id", "pdd_sku_id", name="uq_store_items_store_pddsku"),
         UniqueConstraint("store_id", "item_id", name="uq_store_items_store_item"),
         Index("ix_store_items_store_item", "store_id", "item_id"),
+        {"info": {"skip_autogen": True}},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-
     store_id: Mapped[int] = mapped_column(
         ForeignKey("stores.id", ondelete="RESTRICT"),
         nullable=False,
@@ -102,29 +194,25 @@ class StoreItem(Base):
         nullable=False,
         index=True,
     )
-    # 平台侧 SKU/外部编码（不同平台字段可复用 outer_id）
-    pdd_sku_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    outer_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
-    store: Mapped["Store"] = relationship(back_populates="items")
+    pdd_sku_id: Mapped[Optional[str]] = mapped_column(String(64))
+    outer_id: Mapped[Optional[str]] = mapped_column(String(128))
+
+    store: Mapped["Store"] = relationship("Store", back_populates="items")
 
     def __repr__(self) -> str:
         return f"<StoreItem id={self.id} store_id={self.store_id} item_id={self.item_id}>"
 
-
-# ========================================================================
-# channel_inventory —— 店铺 × 内部商品的渠道库存（A 策略）
-# ========================================================================
 
 class ChannelInventory(Base):
     __tablename__ = "channel_inventory"
     __table_args__ = (
         UniqueConstraint("store_id", "item_id", name="uq_channel_inventory_store_item"),
         Index("ix_channel_inventory_store_item", "store_id", "item_id"),
+        {"info": {"skip_autogen": True}},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-
     store_id: Mapped[int] = mapped_column(
         ForeignKey("stores.id", ondelete="RESTRICT"),
         nullable=False,
@@ -136,19 +224,15 @@ class ChannelInventory(Base):
         index=True,
     )
 
-    # A 策略参数：店铺粒度的配额上限（NULL 表示无限）
-    cap_qty: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    # 该店对该内品的占用合计（服务层维护）
+    # cap_qty: NULL 表示“无限”
+    cap_qty: Mapped[Optional[int]] = mapped_column(Integer)
     reserved_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # 对平台可见量（服务层计算刷新：通常 min(physical - Σreserved, cap)）
     visible_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    store: Mapped["Store"] = relationship(back_populates="inventories")
+    store: Mapped["Store"] = relationship("Store", back_populates="inventories")
 
     def __repr__(self) -> str:
         return (
             f"<ChannelInventory id={self.id} store_id={self.store_id} "
-            f"item_id={self.item_id} visible={self.visible_qty} reserved={self.reserved_qty}>"
+            f"item_id={self.item_id} visible={self.visible_qty}>"
         )

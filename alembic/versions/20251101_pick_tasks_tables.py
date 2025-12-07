@@ -4,13 +4,14 @@ Revision ID: 20251101_pick_tasks_tables
 Revises: 29ee69c580ea
 Create Date: 2025-11-01 23:58:00
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 revision = "20251101_pick_tasks_tables"
 down_revision = "29ee69c580ea"
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     # 1) 任务头
@@ -31,7 +32,9 @@ def upgrade():
         """
     )
     op.execute("CREATE INDEX IF NOT EXISTS ix_pick_tasks_status ON pick_tasks(status);")
-    op.execute("CREATE INDEX IF NOT EXISTS ix_pick_tasks_wh_prio ON pick_tasks(warehouse_id, priority);")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_pick_tasks_wh_prio ON pick_tasks(warehouse_id, priority);"
+    )
     op.execute("CREATE INDEX IF NOT EXISTS ix_pick_tasks_assigned ON pick_tasks(assigned_to)")
 
     # 2) 任务行
@@ -71,8 +74,12 @@ def upgrade():
         );
         """
     )
-    op.execute("CREATE INDEX IF NOT EXISTS ix_ptlr_task_line ON pick_task_line_reservations(task_line_id);")
-    op.execute("CREATE INDEX IF NOT EXISTS ix_ptlr_reservation ON pick_task_line_reservations(reservation_id);")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ptlr_task_line ON pick_task_line_reservations(task_line_id);"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ptlr_reservation ON pick_task_line_reservations(reservation_id);"
+    )
 
     # 4) 状态枚举约束
     op.execute("""
@@ -151,6 +158,7 @@ def upgrade():
       END IF;
     END$$;
     """)
+
 
 def downgrade():
     op.execute("DROP TRIGGER IF EXISTS trg_pt_aggregate ON pick_task_lines;")

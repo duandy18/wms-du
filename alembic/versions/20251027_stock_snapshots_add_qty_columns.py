@@ -4,10 +4,10 @@ Revision ID: 20251027_stock_snapshots_add_qty_columns
 Revises: 20251027_drop_uq_batches_composite
 Create Date: 2025-10-27
 """
+
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
 
 # ---- Alembic identifiers ----
 revision: str = "20251027_stock_snapshots_add_qty_columns"

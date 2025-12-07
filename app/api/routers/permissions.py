@@ -1,4 +1,6 @@
 # app/api/routers/permissions.py
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -11,11 +13,11 @@ from app.services.user_service import AuthorizationError, UserService
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 
-def get_permission_service(db: Session = Depends(get_db)):
+def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
     return PermissionService(db)
 
 
-def get_user_service(db: Session = Depends(get_db)):
+def get_user_service(db: Session = Depends(get_db)) -> UserService:
     return UserService(db)
 
 
@@ -24,8 +26,13 @@ def create_permission(
     permission_in: PermissionCreate,
     perm_service: PermissionService = Depends(get_permission_service),
     user_service: UserService = Depends(get_user_service),
-    current_user: dict = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    """
+    创建权限。
+
+    需要权限: create_permission
+    """
     try:
         user_service.check_permission(current_user, ["create_permission"])
         return perm_service.create_permission(permission_in.name)
@@ -39,8 +46,13 @@ def create_permission(
 def get_all_permissions(
     perm_service: PermissionService = Depends(get_permission_service),
     user_service: UserService = Depends(get_user_service),
-    current_user: dict = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    """
+    获取全部权限列表。
+
+    需要权限: read_permissions
+    """
     try:
         user_service.check_permission(current_user, ["read_permissions"])
         return perm_service.get_all_permissions()
@@ -53,8 +65,13 @@ def get_permission_by_id(
     permission_id: str,
     perm_service: PermissionService = Depends(get_permission_service),
     user_service: UserService = Depends(get_user_service),
-    current_user: dict = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    """
+    按 ID 获取权限详情。
+
+    需要权限: read_permissions
+    """
     try:
         user_service.check_permission(current_user, ["read_permissions"])
         permission = perm_service.get_permission_by_id(permission_id)

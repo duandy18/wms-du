@@ -13,6 +13,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段（对旧客户端更宽容）
     - populate_by_name: 支持别名/字段名互填（便于未来加 alias）
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -26,6 +27,7 @@ class PermissionCreate(_Base):
     新建权限
     - name 建议形如：`stock.read` / `order.approve`
     """
+
     name: Annotated[str, Field(min_length=1, max_length=64, description="权限名（唯一）")]
     description: Annotated[str | None, Field(default=None, max_length=256)] = None
 
@@ -35,9 +37,7 @@ class PermissionCreate(_Base):
         return v.strip() if isinstance(v, str) else v
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {"name": "stock.read", "description": "读取库存数据"}
-        }
+        "json_schema_extra": {"example": {"name": "stock.read", "description": "读取库存数据"}}
     }
 
 
@@ -45,6 +45,7 @@ class PermissionUpdate(_Base):
     """
     更新权限（至少提供一项）
     """
+
     name: Annotated[str | None, Field(default=None, min_length=1, max_length=64)] = None
     description: Annotated[str | None, Field(default=None, max_length=256)] = None
 
@@ -62,21 +63,20 @@ class PermissionUpdate(_Base):
         return v.strip() if isinstance(v, str) else v
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {"description": "允许审批订单"}
-        }
+        "json_schema_extra": {"example": {"description": "允许审批订单"}}
     }
 
 
 # ========= 输出 =========
 class PermissionOut(_Base):
-    id: Annotated[str, Field(description="权限ID（字符串，保持兼容）")]
+    # 关键修复：id 改为 int，与 DB 中 permissions.id 对齐
+    id: Annotated[int, Field(description="权限ID（整数）")]
     name: Annotated[str, Field(min_length=1, max_length=64)]
     description: Annotated[str | None, Field(default=None, max_length=256)] = None
 
     model_config = _Base.model_config | {
         "json_schema_extra": {
-            "example": {"id": "perm_01", "name": "stock.read", "description": "读取库存数据"}
+            "example": {"id": 1, "name": "stock.read", "description": "读取库存数据"}
         }
     }
 

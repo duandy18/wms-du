@@ -8,8 +8,8 @@ Revision ID: u6_fix_ledger_trigger_after_qty
 Revises: u5_merge_and_ledger_defaults
 Create Date: 2025-10-21
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 # --- Alembic identifiers ---
 revision = "u6_fix_ledger_trigger_after_qty"

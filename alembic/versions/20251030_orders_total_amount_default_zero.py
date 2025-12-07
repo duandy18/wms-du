@@ -4,6 +4,7 @@ Revision ID: 20251030_orders_total_amount_default_zero
 Revises: 20251030_orders_add_minimal_columns
 Create Date: 2025-10-30 10:10:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -20,7 +21,8 @@ def upgrade() -> None:
     若存在 orders 表，则确保有 total_amount 列；设置 DEFAULT 0 并回填空值。
     """
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -39,7 +41,8 @@ def upgrade() -> None:
 
       END IF;
     END$$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
@@ -47,7 +50,8 @@ def downgrade() -> None:
     仅当 orders.total_amount 存在时，移除 DEFAULT（不删列），避免 UndefinedColumn。
     """
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF to_regclass('public.orders') IS NOT NULL THEN
@@ -59,4 +63,5 @@ def downgrade() -> None:
         END IF;
       END IF;
     END$$;
-    """))
+    """)
+    )

@@ -1,7 +1,7 @@
 # app/routers/users.py
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, constr
@@ -28,10 +28,12 @@ def _get_sync_session(request: Request) -> Session:
     try:
         # 优先尝试统一依赖模块
         from app.deps import get_db_session as _dep_get_session  # type: ignore
+
         return _dep_get_session()
     except Exception:
         try:
             from app.db import get_db_session as _dep_get_session  # type: ignore
+
             return _dep_get_session()
         except Exception:
             maker = getattr(request.app.state, "sync_sessionmaker", None)
@@ -49,21 +51,26 @@ def _get_sync_session(request: Request) -> Session:
 # -------------------------------------------------------------------
 Username = constr(strip_whitespace=True, min_length=3, max_length=64)
 
+
 class RegisterReq(BaseModel):
     username: Username
     password: constr(min_length=6, max_length=128)
     role_id: int = Field(..., ge=1)
 
+
 class LoginReq(BaseModel):
     username: Username
     password: constr(min_length=1)
+
 
 class ChangePasswordReq(BaseModel):
     old_password: constr(min_length=1)
     new_password: constr(min_length=6, max_length=128)
 
+
 class AssignRoleReq(BaseModel):
     role_id: int = Field(..., ge=1)
+
 
 class PermissionReq(BaseModel):
     permission: constr(strip_whitespace=True, min_length=1, max_length=128)
@@ -79,6 +86,7 @@ def _bearer_token(authz: Optional[str]) -> Optional[str]:
     if len(parts) == 2 and parts[0].lower() == "bearer":
         return parts[1]
     return None
+
 
 def _current_user_or_none(db: Session, token: Optional[str]):
     if not token:
@@ -101,6 +109,7 @@ def register(payload: RegisterReq, db: Session = Depends(_get_sync_session)):
     except NotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.post("/login")
 def login(payload: LoginReq, db: Session = Depends(_get_sync_session)):
     svc = UserService(db)
@@ -109,6 +118,7 @@ def login(payload: LoginReq, db: Session = Depends(_get_sync_session)):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     token = svc.create_token_for_user(user)
     return {"ok": True, "access_token": token, "token_type": "bearer", "username": user.username}
+
 
 @router.get("/me")
 def me(Authorization: Optional[str] = Header(None), db: Session = Depends(_get_sync_session)):
@@ -120,8 +130,14 @@ def me(Authorization: Optional[str] = Header(None), db: Session = Depends(_get_s
     perms = svc.get_user_permissions(user)
     return {
         "ok": True,
-        "user": {"id": user.id, "username": user.username, "role_id": user.role_id, "permissions": perms},
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "role_id": user.role_id,
+            "permissions": perms,
+        },
     }
+
 
 @router.post("/change-password")
 def change_password(
@@ -153,6 +169,7 @@ def assign_role(user_id: int, payload: AssignRoleReq, db: Session = Depends(_get
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+
 @router.post("/roles/{role_id}/permissions")
 def add_perm(role_id: int, payload: PermissionReq, db: Session = Depends(_get_sync_session)):
     svc = UserService(db)
@@ -161,6 +178,7 @@ def add_perm(role_id: int, payload: PermissionReq, db: Session = Depends(_get_sy
         return {"ok": True}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
 
 @router.delete("/roles/{role_id}/permissions/{permission}")
 def del_perm(role_id: int, permission: str, db: Session = Depends(_get_sync_session)):

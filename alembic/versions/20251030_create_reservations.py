@@ -4,6 +4,7 @@ Revision ID: 20251030_create_reservations
 Revises: 20251030_orders_updated_at_default_now
 Create Date: 2025-10-30
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -21,8 +22,10 @@ def _insp():
     bind = op.get_bind()
     return sa.inspect(bind)
 
+
 def _has_table(name: str) -> bool:
     return _insp().has_table(name)
+
 
 def _has_column(table: str, column: str) -> bool:
     try:
@@ -41,7 +44,12 @@ def upgrade() -> None:
             sa.Column("item_id", sa.BigInteger, nullable=False),
             sa.Column("batch_id", sa.BigInteger, nullable=True),
             sa.Column("qty", sa.Numeric(18, 6), nullable=False),
-            sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+            sa.Column(
+                "created_at",
+                sa.TIMESTAMP(timezone=True),
+                nullable=False,
+                server_default=sa.text("now()"),
+            ),
         )
     else:
         # 2) 表已存在：逐列补齐缺失列（幂等）
@@ -52,19 +60,28 @@ def upgrade() -> None:
         if not _has_column("reservations", "batch_id"):
             op.add_column("reservations", sa.Column("batch_id", sa.BigInteger, nullable=True))
         if not _has_column("reservations", "qty"):
-            op.add_column("reservations", sa.Column("qty", sa.Numeric(18, 6), nullable=False, server_default=sa.text("0")))
+            op.add_column(
+                "reservations",
+                sa.Column("qty", sa.Numeric(18, 6), nullable=False, server_default=sa.text("0")),
+            )
             op.alter_column("reservations", "qty", server_default=None)
         if not _has_column("reservations", "created_at"):
             op.add_column(
                 "reservations",
-                sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+                sa.Column(
+                    "created_at",
+                    sa.TIMESTAMP(timezone=True),
+                    nullable=False,
+                    server_default=sa.text("now()"),
+                ),
             )
 
     # 3) 仅对“确实已存在”的列创建索引 —— 使用 DO $$ + information_schema 判定，避免反射缓存
     conn = op.get_bind()
 
     # order_id
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -73,10 +90,12 @@ def upgrade() -> None:
       ) THEN
         EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_order_id ON public.reservations (order_id)';
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # item_id
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -85,10 +104,12 @@ def upgrade() -> None:
       ) THEN
         EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_item_id ON public.reservations (item_id)';
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # batch_id
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -97,10 +118,12 @@ def upgrade() -> None:
       ) THEN
         EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_batch_id ON public.reservations (batch_id)';
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 组合索引 (item_id, batch_id) —— 历史兼容
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
     DO $$
     BEGIN
       IF EXISTS (
@@ -114,7 +137,8 @@ def upgrade() -> None:
       THEN
         EXECUTE 'CREATE INDEX IF NOT EXISTS ix_reservations_item_batch ON public.reservations (item_id, batch_id)';
       END IF;
-    END$$;"""))
+    END$$;""")
+    )
 
     # 外键（如需要；按需开启）
     # …（略）

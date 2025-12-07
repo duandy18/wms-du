@@ -8,7 +8,6 @@ Create Date: 2025-11-01 09:30:00
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "20251101_v_scan_trace_relaxed_join"

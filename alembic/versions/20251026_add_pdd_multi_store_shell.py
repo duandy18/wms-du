@@ -11,6 +11,7 @@ Create Date: 2025-10-26 12:30:00
 - FK: ON DELETE RESTRICT
 - 时区：业务日 Asia/Shanghai(UTC+8)，存储统一 UTC（timestamptz）
 """
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -35,8 +36,12 @@ def upgrade():
         # api_token：v1 先用 TEXT/BYTEA 承载；后续可接 KMS/加密方案
         sa.Column("api_token", sa.LargeBinary, nullable=True),
         sa.Column("active", sa.Boolean, nullable=False, server_default=sa.text("TRUE")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=created_default),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=updated_default),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=created_default
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=updated_default
+        ),
     )
     op.create_index("ix_stores_platform_name", "stores", ["platform", "name"], unique=False)
 
