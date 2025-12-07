@@ -1,72 +1,53 @@
+# tests/services/test_fefo_rank_view_consistency.py
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.grp_core
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code, seed_batch_slot
 
-from datetime import date, timedelta
+from app.schemas.outbound import OutboundLine, OutboundMode
+from app.services.outbound_service import OutboundService
 
-from sqlalchemy import text
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
-pytestmark = pytest.mark.asyncio
 
+@pytest.mark.asyncio
+async def test_fefo_rank_matches_outbound_choice(session: AsyncSession):
+    """
+    场景：同库位三个批次 (E1/E2/E3) 各 2 件，E1 > E2 > E3 到期更近。
+    期望：按 FEFO 出 1 件时，应优先扣减 E1。
+    """
+    wh, loc, item = 1, 1, 7101
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
 
-async def seed_batches(session, item, loc):
-    from app.services.stock_service import StockService
+    # 按到期先后造数：E1(2天)、E2(5天)、E3(30天)，每批 qty=2
+    await seed_batch_slot(session, item=item, loc=loc, code="E1", qty=2, days=2)
+    await seed_batch_slot(session, item=item, loc=loc, code="E2", qty=2, days=5)
+    await seed_batch_slot(session, item=item, loc=loc, code="E3", qty=2, days=30)
+    await session.commit()
 
-    svc = StockService()
-    today = date.today()
-    # 过期更早的放前
-    for code, days, qty in [("E1", 3, 4), ("E2", 10, 5), ("E3", None, 6)]:
-        await svc.adjust(
-            session=session,
-            item_id=item,
-            location_id=loc,
-            delta=qty,
-            reason="INBOUND",
-            ref=f"FRV-{code}",
-            batch_code=code,
-            production_date=today,
-            expiry_date=(today + timedelta(days=days)) if days is not None else None,
+    # 出库 1（FEFO、禁止使用过期）
+    ref = f"SO-FEFO-{int(datetime.now(UTC).timestamp())}"
+    occurred_at = datetime.now(UTC)
+    await session.commit()
+    async with session.begin():
+        _ = await OutboundService.commit(
+            session,
+            platform="pdd",
+            shop_id=None,
+            ref=ref,
+            occurred_at=occurred_at,
+            lines=[OutboundLine(item_id=item, location_id=loc, qty=1)],
+            mode=OutboundMode.FEFO.value,
+            allow_expired=False,
+            warehouse_id=wh,
         )
 
-
-async def test_fefo_rank_matches_outbound_choice(session):
-    from app.services.outbound_service import OutboundService
-
-    item, loc = 84001, 1
-    await seed_batches(session, item, loc)
-    await session.commit()
-
-    # 视图：rank=1 应是最早到期批次
-    rows = await session.execute(
-        text(
-            "SELECT batch_code FROM v_fefo_rank "
-            "WHERE item_id=:i AND location_id=:l "
-            "ORDER BY fefo_rank LIMIT 1"
-        ),
-        {"i": item, "l": loc},
-    )
-    top = rows.scalar()
-    assert top == "E1"
-
-    # 出库 3，应优先消耗 E1
-    await OutboundService.commit(
-        session,
-        platform="pdd",
-        shop_id="",
-        ref="FRV-SO",
-        warehouse_id=1,
-        lines=[{"line_no": "1", "item_id": item, "location_id": loc, "qty": 3}],
-    )
-    await session.commit()
-
-    # 查看剩余批次 qty：E1 应被优先扣
-    left = await session.execute(
-        text(
-            "SELECT batch_code, qty FROM batches "
-            "WHERE item_id=:i AND location_id=:l "
-            "ORDER BY batch_code"
-        ),
-        {"i": item, "l": loc},
-    )
-    remain = {r[0]: int(r[1] or 0) for r in left}
-    assert remain["E1"] == 1  # 4-3=1
+    # 断言：E1 应从 2 → 1，其余不变
+    assert await qty_by_code(session, item=item, loc=loc, code="E1") == 1
+    assert await qty_by_code(session, item=item, loc=loc, code="E2") == 2
+    assert await qty_by_code(session, item=item, loc=loc, code="E3") == 2

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, csv, sys, math
+
+import argparse
+import csv
+import sys
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--csv", required=True)
@@ -16,11 +21,13 @@ def main():
             except ValueError:
                 continue
             worst = max(worst, abs(d))
-            if abs(d) > a.max-abs-delta:  # noqa: E225 (CI 环境简洁起见忽略风格)
+            if abs(d) > a.max - abs - delta:  # noqa: E225 (CI 环境简洁起见忽略风格)
                 bad.append((i, row.get("store_id"), row.get("item_id"), d))
     if bad:
         print(f"[FAIL] max abs delta={worst} > {a.max_abs_delta}; first 5:", bad[:5])
         sys.exit(1)
     print(f"[OK] max abs delta={worst} <= {a.max_abs_delta}")
+
+
 if __name__ == "__main__":
     main()

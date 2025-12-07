@@ -4,6 +4,7 @@ Revision ID: 20251027_add_uq_batches_unique
 Revises: 20251027_stores_add_platform_credentials
 Create Date: 2025-10-27 21:25:00
 """
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -17,6 +18,7 @@ UQ_NAME = "uq_batches_item_wh_loc_code"
 TABLE = "batches"
 COLUMNS = ["item_id", "warehouse_id", "location_id", "batch_code"]
 
+
 def _constraint_absent(conn, table, name):
     sql = sa.text("""
         SELECT 1
@@ -26,6 +28,7 @@ def _constraint_absent(conn, table, name):
         LIMIT 1
     """)
     return conn.execute(sql, {"table": table, "name": name}).scalar() is None
+
 
 def _duplicates_count(conn):
     cols = ", ".join(COLUMNS)
@@ -38,6 +41,7 @@ def _duplicates_count(conn):
         ) d
     """)
     return int(conn.execute(sql).scalar() or 0)
+
 
 def upgrade():
     conn = op.get_bind()
@@ -56,6 +60,7 @@ def upgrade():
 
     # 创建唯一约束
     op.create_unique_constraint(UQ_NAME, TABLE, COLUMNS)
+
 
 def downgrade():
     conn = op.get_bind()

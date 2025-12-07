@@ -16,6 +16,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段（对旧客户端更宽容）
     - populate_by_name: 支持别名/字段名互填（便于未来加 alias）
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -58,29 +59,40 @@ class RoleUpdate(_Base):
         return v.strip() if isinstance(v, str) else v
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {"description": "仅限出库审批权限"}
-        }
+        "json_schema_extra": {"example": {"description": "仅限出库审批权限"}}
     }
 
 
 # ========= 输出 =========
 class RoleOut(_Base):
-    id: Annotated[str, Field(description="角色ID（字符串，以保持兼容）")]
+    # **关键修复：id 从 str → int，与 DB 对齐**
+    id: Annotated[int, Field(description="角色ID（整数）")]
+
     name: Annotated[str, Field(min_length=1, max_length=64)]
     description: Annotated[str | None, Field(default=None, max_length=256)] = None
+
     # 修复可变默认值：使用 default_factory
     permissions: list[PermissionOut] = Field(default_factory=list)
 
     model_config = _Base.model_config | {
         "json_schema_extra": {
             "example": {
-                "id": "role_01",
+                "id": 1,
                 "name": "warehouse.admin",
                 "description": "仓库管理员，可管理库存与订单",
                 "permissions": [
-                    {"id": "perm_01", "name": "stock.read", "description": "读取库存", "scope": "stock"},
-                    {"id": "perm_02", "name": "order.approve", "description": "订单审批", "scope": "order"},
+                    {
+                        "id": 1,
+                        "name": "stock.read",
+                        "description": "读取库存",
+                        "scope": "stock",
+                    },
+                    {
+                        "id": 2,
+                        "name": "order.approve",
+                        "description": "订单审批",
+                        "scope": "order",
+                    },
                 ],
             }
         }

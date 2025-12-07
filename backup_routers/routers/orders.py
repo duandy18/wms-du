@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Body, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, conlist, PositiveInt
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ except Exception:  # noqa: BLE001
     try:
         from app.db import get_async_session as _get_session  # type: ignore
     except Exception:  # noqa: BLE001
+
         async def _get_session(request: Request) -> AsyncSession:  # type: ignore[override]
             maker = getattr(request.app.state, "async_sessionmaker", None)
             if maker is None:
@@ -37,10 +38,12 @@ class ReserveLine(BaseModel):
     item_id: PositiveInt
     qty: PositiveInt = Field(..., description="下单占用数量")
 
+
 class ShipLine(BaseModel):
     item_id: PositiveInt
     location_id: PositiveInt
     qty: PositiveInt = Field(..., description="出库数量")
+
 
 class ReserveReq(BaseModel):
     platform: str = Field("pdd", description="平台标识")
@@ -48,8 +51,10 @@ class ReserveReq(BaseModel):
     ref: str = Field(..., description="幂等键，如订单号/波次号")
     lines: conlist(ReserveLine, min_items=1)
 
+
 class CancelReq(ReserveReq):
     pass
+
 
 class ShipReq(BaseModel):
     platform: str = Field("pdd", description="平台标识")
@@ -58,6 +63,7 @@ class ShipReq(BaseModel):
     lines: conlist(ShipLine, min_items=1)
     refresh_visible: bool = True
     warehouse_id: Optional[int] = Field(None, description="预留（v1.2 多仓启用）")
+
 
 class PreviewReq(BaseModel):
     platform: str = Field("pdd", description="平台标识")
@@ -109,7 +115,9 @@ async def orders_ship(payload: ShipReq, session: AsyncSession = Depends(_get_ses
 
 
 @router.post("/preview-visible")
-async def orders_preview_visible(payload: PreviewReq, session: AsyncSession = Depends(_get_session)):
+async def orders_preview_visible(
+    payload: PreviewReq, session: AsyncSession = Depends(_get_session)
+):
     out = await OrderService.preview_visible(
         session,
         platform=payload.platform,

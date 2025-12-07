@@ -1,0 +1,18 @@
+                                                                  Table "public.outbound_commits"
+   Column    |           Type           | Collation | Nullable |                   Default                    | Storage  | Compression | Stats target | Description
+-------------+--------------------------+-----------+----------+----------------------------------------------+----------+-------------+--------------+-------------
+ id          | integer                  |           | not null | nextval('outbound_commits_id_seq'::regclass) | plain    |             |              |
+ ref         | character varying(64)    |           | not null |                                              | extended |             |              |
+ item_id     | integer                  |           | not null |                                              | plain    |             |              |
+ location_id | integer                  |           | not null |                                              | plain    |             |              |
+ qty         | integer                  |           | not null |                                              | plain    |             |              |
+ created_at  | timestamp with time zone |           | not null | now()                                        | plain    |             |              |
+ platform    | character varying(32)    |           |          |                                              | extended |             |              |
+ state       | character varying(32)    |           |          |                                              | extended |             |              |
+ shop_id     | character varying(64)    |           | not null | ''::character varying                        | extended |             |              |
+Indexes:
+    "outbound_commits_pkey" PRIMARY KEY, btree (id)
+    "ix_outbound_commits_ref" btree (ref)
+    "uq_outbound_ref_item_loc" UNIQUE, btree (ref, item_id, location_id)
+    "ux_outbound_commits_4cols" UNIQUE, btree (platform, shop_id, ref, state)
+Access method: heap

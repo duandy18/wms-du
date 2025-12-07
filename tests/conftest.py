@@ -1,52 +1,57 @@
 # tests/conftest.py
 from __future__ import annotations
 
-import asyncio
 import os
-from typing import AsyncGenerator, Tuple
+from typing import AsyncGenerator
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
-from alembic import command
-from alembic.config import Config
+# ============================================================
+# ★★ 关键：在 import app.main 之前强制设置 FULL_ROUTES ★★
+# ============================================================
+os.environ["FULL_ROUTES"] = "1"
+os.environ["WMS_FULL_ROUTES"] = "1"
 
-# ========================= 通用配置 =========================
+# FULL_ROUTES 设置完毕后再加载 FastAPI app
+from app.main import app  # noqa: E402
+
+# ==========================
+# 数据库 DSN（强制显式配置，禁止自适应 fallback）
+# ==========================
+
+DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL") or os.getenv("WMS_DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "WMS_TEST_DATABASE_URL / WMS_DATABASE_URL 未设置。\n"
+        "请显式指定，例如：\n"
+        "  export WMS_TEST_DATABASE_URL=postgresql+psycopg://postgres:wms@127.0.0.1:55432/postgres"
+    )
+
+# 规范化 DSN：兼容老式 postgres:// / postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 
-def _async_db_url() -> str:
-    """固定到 5433/wms 测试库，防止环境变量指向错误数据库。"""
-    return "postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms"
-
-
-# ========================= 会话/引擎 =========================
-
-
-@pytest.fixture(scope="session", autouse=True)
-def apply_migrations() -> None:
-    """
-    会话级自动迁移到 head；如遇多 head 兜底到 heads。
-    迁移阶段必须使用同步驱动（psycopg），避免 MissingGreenlet。
-    """
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms")
-    try:
-        command.upgrade(cfg, "head")
-    except Exception:
-        command.upgrade(cfg, "heads")
-
-
+# =========================================
+# 每用例独立 Engine（NullPool，避免跨 loop）
+# =========================================
 @pytest_asyncio.fixture(scope="function")
 async def async_engine() -> AsyncGenerator[AsyncEngine, None]:
-    """
-    每条用例独立的异步引擎；yield 后优雅回收连接池。
-    """
-    url = _async_db_url()
-    print(f"[TEST] Using database: {url}")
-    engine = create_async_engine(url, future=True, pool_pre_ping=True)
+    engine = create_async_engine(
+        DATABASE_URL,
+        poolclass=NullPool,
+        pool_pre_ping=False,
+        future=True,
+    )
     try:
         yield engine
     finally:
@@ -60,132 +65,172 @@ def async_session_maker(async_engine: AsyncEngine):
 
 @pytest_asyncio.fixture(scope="function")
 async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
-    """提供干净的 AsyncSession，不自动 begin/rollback。"""
+    """
+    标准 Session（自动 commit / rollback）
+    """
     async with async_session_maker() as sess:
-        yield sess
+        await sess.execute(text("SET search_path TO public"))
+        try:
+            yield sess
+            if sess.in_transaction():
+                await sess.commit()
+        except Exception:
+            if sess.in_transaction():
+                await sess.rollback()
+            raise
 
 
-# ========================= 覆盖 FastAPI 依赖 =========================
-# 关键：让路由里的 get_session 与测试用例使用同一个 AsyncSession
-
-from app.api import deps as api_deps  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _override_dep_session(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
-    """
-    将 FastAPI 依赖 app.api.deps.get_session 覆盖为返回当前测试的 session。
-    保证 /scan 路由与测试回查共用同一会话/同一 search_path/同一事务边界。
-    """
-    async def _yield_test_session():
-        yield session
-
-    monkeypatch.setattr(api_deps, "get_session", _yield_test_session)
+# =========================================
+# Soft Reserve 并发测试用长寿命 Session
+# =========================================
+@pytest_asyncio.fixture
+async def db_session_like_pg(
+    async_session_maker,
+) -> AsyncGenerator[AsyncSession, None]:
+    async with async_session_maker() as sess:
+        await sess.execute(text("SET search_path TO public"))
+        try:
+            yield sess
+        finally:
+            if sess.in_transaction():
+                await sess.rollback()
 
 
-# ========================= 数据清理 & 基线回种 =========================
+@pytest.fixture
+def _maker(async_session_maker):
+    """兼容历史测试：async with _maker() as sess"""
+    return async_session_maker
 
 
+# =========================================
+# 清库 + 最小种子数据（每测试一次）
+#   ★ 不再根据 schema 自适应，有问题直接炸，暴露迁移问题
+# =========================================
 @pytest_asyncio.fixture(autouse=True, scope="function")
-async def _db_clean(async_engine: AsyncEngine):
-    """
-    一次性强力清库：
-      - TRUNCATE 多表（单条语句）；
-      - RESTART IDENTITY 重置自增；
-      - CASCADE 级联外键，避免顺序问题。
-    """
+async def _db_clean_and_seed(async_engine: AsyncEngine):
     async with async_engine.begin() as conn:
-        print("[TEST] Executing TRUNCATE on tables ...")
+        print("[TEST] 清理数据库并重建最小基线 ...")
+
+        # 这里假定数据库已经按 HEAD schema 完整迁移，
+        # 有 warehouses/items/batches/stocks/reservations 等表。
         await conn.execute(
             text(
                 """
-                TRUNCATE TABLE
-                  order_items,
-                  orders,
-                  stock_ledger,
-                  stock_snapshots,
-                  outbound_commits,
-                  event_error_log,
-                  channel_inventory,
-                  store_items,
-                  batches,
-                  stocks
-                RESTART IDENTITY CASCADE
+            TRUNCATE TABLE
+              order_items,
+              orders,
+              stock_ledger,
+              stock_snapshots,
+              outbound_commits,
+              event_error_log,
+              channel_inventory,
+              store_items,
+              reservation_allocations,
+              reservation_lines,
+              reservations,
+              stocks,
+              batches,
+              warehouses,
+              items
+            RESTART IDENTITY CASCADE
+            """
+            )
+        )
+
+        # 仓库（HEAD schema 下 warehouses 至少有 id/name）
+        await conn.execute(
+            text(
+                "INSERT INTO warehouses (id, name) "
+                "VALUES (1,'WH-1')"
+            )
+        )
+
+        # 商品（用当前 HEAD 里的 items 结构：有 qty_available）
+        await conn.execute(
+            text(
                 """
+            INSERT INTO items (id, sku, name, qty_available)
+            VALUES
+              (1,    'SKU-0001','UT-ITEM-1',           0),
+              (3001, 'SKU-3001','SOFT-RESERVE-1',      0),
+              (3002, 'SKU-3002','SOFT-RESERVE-2',      0),
+              (3003, 'SKU-3003','SOFT-RESERVE-BASE',   0),
+              (4001, 'SKU-4001','OUTBOUND-MERGE',      0)
+            """
             )
         )
 
-
-@pytest_asyncio.fixture(autouse=True, scope="function")
-async def _baseline_seed(_db_clean, async_engine: AsyncEngine):
-    """
-    基线回种（Lock-A 合法最小域）。
-    注意：locations 现已规范化，必须显式提供 code（与 name 等值亦可）。
-    """
-    async with async_engine.begin() as conn:
-        # ---- 基础仓 ----
+        # 修正序列（以 HEAD schema 为准，有 serial/identity 时生效）
         await conn.execute(
             text(
-                "INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') "
-                "ON CONFLICT (id) DO NOTHING"
+                """
+            SELECT setval(
+              pg_get_serial_sequence('warehouses','id'),
+              COALESCE((SELECT MAX(id) FROM warehouses), 0),
+              true
+            )
+            """
             )
         )
-
-        # ---- 标准库位（显式 code）----
-        # 兼容旧测试：保留 id=1 的最小位；name 与 code 同值
         await conn.execute(
             text(
-                "INSERT INTO locations (id, name, code, warehouse_id) "
-                "VALUES (1, 'LOC-1', 'LOC-1', 1) "
-                "ON CONFLICT (id) DO NOTHING"
+                """
+            SELECT setval(
+              pg_get_serial_sequence('items','id'),
+              COALESCE((SELECT MAX(id) FROM items), 0),
+              true
+            )
+            """
             )
         )
 
-        # 可选：提供两个系统位（接收入库位 / 暂存位），便于扫码通路专项用例复用
+        # 批次：按最终世界观写，有 warehouse_id / item_id / batch_code / expiry_date
         await conn.execute(
             text(
-                "INSERT INTO locations (name, code, warehouse_id) VALUES "
-                "('01R0000000','01R0000000',1), "
-                "('01S9000000','01S9000000',1) "
-                "ON CONFLICT (warehouse_id, code) DO NOTHING"
+                """
+            INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
+            VALUES
+              (1,    1,'NEAR',      CURRENT_DATE + INTERVAL '10 day'),
+              (3001, 1,'B-CONC-1',  CURRENT_DATE + INTERVAL '7 day'),
+              (3002, 1,'B-OOO-1',   CURRENT_DATE + INTERVAL '7 day'),
+              (3003, 1,'NEAR',      CURRENT_DATE + INTERVAL '5 day'),
+              (4001, 1,'B-MERGE-1', CURRENT_DATE + INTERVAL '10 day')
+            """
             )
         )
 
-        # ---- 最小商品 ----
+        # 库存：按最终世界观写，有 warehouse_id / item_id / batch_code / qty
         await conn.execute(
             text(
-                "INSERT INTO items (id, sku, name, shelf_life_days) "
-                "VALUES (1, 'UT-ITEM-1', 'UT-ITEM', 0) "
-                "ON CONFLICT (id) DO NOTHING"
+                """
+            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+            VALUES
+              (1,    1,'NEAR',      10),
+              (3001, 1,'B-CONC-1',   3),
+              (3002, 1,'B-OOO-1',    3),
+              (3003, 1,'NEAR',      10),
+              (4001, 1,'B-MERGE-1', 10)
+            """
             )
         )
 
-        # （如有需要，可在各自用例中插入条码映射/更复杂主数据）
-        # 这里保持基线最小化，避免对特定业务通路产生隐式耦合。
 
-
-# ========================= A组所需 Fixtures =========================
-
-from app.services.stock_service import StockService  # noqa: E402
+# =========================================
+# FastAPI / httpx AsyncClient
+# =========================================
+@pytest_asyncio.fixture(scope="function")
+async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        timeout=httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0),
+    ) as c:
+        yield c
 
 
 @pytest_asyncio.fixture
-async def stock_service() -> StockService:
-    """A 组测试使用的 StockService 简易装配。"""
-    return StockService()
-
-
-@pytest_asyncio.fixture
-async def item_loc_fixture() -> Tuple[int, int]:
-    """A组测试的起跑线：固定 (item_id=1, location_id=1)。"""
-    return (1, 1)
-
-
-# ========================= 事件循环 =========================
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+async def client_like(
+    client: httpx.AsyncClient,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    yield client

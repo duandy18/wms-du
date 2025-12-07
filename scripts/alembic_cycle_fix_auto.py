@@ -205,7 +205,7 @@ def main():
             print(" - cycle:", " -> ".join(cyc))
             for r, new_downs in patches:
                 print(
-                    f"   * patched {r}: down_revision = {tuple(new_downs) if len(new_downs)>1 else (new_downs[0] if new_downs else None)}"
+                    f"   * patched {r}: down_revision = {tuple(new_downs) if len(new_downs) > 1 else (new_downs[0] if new_downs else None)}"
                 )
     print("\nNext:")
     print("  1) alembic heads -v")

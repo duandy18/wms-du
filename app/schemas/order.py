@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ✅ 引用统一的业务枚举
-from app.models.enum import OrderType, OrderStatus
+from app.models.enum import OrderStatus, OrderType
 
 
 # ===== 通用基类：允许 ORM、忽略多余字段 =====
@@ -19,6 +19,7 @@ class OrderLineIn(_Base):
     """
     行项目：支持以 item_id 或 sku 指定商品（至少一者必须提供）。
     """
+
     item_id: Annotated[int | None, Field(default=None, ge=1)] = None
     sku: Annotated[str | None, Field(default=None, min_length=1, max_length=128)] = None
     qty: Annotated[int, Field(ge=1, description="数量，必须>=1")]
@@ -51,6 +52,7 @@ class OrderCreate(_Base):
     - lines：至少 1 条
     - 可选：order_no / buyer_name / platform
     """
+
     order_type: OrderType
     lines: list[OrderLineIn]
     order_no: Annotated[str | None, Field(default=None, min_length=1, max_length=128)] = None

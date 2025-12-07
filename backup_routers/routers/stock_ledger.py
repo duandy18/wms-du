@@ -18,10 +18,13 @@ router = APIRouter(tags=["stock_ledger"])
 
 # ---- 时区：响应统一转 Asia/Shanghai (+08:00)，DB 仍写入 UTC ----
 _CST = timezone(timedelta(hours=8))
+
+
 def _to_cst(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(_CST)
+
 
 # ---- 每请求独立会话，避免 TestClient 事件循环冲突 ----
 async def _get_session(_req: Request):
@@ -35,6 +38,7 @@ async def _get_session(_req: Request):
     finally:
         await engine.dispose()
 
+
 # ---- 模型 ----
 class LedgerQuery(BaseModel):
     stock_id: Optional[int] = None
@@ -45,6 +49,7 @@ class LedgerQuery(BaseModel):
     time_to: Optional[datetime | date] = None
     limit: int = Field(100, ge=1, le=500)
     offset: int = Field(0, ge=0)
+
 
 class LedgerItem(BaseModel):
     id: int
@@ -57,9 +62,11 @@ class LedgerItem(BaseModel):
     stock_id: Optional[int] = None
     item_id: int
 
+
 class LedgerQueryResp(BaseModel):
     total: int
     items: List[LedgerItem]
+
 
 # ---- 基础查询（仅选 id；用于 count + 分页）----
 def _build_base_stmt(payload: LedgerQuery):
@@ -101,6 +108,7 @@ def _build_base_stmt(payload: LedgerQuery):
 
     return stmt
 
+
 # ---- 路由 ----
 @router.post("/stock/ledger/query", response_model=LedgerQueryResp)
 async def query_ledger(
@@ -110,9 +118,7 @@ async def query_ledger(
     base_stmt = _build_base_stmt(payload)
 
     total = (
-        await session.execute(
-            select(func.count()).select_from(base_stmt.subquery())
-        )
+        await session.execute(select(func.count()).select_from(base_stmt.subquery()))
     ).scalar_one()
 
     ids_sub = (

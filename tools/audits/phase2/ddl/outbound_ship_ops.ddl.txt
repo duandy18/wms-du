@@ -1,0 +1,18 @@
+                                                                  Table "public.outbound_ship_ops"
+   Column    |           Type           | Collation | Nullable |                    Default                    | Storage  | Compression | Stats target | Description
+-------------+--------------------------+-----------+----------+-----------------------------------------------+----------+-------------+--------------+-------------
+ id          | integer                  |           | not null | nextval('outbound_ship_ops_id_seq'::regclass) | plain    |             |              |
+ store_id    | integer                  |           | not null |                                               | plain    |             |              |
+ ref         | character varying(128)   |           | not null |                                               | extended |             |              |
+ item_id     | integer                  |           | not null |                                               | plain    |             |              |
+ location_id | integer                  |           | not null |                                               | plain    |             |              |
+ qty         | integer                  |           | not null |                                               | plain    |             |              |
+ created_at  | timestamp with time zone |           | not null | now()                                         | plain    |             |              |
+Indexes:
+    "outbound_ship_ops_pkey" PRIMARY KEY, btree (id)
+    "ix_ship_ops_ref" btree (ref)
+    "ix_ship_ops_store_ref" btree (store_id, ref)
+    "uq_ship_idem_key" UNIQUE CONSTRAINT, btree (store_id, ref, item_id, location_id)
+Foreign-key constraints:
+    "outbound_ship_ops_store_id_fkey" FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT
+Access method: heap

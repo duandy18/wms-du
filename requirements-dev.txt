@@ -1,0 +1,14 @@
+# ============
+# Testing / Dev
+# ============
+
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=4.1
+
+# DB + scheduler used by service layer
+aiosqlite>=0.20
+APScheduler>=3.10
+
+# Misc developer tools
+ipython

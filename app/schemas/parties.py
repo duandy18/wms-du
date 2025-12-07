@@ -17,6 +17,7 @@ class _Base(BaseModel):
     - extra="ignore": 忽略冗余字段，兼容旧客户端
     - populate_by_name: 支持别名/字段名互填
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -56,6 +57,7 @@ class PartyCreate(PartyBase):
     """
     创建伙伴（供应商/客户/承运商等）
     """
+
     pass
 
 
@@ -63,6 +65,7 @@ class PartyUpdate(_Base):
     """
     更新伙伴信息：字段均为可选；至少提供一项
     """
+
     name: Annotated[str | None, Field(default=None, min_length=1, max_length=128)] = None
     party_type: PartyType | None = None
     contact_person: Annotated[str | None, Field(default=None, max_length=64)] = None

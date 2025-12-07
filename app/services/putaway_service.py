@@ -1,338 +1,154 @@
+# app/services/putaway_service.py
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.enums import MovementType
+from app.services.stock_service import StockService
+
+
+class SameLocationError(ValueError):
+    """Putaway 左右库位相同的业务错误。"""
+
+    def __init__(self, location_id: int) -> None:
+        super().__init__(f"from_location_id 和 to_location_id 不能相同：{location_id}")
+        self.location_id = location_id
+
 
 class PutawayService:
     """
-    上架 / 搬运服务（SQL 路径 · 强契约）
-    - 直接基于 stocks 扣减/增加；
-    - 显式写入 stock_ledger（含 item_id / ref_line / occurred_at / after_qty）；
-    - 幂等：若已存在 (reason, ref, ref_line) 或右腿(ref_line+1) 台账，则认为 idempotent；
-    - “右腿 +1”：入库腿 ref_line = 出库腿 ref_line + 1；
-    - 并发批量：在 PostgreSQL 用 FOR UPDATE SKIP LOCKED；SQLite 退化为无锁选择 + 乐观更新。
-    - 对齐 stocks 正式口径：(item_id, warehouse_id, location_id, batch_code)
+    Putaway 业务服务（v2 版）
+
+    重要约定（结合当前 HEAD）：
+
+    - StockService.adjust 仅按 (warehouse_id, item_id, batch_code) 维度调整库存 + 写台账；
+      不再接受 location_id 参数。
+    - 但作业层仍保留“库位”概念，因此：
+        * 通过 locations 表反查 from_location_id / to_location_id 对应的 warehouse_id；
+        * 要求两者 warehouse_id 一致（同一仓内移库）；
+        * adjust 只动仓维度库存，location 颗粒度由上层视图 / 辅助工具解释。
+    - 审计契约：
+        * 左腿（源位扣减，delta < 0）：必须有 batch_code；
+        * 右腿（目标位入库，delta > 0）：必须有 batch_code，
+          且 production_date / expiry_date 至少提供一个。
     """
 
+    def __init__(self, stock: Optional[StockService] = None) -> None:
+        self.stock = stock or StockService()
+
+    # ------------------------------------------------------------------ #
+    # 内部工具：根据 location_id 解析 warehouse_id
+    # ------------------------------------------------------------------ #
     @staticmethod
+    async def _resolve_warehouse_for_location(
+        session: AsyncSession,
+        location_id: int,
+    ) -> int:
+        row = await session.execute(
+            text(
+                """
+                SELECT warehouse_id
+                  FROM locations
+                 WHERE id = :loc_id
+                """
+            ),
+            {"loc_id": location_id},
+        )
+        wh_id = row.scalar()
+        if wh_id is None:
+            raise ValueError(f"location_id={location_id} 不存在或未绑定仓库")
+        return int(wh_id)
+
+    # ------------------------------------------------------------------ #
+    # 核心接口：putaway
+    # ------------------------------------------------------------------ #
     async def putaway(
+        self,
         session: AsyncSession,
         *,
         item_id: int,
         from_location_id: int,
         to_location_id: int,
         qty: int,
-        warehouse_id: int,
-        batch_code: str,
         ref: str,
-        ref_line: int = 1,
-        occurred_at: datetime | None = None,
-        commit: bool = True,
-    ) -> dict[str, Any]:
+        batch_code: str,
+        production_date: Optional[datetime] = None,
+        expiry_date: Optional[datetime] = None,
+        left_ref_line: int = 1,
+    ) -> Dict[str, Any]:
         """
-        把库存从 from_location_id → to_location_id
-        扣源位、增目标位，并写两条台账（左/右腿）。
-        对齐 stocks 唯一口径：item_id, warehouse_id, location_id, batch_code
+        SRC → DST 搬运 qty 件，保持台账 + 库存在 v2 世界观下自洽。
+
+        - qty > 0
+        - from_location_id != to_location_id
+        - batch_code 必填
+        - production_date / expiry_date 至少一个非空（右腿要求）
         """
         if qty <= 0:
             raise ValueError("qty must be > 0")
+
         if from_location_id == to_location_id:
-            return {"status": "noop", "moved": 0}
+            raise SameLocationError(from_location_id)
 
-        if await PutawayService._ledger_pair_exists(
-            session, reason="PUTAWAY", ref=ref, ref_line=ref_line
-        ):
-            return {"status": "idempotent", "moved": 0}
+        if not batch_code or not str(batch_code).strip():
+            raise ValueError("putaway 操作必须提供 batch_code")
 
-        await PutawayService._move_via_sql(
+        if production_date is None and expiry_date is None:
+            raise ValueError("putaway 操作必须提供 production_date 或 expiry_date 至少其一")
+
+        # 解析两侧库位对应的仓库，要求在同一仓内移库
+        from_wh = await self._resolve_warehouse_for_location(session, from_location_id)
+        to_wh = await self._resolve_warehouse_for_location(session, to_location_id)
+
+        if from_wh != to_wh:
+            raise ValueError(
+                f"跨仓 putaway 暂不支持：from_location_id={from_location_id} → to_location_id={to_location_id}，"
+                f"warehouse_id 分别为 {from_wh} / {to_wh}"
+            )
+
+        now = datetime.now().astimezone()
+
+        # 左腿：源位扣减（仓维度视角 → 同一仓出库）
+        await self.stock.adjust(
             session=session,
             item_id=item_id,
-            from_location_id=from_location_id,
-            to_location_id=to_location_id,
-            qty=qty,
-            warehouse_id=warehouse_id,
-            batch_code=batch_code,
-            reason="PUTAWAY",
+            warehouse_id=from_wh,
+            delta=-qty,
+            reason=MovementType.PUTAWAY,
             ref=ref,
-            ref_line=ref_line,
-            occurred_at=occurred_at,
+            ref_line=left_ref_line,
+            occurred_at=now,
+            batch_code=batch_code,
+            production_date=production_date,
+            expiry_date=expiry_date,
         )
-        if commit:
-            await session.commit()
-        return {"status": "ok", "moved": qty}
 
-    @staticmethod
-    async def bulk_putaway(
-        session: AsyncSession,
-        *,
-        stage_location_id: int,
-        target_locator_fn: Callable[[int], int],
-        batch_size: int = 100,
-        worker_id: str = "W1",
-        occurred_at: datetime | None = None,
-        commit_each: bool = True,
-    ) -> dict[str, Any]:
-        """
-        从“暂存位/分拣位”批量搬运到目标库位：
-        - PG: 以 SKIP LOCKED 逐条领取；
-        - SQLite: 无锁选择 + 乐观更新（失败则跳过）。
-        对齐 stocks 唯一口径：item_id, warehouse_id, location_id, batch_code
-        """
-        dialect = session.get_bind().dialect.name
-        moved = 0
-        claimed = 0
-
-        while moved < batch_size:
-            if dialect == "postgresql":
-                sel_sql = """
-                    SELECT id, item_id, warehouse_id, batch_code, qty
-                      FROM stocks
-                     WHERE location_id = :stage
-                       AND qty > 0
-                     ORDER BY id
-                     FOR UPDATE SKIP LOCKED
-                     LIMIT 1
-                """
-            else:
-                sel_sql = """
-                    SELECT id, item_id, warehouse_id, batch_code, qty
-                      FROM stocks
-                     WHERE location_id = :stage
-                       AND qty > 0
-                     ORDER BY id
-                     LIMIT 1
-                """
-            row = (await session.execute(text(sel_sql), {"stage": stage_location_id})).first()
-            if not row:
-                break
-
-            stock_id = int(row[0])
-            item_id = int(row[1])
-            warehouse_id = int(row[2])
-            batch_code = str(row[3])
-            qty_available = int(row[4] or 0)
-
-            if qty_available <= 0:
-                if commit_each:
-                    await session.commit()
-                continue
-
-            claimed += 1
-            quota = batch_size - moved
-            move_qty = min(qty_available, quota)
-            if move_qty <= 0:
-                if commit_each:
-                    await session.commit()
-                continue
-
-            to_location_id = int(target_locator_fn(item_id))
-            ref = f"BULK-{worker_id}"
-            ref_line = stock_id  # 防碰撞：以 stock 行号充当“左腿行号”
-
-            if await PutawayService._ledger_pair_exists(
-                session, reason="PUTAWAY", ref=ref, ref_line=ref_line
-            ):
-                if commit_each:
-                    await session.commit()
-                continue
-
-            try:
-                await PutawayService._move_via_sql(
-                    session=session,
-                    item_id=item_id,
-                    from_location_id=stage_location_id,
-                    to_location_id=to_location_id,
-                    qty=move_qty,
-                    warehouse_id=warehouse_id,
-                    batch_code=batch_code,
-                    reason="PUTAWAY",
-                    ref=ref,
-                    ref_line=ref_line,
-                    occurred_at=occurred_at,
-                )
-                moved += move_qty
-                if commit_each:
-                    await session.commit()
-            except ValueError:
-                if commit_each:
-                    await session.rollback()
-                continue
+        # 右腿：目标位入库（同仓 +qty），ref_line = left_ref_line + 1
+        await self.stock.adjust(
+            session=session,
+            item_id=item_id,
+            warehouse_id=to_wh,
+            delta=qty,
+            reason=MovementType.PUTAWAY,
+            ref=ref,
+            ref_line=left_ref_line + 1,
+            occurred_at=now,
+            batch_code=batch_code,
+            production_date=production_date,
+            expiry_date=expiry_date,
+        )
 
         return {
-            "status": "ok" if moved > 0 else "idle",
-            "claimed": claimed,
-            "moved": moved,
+            "status": "OK",
+            "moved": qty,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "warehouse_id": from_wh,
+            "ref": ref,
+            "left_ref_line": left_ref_line,
+            "right_ref_line": left_ref_line + 1,
         }
-
-    @staticmethod
-    async def _ledger_pair_exists(
-        session: AsyncSession, *, reason: str, ref: str, ref_line: int
-    ) -> bool:
-        r = await session.execute(
-            text(
-                """
-                SELECT 1 FROM stock_ledger
-                 WHERE reason = :reason
-                   AND ref    = :ref
-                   AND ref_line IN (:out_line, :in_line)
-                 LIMIT 1
-                """
-            ),
-            {
-                "reason": reason,
-                "ref": ref,
-                "out_line": ref_line,
-                "in_line": ref_line + 1,
-            },
-        )
-        return r.first() is not None
-
-    @staticmethod
-    async def _move_via_sql(
-        session: AsyncSession,
-        *,
-        item_id: int,
-        from_location_id: int,
-        to_location_id: int,
-        qty: int,
-        warehouse_id: int,
-        batch_code: str,
-        reason: str,
-        ref: str,
-        ref_line: int,
-        occurred_at: datetime | None = None,
-    ) -> None:
-        ts = occurred_at or datetime.now(UTC)
-
-        # 1) 扣来源位 —— 对齐口径 (item_id, warehouse_id, location_id, batch_code)
-        from_row = (
-            await session.execute(
-                text(
-                    """
-                    UPDATE stocks
-                       SET qty = qty - :q
-                     WHERE item_id      = :item
-                       AND warehouse_id = :wh
-                       AND location_id  = :loc
-                       AND batch_code   = :bc
-                       AND qty >= :q
-                    RETURNING id, qty
-                    """
-                ),
-                {
-                    "q": qty,
-                    "item": item_id,
-                    "wh": warehouse_id,
-                    "loc": from_location_id,
-                    "bc": batch_code,
-                },
-            )
-        ).first()
-        if not from_row:
-            # 源位缺行则补 0 行再扣（满足 NOT NULL 列）
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
-                    VALUES (:item, :wh, :loc, :bc, 0)
-                    ON CONFLICT (item_id, warehouse_id, location_id, batch_code)
-                    DO NOTHING
-                    """
-                ),
-                {"item": item_id, "wh": warehouse_id, "loc": from_location_id, "bc": batch_code},
-            )
-            from_row = (
-                await session.execute(
-                    text(
-                        """
-                        UPDATE stocks
-                           SET qty = qty - :q
-                         WHERE item_id      = :item
-                           AND warehouse_id = :wh
-                           AND location_id  = :loc
-                           AND batch_code   = :bc
-                           AND qty >= :q
-                        RETURNING id, qty
-                        """
-                    ),
-                    {
-                        "q": qty,
-                        "item": item_id,
-                        "wh": warehouse_id,
-                        "loc": from_location_id,
-                        "bc": batch_code,
-                    },
-                )
-            ).first()
-            if not from_row:
-                raise ValueError("库存不足，无法完成搬运（source）")
-
-        from_stock_id, from_after = int(from_row[0]), int(from_row[1])
-
-        # 2) 来源位台账（左腿：ref_line）
-        await session.execute(
-            text(
-                """
-                INSERT INTO stock_ledger (stock_id, item_id, reason, ref, ref_line, delta, after_qty, occurred_at)
-                VALUES (:sid, :item, :reason, :ref, :ref_line, :delta, :after, :ts)
-                """
-            ),
-            {
-                "sid": from_stock_id,
-                "item": item_id,
-                "reason": reason,
-                "ref": ref,
-                "ref_line": ref_line,
-                "delta": -qty,
-                "after": from_after,
-                "ts": ts,
-            },
-        )
-
-        # 3) 增目标位（UPSERT 累加）
-        to_row = (
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
-                    VALUES (:item, :wh, :loc, :bc, :q)
-                    ON CONFLICT (item_id, warehouse_id, location_id, batch_code)
-                      DO UPDATE SET qty = stocks.qty + EXCLUDED.qty
-                    RETURNING id, qty
-                    """
-                ),
-                {
-                    "item": item_id,
-                    "wh": warehouse_id,
-                    "loc": to_location_id,
-                    "bc": batch_code,
-                    "q": qty,
-                },
-            )
-        ).first()
-        to_stock_id, to_after = int(to_row[0]), int(to_row[1])
-
-        # 4) 目标位台账（右腿：ref_line+1）
-        await session.execute(
-            text(
-                """
-                INSERT INTO stock_ledger (stock_id, item_id, reason, ref, ref_line, delta, after_qty, occurred_at)
-                VALUES (:sid, :item, :reason, :ref, :ref_line, :delta, :after, :ts)
-                """
-            ),
-            {
-                "sid": to_stock_id,
-                "item": item_id,
-                "reason": reason,
-                "ref": ref,
-                "ref_line": ref_line + 1,
-                "delta": qty,
-                "after": to_after,
-                "ts": ts,
-            },
-        )

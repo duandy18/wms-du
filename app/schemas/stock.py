@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ✅ 引用统一业务枚举
-from app.models.enum import MovementType
+from app.models.enums import MovementType
 
 
 # ========= 通用基类 =========

@@ -62,9 +62,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("barcode", name="uq_item_barcodes_barcode"),
     )
 
-    op.create_index(
-        "ix_item_barcodes_item_id", "item_barcodes", ["item_id"], unique=False
-    )
+    op.create_index("ix_item_barcodes_item_id", "item_barcodes", ["item_id"], unique=False)
 
 
 def downgrade() -> None:

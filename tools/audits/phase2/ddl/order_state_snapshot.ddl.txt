@@ -1,0 +1,14 @@
+                                                                  Table "public.order_state_snapshot"
+   Column   |           Type           | Collation | Nullable |                     Default                      | Storage  | Compression | Stats target | Description
+------------+--------------------------+-----------+----------+--------------------------------------------------+----------+-------------+--------------+-------------
+ id         | bigint                   |           | not null | nextval('order_state_snapshot_id_seq'::regclass) | plain    |             |              |
+ platform   | character varying(32)    |           | not null |                                                  | extended |             |              |
+ shop_id    | character varying(64)    |           | not null |                                                  | extended |             |              |
+ order_no   | character varying(128)   |           | not null |                                                  | extended |             |              |
+ state      | character varying(32)    |           | not null |                                                  | extended |             |              |
+ updated_at | timestamp with time zone |           | not null | now()                                            | plain    |             |              |
+Indexes:
+    "order_state_snapshot_pkey" PRIMARY KEY, btree (id)
+    "ix_order_state_snapshot_lookup" UNIQUE, btree (platform, shop_id, order_no)
+    "uq_order_state_snapshot_key" UNIQUE CONSTRAINT, btree (platform, shop_id, order_no)
+Access method: heap

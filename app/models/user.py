@@ -1,55 +1,79 @@
 # app/models/user.py
 from __future__ import annotations
 
-from typing import List
-
-from sqlalchemy import Boolean, String, UniqueConstraint, Index
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
-# 关键：导入关联表，避免循环依赖问题
-from app.models.associations import user_role
+
+# 关联表：用户 ←→ 角色，多对多
+user_roles: Table = sa.Table(
+    "user_roles",
+    Base.metadata,
+    sa.Column(
+        "user_id",
+        sa.Integer,
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    sa.Column(
+        "role_id",
+        sa.Integer,
+        sa.ForeignKey("roles.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 
 class User(Base):
     """
-    用户模型（强契约·不改表结构）
-    字段保持与现有表一致：
-      - id: 主键（String）
-      - full_name: 可空
-      - email: 唯一 & 非空
-      - hashed_password: 非空
-      - is_active: 默认 True
-      - is_superuser: 默认 False
-    关系：
-      - roles: 多对多 -> Role（通过 user_role 中间表）
+    系统用户，对应 users 表。
+
+    字段：
+    - id: 主键
+    - username: 登录名，全局唯一
+    - password_hash: 密码哈希
+    - is_active: 是否启用
+    - full_name: 姓名
+    - phone: 联系电话
+    - email: 邮件地址
+    - primary_role_id: 主角色（可选）
     """
 
     __tablename__ = "users"
-    __table_args__ = (
-        UniqueConstraint("email", name="uq_users_email"),
-        Index("ix_users_full_name", "full_name"),
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # unique=True 已经隐含索引，这里不再声明 index=True
+    username = Column(String(64), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="TRUE")
+
+    # ⭐ 新增三列
+    full_name = Column(String(128), nullable=True)
+    phone = Column(String(32), nullable=True)
+    email = Column(String(255), nullable=True)
+
+    primary_role_id = Column(
+        Integer,
+        ForeignKey(
+            "roles.id",
+            name="fk_users_primary_role_id_roles",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
     )
 
-    # 主键（String），沿用现有类型
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    # 主角色：简化场景（一个用户一个主角色）
+    primary_role = relationship("Role", foreign_keys=[primary_role_id], lazy="joined")
 
-    # 基本信息
-    full_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    email: Mapped[str] = mapped_column(String, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
-
-    # 状态
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    # 多对多：User <-> Role
-    roles: Mapped[List["Role"]] = relationship(
+    # 多角色：通过 user_roles 多对多
+    roles = relationship(
         "Role",
-        secondary=user_role,
+        secondary=user_roles,
         back_populates="users",
         lazy="selectin",
     )
 
     def __repr__(self) -> str:
-        return f"<User id={self.id!r} email={self.email!r} active={self.is_active} super={self.is_superuser}>"
+        return f"<User id={self.id} username={self.username!r} active={self.is_active}>"

@@ -1,0 +1,87 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+      - feature-purchase-po-v2-only
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          # 容器 5432 → 宿主 5433
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      # 后端统一 DSN（sync/async 引擎都会从这里和 WMS_* 中取）
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
+      WMS_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
+      WMS_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv & install runtime deps
+        run: |
+          make venv
+          . .venv/bin/activate
+          make deps
+
+      - name: Install dev/test deps
+        run: |
+          . .venv/bin/activate
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            echo "[CI] requirements-dev.txt not found, installing minimal test deps..."
+            pip install pytest pytest-asyncio pytest-cov aiosqlite APScheduler
+          fi
+
+      - name: Run Alembic migrations (upgrade head)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          WMS_DATABASE_URL: ${{ env.WMS_DATABASE_URL }}
+          WMS_TEST_DATABASE_URL: ${{ env.WMS_TEST_DATABASE_URL }}
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=.
+          make upgrade-head
+
+      - name: Lint backend (ruff via pre-commit)
+        run: |
+          . .venv/bin/activate
+          make lint-backend
+
+      - name: Backend smoke tests
+        env:
+          WMS_DATABASE_URL: ${{ env.WMS_DATABASE_URL }}
+          WMS_TEST_DATABASE_URL: ${{ env.WMS_TEST_DATABASE_URL }}
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=.
+          make test-backend-smoke

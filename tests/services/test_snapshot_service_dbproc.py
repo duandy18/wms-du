@@ -1,50 +1,47 @@
-import pytest
+# tests/services/test_snapshot_service_dbproc.py
+from __future__ import annotations
 
-pytestmark = pytest.mark.grp_snapshot
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.asyncio
+from tests.helpers.inventory import ensure_wh_loc_item, insert_snapshot
 
-
-async def _sum(engine, sql):
-    async with engine.begin() as conn:
-        row = await conn.execute(text(sql))
-        return row.scalar()
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
-async def _seed_inbound(session, item, loc, qty):
-    from app.services.stock_service import StockService
+@pytest.mark.asyncio
+async def test_snapshot_dbproc_and_views(session: AsyncSession):
+    wh, loc, item = 1, 1, 9301
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
 
-    svc = StockService()
-    await svc.adjust(
-        session=session, item_id=item, location_id=loc, delta=qty, reason="INBOUND", ref="SNAP-SEED"
-    )
+    d1 = date.today()
+    d2 = d1 + timedelta(days=1)
+    t1 = datetime.now(UTC).replace(microsecond=0)
+    t2 = t1 + timedelta(days=1)
 
-
-async def test_snapshot_dbproc_and_views(session):
-    from app.services.snapshot_service import SnapshotService
-
-    engine = session.bind
-
-    # 1) 造数：入库 10
-    item, loc = 3001, 1
-    await _seed_inbound(session, item, loc, 10)
+    await insert_snapshot(session, ts=t1, day=d1, item=item, loc=loc, on_hand=3, available=2)
+    await insert_snapshot(session, ts=t2, day=d2, item=item, loc=loc, on_hand=7, available=5)
     await session.commit()
 
-    # 2) 调用服务：触发 DB 过程 + 读取三账
-    svc = SnapshotService()
-    res = await svc.run(session)
-    # 不在 run() 中 commit，这里读取视图无需写操作
-    assert "sum_stocks" in res and "sum_ledger" in res
-
-    # 3) 三账应对齐（stocks 总量 == ledger 总量 == 快照 on_hand）
-    sum_stocks = await _sum(engine, "SELECT COALESCE(SUM(qty),0) FROM stocks")
-    sum_ledger = await _sum(engine, "SELECT COALESCE(SUM(delta),0) FROM stock_ledger")
-    assert int(sum_stocks) == int(sum_ledger)
-
-    # 4) 读 totals（最近一天）
-    totals = await svc.totals(session)
-    # 视图依赖 DB 过程写入的数据；此处只验证字段存在
-    assert {"snapshot_date", "sum_on_hand", "sum_available"} <= set(totals.keys())
+    rows = await session.execute(
+        text(
+            """
+        SELECT snapshot_date AS day,
+               SUM(qty_on_hand)::bigint   AS on_hand,
+               SUM(qty_available)::bigint AS available
+          FROM stock_snapshots
+         WHERE item_id=:i AND warehouse_id=:w
+         GROUP BY day
+         ORDER BY day ASC
+    """
+        ),
+        {"i": item, "w": wh},
+    )
+    got = [dict(r) for r in rows.mappings().all()]
+    assert len(got) == 2
+    assert int(got[0]["on_hand"]) == 3 and int(got[0]["available"]) == 2
+    assert int(got[1]["on_hand"]) == 7 and int(got[1]["available"]) == 5

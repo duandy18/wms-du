@@ -4,6 +4,7 @@ Revision ID: 20251028_snapshots_uq_by_wh_loc_item
 Revises: 20251028_event_error_pending_view
 Create Date: 2025-10-28 14:20:00
 """
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -19,25 +20,44 @@ UQ_NEW = "uq_stock_snapshot_grain"
 IDX_ITEM_DATE = "ix_ss_item_date"
 IDX_WH_DATE = "ix_ss_wh_date"
 
+
 def _col_exists(conn, table, col):
-    return bool(conn.execute(sa.text("""
+    return bool(
+        conn.execute(
+            sa.text("""
         SELECT 1 FROM information_schema.columns
         WHERE table_schema='public' AND table_name=:t AND column_name=:c
         LIMIT 1
-    """), {"t": table, "c": col}).scalar())
+    """),
+            {"t": table, "c": col},
+        ).scalar()
+    )
+
 
 def _idx_exists(conn, name):
-    return bool(conn.execute(sa.text("""
+    return bool(
+        conn.execute(
+            sa.text("""
         SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=:n
         LIMIT 1
-    """), {"n": name}).scalar())
+    """),
+            {"n": name},
+        ).scalar()
+    )
+
 
 def _uq_exists(conn, table, name):
-    return bool(conn.execute(sa.text("""
+    return bool(
+        conn.execute(
+            sa.text("""
         SELECT 1 FROM pg_constraint c
         JOIN pg_class t ON t.oid=c.conrelid
         WHERE t.relname=:t AND c.conname=:n AND c.contype='u' LIMIT 1
-    """), {"t": table, "n": name}).scalar())
+    """),
+            {"t": table, "n": name},
+        ).scalar()
+    )
+
 
 def upgrade():
     conn = op.get_bind()
@@ -61,6 +81,7 @@ def upgrade():
             TABLE,
             ["snapshot_date", COL_WH, COL_LOC, "item_id"],
         )
+
 
 def downgrade():
     conn = op.get_bind()

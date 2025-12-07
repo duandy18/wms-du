@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
-import json
 import time
 from typing import Any, Dict, Optional
 
@@ -12,11 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import async_session_maker
 from app.worker import celery
 
-
 FIX_NONE_SET = {"", "none", "null", "None", "NULL"}
 
 
-def _fix_payload(payload: Dict[str, Any], strip_from_state: bool, force_to_state: Optional[str]) -> Dict[str, Any]:
+def _fix_payload(
+    payload: Dict[str, Any], strip_from_state: bool, force_to_state: Optional[str]
+) -> Dict[str, Any]:
     p = dict(payload or {})
     if strip_from_state:
         fs = str(p.get("from_state", "") or "")
@@ -45,9 +45,16 @@ async def _iter_illegal(
     ORDER BY id DESC
     LIMIT :limit
     """
-    rows = (await session.execute(text(sql), {
-        "platform": platform, "shop_id": shop_id, "order_no": order_no, "limit": limit
-    })).mappings().all()
+    rows = (
+        (
+            await session.execute(
+                text(sql),
+                {"platform": platform, "shop_id": shop_id, "order_no": order_no, "limit": limit},
+            )
+        )
+        .mappings()
+        .all()
+    )
     return [dict(r) for r in rows]
 
 
@@ -76,7 +83,9 @@ async def replay(
             fixed = _fix_payload(payload, strip_from_state, force_to_state)
 
             task_kwargs = {"platform": p, "shop_id": s, "payload": fixed}
-            print(f"[{row['id']}] -> queue=events.{p}.{s} order={row['order_no']} dry_run={dry_run}")
+            print(
+                f"[{row['id']}] -> queue=events.{p}.{s} order={row['order_no']} dry_run={dry_run}"
+            )
             if not dry_run:
                 # 发到与线上一致的任务入口
                 r = celery.send_task("wms.process_event", kwargs=task_kwargs)
@@ -94,14 +103,19 @@ async def replay(
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Replay ILLEGAL_TRANSITION events with optional payload fixes.")
+    ap = argparse.ArgumentParser(
+        description="Replay ILLEGAL_TRANSITION events with optional payload fixes."
+    )
     ap.add_argument("--platform", help="filter by platform")
     ap.add_argument("--shop-id", help="filter by shop_id")
     ap.add_argument("--order-no", help="filter by order_no")
     ap.add_argument("--limit", type=int, default=50, help="max rows to replay")
     ap.add_argument("--qps", type=float, default=2.0, help="send speed (tasks per second)")
-    ap.add_argument("--strip-from-state", action="store_true",
-                    help="treat empty/'none'/'null' from_state as None and remove it from payload")
+    ap.add_argument(
+        "--strip-from-state",
+        action="store_true",
+        help="treat empty/'none'/'null' from_state as None and remove it from payload",
+    )
     ap.add_argument("--force-to-state", help="force payload.to_state to this value (e.g. PAID)")
     ap.add_argument("--dry-run", action="store_true", help="plan only, do not actually send tasks")
     args = ap.parse_args()

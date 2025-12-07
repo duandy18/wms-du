@@ -1,0 +1,13 @@
+[pytest]
+addopts = -ra
+testpaths = tests
+
+markers =
+    smoke: smoke tests
+    quick: quick tests
+    grp_core: Core invariants & services
+    grp_snapshot: Snapshots & views
+    grp_flow: End-to-end flow (E2E/smoke)
+    grp_reverse: Reverse / release / rollback paths
+    grp_scan: Scan gateway unit scope (legacy alias to grp_flow)
+    grp_phase34: Phase 3.4 并发与乱序验证

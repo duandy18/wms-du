@@ -4,8 +4,7 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
-from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator, List, Set
 
 from sqlalchemy.orm import DeclarativeBase, configure_mappers
 
@@ -13,56 +12,94 @@ log = logging.getLogger("wmsdu.models")
 
 
 class Base(DeclarativeBase):
-    """全局唯一 ORM Base（全项目统一 from app.db.base import Base）"""
+    """全局唯一 ORM Base"""
+
     pass
 
 
-def _iter_model_modules() -> list[str]:
-    """
-    自动发现 app/models 下的所有模块（排除 __init__.py），
-    以避免手工维护“白名单”时漏掉新模型。
-    """
-    pkg_name = "app.models"
+_INITIALIZED: bool = False  # 防重复初始化
+
+
+def _iter_model_modules_recursive(pkg_name: str = "app.models") -> Iterator[str]:
+    """递归发现 app.models.* 下的所有模块（排除以下划线开头的内部模块）"""
     try:
         pkg = importlib.import_module(pkg_name)
     except ModuleNotFoundError:
-        return []
+        return iter([])
 
-    modules: list[str] = []
-    # 支持包为命名空间或普通包的两种情况
     paths = list(getattr(pkg, "__path__", []))
-    for finder, name, ispkg in pkgutil.iter_modules(paths):
-        if name.startswith("_"):
+    if not paths:
+        return iter([])
+
+    for _, name, _ in pkgutil.walk_packages(paths, prefix=pkg_name + "."):
+        short = name.rsplit(".", 1)[-1]
+        if short.startswith("_"):
             continue
-        full = f"{pkg_name}.{name}"
-        modules.append(full)
-    return modules
+        yield name
 
 
-def _eager_import(modules: Iterable[str]) -> None:
-    for mod in modules:
-        try:
-            importlib.import_module(mod)
-        except ModuleNotFoundError:
-            # 分支差异或未启用子域：跳过即可
+def _safe_import(mod: str) -> bool:
+    try:
+        importlib.import_module(mod)
+        return True
+    except ModuleNotFoundError:
+        log.debug("model module not found (skip): %s", mod)
+        return False
+    except Exception as e:
+        log.warning("model import failed: %s (%s)", mod, e)
+        return False
+
+
+def init_models(
+    *,
+    extra_modules: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+    force: bool = False,
+) -> None:
+    """
+    集中导入模型 + 固化关系映射：
+      1) 先显式导入关键模型（保证字符串关系目标类已注册）
+      2) 再递归导入 app.models.* 补齐遗漏
+      3) 最后统一 configure_mappers()
+    """
+    global _INITIALIZED
+    if _INITIALIZED and not force:
+        log.debug("init_models() called again; already initialized, skipping.")
+        return
+
+    ex: Set[str] = set(exclude or [])
+    loaded: List[str] = []
+
+    explicit_chain = [
+        "app.models.item",
+        "app.models.batch",
+        "app.models.stock",
+        "app.models.stock_ledger",
+        "app.models.order",
+        "app.models.order_item",
+        "app.models.order_address",
+        "app.models.order_logistics",
+        "app.models.store",
+        "app.models.warehouse",
+        "app.models.platform_shops",
+    ]
+    for mod in [m for m in explicit_chain if m and m not in ex]:
+        if _safe_import(mod):
+            loaded.append(mod)
+
+    for mod in _iter_model_modules_recursive("app.models"):
+        if mod in ex or mod in loaded:
             continue
-        except Exception as e:
-            # 不阻断启动；需要时可提升为 warning
-            log.debug("model import failed: %s (%s)", mod, e)
-
-
-def init_models(extra_modules: Iterable[str] | None = None) -> None:
-    """
-    集中导入模型 + 触发关系映射校验。
-    - 在应用/脚本启动时调用一次（FastAPI：app/main.py；脚本：见下文替换版）
-    - 如有特殊模型不在 app.models 包下，可通过 extra_modules 追加
-    """
-    discovered = _iter_model_modules()
-    _eager_import(discovered)
+        if _safe_import(mod):
+            loaded.append(mod)
 
     if extra_modules:
-        _eager_import(extra_modules)
+        for mod in extra_modules:
+            if mod in ex or mod in loaded:
+                continue
+            if _safe_import(mod):
+                loaded.append(mod)
 
-    # 关键：强制配置所有 mapper；若 relationship("ClassName") 无法解析会在此抛出
     configure_mappers()
-    log.info("ORM models initialized & mappers configured (loaded %d modules)", len(discovered))
+    _INITIALIZED = True
+    log.info("ORM models initialized & mappers configured (loaded %d modules)", len(loaded))

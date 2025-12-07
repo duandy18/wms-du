@@ -2,11 +2,13 @@
 
 Revision ID: cfb24bbca2a0
 Revises: 20251029_merge_heads_lockA_single_head
-Create Date: 2025-10-29 13:41:26.199993
+Create Date: 2025-10-29 11:40:00
 """
+
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
-
 
 revision = "cfb24bbca2a0"
 down_revision = "20251029_merge_heads_lockA_single_head"
@@ -14,45 +16,37 @@ branch_labels = None
 depends_on = None
 
 
-def _has_table(bind, name: str, schema: str | None = None) -> bool:
-    insp = sa.inspect(bind)
-    return insp.has_table(name, schema=schema)
-
-
-def upgrade():
+def upgrade() -> None:
+    # 若表不存在则创建最小形态（幂等）
     bind = op.get_bind()
+    insp = sa.inspect(bind)
 
-    # 1) 父表 items 若不存在，创建“最小结构”
-    if not _has_table(bind, "items"):
+    if not insp.has_table("order_items"):
         op.create_table(
-            "items",
-            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-            sa.Column("sku", sa.String(length=128), nullable=False, unique=True),
-            sa.Column("name", sa.String(length=255), nullable=False),
+            "order_items",
+            sa.Column("id", sa.BigInteger, primary_key=True),
+            sa.Column("order_id", sa.BigInteger, nullable=False),
+            sa.Column("item_id", sa.BigInteger, nullable=False),
+            sa.Column("qty", sa.Numeric(18, 6), nullable=False, server_default=sa.text("0")),
         )
+        op.alter_column("order_items", "qty", server_default=None)
 
-    # 2) 父表 orders 若不存在，创建“最小结构”
-    if not _has_table(bind, "orders"):
-        op.create_table(
-            "orders",
-            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+    # 复合索引（有些历史路径会在别的迁移里创建，这里用 IF NOT EXISTS 保守兜底）
+    op.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_order_items_order_item "
+            "ON public.order_items (order_id, item_id)"
         )
-
-    # 3) 子表 order_items（本迁移的目标表）
-    op.create_table(
-        "order_items",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("order_id", sa.Integer(), nullable=False),
-        sa.Column("item_id", sa.Integer(), nullable=False),
-        sa.Column("qty", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(["order_id"], ["orders.id"], name="fk_order_items_order", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["item_id"], ["items.id"], name="fk_order_items_item"),
     )
-    op.create_index("ix_order_items_order_item", "order_items", ["order_id", "item_id"], unique=False)
 
 
-def downgrade():
-    # 仅删除当前迁移创建的对象（不要动父表）
-    op.drop_index("ix_order_items_order_item", table_name="order_items")
-    op.drop_table("order_items")
+def downgrade() -> None:
+    """幂等降级：索引按 IF EXISTS 删除，不依赖固定存在的名字。"""
+    conn = op.get_bind()
+
+    # 常见命名
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_order_item"))
+    # 若历史曾分开建过单列索引，也顺带兜一下（不会报错）
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_order_id"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS public.ix_order_items_item_id"))
+    # 不在此删除表，保持与后续迁移的删除顺序一致

@@ -4,6 +4,7 @@ Revision ID: 20251101_v_scan_trace_view
 Revises: 20251101_event_log_occurred_at_unify
 Create Date: 2025-11-01 22:15:00
 """
+
 from alembic import op
 
 revision = "20251101_v_scan_trace_view"
@@ -63,8 +64,10 @@ ORDER BY e.occurred_at, l.ref_line NULLS FIRST;
 
 DROP_SQL = r"DROP VIEW IF EXISTS v_scan_trace;"
 
+
 def upgrade():
     op.execute(VIEW_SQL)
+
 
 def downgrade():
     op.execute(DROP_SQL)

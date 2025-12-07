@@ -4,6 +4,7 @@ Revision ID: u2_event_error_log_message_text
 Revises: u1_outbound_commits_unique
 Create Date: 2025-10-XX
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

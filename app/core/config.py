@@ -19,6 +19,9 @@ class AppSettings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
     JSON_LOG: bool = Field(default=False)
 
+    # 出库策略（Phase 3.4 简化：允许“直发出库（无需 RESERVE）”）
+    ALLOW_SHIP_WITHOUT_RESERVE: bool = Field(default=True)
+
     # 从 .env 读取，忽略多余项
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

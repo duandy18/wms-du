@@ -1,12 +1,14 @@
-"""compact event_error_log: move verbose columns into meta JSONB and drop them (dependency-aware)
+"""event_error_log compact meta (move verbose cols into meta JSONB) + CI-safe downgrade
 
 Revision ID: 20251031_event_error_log_compact_meta
 Revises: 20251030_events_core_tables
 Create Date: 2025-10-31
 """
+
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # ---- Alembic identifiers ----
 revision = "20251031_event_error_log_compact_meta"
@@ -14,128 +16,256 @@ down_revision = "20251030_events_core_tables"
 branch_labels = None
 depends_on = None
 
-# 计划保留的最小接口：dedup_key, stage, error, occurred_at, meta
-# 其余列若不存在依赖则删除；若存在依赖（如视图/函数）则暂留并标注为deprecated。
-EXTRA_COLS = [
-    "error_code", "error_type", "error_msg", "message",
-    "event_id", "order_no", "shop_id", "platform",
-    "from_state", "to_state", "idempotency_key",
-    "retry_count", "max_retries", "next_retry_at",
-    "payload", "payload_json",
-    "created_at", "updated_at",
-]
 
-def _insp():
-    bind = op.get_bind()
-    return sa.inspect(bind)
+def upgrade() -> None:
+    conn = op.get_bind()
 
-def _has_table(name: str) -> bool:
-    return _insp().has_table(name)
-
-def _has_column(table: str, col: str) -> bool:
-    return any(c["name"] == col for c in _insp().get_columns(table))
-
-def _existing_indexes(table: str):
-    return [ix["name"] for ix in _insp().get_indexes(table)]
-
-def _add_meta_if_absent():
-    if not _has_column("event_error_log", "meta"):
-        op.add_column(
-            "event_error_log",
-            sa.Column("meta", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
-        )
-        op.alter_column("event_error_log", "meta", server_default=None)
-
-def _dependent_views_for_column(table: str, column: str):
-    # 查找依赖此列的视图（不含物化/函数依赖的复杂情况）
-    sql = sa.text("""
-        SELECT DISTINCT n.nspname || '.' || c.relname AS view_name
-        FROM pg_catalog.pg_attribute a
-        JOIN pg_catalog.pg_class t ON a.attrelid = t.oid
-        JOIN pg_catalog.pg_depend d ON d.refobjid = t.oid AND d.refobjsubid = a.attnum
-        JOIN pg_catalog.pg_rewrite r ON r.oid = d.objid
-        JOIN pg_catalog.pg_class c ON c.oid = r.ev_class
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE t.relkind = 'r'
-          AND c.relkind = 'v'
-          AND t.relname = :table
-          AND a.attname = :column
-    """)
-    rows = _insp().bind.execute(sql, {"table": table, "column": column}).fetchall()
-    return [r[0] for r in rows]
-
-def upgrade():
-    if not _has_table("event_error_log"):
-        return
-
-    _add_meta_if_absent()
-
-    # 1) 把扩展列打包进 meta（仅对存在的列）
-    pairs = []
-    for c in EXTRA_COLS:
-        if _has_column("event_error_log", c):
-            pairs.append(f"'{c}', {sa.text(c).text}")
-    if pairs:
-        kv = ", ".join(pairs)
-        op.execute(sa.text(
-            f"""
-            UPDATE event_error_log
-               SET meta = COALESCE(meta, '{{}}'::jsonb) || jsonb_strip_nulls(jsonb_build_object({kv}));
+    # 1) 确保 meta 列存在（JSONB）
+    conn.execute(
+        sa.text(
             """
-        ))
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='event_error_log' AND column_name='meta'
+      ) THEN
+        ALTER TABLE public.event_error_log ADD COLUMN meta JSONB;
+      END IF;
+    END$$;"""
+        )
+    )
 
-    # 2) 逐列尝试删除：若有依赖视图，则跳过删除并打上deprecated标注
-    for c in EXTRA_COLS:
-        if _has_column("event_error_log", c):
-            deps = _dependent_views_for_column("event_error_log", c)
-            if deps:
-                # 标注为废弃，便于后续治理（COMMENT 不会影响性能）
-                op.execute(sa.text(
-                    f"COMMENT ON COLUMN event_error_log.{c} IS 'DEPRECATED: moved into meta; referenced by views: {', '.join(deps)}';"
-                ))
-            else:
-                op.drop_column("event_error_log", c)
+    # 2) 将“冗余列”合并进 meta（仅当这些列存在时才采集）
+    #   说明：这里尽量只聚合，不在此处删除；删除放到步骤 4 并带守卫
+    conn.execute(
+        sa.text(
+            """
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_code') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('error_code', error_code);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_type') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('error_type', error_type);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_msg') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('error_msg', error_msg);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='message') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('message', message);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='event_id') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('event_id', event_id);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='order_no') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('order_no', order_no);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='shop_id') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('shop_id', shop_id);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='platform') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('platform', platform);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='from_state') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('from_state', from_state);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='to_state') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('to_state', to_state);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='idempotency_key') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('idempotency_key', idempotency_key);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='payload') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('payload', payload);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='payload_json') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('payload_json', payload_json);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='retry_count') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('retry_count', retry_count);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='max_retries') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('max_retries', max_retries);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='created_at') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('created_at', created_at);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='updated_at') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('updated_at', updated_at);
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='next_retry_at') THEN
+        UPDATE public.event_error_log
+           SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('next_retry_at', next_retry_at);
+      END IF;
+    END$$;"""
+        )
+    )
 
-    # 3) 给 meta 建 GIN 索引（若尚未存在）
-    idx_name = "ix_event_error_log_meta_gin"
-    if idx_name not in _existing_indexes("event_error_log"):
-        op.execute(sa.text(f"CREATE INDEX {idx_name} ON event_error_log USING gin (meta)"))
+    # 3) 为 meta 建 GIN 索引（如需）
+    op.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_event_error_log_meta_gin ON event_error_log USING gin (meta)"
+        )
+    )
 
-def downgrade():
-    # 弱可逆：仅恢复被删的列壳，并尽力从 meta 回填
-    if not _has_table("event_error_log"):
-        return
+    # 3.5) 为避免依赖关系错误，先删除依赖旧列的视图（如存在）
+    #      v_event_errors_pending 依赖 error_code 等列，先 DROP 再 DROP COLUMN
+    op.execute(sa.text("DROP VIEW IF EXISTS v_event_errors_pending"))
 
-    # 1) 还原列（可空）
-    ts_cols = ["created_at", "updated_at", "next_retry_at"]
-    text_cols = [
-        "error_code", "error_type", "error_msg", "message",
-        "event_id", "order_no", "shop_id", "platform",
-        "from_state", "to_state", "idempotency_key",
-        "payload", "payload_json",
-    ]
-    int_cols = ["retry_count", "max_retries"]
+    # 4) 删除已合并到 meta 的旧列（带守卫）
+    cols = (
+        "error_code,error_type,error_msg,message,event_id,order_no,shop_id,platform,from_state,to_state,"
+        "idempotency_key,payload,payload_json,retry_count,max_retries,created_at,updated_at,next_retry_at"
+    ).split(",")
+    for c in cols:
+        op.execute(sa.text(f"ALTER TABLE event_error_log DROP COLUMN IF EXISTS {c}"))
 
-    for c in ts_cols:
-        if not _has_column("event_error_log", c):
-            op.add_column("event_error_log", sa.Column(c, sa.TIMESTAMP(timezone=True), nullable=True))
-    for c in text_cols:
-        if not _has_column("event_error_log", c):
-            op.add_column("event_error_log", sa.Column(c, sa.Text, nullable=True))
-    for c in int_cols:
-        if not _has_column("event_error_log", c):
-            op.add_column("event_error_log", sa.Column(c, sa.Integer, nullable=True))
 
-    # 2) 从 meta 回填（存在键才覆盖）
-    sets = []
-    for k in text_cols:
-        sets.append(f"""{k} = COALESCE(meta->>'{k}', {k})""")
-    for k in int_cols:
-        sets.append(f"""{k} = COALESCE(NULLIF(meta->>'{k}','')::int, {k})""")
-    for k in ts_cols:
-        sets.append(f"""{k} = COALESCE(NULLIF(meta->>'{k}','')::timestamptz, {k})""")
-    if sets and _has_column("event_error_log", "meta"):
-        op.execute(sa.text(f"UPDATE event_error_log SET {', '.join(sets)}"))
+def downgrade() -> None:
+    conn = op.get_bind()
 
-    # 3) 删 GIN 索引（若存在）
+    # 1) 先补回旧列（若缺）
+    conn.execute(
+        sa.text(
+            """
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_code') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN error_code TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_type') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN error_type TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='error_msg') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN error_msg TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='message') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN message TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='event_id') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN event_id TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='order_no') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN order_no TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='shop_id') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN shop_id TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='platform') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN platform TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='from_state') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN from_state TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='to_state') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN to_state TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='idempotency_key') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN idempotency_key TEXT;
+      END IF;
+      -- payload: 历史有 text/bytea 等，这里按 TEXT 回填
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='payload') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN payload TEXT;
+      END IF;
+      -- payload_json: 历史有 text/jsonb 两种，先加 TEXT，稍后根据实际类型回填后可按需改型
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='payload_json') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN payload_json TEXT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='retry_count') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN retry_count INT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='max_retries') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN max_retries INT;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='created_at') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN created_at TIMESTAMPTZ;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='updated_at') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN updated_at TIMESTAMPTZ;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='event_error_log' AND column_name='next_retry_at') THEN
+        ALTER TABLE public.event_error_log ADD COLUMN next_retry_at TIMESTAMPTZ;
+      END IF;
+    END$$;"""
+        )
+    )
+
+    # 2) 从 meta 回填各列（text/int/timestamptz 用 ->> 并显式强转）
+    conn.execute(
+        sa.text(
+            """
+    UPDATE public.event_error_log
+       SET error_code      = COALESCE(NULLIF(meta->>'error_code',''), error_code),
+           error_type      = COALESCE(NULLIF(meta->>'error_type',''), error_type),
+           error_msg       = COALESCE(NULLIF(meta->>'error_msg',''), error_msg),
+           message         = COALESCE(NULLIF(meta->>'message',''), message),
+           event_id        = COALESCE(NULLIF(meta->>'event_id',''), event_id),
+           order_no        = COALESCE(NULLIF(meta->>'order_no',''), order_no),
+           shop_id         = COALESCE(NULLIF(meta->>'shop_id',''), shop_id),
+           platform        = COALESCE(NULLIF(meta->>'platform',''), platform),
+           from_state      = COALESCE(NULLIF(meta->>'from_state',''), from_state),
+           to_state        = COALESCE(NULLIF(meta->>'to_state',''), to_state),
+           idempotency_key = COALESCE(NULLIF(meta->>'idempotency_key',''), idempotency_key),
+           payload         = COALESCE(NULLIF(meta->>'payload',''), payload),
+           retry_count     = COALESCE(NULLIF(meta->>'retry_count','')::int, retry_count),
+           max_retries     = COALESCE(NULLIF(meta->>'max_retries','')::int, max_retries),
+           created_at      = COALESCE(NULLIF(meta->>'created_at','')::timestamptz, created_at),
+           updated_at      = COALESCE(NULLIF(meta->>'updated_at','')::timestamptz, updated_at),
+           next_retry_at   = COALESCE(NULLIF(meta->>'next_retry_at','')::timestamptz, next_retry_at)
+    """
+        )
+    )
+
+    # 3) payload_json 回填：根据列真实类型选择 text / jsonb 两种路径，避免 COALESCE 类型不一致
+    conn.execute(
+        sa.text(
+            """
+    DO $$
+    DECLARE is_jsonb boolean;
+    BEGIN
+      SELECT (data_type='jsonb')
+        INTO is_jsonb
+        FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='event_error_log' AND column_name='payload_json'
+       LIMIT 1;
+
+      IF is_jsonb THEN
+        -- 目标列是 jsonb：把 meta->>'payload_json' 解析为 jsonb，再回填
+        EXECUTE $SQL$
+          UPDATE public.event_error_log
+             SET payload_json = COALESCE(NULLIF(meta->>'payload_json','')::jsonb, payload_json)
+        $SQL$;
+      ELSE
+        -- 目标列是 text：走纯文本
+        EXECUTE $SQL$
+          UPDATE public.event_error_log
+             SET payload_json = COALESCE(NULLIF(meta->>'payload_json',''), payload_json)
+        $SQL$;
+      END IF;
+    END$$;"""
+        )
+    )
+
+    # 4) 删 meta 索引（如果有）
     op.execute(sa.text("DROP INDEX IF EXISTS ix_event_error_log_meta_gin"))
+
+    # 5) 如不再需要 meta，可按需删除（这里保留；若一定要删，可打开下行）
+    # op.execute(sa.text("ALTER TABLE event_error_log DROP COLUMN IF EXISTS meta"))

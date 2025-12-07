@@ -1,7 +1,9 @@
 # app/api/__init__.py
 """
-让旧代码可以 `from app.api import api_router`。
-"""
-from __future__ import annotations
+API package bootstrap.
 
-from .endpoints import api_router  # re-export
+- 这里不做任何重导出（尤其不再引用已删除的 `app.api.endpoints`）
+- 聚合逻辑由 `app/api/router.py` 管理
+"""
+
+__all__ = []

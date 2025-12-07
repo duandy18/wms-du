@@ -1,0 +1,24 @@
+                                                                   Table "public.pick_tasks"
+    Column    |           Type           | Collation | Nullable |                Default                 | Storage  | Compression | Stats target | Description
+--------------+--------------------------+-----------+----------+----------------------------------------+----------+-------------+--------------+-------------
+ id           | bigint                   |           | not null | nextval('pick_tasks_id_seq'::regclass) | plain    |             |              |
+ ref          | text                     |           |          |                                        | extended |             |              |
+ warehouse_id | bigint                   |           | not null |                                        | plain    |             |              |
+ source       | text                     |           | not null | 'SYSTEM'::text                         | extended |             |              |
+ priority     | integer                  |           | not null | 100                                    | plain    |             |              |
+ status       | text                     |           | not null | 'READY'::text                          | extended |             |              |
+ assigned_to  | text                     |           |          |                                        | extended |             |              |
+ note         | text                     |           |          |                                        | extended |             |              |
+ created_at   | timestamp with time zone |           | not null | now()                                  | plain    |             |              |
+ updated_at   | timestamp with time zone |           | not null | now()                                  | plain    |             |              |
+Indexes:
+    "pick_tasks_pkey" PRIMARY KEY, btree (id)
+    "ix_pick_tasks_assigned" btree (assigned_to)
+    "ix_pick_tasks_status" btree (status)
+    "ix_pick_tasks_wh_prio" btree (warehouse_id, priority)
+    "pick_tasks_ref_key" UNIQUE CONSTRAINT, btree (ref)
+Check constraints:
+    "ck_pick_tasks_status" CHECK (status = ANY (ARRAY['READY'::text, 'ASSIGNED'::text, 'PICKING'::text, 'DONE'::text, 'CANCELLED'::text]))
+Referenced by:
+    TABLE "pick_task_lines" CONSTRAINT "pick_task_lines_task_id_fkey" FOREIGN KEY (task_id) REFERENCES pick_tasks(id) ON DELETE CASCADE
+Access method: heap

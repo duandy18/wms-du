@@ -7,13 +7,13 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.worker import celery  # 导入项目里暴露的 Celery 实例
 from app.db.session import async_session_maker
+from app.domain.events_enums import EventState
 from app.limits import ensure_bucket
-from app.metrics import EVENTS, ERRS, LAT
+from app.metrics import ERRS, EVENTS, LAT
 from app.services.event_gateway import enforce_transition
 from app.services.outbound_service import OutboundService
-from app.domain.events_enums import EventState
+from app.worker import celery  # 导入项目里暴露的 Celery 实例
 
 
 def _s(v: Optional[Any], default: str = "") -> str:
@@ -39,7 +39,9 @@ async def _process_one(
 
     order_no: str = _s(payload.get("order_no") or payload.get("ref"))
     from_state: Optional[str] = _s(payload.get("from_state")) or None
-    to_state: str = _s(payload.get("to_state") or payload.get("state") or EventState.PAID.value).upper()
+    to_state: str = _s(
+        payload.get("to_state") or payload.get("state") or EventState.PAID.value
+    ).upper()
     idem_key: str = _s(payload.get("idempotency_key")) or f"{p}:{s}:{order_no}:{to_state}"
 
     # 1) 状态机守卫（不合法将抛出 ValueError("ILLEGAL_TRANSITION")）
@@ -83,6 +85,7 @@ def process_event(platform: str, shop_id: str, payload: Dict[str, Any]) -> str:
       - 打开异步会话执行 _process_one
       - 异常兜底：仅当异常不是 ILLEGAL_TRANSITION 才补记错误计数（避免与网关重复）
     """
+
     async def _runner() -> str:
         p = _s(platform).lower()
         s = _s(shop_id)
@@ -104,9 +107,12 @@ def process_event(platform: str, shop_id: str, payload: Dict[str, Any]) -> str:
                 return result
             except Exception as exc:
                 code = str(getattr(exc, "code", None) or type(exc).__name__)
-                msg  = str((exc.args[0] if getattr(exc, "args", None) else "") or "")
+                msg = str((exc.args[0] if getattr(exc, "args", None) else "") or "")
                 # 状态机已对 ILLEGAL_TRANSITION 记过一次，这里避免重复计数
-                if not (code == "ILLEGAL_TRANSITION" or (code == "ValueError" and msg == "ILLEGAL_TRANSITION")):
+                if not (
+                    code == "ILLEGAL_TRANSITION"
+                    or (code == "ValueError" and msg == "ILLEGAL_TRANSITION")
+                ):
                     ERRS.labels(p, s, code).inc()
                 try:
                     await session.rollback()

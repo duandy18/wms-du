@@ -1,7 +1,7 @@
-# app/services/platform_adapter.py
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 StandardEvent = Dict[str, Any]
 RawEvent = Dict[str, Any]
@@ -11,6 +11,7 @@ Task = Dict[str, Any]
 # ============================================================
 #                    基类与通用工具
 # ============================================================
+
 
 class PlatformAdapter(ABC):
     platform: str
@@ -70,9 +71,10 @@ def _shop_id_of(raw: RawEvent) -> str:
 
 # --------------------- 行规范化：item/qty[/location] ---------------------
 
-_ItemIdKeys  = ("item_id", "itemId", "sku_id", "skuId", "goods_id", "goodsId", "id")
-_QtyKeys     = ("qty", "quantity", "num", "count", "amount")
-_LocIdKeys   = ("location_id", "loc_id", "locationId", "warehouse_loc_id", "bin_id", "binId")
+_ItemIdKeys = ("item_id", "itemId", "sku_id", "skuId", "goods_id", "goodsId", "id")
+_QtyKeys = ("qty", "quantity", "num", "count", "amount")
+_LocIdKeys = ("location_id", "loc_id", "locationId", "warehouse_loc_id", "bin_id", "binId")
+
 
 def _norm_int(val: Any, default: Optional[int] = None) -> Optional[int]:
     if val is None or val == "":
@@ -85,17 +87,15 @@ def _norm_int(val: Any, default: Optional[int] = None) -> Optional[int]:
         except Exception:
             return default
 
+
 def _first_present(d: Dict[str, Any], keys: Iterable[str]) -> Any:
     for k in keys:
         if k in d:
             return d[k]
     return None
 
-def _normalize_lines(
-    lines: Any,
-    *,
-    need_location: bool = False
-) -> List[Dict[str, int]]:
+
+def _normalize_lines(lines: Any, *, need_location: bool = False) -> List[Dict[str, int]]:
     """
     将多形态 lines 规整为 [{item_id, qty}[, location_id]]。
     - 当 need_location=True 时，仅保留含 location_id 的行（用于 SHIP 尝试直达）；
@@ -111,8 +111,8 @@ def _normalize_lines(
         if not isinstance(raw, dict):
             continue
         item = _norm_int(_first_present(raw, _ItemIdKeys))
-        qty  = _norm_int(_first_present(raw, _QtyKeys))
-        loc  = _norm_int(_first_present(raw, _LocIdKeys))
+        qty = _norm_int(_first_present(raw, _QtyKeys))
+        loc = _norm_int(_first_present(raw, _LocIdKeys))
 
         if item is None or qty is None:
             continue
@@ -134,6 +134,7 @@ def _normalize_lines(
 #                        平台适配器
 # ============================================================
 
+
 # ---------- PDD ----------
 class PDDAdapter(PlatformAdapter):
     platform = "pdd"
@@ -142,10 +143,10 @@ class PDDAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("order_sn") or raw.get("order_id") or "",
-            "status":   raw.get("status")   or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
@@ -165,10 +166,10 @@ class TaobaoAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("tid") or raw.get("order_id") or "",
-            "status":   raw.get("trade_status") or raw.get("status") or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("trade_status") or raw.get("status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
@@ -186,10 +187,10 @@ class TmallAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("tid") or raw.get("order_id") or "",
-            "status":   raw.get("trade_status") or raw.get("status") or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("trade_status") or raw.get("status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
@@ -207,10 +208,10 @@ class JDAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("orderId") or raw.get("order_id") or "",
-            "status":   raw.get("orderStatus") or raw.get("status") or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("orderStatus") or raw.get("status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
@@ -228,10 +229,10 @@ class DouyinAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("order_id") or raw.get("orderId") or raw.get("tid") or "",
-            "status":   raw.get("status") or raw.get("trade_status") or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("status") or raw.get("trade_status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
@@ -249,10 +250,10 @@ class XHSAdapter(PlatformAdapter):
         return {
             "platform": self.platform,
             "order_id": raw.get("order_id") or raw.get("orderId") or raw.get("tid") or "",
-            "status":   raw.get("status") or raw.get("trade_status") or "",
-            "lines":    raw.get("lines"),
-            "shop_id":  _shop_id_of(raw),
-            "raw":      raw,
+            "status": raw.get("status") or raw.get("trade_status") or "",
+            "lines": raw.get("lines"),
+            "shop_id": _shop_id_of(raw),
+            "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:

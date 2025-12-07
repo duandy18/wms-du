@@ -44,9 +44,7 @@ class PermissionService:
         return obj
 
     def get_all_permissions(self) -> List[Permission]:
-        rows = self.db.execute(
-            select(Permission).order_by(Permission.id.asc())
-        ).scalars().all()
+        rows = self.db.execute(select(Permission).order_by(Permission.id.asc())).scalars().all()
         return list(rows)
 
     def get_permission_by_id(self, permission_id: str | int) -> Optional[Permission]:
@@ -54,6 +52,4 @@ class PermissionService:
             pid = int(permission_id)
         except Exception:
             return None
-        return self.db.execute(
-            select(Permission).where(Permission.id == pid)
-        ).scalar_one_or_none()
+        return self.db.execute(select(Permission).where(Permission.id == pid)).scalar_one_or_none()

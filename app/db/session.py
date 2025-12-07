@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session, sessionmaker
 # ---- DSN 归一：把 sync/async DSN 统一到 psycopg3 与 aiosqlite ----
 def _normalize_sync_dsn(url: str) -> str:
     if not url:
-        return "postgresql+psycopg://wms:wms@localhost:5432/wms"
+        # 默认使用 dev 环境 PG（5433）
+        return "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
     # postgres/postgresql(+*) → postgresql+psycopg
     if url.startswith("postgresql+asyncpg://") or url.startswith("postgres+asyncpg://"):
         return re.sub(r"^postgres(?:ql)?\+asyncpg://", "postgresql+psycopg://", url)
@@ -32,7 +33,8 @@ def _normalize_sync_dsn(url: str) -> str:
 
 def _normalize_async_dsn(url: str) -> str:
     if not url:
-        return "postgresql+psycopg://wms:wms@localhost:5432/wms"
+        # 默认使用 dev 环境 PG（5433）
+        return "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
     # sqlite:/// → sqlite+aiosqlite:///
     if url.startswith("sqlite:///"):
         return "sqlite+aiosqlite://" + url[len("sqlite:///") - 1 :]
@@ -46,9 +48,25 @@ def _normalize_async_dsn(url: str) -> str:
     return url
 
 
-RAW_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://wms:wms@localhost:5432/wms")
+# 优先级：
+#  1) WMS_DATABASE_URL（你用来跑 Alembic / 本地 docker 的）
+#  2) DATABASE_URL
+#  3) 默认 dev DSN: 5433/wms
+_DEFAULT_DSN = "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
+_raw = os.getenv("WMS_DATABASE_URL") or os.getenv("DATABASE_URL") or _DEFAULT_DSN
+
+# 有些环境会把值写成 '"postgresql+psycopg://.../wms"'，这里统一剥掉两侧引号
+_raw = _raw.strip()
+if (_raw.startswith('"') and _raw.endswith('"')) or (_raw.startswith("'") and _raw.endswith("'")):
+    _raw = _raw[1:-1].strip()
+
+RAW_URL = _raw
+
 SYNC_URL = _normalize_sync_dsn(RAW_URL)
 ASYNC_URL = _normalize_async_dsn(RAW_URL)
+
+print(f"[DB] Using DSN (sync) : {SYNC_URL}")
+print(f"[DB] Using DSN (async): {ASYNC_URL}")
 
 # ---- 同步 Engine + Session（Alembic / 同步场景） ----
 engine = create_sync_engine_sa(SYNC_URL, future=True, pool_pre_ping=True)

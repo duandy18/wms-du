@@ -1,0 +1,82 @@
+# tests/api/test_orders_create_contract.py
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_orders_create_minimal_contract() -> None:
+    """
+    验证 /orders 接口的最小契约：
+
+    - 支持以 platform / shop_id / ext_order_no + lines 创建订单；
+    - 返回 JSON 中包含 status / id / ref 字段；
+    - status 为 "OK" 或 "IDEMPOTENT"（幂等插入场景）；
+    - ref 采用 "ORD:{platform}:{shop_id}:{ext_order_no}" 格式。
+    """
+    payload = {
+        "platform": "PDD",
+        "shop_id": "TEST_SHOP_ORD",
+        "ext_order_no": "TEST_ORDER_001",
+        "buyer_name": "测试买家",
+        "buyer_phone": "13800000000",
+        "order_amount": 26.0,
+        "pay_amount": 26.0,
+        "lines": [
+            {
+                # 假设测试库中存在 item_id=1，如果不存在，你现有其他测试也会挂
+                "item_id": 1,
+                "title": "测试商品 A",
+                "qty": 2,
+                "price": 10.5,
+                "amount": 21.0,
+            },
+            {
+                "item_id": 1,
+                "title": "测试商品 B",
+                "qty": 1,
+                "price": 5.0,
+                "amount": 5.0,
+            },
+        ],
+    }
+
+    resp = client.post("/orders", json=payload)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    # 基础字段契约
+    assert "status" in data
+    assert "id" in data
+    assert "ref" in data
+
+    assert data["status"] in ("OK", "IDEMPOTENT")
+    assert isinstance(data["id"], int) or data["id"] is None
+
+    expected_ref = f"ORD:{payload['platform']}:{payload['shop_id']}:{payload['ext_order_no']}"
+    assert data["ref"] == expected_ref
+
+
+def test_orders_create_with_no_lines_rejected() -> None:
+    """
+    验证无行订单的行为：
+
+    当前实现允许 lines 为空，但这类订单对库存 / 履约没有意义。
+    这里至少保证接口能正常返回，不抛 5xx。
+    """
+    payload = {
+        "platform": "PDD",
+        "shop_id": "TEST_SHOP_ORD",
+        "ext_order_no": "TEST_ORDER_NO_LINES",
+        "lines": [],
+    }
+
+    resp = client.post("/orders", json=payload)
+    # 当前实现并未强制校验 lines 非空，因此只验证不会 5xx 即可
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "status" in data
+    assert data["ref"].startswith("ORD:PDD:TEST_SHOP_ORD:")

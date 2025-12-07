@@ -1,64 +1,111 @@
 # app/models/__init__.py
 """
-聚合 ORM 基类，并在导入时安全地加载所有模型模块，
-确保 SQLAlchemy 的关系映射（relationship("...")）能正确注册。
-
-用途：
-- 测试或服务代码在未 import app.main 的情况下，也能直接使用 ORM。
-- 某些模块缺失时不会阻断（try/except 保护），便于渐进迁移。
+统一导出 ORM 模型（主线模型，不包含已归档 / 兼容层）。
 """
 
-from __future__ import annotations
-
-from app.db.base import Base  # 声明式基类
+from importlib import import_module
 
 
-def _safe_import(module_path: str) -> None:
-    """安全导入模型模块：不存在时跳过，不影响整体导入。"""
-    try:
-        __import__(module_path)
-    except Exception:
-        # 不打印噪音日志：测试/子集运行时允许部分模型缺席
-        pass
+def _export(module_name: str, class_name: str) -> None:
+    module = import_module(module_name)
+    globals()[class_name] = getattr(module, class_name)
 
 
-def _import_all_models() -> None:
-    """
-    将项目里的模型模块尽量全部导入到同一个 registry，
-    解决 relationship("OrderItem") 这类字符串引用在首次使用时未解析的问题。
-    """
-    # 维表/主数据
-    _safe_import("app.models.item")
-    _safe_import("app.models.location")
-    _safe_import("app.models.warehouse")
-    _safe_import("app.models.party")
-    _safe_import("app.models.store")
-    _safe_import("app.models.platform_shops")
+MODEL_SPECS = [
+    # -------- 库存 / 批次 --------
+    ("app.models.item", "Item"),
+    ("app.models.location", "Location"),
+    ("app.models.warehouse", "Warehouse"),
+    ("app.models.batch", "Batch"),
+    ("app.models.stock", "Stock"),
+    ("app.models.stock_ledger", "StockLedger"),
+    ("app.models.stock_snapshot", "StockSnapshot"),
+    # -------- 订单 & 出库相关（v2/v3）--------
+    ("app.models.order", "Order"),
+    ("app.models.order_item", "OrderItem"),
+    ("app.models.order_line", "OrderLine"),
+    ("app.models.order_logistics", "OrderLogistics"),
+    ("app.models.order_state_snapshot", "OrderStateSnapshot"),
+    # -------- 拣货任务 --------
+    ("app.models.pick_task", "PickTask"),
+    ("app.models.pick_task_line", "PickTaskLine"),
+    # -------- 平台 & 事件流 --------
+    ("app.models.platform_shops", "PlatformShop"),
+    ("app.models.platform_event", "PlatformEvent"),
+    ("app.models.event_store", "EventStore"),
+    ("app.models.event_log", "EventLog"),
+    ("app.models.event_error_log", "EventErrorLog"),
+    ("app.models.audit_event", "AuditEvent"),
+    # -------- 预占 / 软预占 --------
+    ("app.models.reservation", "Reservation"),
+    ("app.models.reservation_line", "ReservationLine"),
+    ("app.models.reservation_allocation", "ReservationAllocations"),
+    # -------- 门店 & RBAC --------
+    ("app.models.store", "Store"),
+    ("app.models.user", "User"),
+    ("app.models.role", "Role"),
+    ("app.models.permission", "Permission"),
+    # -------- 采购系统 --------
+    ("app.models.purchase_order", "PurchaseOrder"),
+    ("app.models.purchase_order_line", "PurchaseOrderLine"),
+    # -------- 收货任务 --------
+    ("app.models.receive_task", "ReceiveTask"),
+    ("app.models.receive_task", "ReceiveTaskLine"),
+    # -------- 退货任务（采购退货）--------
+    ("app.models.return_task", "ReturnTask"),
+    ("app.models.return_task", "ReturnTaskLine"),
+    # -------- 主数据 --------
+    ("app.models.supplier", "Supplier"),
+    ("app.models.shipping_provider", "ShippingProvider"),
+]
 
-    # 交易/单据
-    _safe_import("app.models.order")
-    _safe_import("app.models.order_item")
-    _safe_import("app.models.return_record")
+for _module, _name in MODEL_SPECS:
+    _export(_module, _name)
 
-    # 库存相关
-    _safe_import("app.models.stock")
-    _safe_import("app.models.batch")
-    _safe_import("app.models.stock_ledger")
-    _safe_import("app.models.stock_snapshot")
-    _safe_import("app.models.inventory")
+from app.models.batch import Batch as _Batch  # noqa: E402
+from app.models.reservation_allocation import (  # noqa: E402
+    ReservationAllocations as _ReservationAllocations,
+)
 
-    # 权限/用户
-    _safe_import("app.models.user")
-    _safe_import("app.models.role")
-    _safe_import("app.models.permission")
-    _safe_import("app.models.role_grants")
-    _safe_import("app.models.associations")
+Batches = getattr(_Batch, "__table__", None)
+ReservationAllocations = getattr(_ReservationAllocations, "__table__", None)
 
-    # 事件/日志
-    _safe_import("app.models.event_error_log")
-
-
-# 在导入 app.models 时立即完成注册
-_import_all_models()
-
-__all__ = ["Base"]
+__all__ = [
+    "Item",
+    "Location",
+    "Warehouse",
+    "Batch",
+    "Stock",
+    "StockLedger",
+    "StockSnapshot",
+    "Order",
+    "OrderItem",
+    "OrderLine",
+    "OrderLogistics",
+    "OrderStateSnapshot",
+    "PickTask",
+    "PickTaskLine",
+    "PlatformShop",
+    "PlatformEvent",
+    "EventStore",
+    "EventLog",
+    "EventErrorLog",
+    "AuditEvent",
+    "Reservation",
+    "ReservationLine",
+    "ReservationAllocations",
+    "Store",
+    "User",
+    "Role",
+    "Permission",
+    "PurchaseOrder",
+    "PurchaseOrderLine",
+    "ReceiveTask",
+    "ReceiveTaskLine",
+    "ReturnTask",
+    "ReturnTaskLine",
+    "Supplier",
+    "ShippingProvider",
+    "Batches",
+    "ReservationAllocations",
+]

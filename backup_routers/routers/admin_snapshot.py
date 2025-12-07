@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -15,6 +15,7 @@ try:
     from app.models.stock_snapshot import StockSnapshot
 except Exception:  # pragma: no cover
     from app.models.stock_snapshots import StockSnapshot
+
 
 # 每请求独立引擎/会话，避免跨事件循环
 async def _get_session(_req: Request):
@@ -28,10 +29,12 @@ async def _get_session(_req: Request):
     finally:
         await engine.dispose()
 
+
 class TrendItem(BaseModel):
     snapshot_date: date
     qty_on_hand: int
     qty_available: Optional[int] = None
+
 
 @router.get("/snapshot/trends", response_model=List[TrendItem])
 async def get_snapshot_trends(
@@ -44,7 +47,10 @@ async def get_snapshot_trends(
         frm, to = to, frm
 
     has_qty_available = hasattr(StockSnapshot, "qty_available")
-    cols = [StockSnapshot.snapshot_date, func.coalesce(StockSnapshot.qty_on_hand, 0).label("qty_on_hand")]
+    cols = [
+        StockSnapshot.snapshot_date,
+        func.coalesce(StockSnapshot.qty_on_hand, 0).label("qty_on_hand"),
+    ]
     if has_qty_available:
         cols.append(StockSnapshot.qty_available)
 

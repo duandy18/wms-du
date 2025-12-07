@@ -7,12 +7,14 @@ down_revision = "20251027_drop_legacy_uq_item_batch"  # 按你实际上一条迁
 branch_labels = None
 depends_on = None
 
+
 def upgrade():
     op.drop_constraint(
         "uq_batches_composite",
         table_name="batches",
         type_="unique",
     )
+
 
 def downgrade():
     op.create_unique_constraint(

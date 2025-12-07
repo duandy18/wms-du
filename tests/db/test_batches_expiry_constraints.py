@@ -40,7 +40,7 @@ async def test_batches_expiry_check_and_trigger(session):
     # 3) 触发器兜底：不给 expire_at，但给 production_date + shelf_life_days
     sql_ins = text(
         """
-      INSERT INTO batches (item_id, warehouse_id, location_id, batch_code, production_date, shelf_life_days)
+      INSERT INTO batches (item_id, warehouse_id, batch_code, production_date, shelf_life_days)
       VALUES (:item_id, :wh, :loc, 'AUTO-EXP-TEST', :pd, :days)
       RETURNING id, expire_at
     """
@@ -67,7 +67,7 @@ async def test_batches_expiry_check_and_trigger(session):
     # 4) CHECK 约束：当 pd/expire_at 并存，expire_at 必须 >= production_date
     sql_bad = text(
         """
-      INSERT INTO batches (item_id, warehouse_id, location_id, batch_code, production_date, shelf_life_days, expire_at)
+      INSERT INTO batches (item_id, warehouse_id, batch_code, production_date, shelf_life_days, expire_at)
       VALUES (:item_id, :wh, :loc, 'AUTO-EXP-BAD', :pd, 1, :exp)
     """
     )

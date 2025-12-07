@@ -1,224 +1,294 @@
 # app/services/outbound_service.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import text
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.inventory_adjust import InventoryAdjust
 from app.services.stock_service import StockService
+
+UTC = timezone.utc
+
+__all__ = ["ShipLine", "OutboundService", "ship_commit", "commit_outbound"]
+
+
+@dataclass
+class ShipLine:
+    item_id: int
+    batch_code: str
+    qty: int
+    warehouse_id: Optional[int] = None
+    batch_id: Optional[int] = None
+    meta: Optional[Dict[str, Any]] = None
 
 
 class OutboundService:
     """
-    v1.0 一步法出库（单仓，接口预留多仓）：
-      commit(session, *, platform, shop_id, ref, warehouse_id, lines)
+    Phase 3 出库服务（硬口径 + 强幂等）：
 
-    要点：
-    - FEFO 扣减：InventoryAdjust.fefo_outbound(delta 为负)
-    - 幂等：outbound_ship_ops 上 (store_id, ref, item_id, location_id) 唯一
-    - 可见性：末尾统一 flush + commit（适配外部可能已有事务上下文）
-    - 可用量：读取 v_available（= on_hand - reservations.ACTIVE），避免多批次误判
+    - 粒度：(warehouse_id, item_id, batch_code)
+    - 幂等：以 (ref=order_id, item_id, warehouse_id, batch_code) 为键，
+      先查已扣数量，再扣“剩余需要扣”的量。
+    - 同一 payload 中重复的 (item,wh,batch) 会先合并为一行，再做一次扣减。
+
+    Phase 3.6：增加 trace_id 透传能力（当前不直接写 audit，仅向下传参）。
+    Phase 3.7-A：trace_id 透传到 StockService.adjust，用于后续填充 stock_ledger.trace_id。
+
+    Phase 3.9（Ship v3）：
+    ----------------------
+    出库成功后，自动将与 trace_id 对应的 open reservation_lines.consumed_qty 补齐，
+    使“预占 → 出库”形成闭环。
     """
 
-    @staticmethod
-    async def commit(
+    def __init__(self, stock_svc: Optional[StockService] = None) -> None:
+        self.stock_svc = stock_svc or StockService()
+
+    async def _consume_reservations_for_trace(
+        self,
         session: AsyncSession,
-        platform: str,
-        shop_id: str,
         *,
-        ref: str,
-        warehouse_id: int,
-        lines: List[Dict[str, Any]],
-        allow_expired: bool = False,
-    ) -> Dict[str, Any]:
-        if not lines:
-            return {"ok": True, "total_lines": 0, "total_qty": 0}
+        trace_id: Optional[str],
+        shipped_by_item: Dict[int, int],
+    ) -> None:
+        """
+        Ship v3: 自动消费预占（reservation_lines.consumed_qty）
 
-        store_id = await _resolve_store_id(session, platform=platform, shop_id=shop_id)
-        if store_id is None:
-            store_id = await _ensure_internal_store(session)
+        策略（保守版）：
 
-        results: List[Dict[str, Any]] = []
-        total_qty = 0
-        svc = StockService()
+        - 如果 trace_id 为空，直接跳过；
+        - shipped_by_item: {item_id: 本次实际发货数量}；
+        - 对每个 item_id：
+            * 找到 trace_id 匹配且 status='open' 的 reservation_lines；
+            * 按 created_at 顺序依次扣减 consumed_qty，最多扣到 shipped_qty；
+        - 不修改 reservations.status，只调整 reservation_lines.consumed_qty。
 
-        for ln in lines:
-            item_id = int(ln["item_id"])
-            location_id = int(ln["location_id"])
-            qty = int(ln["qty"])
+        仅在出库成功（有实际 need>0）时才更新 shipped_by_item。
+        """
+        if not trace_id:
+            return
+        if not shipped_by_item:
+            return
 
-            if qty <= 0:
-                results.append(
-                    {"item_id": item_id, "location_id": location_id, "qty": 0, "status": "IGNORED"}
-                )
+        for item_id, shipped_qty in shipped_by_item.items():
+            remain = int(shipped_qty or 0)
+            if remain <= 0:
                 continue
 
-            # 可用量检查：统一从 v_available 读取（现存-预留 的聚合口径）
-            avail_row = await session.execute(
-                text(
+            # 找到 trace_id + item_id 对应的 open reservation_lines
+            res2 = await session.execute(
+                sa.text(
                     """
-                    SELECT COALESCE(available, 0)
-                    FROM v_available
-                    WHERE item_id=:iid AND location_id=:loc
+                    SELECT rl.id,
+                           rl.qty,
+                           rl.consumed_qty
+                      FROM reservation_lines rl
+                      JOIN reservations r
+                        ON r.id = rl.reservation_id
+                     WHERE r.trace_id = :tid
+                       AND r.status   = 'open'
+                       AND rl.item_id = :item_id
+                     ORDER BY rl.created_at ASC, rl.id ASC
                     """
                 ),
-                {"iid": item_id, "loc": location_id},
+                {"tid": trace_id, "item_id": item_id},
             )
-            avail = int(avail_row.scalar() or 0)
-            if avail < qty:
+            lines = res2.mappings().all()
+            if not lines:
+                continue
+
+            for line in lines:
+                line_id = int(line["id"])
+                qty = int(line["qty"])
+                consumed = int(line["consumed_qty"] or 0)
+                open_qty = qty - consumed
+                if open_qty <= 0:
+                    continue
+
+                take = min(open_qty, remain)
+                if take <= 0:
+                    break
+
+                await session.execute(
+                    sa.text(
+                        """
+                        UPDATE reservation_lines
+                           SET consumed_qty = consumed_qty + :take,
+                               updated_at   = now()
+                         WHERE id = :id
+                        """
+                    ),
+                    {"take": take, "id": line_id},
+                )
+
+                remain -= take
+                if remain <= 0:
+                    break
+
+    async def commit(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: str | int,
+        lines: Sequence[Dict[str, Any] | ShipLine],
+        occurred_at: Optional[datetime] = None,
+        warehouse_code: Optional[str] = None,  # 保留旧签名，当前实现不使用
+        trace_id: Optional[str] = None,  # 上层可携带 trace_id
+    ) -> Dict[str, Any]:
+        ts = occurred_at or datetime.now(UTC)
+        if ts.tzinfo is None:
+            ts = datetime.now(UTC)
+
+        # 1) 归一化 + 合并：同一 (item_id, warehouse_id, batch_code) 汇总为一行
+        agg_qty: Dict[Tuple[int, int, str], int] = defaultdict(int)
+        for raw in lines:
+            ln = self._coerce_line(raw)
+            if ln.warehouse_id is None:
+                raise ValueError("warehouse_id is required in each ship line")
+            key = (int(ln.item_id), int(ln.warehouse_id), str(ln.batch_code))
+            agg_qty[key] += int(ln.qty)
+
+        committed = 0
+        total_qty = 0
+        results: List[Dict[str, Any]] = []
+
+        # 记录本次实际发货量（按 item_id 聚合），供 Ship v3 消耗预占使用
+        shipped_by_item: Dict[int, int] = defaultdict(int)
+
+        # 2) 对每个合并后的槽位做一次“已扣 + 剩余扣减”逻辑
+        for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
+            # 已扣数量（负数，例如 -3）
+            row = await session.execute(
+                sa.text(
+                    """
+                    SELECT COALESCE(SUM(delta), 0)
+                    FROM stock_ledger
+                    WHERE ref=:ref
+                      AND item_id=:item
+                      AND warehouse_id=:wid
+                      AND batch_code=:code
+                      AND delta < 0
+                    """
+                ),
+                {"ref": str(order_id), "item": item_id, "wid": wh_id, "code": batch_code},
+            )
+            already = int(row.scalar() or 0)
+            need = int(want_qty) + already  # 目标是总 delta = -want_qty
+
+            if need <= 0:
+                # 已经满足（或超扣，不太可能），视为幂等
                 results.append(
                     {
                         "item_id": item_id,
-                        "location_id": location_id,
-                        "qty": 0,
-                        "status": "INSUFFICIENT_STOCK",
+                        "batch_code": batch_code,
+                        "warehouse_id": wh_id,
+                        "qty": int(want_qty),
+                        "status": "OK",
+                        "idempotent": True,
                     }
                 )
                 continue
 
-            # 幂等登记（命中唯一键→不再二次扣减）
-            inserted = await _insert_idempotency_row(
-                session,
-                store_id=store_id,
-                ref=ref,
-                item_id=item_id,
-                location_id=location_id,
-                qty=qty,
-            )
-            if not inserted:
-                if await _ledger_has_ref_column(session) and await _ledger_exists_with_ref(
-                    session, ref=ref, item_id=item_id, location_id=location_id
-                ):
-                    results.append(
-                        {
-                            "item_id": item_id,
-                            "location_id": location_id,
-                            "qty": 0,
-                            "status": "IDEMPOTENT",
-                        }
-                    )
-                    continue
-                # 未找到台账则补做一次扣减（仍在本次提交范畴内）
-                await svc.adjust(
+            try:
+                res = await self.stock_svc.adjust(
                     session=session,
                     item_id=item_id,
-                    location_id=location_id,
-                    delta=-qty,
-                    reason="OUTBOUND",
-                    ref=ref,
+                    delta=-need,
+                    reason="OUTBOUND_SHIP",
+                    ref=str(order_id),
+                    ref_line=1,  # 同一个 order_id 只占用一个 ref_line，幂等由 delta 汇总保证
+                    occurred_at=ts,
+                    warehouse_id=wh_id,
+                    batch_code=batch_code,
+                    trace_id=trace_id,  # Phase 3.7-A：trace_id 透传到底层 ledger 写入
                 )
+                committed += 1
+                total_qty += need
+                shipped_by_item[item_id] += need  # 记录本次实际发货量（Ship v3 使用）
                 results.append(
-                    {"item_id": item_id, "location_id": location_id, "qty": qty, "status": "OK"}
+                    {
+                        "item_id": item_id,
+                        "batch_code": batch_code,
+                        "warehouse_id": wh_id,
+                        "qty": need,
+                        "status": "OK",
+                        "after": res.get("after"),
+                    }
                 )
-                total_qty += qty
-                continue
+            except ValueError as e:
+                results.append(
+                    {
+                        "item_id": item_id,
+                        "batch_code": batch_code,
+                        "warehouse_id": wh_id,
+                        "qty": need,
+                        "status": "INSUFFICIENT",
+                        "error": str(e),
+                    }
+                )
 
-            # 正常路径：FEFO 扣减
-            await InventoryAdjust.fefo_outbound(
+        # 3) Ship v3：出库成功后，自动消费 trace 对应的预占
+        try:
+            await self._consume_reservations_for_trace(
                 session=session,
-                item_id=item_id,
-                location_id=location_id,
-                delta=-qty,
-                reason="OUTBOUND",
-                ref=ref,
-                allow_expired=allow_expired,
+                trace_id=trace_id,
+                shipped_by_item=shipped_by_item,
             )
-            results.append(
-                {"item_id": item_id, "location_id": location_id, "qty": qty, "status": "OK"}
-            )
-            total_qty += qty
-
-        await session.flush()
-        await session.commit()
+        except Exception:
+            # 自动 consume 失败不能影响出库主流程；
+            # 如需观察，可接入 event_log / logging 记录 warning。
+            pass
 
         return {
-            "ok": True,
-            "total_lines": len([r for r in results if r.get("status") == "OK"]),
+            "status": "OK",
+            "order_id": str(order_id),
             "total_qty": total_qty,
-            "store_id": store_id,
-            "ref": ref,
+            "committed_lines": committed,
             "results": results,
+            # trace_id 不放在返回体里，以免破坏现有 tests；
+            # 如需关联，请通过 audit_events(meta.trace_id / trace_id) + ref 进行查询。
         }
 
-
-# ===================== 内部辅助 =====================
-
-
-async def _resolve_store_id(session: AsyncSession, *, platform: str, shop_id: str) -> Optional[int]:
-    if not shop_id:
-        return None
-    row = await session.execute(
-        text("SELECT id FROM stores WHERE platform=:p AND name=:n LIMIT 1"),
-        {"p": platform, "n": shop_id},
-    )
-    got = row.scalar_one_or_none()
-    return int(got) if got is not None else None
-
-
-async def _ensure_internal_store(session: AsyncSession) -> int:
-    p, n = "__internal__", "__NO_STORE__"
-    await session.execute(
-        text("INSERT INTO stores(platform, name) VALUES (:p, :n) ON CONFLICT DO NOTHING"),
-        {"p": p, "n": n},
-    )
-    row = await session.execute(
-        text("SELECT id FROM stores WHERE platform=:p2 AND name=:n2 LIMIT 1"), {"p2": p, "n2": n}
-    )
-    return int(row.scalar_one())
-
-
-async def _insert_idempotency_row(
-    session: AsyncSession, *, store_id: int, ref: str, item_id: int, location_id: int, qty: int
-) -> bool:
-    rec = await session.execute(
-        text(
-            """
-            INSERT INTO outbound_ship_ops (store_id, ref, item_id, location_id, qty)
-            VALUES (:sid, :ref, :iid, :loc, :qty)
-            ON CONFLICT ON CONSTRAINT uq_ship_idem_key DO NOTHING
-            RETURNING id
-            """
-        ),
-        {"sid": store_id, "ref": ref, "iid": item_id, "loc": location_id, "qty": qty},
-    )
-    return rec.scalar_one_or_none() is not None
-
-
-async def _ledger_has_ref_column(session: AsyncSession) -> bool:
-    row = await session.execute(
-        text(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema='public' AND table_name='stock_ledger' AND column_name='ref'
-            LIMIT 1
-            """
+    @staticmethod
+    def _coerce_line(raw: Dict[str, Any] | ShipLine) -> ShipLine:
+        if isinstance(raw, ShipLine):
+            return raw
+        return ShipLine(
+            item_id=int(raw["item_id"]),
+            batch_code=str(raw["batch_code"]),
+            qty=int(raw["qty"]),
+            warehouse_id=(
+                int(raw["warehouse_id"])
+                if "warehouse_id" in raw and raw["warehouse_id"] is not None
+                else None
+            ),
+            batch_id=raw.get("batch_id"),
+            meta=raw.get("meta"),
         )
+
+
+# 便捷函数（与历史签名兼容）
+async def ship_commit(
+    session: AsyncSession,
+    order_id: str | int,
+    lines: Sequence[Dict[str, Any] | ShipLine],
+    warehouse_code: Optional[str] = None,
+    occurred_at: Optional[datetime] = None,
+    trace_id: Optional[str] = None,  # HTTP / API 层可直接传 trace_id
+) -> Dict[str, Any]:
+    svc = OutboundService()
+    return await svc.commit(
+        session=session,
+        order_id=order_id,
+        lines=lines,
+        warehouse_code=warehouse_code,
+        occurred_at=occurred_at,
+        trace_id=trace_id,
     )
-    return row.first() is not None
 
 
-async def _ledger_exists_with_ref(
-    session: AsyncSession, *, ref: str, item_id: int, location_id: int
-) -> bool:
-    row = await session.execute(
-        text(
-            """
-            SELECT 1
-              FROM stock_ledger sl
-              JOIN stocks s ON s.id = sl.stock_id
-             WHERE sl.reason = 'OUTBOUND'
-               AND sl.ref    = :ref
-               AND sl.item_id = :iid
-               AND s.location_id = :loc
-             LIMIT 1
-            """
-        ),
-        {"ref": ref, "iid": item_id, "loc": location_id},
-    )
-    return row.first() is not None
-
-
-__all__ = ["OutboundService"]
+# 历史别名
+commit_outbound = ship_commit

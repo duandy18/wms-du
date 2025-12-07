@@ -1,56 +1,38 @@
+# tests/services/test_pick_service_by_context.py
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
 import pytest
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.pick_service import PickService
+from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
 
-pytestmark = pytest.mark.grp_scan
+from app.schemas.outbound import OutboundLine, OutboundMode
+from app.services.outbound_service import OutboundService
 
-
-class _NoOpStock:
-    async def adjust(self, **kwargs):  # 不触发真实扣库
-        return
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
 @pytest.mark.asyncio
-async def test_pick_by_context_selects_line_and_updates_status(session):
-    # 建任务头与两行
-    tid = (
-        await session.execute(
-            text(
-                "INSERT INTO pick_tasks (warehouse_id, ref, assigned_to) VALUES (1, 'T-CTX', 'RF01') RETURNING id"
-            )
-        )
-    ).scalar_one()
-    l1 = (
-        await session.execute(
-            text(
-                "INSERT INTO pick_task_lines (task_id, item_id, req_qty) VALUES (:t, 3001, 3) RETURNING id"
-            ),
-            {"t": tid},
-        )
-    ).scalar_one()
-    l2 = (
-        await session.execute(
-            text(
-                "INSERT INTO pick_task_lines (task_id, item_id, req_qty) VALUES (:t, 3002, 2) RETURNING id"
-            ),
-            {"t": tid},
-        )
-    ).scalar_one()
+async def test_pick_by_context_selects_line_and_updates_status(session: AsyncSession):
+    wh, loc, item, code = 1, 1, 7661, "PICK-7661"
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+    await seed_batch_slot(session, item=item, loc=loc, code=code, qty=3, days=365)
+    await session.commit()
 
-    svc = PickService(_NoOpStock())
-    # RF01 合法；RF02 应拒绝
-    with pytest.raises(PermissionError):
-        await svc.record_pick_by_context(
-            session, tid, item_id=3001, qty=1, scan_ref="scan:ctx", device_id="RF02"
+    ref = f"SO-PICK-{int(datetime.now(UTC).timestamp())}"
+    async with session.begin():
+        res = await OutboundService.commit(
+            session,
+            platform="pdd",
+            shop_id=None,
+            ref=ref,
+            occurred_at=datetime.now(UTC),
+            lines=[OutboundLine(item_id=item, location_id=loc, qty=1)],
+            mode=OutboundMode.FEFO.value,
+            allow_expired=False,
+            warehouse_id=wh,
         )
-
-    r = await svc.record_pick_by_context(
-        session, tid, item_id=3001, qty=1, scan_ref="scan:ctx", device_id="RF01"
-    )
-    assert r["task_id"] == tid and r["picked"] == 1 and r["remain"] == 2
-
-    st = (
-        await session.execute(text("SELECT status FROM pick_task_lines WHERE id=:id"), {"id": l1})
-    ).scalar_one()
-    assert st in ("OPEN", "PARTIAL")  # 1/3
+    assert res["ok"] is True

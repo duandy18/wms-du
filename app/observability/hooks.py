@@ -1,15 +1,17 @@
 # app/observability/hooks.py
 from __future__ import annotations
-import time
+
 import functools
+import time
 from contextlib import contextmanager
-from typing import Callable, Awaitable, Optional
+from typing import Awaitable, Callable, Optional
 
-from app.metrics import EVENTS, ERRS, OUTB, LAT
+from app.metrics import ERRS, EVENTS, LAT, OUTB
 
 
-def record_event(platform: str, shop_id: str, state: str,
-                 duration_sec: Optional[float] = None) -> None:
+def record_event(
+    platform: str, shop_id: str, state: str, duration_sec: Optional[float] = None
+) -> None:
     """
     记录一次“事件推进”（如 PAID/ALLOCATED/SHIPPED/VOID），可选带时长。
     """
@@ -46,9 +48,11 @@ def track_latency(platform: str, shop_id: str, state: str):
         LAT.labels(platform, shop_id, state).observe(time.perf_counter() - t0)
 
 
-def instrument_async(platform_getter: Callable[..., str],
-                     shop_getter: Callable[..., str],
-                     state_getter: Callable[..., str]):
+def instrument_async(
+    platform_getter: Callable[..., str],
+    shop_getter: Callable[..., str],
+    state_getter: Callable[..., str],
+):
     """
     装饰器（异步）：自动计时 + 成功计数；异常时计错误码。
     用法：
@@ -57,6 +61,7 @@ def instrument_async(platform_getter: Callable[..., str],
                           lambda *a, **k: k["new_state"])
         async def handle_event(...): ...
     """
+
     def deco(fn: Callable[..., Awaitable]):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
@@ -72,5 +77,7 @@ def instrument_async(platform_getter: Callable[..., str],
                 code = getattr(e, "code", None) or type(e).__name__
                 record_error(p, s, str(code))
                 raise
+
         return wrapper
+
     return deco

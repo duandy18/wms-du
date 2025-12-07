@@ -4,6 +4,7 @@ Revision ID: 20251028_fefo_partial_cover_index
 Revises: 20251028_fix_fefo_index_on_batches
 Create Date: 2025-10-28 13:45:00
 """
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -14,12 +15,17 @@ depends_on = None
 
 IDX = "ix_batches_fefo"
 
+
 def _idx_def(conn, name):
-    row = conn.execute(sa.text("""
+    row = conn.execute(
+        sa.text("""
         SELECT indexdef FROM pg_indexes
         WHERE schemaname='public' AND indexname=:n
-    """), {"n": name}).scalar()
+    """),
+        {"n": name},
+    ).scalar()
     return row or ""
+
 
 def upgrade():
     conn = op.get_bind()
@@ -34,6 +40,7 @@ def upgrade():
             WHERE qty > 0
         """)
         op.execute("ANALYZE public.batches")
+
 
 def downgrade():
     op.execute(f"DROP INDEX IF EXISTS {IDX}")

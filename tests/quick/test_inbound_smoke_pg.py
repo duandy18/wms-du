@@ -1,47 +1,164 @@
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.ledger_writer import write_ledger
+
 pytestmark = pytest.mark.asyncio
 
-async def _ensure_min_domain(session: AsyncSession, item_id: int = 777, loc_id: int = 1) -> int:
-    await session.execute(text("INSERT INTO warehouses(id,name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"))
-    await session.execute(text("INSERT INTO locations(id,name,warehouse_id) VALUES (:l,'L1',1) ON CONFLICT (id) DO NOTHING"), {"l": loc_id})
+
+async def _ensure_min_domain_v2(
+    session: AsyncSession,
+    *,
+    warehouse_id: int = 1,
+    item_id: int = 777,
+    batch_code: str = "SMOKE-BATCH-001",
+) -> None:
+    """
+    在 v2 世界下，确保最小域存在：
+    - warehouses: id = warehouse_id
+    - items     : id = item_id
+    - stocks    : (warehouse_id, item_id, batch_code) 存在一行，qty 初始为 0
+    """
+
+    # 仓库（最小一行）
     await session.execute(
-        text("INSERT INTO items(id,sku,name,unit) VALUES (:i,:s,:n,'bag') ON CONFLICT (id) DO NOTHING"),
-        {"i": item_id, "s": f"SKU-{item_id}", "n": f"ITEM-{item_id}"}
+        text("INSERT INTO warehouses(id, name) VALUES (:w, :name) ON CONFLICT (id) DO NOTHING"),
+        {"w": warehouse_id, "name": f"WH-{warehouse_id}"},
     )
+
+    # 商品（最小一行）
     await session.execute(
-        text("INSERT INTO stocks(item_id,location_id,qty) VALUES (:i,:l,0) ON CONFLICT (item_id,location_id) DO NOTHING"),
-        {"i": item_id, "l": loc_id}
+        text(
+            "INSERT INTO items(id, sku, name, unit) "
+            "VALUES (:i, :sku, :name, 'bag') "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {"i": item_id, "sku": f"SKU-{item_id}", "name": f"ITEM-{item_id}"},
     )
+
+    # stocks 3D 槽位：warehouse + item + batch_code
+    await session.execute(
+        text(
+            """
+            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
+            VALUES (:w, :i, :b, 0)
+            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
+            """
+        ),
+        {"w": warehouse_id, "i": item_id, "b": batch_code},
+    )
+
     await session.commit()
-    sid = (await session.execute(
-        text("SELECT id FROM stocks WHERE item_id=:i AND location_id=:l"), {"i": item_id, "l": loc_id}
-    )).scalar_one()
-    return int(sid)
+
 
 async def test_inbound_putaway_ledger_snapshot_smoke(session: AsyncSession):
-    ITEM, LOC = 777, 1
-    stock_id = await _ensure_min_domain(session, ITEM, LOC)
+    """
+    v2 入库烟雾测试（最小闭环）：
 
-    before = (await session.execute(text("SELECT qty FROM stocks WHERE id=:sid"), {"sid": stock_id})).scalar_one() or 0
+    场景：
+    1. 准备一个 (warehouse, item, batch_code) 的库存槽位，初始 qty = 0；
+    2. 模拟“入库 + 上架”合并 +5，直接更新 stocks；
+    3. 调用 ledger_writer.write_ledger 写一条 INBOUND 账本，after_qty 对齐 stocks；
+    4. 断言：
+       - stocks.qty == after_qty
+       - 最新一条 ledger 记录的 reason/delta/after_qty 与期望一致。
+    """
+
+    WH, ITEM, BATCH = 1, 777, "SMOKE-BATCH-001"
+
+    # 1) 确保最小域存在
+    await _ensure_min_domain_v2(
+        session,
+        warehouse_id=WH,
+        item_id=ITEM,
+        batch_code=BATCH,
+    )
+
+    # 2) 读当前 qty（可能为 0）
+    before = (
+        await session.execute(
+            text(
+                """
+                SELECT qty
+                FROM stocks
+                WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+                """
+            ),
+            {"w": WH, "i": ITEM, "b": BATCH},
+        )
+    ).scalar_one() or 0
     after = int(before) + 5
 
-    # 模拟“入库+上架”合并 +5，并写台账
-    await session.execute(text("UPDATE stocks SET qty=:q WHERE id=:sid"), {"q": after, "sid": stock_id})
-    await session.execute(text("""
-        INSERT INTO stock_ledger (stock_id,item_id,delta,after_qty,occurred_at,reason,ref,ref_line)
-        VALUES (:sid,:item,5,:after, NOW(), 'INBOUND','SMOKE-INBOUND',1)
-    """), {"sid": stock_id, "item": ITEM, "after": after})
+    # 3) 模拟“入库 + 上架”合并 +5：直接改 stocks
+    await session.execute(
+        text(
+            """
+            UPDATE stocks
+            SET qty = :after
+            WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+            """
+        ),
+        {"after": after, "w": WH, "i": ITEM, "b": BATCH},
+    )
+
+    # 4) 写一条账本记录（通过正式的 ledger_writer，而不是硬编码列）
+    await write_ledger(
+        session,
+        warehouse_id=WH,
+        item_id=ITEM,
+        batch_code=BATCH,
+        reason="INBOUND",
+        delta=5,
+        after_qty=after,
+        ref="SMOKE-INBOUND",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+        trace_id=None,
+    )
+
     await session.commit()
 
-    # ✅ 断言 stocks 与台账
-    qty_now = (await session.execute(text("SELECT qty FROM stocks WHERE id=:sid"), {"sid": stock_id})).scalar_one()
+    # ✅ 断言 stocks 与 ledger 一致
+
+    # stocks.qty 是否等于 after
+    qty_now = (
+        await session.execute(
+            text(
+                """
+                SELECT qty
+                FROM stocks
+                WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+                """
+            ),
+            {"w": WH, "i": ITEM, "b": BATCH},
+        )
+    ).scalar_one()
     assert int(qty_now) == after
 
-    row = (await session.execute(text("""
-        SELECT reason, delta, after_qty FROM stock_ledger
-        WHERE item_id=:item ORDER BY id DESC LIMIT 1
-    """), {"item": ITEM})).first()
-    assert row is not None and row.reason == "INBOUND" and int(row.delta) == 5 and int(row.after_qty) == after
+    # 最新一条 ledger 是否匹配
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT reason, delta, after_qty
+                FROM stock_ledger
+                WHERE warehouse_id = :w
+                  AND item_id = :i
+                  AND batch_code = :b
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ),
+            {"w": WH, "i": ITEM, "b": BATCH},
+        )
+    ).first()
+
+    assert (
+        row is not None
+        and row.reason == "INBOUND"
+        and int(row.delta) == 5
+        and int(row.after_qty) == after
+    )

@@ -1,72 +1,54 @@
+# tests/services/test_rma_service.py
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.grp_reverse
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code
 
-import pytest
-from sqlalchemy import text
+from app.services.inbound_service import InboundService
+from app.services.putaway_service import PutawayService
 
-pytestmark = pytest.mark.asyncio
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
-async def _sum(engine, item, loc):
-    async with engine.begin() as conn:
-        row = await conn.execute(
-            text(
-                "SELECT COALESCE(qty,0) FROM stocks WHERE item_id=:iid AND location_id=:loc LIMIT 1"
-            ),
-            {"iid": item, "loc": loc},
+@pytest.mark.asyncio
+async def test_rma_return_good_and_defect(session: AsyncSession):
+    wh, loc_good, loc_def, item, code = 1, 1, 2, 7721, "RMA-7721"
+    await ensure_wh_loc_item(session, wh=wh, loc=loc_good, item=item, code="GOOD", name="GOOD")
+    await ensure_wh_loc_item(session, wh=wh, loc=loc_def, item=item, code="DEFECT", name="DEFECT")
+    await session.commit()
+
+    # GOOD 收 5
+    async with session.begin():
+        _ = await InboundService().receive(
+            session=session,
+            item_id=item,
+            location_id=loc_good,
+            qty=5,
+            ref="IN-RMA",
+            occurred_at=datetime.now(UTC),
+            batch_code=code,
+            expiry_date=(date.today() + timedelta(days=365)),
         )
-        return int(row.scalar() or 0)
+    assert await qty_by_code(session, item=item, loc=loc_good, code=code) == 5
+    await session.commit()  # 读后提交，再 begin
 
-
-async def _ensure_quarantine(engine, qloc=9001):
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(
-                """
-            INSERT INTO locations(id, name, warehouse_id, type)
-            VALUES (:id, 'QUAR-1', 1, 'QUARANTINE')
-            ON CONFLICT (id) DO NOTHING
-        """
-            ),
-            {"id": qloc},
+    # 搬 2 到 DEFECT
+    async with session.begin():
+        _ = await PutawayService().putaway(
+            session=session,
+            item_id=item,
+            from_location_id=loc_good,
+            to_location_id=loc_def,
+            qty=2,
+            ref="RMA-RET",
+            batch_code=code,
+            left_ref_line=1,
         )
 
-
-async def _seed(session, item, loc, qty):
-    from app.services.stock_service import StockService
-
-    svc = StockService()
-    await svc.adjust(
-        session=session, item_id=item, location_id=loc, delta=qty, reason="INBOUND", ref="SEED"
-    )
-
-
-async def test_rma_return_good_and_defect(session):
-    from app.services.rma_service import RMAService
-
-    engine = session.bind
-    item, loc, qloc = 2201, 1, 9001
-    await _ensure_quarantine(engine, qloc)
-    await _seed(session, item, loc, 10)
-    await session.commit()
-
-    svc = RMAService()
-
-    # 良品回库 +3
-    await svc.return_good(session=session, ref="RMA-001", item_id=item, location_id=loc, qty=3)
-    await session.commit()
-    assert await _sum(engine, item, loc) == 13
-
-    # 次品 5 → 隔离位
-    await svc.return_defect(
-        session=session,
-        ref="RMA-002",
-        item_id=item,
-        from_location_id=loc,
-        quarantine_location_id=qloc,
-        qty=5,
-    )
-    await session.commit()
-    assert await _sum(engine, item, loc) == 8
-    assert await _sum(engine, item, qloc) == 5
+    assert await qty_by_code(session, item=item, loc=loc_good, code=code) == 3
+    assert await qty_by_code(session, item=item, loc=loc_def, code=code) == 2

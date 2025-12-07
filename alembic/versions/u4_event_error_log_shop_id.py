@@ -1,6 +1,5 @@
 # alembic/versions/u4_event_error_log_shop_id.py
 from alembic import op
-import sqlalchemy as sa
 
 revision = "u4_event_error_log_shop_id"
 down_revision = "u3_outbound_commits_shop_id"

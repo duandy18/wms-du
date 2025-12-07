@@ -4,6 +4,7 @@ Revision ID: 20251031_scan_event_views
 Revises: 20251031_locations_add_code_and_uq
 Create Date: 2025-10-31
 """
+
 from alembic import op
 
 revision = "20251031_scan_event_views"
@@ -51,8 +52,10 @@ DROP VIEW IF EXISTS v_scan_ledger_recent CASCADE;
 DROP VIEW IF EXISTS v_scan_recent CASCADE;
 """
 
+
 def upgrade() -> None:
     op.execute(SQL_UP)
+
 
 def downgrade() -> None:
     op.execute(SQL_DOWN)

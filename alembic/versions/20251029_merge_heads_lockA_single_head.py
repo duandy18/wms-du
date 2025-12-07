@@ -11,9 +11,11 @@ down_revision = (
 branch_labels = None
 depends_on = None
 
+
 def upgrade():
     # Merge migration: no schema changes.
     pass
+
 
 def downgrade():
     # No split back.

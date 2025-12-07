@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
 
 # 支持两种常见 GS1 表示：带括号 (01)(17)(10) 或紧凑 AI 序列（FNC1 分隔）
 _AI_FIXED = {

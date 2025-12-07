@@ -1,324 +1,154 @@
-import pytest
-
-pytestmark = pytest.mark.grp_flow
-
-import inspect
-from uuid import uuid4
+# tests/services/test_putaway_service.py
+from datetime import date, timedelta
+from typing import List, Tuple
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = [pytest.mark.asyncio]
+# 测试辅助：按项目实际路径导入
+from tests.helpers.inventory import ensure_wh_loc_item
+
+from app.models.enums import MovementType
+from app.services.putaway_service import PutawayService
+from app.services.stock_service import StockService  # 直接入库以满足审计契约（带日期与批次码）
+
+pytestmark = pytest.mark.grp_core
 
 
-def _unique(prefix: str) -> str:
-    return f"{prefix}-{uuid4().hex[:12]}"
-
-
-# ----------------------
-# generic fresh session helpers
-# ----------------------
-async def _scalar_fresh(engine, sql: str, params: dict):
-    async with AsyncSession(bind=engine, expire_on_commit=False) as s:
-        try:
-            return await s.scalar(text(sql), params)
-        except DBAPIError:
-            await s.rollback()
-            return await s.scalar(text(sql), params)
-
-
-async def _row_fresh(engine, sql: str, params: dict):
-    async with AsyncSession(bind=engine, expire_on_commit=False) as s:
-        try:
-            res = await s.execute(text(sql), params)
-            return res.first()
-        except DBAPIError:
-            await s.rollback()
-            res = await s.execute(text(sql), params)
-            return res.first()
-
-
-async def _exec_fresh(engine, sql: str, params: dict):
-    async with AsyncSession(bind=engine, expire_on_commit=False) as s:
-        await s.execute(text(sql), params)
-        await s.commit()
-
-
-# ----------------------
-# stock state helpers
-# ----------------------
-async def _ensure_location(engine, loc_id: int, wh_id: int = 1):
-    await _exec_fresh(
-        engine,
-        "INSERT INTO warehouses (id, name) VALUES (:w, 'AUTO-WH') ON CONFLICT (id) DO NOTHING",
-        {"w": wh_id},
+async def _get_slot_qty(session: AsyncSession, *, wh: int, item: int, code: str) -> int:
+    row = await session.execute(
+        text(
+            """
+            SELECT qty
+              FROM stocks
+             WHERE warehouse_id = :wh
+               AND item_id      = :item
+               AND batch_code   = :code
+             LIMIT 1
+            """
+        ),
+        {"wh": wh, "item": item, "code": code},
     )
-    await _exec_fresh(
-        engine,
-        "INSERT INTO locations (id, name, warehouse_id) VALUES (:i, :n, :w) ON CONFLICT (id) DO NOTHING",
-        {"i": loc_id, "n": f"A-{loc_id:04d}", "w": wh_id},
-    )
+    val = row.scalar()
+    return int(val or 0)
 
 
-async def _get_qty(engine, *, item_id: int, loc_id: int) -> int:
-    v = await _scalar_fresh(
-        engine,
-        "SELECT COALESCE(qty,0) FROM stocks WHERE item_id=:i AND location_id=:l",
-        {"i": item_id, "l": loc_id},
-    )
-    return int(v or 0)
-
-
-async def _sum_qty(engine, *, item_id: int) -> int:
-    v = await _scalar_fresh(
-        engine, "SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i", {"i": item_id}
-    )
-    return int(v or 0)
-
-
-async def _pick_src_location_for_item(engine, *, item_id: int, min_qty: int) -> int:
-    row = await _row_fresh(
-        engine,
-        """
-        SELECT location_id, qty
-        FROM stocks
-        WHERE item_id=:i
-        ORDER BY qty DESC, location_id ASC
-        LIMIT 1
-        """,
-        {"i": item_id},
-    )
-    if not row:
-        raise AssertionError("没有可用库存作为上架源位")
-    loc_id, qty = int(row[0]), int(row[1])
-    # 不强制必须 >= min_qty，部分实现可能在 receive 时拆分批次
-    return loc_id
-
-
-# ----------------------
-# build source stock by using InboundService
-# ----------------------
-async def _receive_to_make_stock(
-    engine, *, sku: str, qty: int, stage_location_id: int | None = None
-) -> int:
-    """用 InboundService 造货；返回 item_id。"""
-    from app.services.inbound_service import InboundService
-
-    ref, ref_line = _unique("INB"), 1
-
-    async with AsyncSession(bind=engine, expire_on_commit=False) as s:
-        svc = InboundService()
-        fn = getattr(svc, "receive")
-        kwargs = dict(session=s, sku=sku, qty=qty, ref=ref, ref_line=ref_line)
-        if stage_location_id is not None:
-            kwargs["stage_location_id"] = stage_location_id
-
-        async with s.begin():
-            res = fn(**kwargs)
-            if inspect.isawaitable(res):
-                res = await res
-
-        if isinstance(res, dict) and "item_id" in res:
-            return int(res["item_id"])
-
-        row = await s.execute(text("SELECT id FROM items WHERE sku=:sku LIMIT 1"), {"sku": sku})
-        got = row.first()
-        if not got:
-            raise AssertionError("造货后无法解析 item_id")
-        return int(got[0])
-
-
-# ----------------------
-# Putaway adapters（支持两类幂等：同 task_id；或同 ref/ref_line）
-# ----------------------
-def _bind_putaway_kwargs(fn, *, session, item_id, src_loc, dst_loc, qty, ref, ref_line):
-    """按函数签名自适配参数名（from_/to_ 优先；回退 src_/dst_ 等变体）"""
-    sig = inspect.signature(fn)
-    params = sig.parameters
-    kw = {}
-
-    # session/db/sess
-    for name in ("session", "db", "sess"):
-        if name in params:
-            kw[name] = session
-            break
-
-    # 位置参数命名优先级：from_/to_ → src_/dst_ → 其它合理变体
-    if "from_location_id" in params:
-        kw["from_location_id"] = src_loc
-    elif "src_location_id" in params:
-        kw["src_location_id"] = src_loc
-    elif "src_loc" in params:
-        kw["src_loc"] = src_loc
-
-    if "to_location_id" in params:
-        kw["to_location_id"] = dst_loc
-    elif "dst_location_id" in params:
-        kw["dst_location_id"] = dst_loc
-    elif "dst_loc" in params:
-        kw["dst_loc"] = dst_loc
-
-    # item_id
-    if "item_id" in params:
-        kw["item_id"] = item_id
-
-    # 数量可能叫 qty/quantity/move_qty
-    if "qty" in params:
-        kw["qty"] = qty
-    elif "quantity" in params:
-        kw["quantity"] = qty
-    elif "move_qty" in params:
-        kw["move_qty"] = qty
-
-    # 幂等参考
-    if "ref" in params:
-        kw["ref"] = ref
-    if "ref_line" in params:
-        kw["ref_line"] = ref_line
-
-    return kw
-
-
-async def _call_putaway_twice(
-    engine,
+async def _list_putaway_ledger(
+    session: AsyncSession,
     *,
-    item_id: int,
-    src_loc: int,
-    dst_loc: int,
-    qty: int,
-    _fixed_key: str | None = None,
-):
+    ref: str,
+) -> List[Tuple[int, int]]:
     """
-    幂等测试：
-    - 若存在任务流：create_task 一次，putaway 同一 task_id 执行两次；
-    - 否则：直接 putaway，用同一个 (ref, ref_line) 连续执行两次。
-    为了保证跨多次调用也幂等，这里固定业务键：
-      biz_key = _fixed_key or f"PUT-{item_id}-{src_loc}-{dst_loc}-{qty}"
+    返回该 ref 下所有 PUTAWAY 台账的 (delta, ref_line)，按 ref_line 排序。
     """
-    from app.services.putaway_service import PutawayService
-
-    biz_key = _fixed_key or f"PUT-{item_id}-{src_loc}-{dst_loc}-{qty}"
-    ref, ref_line = biz_key, 1
-
-    async with AsyncSession(bind=engine, expire_on_commit=False) as s:
-        svc = PutawayService()
-
-        # 方案1：任务流；同一 task_id 两次执行
-        if (
-            hasattr(svc, "create_task")
-            and callable(getattr(svc, "create_task"))
-            and hasattr(svc, "putaway")
-        ):
-            # 使用稳定的 ref/ref_line 以便服务端自行实现 create_task 幂等复用
-            async with s.begin():
-                task_id = await svc.create_task(
-                    session=s,
-                    item_id=item_id,
-                    src_location_id=src_loc,
-                    dst_location_id=dst_loc,
-                    qty=qty,
-                    ref=ref,
-                    ref_line=ref_line,
-                )
-            # 第一次执行
-            async with s.begin():
-                await svc.putaway(session=s, task_id=task_id)
-            # 第二次执行（同一个 task_id）
-            async with s.begin():
-                await svc.putaway(session=s, task_id=task_id)
-            return
-
-        # 方案2：直接 putaway；相同的 (ref, ref_line) 两次执行
-        if not hasattr(svc, "putaway") or not callable(getattr(svc, "putaway")):
-            raise AssertionError("PutawayService.putaway 不存在或不可调用")
-
-        fn = getattr(svc, "putaway")
-        kw = _bind_putaway_kwargs(
-            fn,
-            session=s,
-            item_id=item_id,
-            src_loc=src_loc,
-            dst_loc=dst_loc,
-            qty=qty,
-            ref=ref,
-            ref_line=ref_line,
-        )
-
-        # 第一次
-        async with s.begin():
-            res = fn(**kw)
-            if inspect.isawaitable(res):
-                await res
-        # 第二次（同幂等键）
-        async with s.begin():
-            res = fn(**kw)
-            if inspect.isawaitable(res):
-                await res
-
-
-# ----------------------
-# the test
-# ----------------------
-async def test_putaway_binds_location_and_is_idempotent(session, _baseline_seed, _db_clean):
-    """
-    上架：源位减少、目标位增加、总量不变；重复执行幂等
-    """
-    engine = session.bind
-    if engine is None:
-        pytest.fail("session.bind is None")
-
-    # 1) 造货到一个“源位”
-    sku = "ITEM-PA"
-    qty = 5
-
-    item_id = await _receive_to_make_stock(engine, sku=sku, qty=qty)
-    src_loc = await _pick_src_location_for_item(engine, item_id=item_id, min_qty=qty)
-
-    # 创建一个不同的目标位
-    dst_loc = 9999
-    if dst_loc == src_loc:
-        dst_loc += 1
-    await _ensure_location(engine, dst_loc)
-
-    # 记录搬运前状态
-    total_before = await _sum_qty(engine, item_id=item_id)
-    src_before = await _get_qty(engine, item_id=item_id, loc_id=src_loc)
-    dst_before = await _get_qty(engine, item_id=item_id, loc_id=dst_loc)
-
-    # 2) putaway：执行两次（同 task_id 或同 ref/ref_line），固定幂等键
-    stable_key = f"PUT-{item_id}-{src_loc}-{dst_loc}-{qty}"
-    await _call_putaway_twice(
-        engine, item_id=item_id, src_loc=src_loc, dst_loc=dst_loc, qty=qty, _fixed_key=stable_key
+    rows = await session.execute(
+        text(
+            """
+            SELECT delta, ref_line
+              FROM stock_ledger
+             WHERE reason = :reason
+               AND ref    = :ref
+             ORDER BY ref_line ASC, id ASC
+            """
+        ),
+        {"reason": MovementType.PUTAWAY.value, "ref": ref},
     )
+    return [(int(r[0]), int(r[1])) for r in rows.fetchall()]
 
-    # 搬运后状态
-    total_after = await _sum_qty(engine, item_id=item_id)
-    src_after = await _get_qty(engine, item_id=item_id, loc_id=src_loc)
-    dst_after = await _get_qty(engine, item_id=item_id, loc_id=dst_loc)
 
-    # 断言：总量不变；源位减少 >= qty；目标位增加 >= qty
-    assert total_after == total_before, "总库存应不变"
-    assert src_before - src_after >= qty, f"源位未按期望减少：{src_before} -> {src_after}"
-    assert dst_after - dst_before >= qty, f"目标位未按期望增加：{dst_before} -> {dst_after}"
+@pytest.mark.asyncio
+async def test_putaway_binds_location_and_is_idempotent(session: AsyncSession):
+    """
+    Putaway 两腿：SRC→DST 搬 3；幂等：同 ref/left_ref_line 再次提交不变。
 
-    # 3) 幂等：再次调用（第三次/第四次）不应再改变状态
-    before_third_src = await _get_qty(engine, item_id=item_id, loc_id=src_loc)
-    before_third_dst = await _get_qty(engine, item_id=item_id, loc_id=dst_loc)
-    before_third_total = await _sum_qty(engine, item_id=item_id)
+    审计契约对齐：
+      - 出库（左腿，delta<0）：必须提供 batch_code
+      - 入库（右腿，delta>0）：必须提供 batch_code 且提供 production_date 或 expiry_date（至少其一）
 
-    # 再执行一次（同幂等键，同 task_id/同 ref）应不变
-    await _call_putaway_twice(
-        engine, item_id=item_id, src_loc=src_loc, dst_loc=dst_loc, qty=qty, _fixed_key=stable_key
+    v2 世界观下：
+      - StockService 只在 (warehouse_id, item_id, batch_code) 槽位上调整库存 + 写台账；
+      - location_id 仅用于“作业含义”和路径规划，不再直接体现在 stocks 表结构里。
+      - 本测试验证：
+          * 仓维度库存不丢失；
+          * PUTAWAY 产生一对 (-qty, +qty) 台账；
+          * 重复调用时台账不重复写入（幂等）。
+    """
+    wh, src, dst, item, code = 1, 900, 1, 6006, "PA-DEMO-6006"
+    putaway_ref = "PA-MV-1"
+
+    # 1) 基线实体：仓 + 两个库位 + 商品
+    await ensure_wh_loc_item(session, wh=wh, loc=src, item=item, code="SRC-900", name="SRC-900")
+    await ensure_wh_loc_item(session, wh=wh, loc=dst, item=item, code="DST-001", name="DST-001")
+    await session.commit()
+
+    # 2) 仓维度入库 3（RECEIPT），显式带批次 + 日期，满足审计契约
+    prod = date.today()
+    exp = date.today() + timedelta(days=365)
+
+    await StockService().adjust(
+        session=session,
+        item_id=item,
+        warehouse_id=wh,  # v2：以仓维度为主
+        delta=3,
+        reason=MovementType.RECEIPT,
+        ref="IN-PA",
+        batch_code=code,
+        production_date=prod,
+        expiry_date=exp,
     )
+    await session.commit()
 
-    after_third_src = await _get_qty(engine, item_id=item_id, loc_id=src_loc)
-    after_third_dst = await _get_qty(engine, item_id=item_id, loc_id=dst_loc)
-    after_third_total = await _sum_qty(engine, item_id=item_id)
+    qty_before = await _get_slot_qty(session, wh=wh, item=item, code=code)
+    assert qty_before == 3, "入库后仓维度库存应为 3"
 
-    assert (before_third_src, before_third_dst, before_third_total) == (
-        after_third_src,
-        after_third_dst,
-        after_third_total,
-    ), "重复执行不应再改变状态（幂等）"
+    # 3) Putaway：SRC→DST 搬 3
+    res1 = await PutawayService().putaway(
+        session=session,
+        item_id=item,
+        from_location_id=src,
+        to_location_id=dst,
+        qty=3,
+        ref=putaway_ref,
+        batch_code=code,
+        production_date=prod,
+        expiry_date=exp,
+        left_ref_line=1,  # 左腿=1，右腿=2
+    )
+    await session.commit()
+
+    assert res1["status"] == "OK"
+    assert res1["moved"] == 3
+
+    # 仓维度库存总量不变（只是“移库”，不应额外凭空增减）
+    qty_after_first = await _get_slot_qty(session, wh=wh, item=item, code=code)
+    assert qty_after_first == 3
+
+    # PUTAWAY 台账应当正好两条：-3（左腿） / +3（右腿），ref_line 分别为 1 / 2
+    legs = await _list_putaway_ledger(session, ref=putaway_ref)
+    assert legs == [(-3, 1), (3, 2)]
+
+    # 4) 幂等：同 ref + left_ref_line 再调用一次，不应产生新的 PUTAWAY 台账
+    res2 = await PutawayService().putaway(
+        session=session,
+        item_id=item,
+        from_location_id=src,
+        to_location_id=dst,
+        qty=3,
+        ref=putaway_ref,
+        batch_code=code,
+        production_date=prod,
+        expiry_date=exp,
+        left_ref_line=1,
+    )
+    await session.commit()
+
+    # 结果仍应标记 moved=3（业务视角），但 DB 层不再新增 PUTAWAY 台账（依赖 ledger 唯一约束 + adjust 幂等）
+    assert res2["status"] == "OK"
+    assert res2["moved"] == 3
+
+    qty_after_second = await _get_slot_qty(session, wh=wh, item=item, code=code)
+    assert qty_after_second == 3, "幂等调用不应改变仓维度库存"
+
+    legs_after = await _list_putaway_ledger(session, ref=putaway_ref)
+    assert legs_after == legs, "第二次调用不应产生额外 PUTAWAY 台账行"

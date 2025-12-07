@@ -1,182 +1,96 @@
-from datetime import date, timedelta
+from __future__ import annotations
+
+from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.asyncio
+from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
+
+from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.order_service import OrderService
+
+UTC = timezone.utc
+pytestmark = pytest.mark.contract
 
 
-async def _seed(session, item_id=1, wh=1, loc=1):
+@pytest.mark.asyncio
+async def test_fefo_reserve_then_cancel(session: AsyncSession):
     """
-    造数：为 item=1 准备两个批次并落地 onhand（直接写入 stocks 的必填列）
-      - B1（临期优先）3 件
-      - B2（远期）     5 件
+    Phase 3.6 版合同：
 
-    说明：
-    - 你的 stocks 表对 item_id / warehouse_id / location_id / batch_id / batch_code / qty
-      都有口径要求（其中 batch_code 为 NOT NULL），故以六列完整插入。
+    场景：
+      - 仓库 1 / 库位 1 / 商品 7301，有一批次 code='RES-7301'，qty=5
+      - 平台 PDD / 店铺 SHOP1：
+          * 调用 OrderService.reserve 占用 2
+          * 可售库存应从 available0 降到 available0-2
+          * 调用 OrderService.cancel 取消该 ref
+          * 可售库存应恢复为 available0
     """
-    today = date.today()
-    plan = [
-        ("B1", today + timedelta(days=2), 3),
-        ("B2", today + timedelta(days=10), 5),
-    ]
 
-    # 1) 插入批次并取回 batch_id
-    batch_ids = {}
-    for code, exp, qty in plan:
-        bid = (
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO batches(item_id, warehouse_id, location_id, batch_code, expire_at)
-                    VALUES (:item, :wh, :loc, :code, :exp)
-                    RETURNING id
-                """
-                ),
-                {"item": item_id, "wh": wh, "loc": loc, "code": code, "exp": exp},
-            )
-        ).scalar_one()
-        batch_ids[code] = int(bid)
+    wh, loc, item, code = 1, 1, 7301, "RES-7301"
 
-    # 2) 以六列完整写入 onhand（避免 NOT NULL 违反）
-    for code, _, qty in plan:
-        await session.execute(
-            text(
-                """
-                INSERT INTO stocks(item_id, warehouse_id, location_id, batch_id, batch_code, qty)
-                VALUES (:item, :wh, :loc, :bid, :code, :qty)
-            """
-            ),
-            {
-                "item": item_id,
-                "wh": wh,
-                "loc": loc,
-                "bid": batch_ids[code],
-                "code": code,
-                "qty": int(qty),
-            },
-        )
-
+    # 1) 基线：准备仓/库位/商品 + 批次 + 库存槽位
+    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+    await seed_batch_slot(session, item=item, loc=loc, code=code, qty=5, days=365)
     await session.commit()
-    return {"b1": batch_ids["B1"], "b2": batch_ids["B2"]}
 
+    # 2) 读 baseline 可售库存（按平台/店铺/仓库）
+    platform = "PDD"
+    shop_id = "SHOP1"
+    ref = "RES-TEST-7301"
 
-async def _reservations_by_batch(session, order_id: int):
-    rows = (
-        await session.execute(
-            text(
-                """
-                SELECT batch_id, SUM(qty) AS q
-                FROM reservations
-                WHERE order_id = :oid
-                GROUP BY batch_id
-                ORDER BY batch_id
-            """
-            ),
-            {"oid": order_id},
-        )
-    ).all()
-    return {int(bid): int(q) for bid, q in rows}
-
-
-async def _sum_onhand(session, item_id: int) -> int:
-    """
-    onhand = SUM(stocks.qty) WHERE item_id=...
-    """
-    return int(
-        (
-            await session.execute(
-                text(
-                    """
-                    SELECT COALESCE(SUM(qty),0)
-                    FROM stocks
-                    WHERE item_id = :item
-                """
-                ),
-                {"item": item_id},
-            )
-        ).scalar()
-        or 0
+    chan = ChannelInventoryService()
+    available0 = await chan.get_available_for_item(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        warehouse_id=wh,
+        item_id=item,
     )
 
+    # 至少有 5 件（我们刚 seed 了一批），但为了容忍已有基础数据，只要求 >=2
+    assert available0 >= 2
 
-async def _sum_available(session, item_id: int) -> int:
-    """
-    可用量口径：available = onhand(stocks) - reserved(reservations)
-    其中 reserved 通过 reservations JOIN batches 过滤到同一 item。
-    """
-    return int(
-        (
-            await session.execute(
-                text(
-                    """
-                    WITH onhand AS (
-                      SELECT COALESCE(SUM(s.qty),0) AS q
-                      FROM stocks s
-                      WHERE s.item_id=:item
-                    ),
-                    reserved AS (
-                      SELECT COALESCE(SUM(r.qty),0) AS q
-                      FROM reservations r
-                      JOIN batches b ON b.id = r.batch_id
-                      WHERE b.item_id=:item
-                    )
-                    SELECT (SELECT q FROM onhand) - (SELECT q FROM reserved)
-                """
-                ),
-                {"item": item_id},
-            )
-        ).scalar()
-        or 0
+    # 3) 调用 OrderService.reserve 占用 2 件
+    r1 = await OrderService.reserve(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ref=ref,
+        lines=[{"item_id": item, "qty": 2}],
+    )
+    assert r1["status"] == "OK"
+    assert r1["reservation_id"] is not None
+    await session.commit()
+
+    available1 = await chan.get_available_for_item(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        warehouse_id=wh,
+        item_id=item,
+    )
+    assert available1 == available0 - 2
+
+    # 4) 调用 OrderService.cancel 取消该预留
+    r2 = await OrderService.cancel(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ref=ref,
+        lines=[{"item_id": item, "qty": 2}],
+    )
+    assert r2["status"] in ("CANCELED", "NOOP")  # 在高并发/重放场景下允许 NOOP
+    await session.commit()
+
+    available2 = await chan.get_available_for_item(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        warehouse_id=wh,
+        item_id=item,
     )
 
-
-async def test_fefo_reserve_then_cancel(session):
-    """
-    目标：按 order_id 执行 FEFO 预留与取消。
-    预期：
-      1) 预留时分摊到 B1(3) + B2(1)，合计 4；
-      2) 预留只影响 reservations，可用量下降 4，onhand 不变；
-      3) 取消后 reservations 清空，可用量恢复。
-    """
-    from app.services.order_service import OrderService
-
-    # 造数：B1=3、B2=5 → 总 onhand=8
-    ids = await _seed(session)
-    b1_id, b2_id = ids["b1"], ids["b2"]
-
-    before_onhand = await _sum_onhand(session, item_id=1)
-    before_available = await _sum_available(session, item_id=1)
-    assert before_onhand == 8
-    assert before_available == 8
-
-    svc = OrderService()
-
-    # 1) 创建订单（单行需求 4）
-    oid = await svc.create_order(
-        session=session, item_id=1, warehouse_id=1, qty=4, client_ref="REF-1"
-    )
-
-    # 2) 预留：应按 FEFO 分配为 B1:3、B2:1（只写 reservations）
-    res = await svc.reserve(session=session, order_id=oid)
-    assert res["order_id"] == oid
-
-    alloc = await _reservations_by_batch(session, oid)
-    assert alloc.get(b1_id, 0) == 3
-    assert alloc.get(b2_id, 0) == 1
-    assert sum(alloc.values()) == 4
-
-    # 可用量下降 4；onhand 不变
-    after_available = await _sum_available(session, item_id=1)
-    assert after_available == before_available - 4
-    assert await _sum_onhand(session, item_id=1) == before_onhand
-
-    # 3) 取消：清空该单 reservations；可用量回到初值；onhand 仍不变
-    await svc.cancel(session=session, order_id=oid)
-    alloc2 = await _reservations_by_batch(session, oid)
-    assert sum(alloc2.values()) == 0
-
-    after_cancel_available = await _sum_available(session, item_id=1)
-    assert after_cancel_available == before_available
-    assert await _sum_onhand(session, item_id=1) == before_onhand
+    # 最终可售应回到 baseline
+    assert available2 == available0

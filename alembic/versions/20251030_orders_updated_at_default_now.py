@@ -1,12 +1,12 @@
-"""orders.updated_at: set DEFAULT NOW() and backfill (idempotent)
-
-给 orders.updated_at 设默认值 NOW()，并回填历史 NULL。
-避免创建订单时因未显式赋值而触发 NOT NULL 违反。
+"""orders.updated_at: set DEFAULT now() and backfill (idempotent)
 
 Revision ID: 20251030_orders_updated_at_default_now
 Revises: 20251030_orders_total_amount_default_zero
-Create Date: 2025-10-30
+Create Date: 2025-10-30 10:20:00
 """
+
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -15,26 +15,56 @@ down_revision = "20251030_orders_total_amount_default_zero"
 branch_labels = None
 depends_on = None
 
-def _has_col(conn, table, col) -> bool:
-    return bool(conn.exec_driver_sql(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=%s AND column_name=%s
-        LIMIT 1
-        """, (table, col)
-    ).scalar())
 
-def upgrade():
+def upgrade() -> None:
+    """
+    目标：若存在 orders 表，则确保有 updated_at 列；设置 DEFAULT now() 并一次性回填空值。
+    说明：使用 to_regclass/ information_schema 守卫，避免 UndefinedTable/UndefinedColumn。
+    """
     conn = op.get_bind()
-    if not _has_col(conn, "orders", "updated_at"):
-        return  # 不强加列，保持幂等
+    conn.execute(
+        sa.text("""
+    DO $$
+    BEGIN
+      IF to_regclass('public.orders') IS NOT NULL THEN
 
-    # 设置默认值
-    op.alter_column("orders", "updated_at", server_default=sa.text("NOW()"))
-    # 回填历史空值
-    conn.exec_driver_sql("UPDATE orders SET updated_at=NOW() WHERE updated_at IS NULL")
+        -- 若列不存在，先补列
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='updated_at'
+        ) THEN
+          ALTER TABLE public.orders ADD COLUMN updated_at timestamptz;
+        END IF;
 
-def downgrade():
-    # 仅移除默认值，不回滚数据
-    op.alter_column("orders", "updated_at", server_default=None)
+        -- 设置默认值并回填空值
+        ALTER TABLE public.orders ALTER COLUMN updated_at SET DEFAULT now();
+        EXECUTE 'UPDATE public.orders SET updated_at = now() WHERE updated_at IS NULL';
+
+        -- （可选）若你不希望保留默认，可在后续迁移再统一 DROP DEFAULT
+        -- 当前保留默认，方便后续写入
+      END IF;
+    END$$;
+    """)
+    )
+
+
+def downgrade() -> None:
+    """
+    回滚：仅当 orders.updated_at 存在时，移除 DEFAULT（不删列）。
+    """
+    conn = op.get_bind()
+    conn.execute(
+        sa.text("""
+    DO $$
+    BEGIN
+      IF to_regclass('public.orders') IS NOT NULL THEN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema='public' AND table_name='orders' AND column_name='updated_at'
+        ) THEN
+          ALTER TABLE public.orders ALTER COLUMN updated_at DROP DEFAULT;
+        END IF;
+      END IF;
+    END$$;
+    """)
+    )

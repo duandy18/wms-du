@@ -1,158 +1,95 @@
+# app/services/pick_service.py
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# 优先尝试注入真实库存服务；单测/无依赖时自动回退到占位服务
-try:
-    from app.services.stock_service import StockService as _RealStockService  # type: ignore
-except Exception:  # pragma: no cover
-    _RealStockService = None  # type: ignore
-
-
-class _DefaultStockService:
-    async def adjust(self, **kwargs):  # pragma: no cover
-        raise NotImplementedError("inject a real StockService or a test double")
+from app.models.enums import MovementType
+from app.services.stock_service import StockService
 
 
 class PickService:
-    def __init__(self, stock_service: Optional[object] = None):
-        if stock_service is not None:
-            self.stock = stock_service
-        elif _RealStockService is not None:
-            self.stock = _RealStockService()
-        else:
-            self.stock = _DefaultStockService()
+    """
+    v2 拣货（出库）Facade（location_id 已移除；FEFO 仅提示不刚性）：
 
-    async def _get_task_line_by_context(
-        self,
-        session: AsyncSession,
-        task_id: int,
-        item_id: int,
-        location_id: Optional[int],
-        device_id: Optional[str],
-    ) -> int:
-        """
-        基于 {task_id, item_id, (optional) location_id} 选择唯一行，并做并发护栏：
-        - 锁头/行；若任务已分配 assigned_to 且 device_id 不匹配 → 拒绝
-        - 仅允许未完成的行（OPEN/PARTIAL）
-        """
-        row = (
-            await session.execute(
-                text(
-                    """
-                SELECT pt.assigned_to, ptl.id
-                  FROM pick_task_lines ptl
-                  JOIN pick_tasks pt ON pt.id = ptl.task_id
-                 WHERE ptl.task_id = :tid
-                   AND ptl.item_id = :itm
-                   AND ptl.status IN ('OPEN','PARTIAL')
-                 FOR UPDATE
-                """
-                ),
-                {"tid": task_id, "itm": item_id},
-            )
-        ).first()
-        if not row:
-            raise ValueError("no OPEN/PARTIAL line for the given task_id & item_id")
-        assigned_to, line_id = row
+    设计要点
+    - 拣货即扣减：扫码确认后立刻扣减库存（原子 + 幂等由 StockService.adjust 保障）
+    - 批次强制：扫码必须提供 batch_code；未提供即拒绝
+    - 粒度统一：以 (item_id, warehouse_id, batch_code) 为唯一槽位
+    - FEFO 柔性：不强制 FEFO，只要指定批次即可扣减；FEFO 风险通过快照/查询提示
 
-        if assigned_to and device_id and assigned_to != device_id:
-            raise PermissionError(f"task assigned to {assigned_to}, device {device_id} denied")
+    Phase N（订单驱动增强）：
+    - 允许调用方传入 trace_id，用于将本次扣减挂到订单 trace 上；
+    - trace_id 透传到 StockService.adjust → stock_ledger.trace_id；
+    - 订单驱动的 HTTP 层可以从 orders.trace_id 获取该 trace_id 并传入。
+    """
 
-        # 可加拣货位策略：校验 location_id 是否在允许集合；当前先放宽
-        return int(line_id)
-
-    async def record_pick_by_context(
-        self,
-        session: AsyncSession,
-        task_id: int,
-        item_id: int,
-        qty: int,
-        scan_ref: str,
-        *,
-        location_id: Optional[int] = None,
-        device_id: Optional[str] = None,
-        operator: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        line_id = await self._get_task_line_by_context(
-            session, task_id, item_id, location_id, device_id
-        )
-        return await self.record_pick(
-            session=session,
-            task_line_id=line_id,
-            from_location_id=location_id or 0,
-            item_id=item_id,
-            qty=qty,
-            scan_ref=scan_ref,
-            device_id=device_id,
-            operator=operator,
-        )
+    def __init__(self, stock_svc: Optional[StockService] = None) -> None:
+        self.stock_svc = stock_svc or StockService()
 
     async def record_pick(
         self,
         session: AsyncSession,
-        task_line_id: int,
-        from_location_id: int,
+        *,
         item_id: int,
         qty: int,
-        scan_ref: str,
-        *,
-        device_id: Optional[str] = None,
-        operator: Optional[str] = None,
+        ref: str,
+        occurred_at: datetime,
+        batch_code: str,
+        warehouse_id: int,
+        trace_id: Optional[str] = None,  # ⭐ 新增：可选 trace_id（订单驱动时传入）
+        start_ref_line: Optional[int] = None,
+        task_line_id: Optional[int] = None,  # 预留：任务/拣货单整合
     ) -> Dict[str, Any]:
-        # 1) 锁定任务行 + 并发护栏（assigned_to）
-        row = (
-            await session.execute(
-                text(
-                    """
-                    SELECT ptl.task_id, ptl.item_id, ptl.req_qty, ptl.picked_qty, pt.assigned_to
-                      FROM pick_task_lines ptl
-                      JOIN pick_tasks pt ON pt.id = ptl.task_id
-                     WHERE ptl.id = :id
-                     FOR UPDATE
-                """
-                ),
-                {"id": task_line_id},
+        """
+        人工拣货（扫码确认）→ 直接扣减 (item_id, warehouse_id, batch_code) 槽位上的库存。
+        幂等键由台账唯一键保障：(warehouse_id, batch_code, item_id, reason, ref, ref_line)
+
+        参数说明：
+          - trace_id: 若为订单驱动拣货，可传入对应订单的 trace_id；
+                      将透传给 StockService.adjust，最终写入 stock_ledger.trace_id，
+                      便于 TraceService 统一聚合。
+        """
+        # —— 基础校验 ——
+        if qty <= 0:
+            raise ValueError("Qty must be > 0 for pick record.")
+        if not batch_code or not str(batch_code).strip():
+            raise ValueError("扫码拣货必须提供 batch_code。")
+        if warehouse_id is None or int(warehouse_id) <= 0:
+            raise ValueError("拣货必须明确 warehouse_id。")
+
+        ref_line = int(start_ref_line or 1)
+
+        # —— 核心原子操作：统一走 StockService.adjust（delta < 0 扣减） ——
+        try:
+            result = await self.stock_svc.adjust(
+                session=session,
+                item_id=item_id,
+                delta=-int(qty),
+                reason=MovementType.PICK,  # 与审计/报表口径一致
+                ref=ref,
+                ref_line=ref_line,
+                occurred_at=occurred_at,
+                batch_code=str(batch_code),
+                warehouse_id=int(warehouse_id),
+                trace_id=trace_id,  # ⭐ 将 trace_id 透传到 ledger
             )
-        ).first()
-        if not row:
-            raise ValueError("task line not found")
-        task_id, task_item_id, req_qty, picked_qty, assigned_to = row
-        if task_item_id != item_id:
-            raise ValueError("item mismatch with task line")
-        if assigned_to and device_id and assigned_to != device_id:
-            raise PermissionError(f"task assigned to {assigned_to}, device {device_id} denied")
+        except ValueError as e:
+            # 典型：库存不足 / 批次不存在等业务校验失败
+            raise ValueError(f"拣货失败：{e}") from e
+        except Exception as e:
+            # 其他异常：继续抛出交由上层审计/处理
+            raise e
 
-        remain = int(req_qty) - int(picked_qty)
-        if qty <= 0 or qty > remain:
-            raise ValueError(f"invalid qty: {qty}, remain={remain}")
-
-        # 2) 真出库（统一走库存服务；仅传最小必需形参，兼容你当前实现）
-        await self.stock.adjust(
-            session=session,
-            item_id=item_id,
-            location_id=from_location_id,
-            delta=-qty,
-            reason="PICK",
-            ref=scan_ref,
-        )
-
-        # 3) 累加 picked_qty（触发行/头状态触发器）
-        await session.execute(
-            text(
-                "UPDATE pick_task_lines SET picked_qty = picked_qty + :q, updated_at=now() WHERE id=:id"
-            ),
-            {"q": qty, "id": task_line_id},
-        )
-
+        # —— 返回结果：与出库链路保持一致的最小契约 ——
         return {
-            "task_id": int(task_id),
-            "task_line_id": int(task_line_id),
-            "item_id": int(item_id),
-            "from_location_id": int(from_location_id),
             "picked": int(qty),
-            "remain": int(remain - qty),
+            "stock_after": result.get("after") if result else None,
+            "batch_code": str(batch_code),
+            "warehouse_id": int(warehouse_id),
+            "ref": ref,
+            "ref_line": ref_line,
+            "status": "OK" if result and result.get("applied", True) else "IDEMPOTENT",
         }

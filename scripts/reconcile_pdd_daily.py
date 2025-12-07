@@ -7,17 +7,18 @@ import csv
 from pathlib import Path
 from typing import Dict, List
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 # ★ 集中导入 & 映射校验
 from app.db.base import init_models
+
 init_models()
+
+from app.adapters.registry import get_adapter
 
 # 开关与适配器注册表
 from app.config.flags import ENABLE_PDD_PULL
-from app.adapters.registry import get_adapter
-
 from app.services.store_service import StoreService
 
 
@@ -34,14 +35,19 @@ async def _pull_platform_qty(
     adapter = get_adapter("pdd")  # 现阶段默认单平台
     if verbose:
         try:
-            preview = await adapter.build_fetch_preview(session, store_id=store_id, item_ids=item_ids)
+            preview = await adapter.build_fetch_preview(
+                session, store_id=store_id, item_ids=item_ids
+            )
             # 打印简洁预览（不泄露秘钥）
-            print("[PDD fetch preview]", {
-                "store_id": preview.get("store_id"),
-                "creds_ready": preview.get("creds_ready"),
-                "ext_sku_ids": preview.get("ext_sku_ids"),
-                "signature": preview.get("signature"),
-            })
+            print(
+                "[PDD fetch preview]",
+                {
+                    "store_id": preview.get("store_id"),
+                    "creds_ready": preview.get("creds_ready"),
+                    "ext_sku_ids": preview.get("ext_sku_ids"),
+                    "signature": preview.get("signature"),
+                },
+            )
         except Exception as e:
             print("[PDD fetch preview] error:", e)
 
@@ -69,7 +75,9 @@ async def _run(store_id: int, out_csv: Path, db_url: str, verbose: bool):
             out_csv.parent.mkdir(parents=True, exist_ok=True)
             with out_csv.open("w", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["store_id", "item_id", "platform_qty", "system_visible_qty", "delta", "advice"])
+                w.writerow(
+                    ["store_id", "item_id", "platform_qty", "system_visible_qty", "delta", "advice"]
+                )
                 for iid in item_ids:
                     plat = int(platform_qty.get(iid, 0))
                     sysv = int(system_visible.get(iid, 0))

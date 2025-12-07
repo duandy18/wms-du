@@ -21,9 +21,15 @@ router = APIRouter(prefix="/stores", tags=["stores"])
 
 # -------------------- 可见量影子/刷新 --------------------
 
+
 class RefreshRequest(BaseModel):
-    item_ids: Optional[Sequence[int]] = Field(default=None, description="只刷新这些 item_id；None 表示全部绑定")
-    dry_run: bool = Field(default=False, description="True 仅计算；False 落表到 channel_inventory.visible_qty")
+    item_ids: Optional[Sequence[int]] = Field(
+        default=None, description="只刷新这些 item_id；None 表示全部绑定"
+    )
+    dry_run: bool = Field(
+        default=False, description="True 仅计算；False 落表到 channel_inventory.visible_qty"
+    )
+
 
 @router.post("/{store_id}/refresh")
 async def refresh_store_inventory(
@@ -53,6 +59,7 @@ async def get_store_visible(
 
 # -------------------- 幂等占用（+reserved） --------------------
 
+
 class ReserveRequest(BaseModel):
     item_id: int
     qty: int = Field(ge=1, description="本次占用数量（正数）")
@@ -60,6 +67,7 @@ class ReserveRequest(BaseModel):
     ext_sku_id: str = Field(min_length=1, max_length=64)
     op: str = Field(default="RESERVE", description="幂等操作类型，默认 RESERVE")
     refresh_visible: bool = True
+
 
 @router.post("/{store_id}/reserve")
 async def reserve_for_store(
@@ -82,7 +90,13 @@ async def reserve_for_store(
                 ON CONFLICT ON CONSTRAINT uq_reserve_idem_key DO NOTHING
                 RETURNING id
             """),
-            {"sid": store_id, "oid": body.ext_order_id, "sk": body.ext_sku_id, "op": body.op, "qty": body.qty},
+            {
+                "sid": store_id,
+                "oid": body.ext_order_id,
+                "sk": body.ext_sku_id,
+                "op": body.op,
+                "qty": body.qty,
+            },
         )
         inserted_id = res.scalar_one_or_none()
 
@@ -137,6 +151,7 @@ async def _get_reserved(session: AsyncSession, store_id: int, item_id: int) -> i
 
 # -------------------- 影子期推送预览（PDD） --------------------
 
+
 @router.post("/{store_id}/pdd/push", status_code=501)
 async def push_store_visible_preview(
     store_id: int,
@@ -150,5 +165,7 @@ async def push_store_visible_preview(
         "ok": False,
         "reason": "Not Implemented (shadow mode)",
         "preview": {"store_id": store_id, "items": payload},
-        "note": ("ENABLE_PDD_PUSH is off" if not ENABLE_PDD_PUSH else "PUSH gated by adapter wiring"),
+        "note": (
+            "ENABLE_PDD_PUSH is off" if not ENABLE_PDD_PUSH else "PUSH gated by adapter wiring"
+        ),
     }

@@ -1,68 +1,72 @@
 # app/models/stock.py
 from __future__ import annotations
 
-from typing import List
+from datetime import date
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+import sqlalchemy as sa
+from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.db.base import Base
 
 
 class Stock(Base):
     """
-    汇总库存（强契约·与数据库结构对齐）
-    维度：item_id + location_id
-    数量：qty（非负）
-    关系：StockLedger.stock_id → stocks.id
+    v2：库存余额维度 (warehouse_id, item_id, batch_code)
+
+    - qty 为唯一真实库存来源
+    - expiry_date：从 batches 表按 (item_id, warehouse_id, batch_code) 精确映射
+    - location_id：兼容旧时代，始终固定为 1
     """
+
     __tablename__ = "stocks"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
 
+    warehouse_id: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     item_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("items.id", ondelete="RESTRICT"),
+        sa.Integer,
+        sa.ForeignKey("items.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
+    batch_code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
 
-    location_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("locations.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-
-    # 库存数量（非负）
-    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    qty: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
 
     __table_args__ = (
-        UniqueConstraint("item_id", "location_id", name="uq_stocks_item_loc"),
-        CheckConstraint("qty >= 0", name="ck_stocks_qty_nonneg"),
-        Index("ix_stocks_item_loc", "item_id", "location_id"),
+        UniqueConstraint("item_id", "warehouse_id", "batch_code", name="uq_stocks_item_wh_batch"),
+        Index("ix_stocks_item_wh_batch", "item_id", "warehouse_id", "batch_code"),
     )
 
-    # ==== 关系 ====
-    item: Mapped["Item"] = relationship(
-        "Item",
-        back_populates="stocks",
-        lazy="selectin",
+    warehouse = relationship("Warehouse", lazy="selectin")
+    item = relationship("Item", lazy="selectin")
+
+    # ★ Batch v3 兼容：按 仓 + 商品 + 批次 精确取 expiry_date
+    expiry_date: Mapped[date | None] = column_property(
+        sa.select(sa.text("b.expiry_date"))
+        .select_from(sa.text("batches AS b"))
+        .where(sa.text("b.item_id = stocks.item_id"))
+        .where(sa.text("b.warehouse_id = stocks.warehouse_id"))
+        .where(sa.text("b.batch_code = stocks.batch_code"))
+        .limit(1)
+        .scalar_subquery()
     )
 
-    location: Mapped["Location"] = relationship(
-        "Location",
-        back_populates="stocks",
-        lazy="selectin",
-    )
+    # 兼容旧用例：location_id 恒为 1
+    location_id: Mapped[int] = column_property(sa.literal(1, type_=sa.Integer()))
 
-    ledgers: Mapped[List["StockLedger"]] = relationship(
-        "StockLedger",
-        back_populates="stock",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        lazy="selectin",
-    )
+    @property
+    def qty_on_hand(self) -> int:
+        return int(self.qty or 0)
 
     def __repr__(self) -> str:
-        return f"<Stock id={self.id} item_id={self.item_id} location_id={self.location_id} qty={self.qty}>"
+        return (
+            f"<Stock wh={self.warehouse_id} item={self.item_id} "
+            f"code={self.batch_code} qty={self.qty}>"
+        )

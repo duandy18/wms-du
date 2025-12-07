@@ -7,12 +7,15 @@
 """
 
 from __future__ import annotations
-from typing import Generator, AsyncGenerator
+
+from typing import AsyncGenerator, Generator
 
 try:
     # 项目内统一的会话工厂（推荐）
     from app.db.session import get_db as _get_db  # 同步 generator[yield Session]
-    from app.db.session import get_session as _get_async_session  # 异步 generator[yield AsyncSession]
+    from app.db.session import (
+        get_session as _get_async_session,
+    )  # 异步 generator[yield AsyncSession]
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "app.db.deps 依赖 app.db.session 中的 get_db / get_session。"

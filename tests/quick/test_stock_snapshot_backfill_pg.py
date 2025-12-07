@@ -1,35 +1,32 @@
-# tests/quick/test_stock_snapshot_backfill_pg.py
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.db.session import async_engine
 from app.jobs.snapshot import run_once
-from app.models.item import Item
-from app.models.location import Location
+from app.services.ledger_writer import write_ledger
 
 pytestmark = pytest.mark.asyncio
 
 
 async def _qty_col(session: AsyncSession) -> str:
-    """检测 stock_snapshots 的数量列：优先 qty，其次 qty_on_hand。"""
+    """检测 stock_snapshots 的数量列：优先 qty_on_hand，其次 qty。"""
     rows = await session.execute(
         text(
             """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='stock_snapshots'
-    """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='stock_snapshots'
+            """
         )
     )
     names = {r[0] for r in rows.fetchall()}
-    if "qty" in names:
-        return "qty"
     if "qty_on_hand" in names:
         return "qty_on_hand"
-    raise RuntimeError("stock_snapshots has neither 'qty' nor 'qty_on_hand' column")
+    if "qty" in names:
+        return "qty"
+    raise RuntimeError("stock_snapshots has neither 'qty_on_hand' nor 'qty' column")
 
 
 async def _ins_item(session: AsyncSession, sku: str) -> int:
@@ -37,59 +34,115 @@ async def _ins_item(session: AsyncSession, sku: str) -> int:
         text("INSERT INTO items (sku,name) VALUES (:s,:n) ON CONFLICT DO NOTHING"),
         {"s": sku, "n": sku},
     )
-    iid = await session.scalar(select(Item.id).where(Item.sku == sku))
-    return int(iid)
-
-
-async def _ins_location(session: AsyncSession, loc_id: int, name: str) -> int:
-    exists = await session.scalar(select(Location.id).where(Location.id == loc_id))
-    if exists is None:
-        await session.execute(
-            text(
-                "INSERT INTO locations (id,name,warehouse_id) VALUES (:i,:n,1) ON CONFLICT (id) DO NOTHING"
-            ),
-            {"i": loc_id, "n": name},
-        )
-    return loc_id
-
-
-async def _get_stock_id(session: AsyncSession, item_id: int, loc_id: int) -> int:
-    return int(
-        (
-            await session.execute(
-                text("SELECT id FROM stocks WHERE item_id=:i AND location_id=:l"),
-                {"i": item_id, "l": loc_id},
-            )
-        ).scalar_one()
+    row = await session.execute(
+        text("SELECT id FROM items WHERE sku = :s"),
+        {"s": sku},
     )
+    return int(row.scalar_one())
 
 
-async def test_backfill(session: AsyncSession):
-    # 造维度
-    item_id = await _ins_item(session, "SNAP-2")
-    loc_id = await _ins_location(session, 12, "L12")
-
-    # 确保 stocks 行存在
+async def _ensure_wh_and_batch(
+    session: AsyncSession,
+    *,
+    wh_id: int,
+    item_id: int,
+    batch_code: str,
+) -> None:
+    # warehouse
     await session.execute(
         text(
-            "INSERT INTO stocks (item_id, location_id, qty) "
-            "VALUES (:i,:l,0) ON CONFLICT (item_id,location_id) DO NOTHING"
+            """
+            INSERT INTO warehouses (id, name)
+            VALUES (:w, 'WH-SNAP-BF')
+            ON CONFLICT (id) DO NOTHING
+            """
         ),
-        {"i": item_id, "l": loc_id},
+        {"w": wh_id},
     )
 
-    # 造 T-1 与 T 窗口内的两笔台账：+2（T-1 10:00），+5（T 10:00）
+    # batch
+    await session.execute(
+        text(
+            """
+            INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
+            VALUES (:item_id, :w, :b, NULL)
+            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
+            """
+        ),
+        {"item_id": item_id, "w": wh_id, "b": batch_code},
+    )
+
+    # stocks 槽位，初始 qty=0
+    await session.execute(
+        text(
+            """
+            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+            VALUES (:item_id, :w, :b, 0)
+            ON CONFLICT (item_id, warehouse_id, batch_code)
+            DO UPDATE SET qty = EXCLUDED.qty
+            """
+        ),
+        {"item_id": item_id, "w": wh_id, "b": batch_code},
+    )
+
+
+async def test_backfill(
+    session: AsyncSession,
+    async_engine: AsyncEngine,
+):
+    """
+    Backfill 行为验证（v2）：
+
+    场景：
+      - 同一 (wh,item,batch) 在 T-1 有一笔 +2 台账，在 T 有一笔 +5；
+      - 先跑 cut = T 00:00；
+      - 再回灌 cut = T-1 00:00；
+      - 期望：
+          * T-1 的 snapshot 记录数量为 2.0；
+          * T 的 snapshot 仍为 5.0，不受回灌影响。
+    """
+
+    # 造维度
+    item_id = await _ins_item(session, "SNAP-2")
+    wh_id = 1
+    batch_code = "SNAP-B2"
+
+    await _ensure_wh_and_batch(
+        session,
+        wh_id=wh_id,
+        item_id=item_id,
+        batch_code=batch_code,
+    )
+
     dayT = datetime(2025, 10, 10, tzinfo=UTC)
     dayT_1 = datetime(2025, 10, 9, tzinfo=UTC)
 
-    sid = await _get_stock_id(session, item_id, loc_id)
-    await session.execute(
-        text(
-            "INSERT INTO stock_ledger (stock_id, reason, after_qty, delta, occurred_at, ref, ref_line) "
-            "VALUES (:sid,'TEST',0, 2, :t1, 'R1',1), (:sid,'TEST',0, 5, :t2, 'R2',1) "
-            "ON CONFLICT DO NOTHING"
-        ),
-        {"sid": sid, "t1": dayT_1.replace(hour=10), "t2": dayT.replace(hour=10)},
+    # 写台账：T-1 +2，T +5
+    await write_ledger(
+        session,
+        warehouse_id=wh_id,
+        item_id=item_id,
+        batch_code=batch_code,
+        reason="TEST",
+        delta=2,
+        after_qty=2,  # 任意合法值，snapshot 逻辑主要关心 delta
+        ref="R1",
+        ref_line=1,
+        occurred_at=dayT_1.replace(hour=10),
+        trace_id=None,
+    )
+    await write_ledger(
+        session,
+        warehouse_id=wh_id,
+        item_id=item_id,
+        batch_code=batch_code,
+        reason="TEST",
+        delta=5,
+        after_qty=7,  # 任意合法值
+        ref="R2",
+        ref_line=1,
+        occurred_at=dayT.replace(hour=10),
+        trace_id=None,
     )
     await session.commit()
 
@@ -104,18 +157,32 @@ async def test_backfill(session: AsyncSession):
     qT_1 = (
         await session.execute(
             text(
-                f"SELECT {qcol} FROM stock_snapshots WHERE snapshot_date=:c AND item_id=:i AND location_id=:l"
+                f"""
+                SELECT {qcol}
+                  FROM stock_snapshots
+                 WHERE snapshot_date = :c
+                   AND item_id       = :i
+                   AND warehouse_id  = :w
+                   AND batch_code    = :b
+                """
             ),
-            {"c": dayT_1.date(), "i": item_id, "l": loc_id},
+            {"c": dayT_1.date(), "i": item_id, "w": wh_id, "b": batch_code},
         )
     ).scalar_one()
 
     qT = (
         await session.execute(
             text(
-                f"SELECT {qcol} FROM stock_snapshots WHERE snapshot_date=:c AND item_id=:i AND location_id=:l"
+                f"""
+                SELECT {qcol}
+                  FROM stock_snapshots
+                 WHERE snapshot_date = :c
+                   AND item_id       = :i
+                   AND warehouse_id  = :w
+                   AND batch_code    = :b
+                """
             ),
-            {"c": dayT.date(), "i": item_id, "l": loc_id},
+            {"c": dayT.date(), "i": item_id, "w": wh_id, "b": batch_code},
         )
     ).scalar_one()
 

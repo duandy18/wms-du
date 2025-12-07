@@ -4,8 +4,8 @@ Revision ID: 20251101_batches_expiry_constraints
 Revises: 20251101_v_scan_trace_view
 Create Date: 2025-11-01 23:10:00
 """
+
 from alembic import op
-import sqlalchemy as sa
 
 revision = "20251101_batches_expiry_constraints"
 down_revision = "20251101_v_scan_trace_view"
@@ -105,10 +105,12 @@ END
 $$;
 """
 
+
 def upgrade():
     op.execute(CHECK_SQL)
     op.execute(FN_SQL)
     op.execute(TRIGGER_SQL)
+
 
 def downgrade():
     op.execute(DROP_SQL)

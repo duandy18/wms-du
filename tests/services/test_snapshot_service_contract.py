@@ -1,14 +1,22 @@
-import pytest
+# tests/services/test_snapshot_service_contract.py
+from __future__ import annotations
 
-pytestmark = pytest.mark.grp_snapshot
-
 import pytest
-from sqlalchemy import text
 
 pytestmark = pytest.mark.asyncio
 
 
 async def test_snapshot_service_calls_proc_and_reads_views(session, monkeypatch):
+    """
+    合同测试：
+
+    - SnapshotService.run(session) 应该尝试执行：
+        * CALL snapshot_today()
+        * SELECT * FROM v_three_books
+      （本测试通过 FakeSession 拦截 SQL 文本）
+
+    - run() 返回值应包含 "sum_stocks" 等字段。
+    """
     from app.services.snapshot_service import SnapshotService
 
     called = {"proc": False, "views": False}

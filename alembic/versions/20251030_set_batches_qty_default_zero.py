@@ -8,6 +8,7 @@ Revision ID: 20251030_set_batches_qty_default_zero
 Revises: 20251030_add_expire_at_to_batches
 Create Date: 2025-10-30
 """
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -16,12 +17,14 @@ down_revision = "20251030_add_expire_at_to_batches"
 branch_labels = None
 depends_on = None
 
+
 def upgrade() -> None:
     conn = op.get_bind()
     # 设定默认值
     op.alter_column("batches", "qty", server_default=sa.text("0"))
     # 修正历史 NULL（若有）
     conn.exec_driver_sql("UPDATE batches SET qty=0 WHERE qty IS NULL")
+
 
 def downgrade() -> None:
     # 仅移除默认值（不改动已有数据）

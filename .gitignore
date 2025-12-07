@@ -1,85 +1,126 @@
-# ---------------------------
-# Core Python / FastAPI ignores
-# ---------------------------
+# ============================================================
+# 🧱 WMS-DU Project .gitignore (Full Replacement)
+# ============================================================
 
+# --- Python Bytecode ---
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.pdb
-*.so
+*$py.class
 
-# Virtual environments
+# --- Virtualenv / Pipenv ---
 .venv/
 env/
 venv/
 ENV/
+Pipfile.lock
+poetry.lock
 
-# Bytecode caches
-**/__pycache__/
-**/*.py[cod]
+# --- OS / Editor Junk ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+.idea/
+.vscode/
+*.log
 
-# SQLite / Postgres local data
+# --- Build / Distribution / Packaging ---
+build/
+dist/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+
+# --- Coverage / Testing ---
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+junit*.xml
+test-results/
+.cache/
+*.prof
+
+# --- Alembic / Migration Cache / Quarantine ---
+alembic/*.pyc
+alembic/versions/*.pyc
+alembic/__pycache__/
+alembic/versions/__pycache__/
+.alembic_quarantine/
+migrations/
+migrations/**
+
+# --- Application Artifacts ---
+logs/
+tmp/
+temp/
+__snapshots__/
+uploads/
+exports/
+backups/
+var/
+
+# --- Node / Frontend (Vite + React) ---
+node_modules/
+yarn.lock
+npm-debug.log*
+.vite/
+dist/
+build/
+coverage/
+.env*
+!.env.example
+pnpm-lock.yaml   # 已 archive 到 _archive_fe
+
+# --- Docker / Compose / Local DB ---
+*.pid
+*.seed
+docker-data/
+docker-compose.override.yml
+**/db-data/
+**/pgdata/
+**/volumes/
 *.db
 *.sqlite3
 *.sqlite
-*.log
 
-# Alembic migration cache
-alembic/__pycache__/
-alembic/versions/__pycache__/
-
-# Pytest / Coverage / MyPy
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.cache/
-
-# VSCode / PyCharm / Editors
-.vscode/
+# --- JetBrains / VSCode ---
 .idea/
-*.swp
-*.swo
+.vscode/
+*.iml
+*.ipr
+*.iws
 
-# Node / Frontend artifacts (for wms-fe or local dashboards)
-node_modules/
-dist/
-build/
-*.lock
-*.log
+# --- Archive / Bundles / Reports ---
+_archive/
+_archive_backend/
+_archive_fe/
+_archive_migrations/
+tools/audits/
+tools/model_db_check_*.txt
+tools/model_db_diff_*.txt
+reports/
+output/
+out/
+*.tar.gz
+*.zip
 
-# Mac / Windows OS junk
-.DS_Store
-Thumbs.db
-
-# ---------------------------
-# Project specific ignores
-# ---------------------------
-
-# Local docker / compose logs
-docker-data/
-*.pid
-
-# Exported Canvas or documentation builds
-home/Downloads/wms-du-canvas/
-WMS-DU-*.md
-*.pdf
-*.docx
-*.xlsx
-*.csv
-*.tmp
+# --- System-Specific ---
+*.pkl
+*.cache
 *.bak
-*.bak.*
+*.orig
+*.rej
+*.save
 
-# Test outputs and temporary results
-tests/output/
-logs/
-run.log
-.env
-ops/compose/.env
-
-# local db
-*.db
-app/db/db.sqlite
-scratch_probe.py
+# ============================================================
+# Redundant Safety
+__pycache__/
+*.pyc
+# ============================================================

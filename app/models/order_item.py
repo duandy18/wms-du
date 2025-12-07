@@ -1,56 +1,63 @@
-# app/models/order_item.py
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, Numeric, Index
+from sqlalchemy import BigInteger, ForeignKey, Integer, Numeric, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.order import Order
-    from app.models.item import Item
+    from .item import Item
+    from .order import Order
 
 
 class OrderItem(Base):
-    """
-    订单行项目（强契约·现代声明式）
-    与原表结构完全一致：
-      - id 主键自增
-      - order_id → orders.id（CASCADE 删除）
-      - item_id  → items.id（RESTRICT 删除）
-      - qty / unit_price / line_amount 均为数值字段
-    无需迁移。
-    """
-
     __tablename__ = "order_items"
-    __table_args__ = (
-        Index("ix_order_items_order_item", "order_id", "item_id"),
-    )
+    __allow_unmapped__ = True
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
     order_id: Mapped[int] = mapped_column(
+        BigInteger,
         ForeignKey("orders.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     item_id: Mapped[int] = mapped_column(
+        Integer,
         ForeignKey("items.id", ondelete="RESTRICT"),
         nullable=False,
-        index=True,
     )
-    qty: Mapped[int] = mapped_column(Integer, nullable=False)
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
-    line_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
 
-    # 关系：订单 ↔ 行项目；商品 ↔ 行项目
-    order: Mapped["Order"] = relationship("Order", back_populates="lines", lazy="selectin")
-    item: Mapped["Item"] = relationship("Item", back_populates="lines", lazy="selectin")
+    sku_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    discount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+
+    shipped_qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    returned_qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    extras: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    order: Mapped["Order"] = relationship(
+        "Order",
+        back_populates="order_items",
+        lazy="selectin",
+    )
+    item: Mapped["Item"] = relationship(
+        "Item",
+        back_populates="order_items",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return (
             f"<OrderItem id={self.id} order_id={self.order_id} "
-            f"item_id={self.item_id} qty={self.qty} line_amount={self.line_amount}>"
+            f"item_id={self.item_id} qty={self.qty} "
+            f"shipped={self.shipped_qty} returned={self.returned_qty}>"
         )

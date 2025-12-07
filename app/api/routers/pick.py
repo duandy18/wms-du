@@ -1,11 +1,10 @@
-# app/api/routers/pick.py
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -15,24 +14,57 @@ router = APIRouter(prefix="/pick", tags=["pick"])
 
 
 class PickIn(BaseModel):
-    task_id: int = Field(..., ge=1, description="拣货任务ID")
-    item_id: int = Field(..., ge=1)
-    qty: int = Field(..., ge=1)
-    location_id: Optional[int] = Field(None, ge=0, description="拣货位；可为 0/None 走服务侧策略")
-    ref: str = Field(..., description="扫描引用/对账引用（scan_ref 或人工引用）")
-    device_id: Optional[str] = None
-    operator: Optional[str] = None
-    # 若你要显式行号，可解开下行并在回退分支使用：
-    # task_line_id: Optional[int] = None
+    """
+    v2 拣货请求体（与 PickService.record_pick 对齐）：
+
+    - 必填：
+        * item_id: 商品 ID
+        * qty: 本次拣货数量（>0）
+        * warehouse_id: 仓库 ID
+        * batch_code: 扣减的批次编码
+        * ref: 拣货引用（用于台账幂等，如 SCAN-xxx）
+    - 可选：
+        * occurred_at: 拣货时间，默认当前时间（UTC）
+        * task_line_id: 若有拣货任务行，可用于后续扩展 remain 计算
+        * location_id / device_id / operator: 仅作为审计/扩展信息，当前不影响扣减逻辑
+    """
+
+    item_id: int = Field(..., ge=1, description="商品 ID")
+    qty: int = Field(..., ge=1, description="拣货数量")
+    warehouse_id: int = Field(..., ge=1, description="仓库 ID")
+    batch_code: str = Field(..., min_length=1, description="批次编码")
+    ref: str = Field(..., min_length=1, description="拣货引用（如扫描号）")
+
+    occurred_at: Optional[datetime] = Field(
+        default=None, description="拣货时间（缺省为当前 UTC 时间）"
+    )
+
+    task_line_id: Optional[int] = Field(
+        default=None, description="可选：拣货任务行 ID，用于后续扩展 remain 计算"
+    )
+    location_id: Optional[int] = Field(
+        default=None, ge=0, description="拣货库位 ID（当前不参与扣减，仅作记录）"
+    )
+    device_id: Optional[str] = Field(default=None, description="设备 ID（扫描枪等）")
+    operator: Optional[str] = Field(default=None, description="操作人 ID 或姓名")
 
 
 class PickOut(BaseModel):
-    task_id: int
-    task_line_id: int
+    """
+    拣货结果（与前端展示需求对齐）：
+    - picked: 本次实际扣减数量
+    - stock_after: 扣减后库存余额（如果 StockService 有返回）
+    - warehouse_id / batch_code / item_id: 标识拣货槽位
+    - status: OK / IDEMPOTENT / ERROR
+    """
+
     item_id: int
-    from_location_id: int
+    warehouse_id: int
+    batch_code: str
     picked: int
-    remain: int
+    stock_after: Optional[int] = None
+    ref: str
+    status: str
 
 
 @router.post("", response_model=PickOut)
@@ -41,72 +73,41 @@ async def pick_commit(
     session: AsyncSession = Depends(get_session),
 ):
     """
-    拣货真动作：
-    - 优先用 PickService.record_pick_by_context()（推荐）
-    - 若服务没有 by_context，则在网关内按 {task_id,item_id} 兜底定位一条 OPEN/PARTIAL 行再调用 record_pick()
-    - 并发/权限不符 → 403；数量非法/无可拣 → 409
+    拣货动作：调用 PickService.record_pick 立即扣减库存（原子 + 幂等）。
+
+    当前版本暂不直接更新 pick_task_lines / remain，仅返回本次拣货结果；
+    后续可在此基础上增加任务维度的 picked/remain 统计。
     """
     svc = PickService()
 
-    # 1) 首选 by_context（若存在）
-    if hasattr(svc, "record_pick_by_context"):
-        try:
-            result = await svc.record_pick_by_context(  # type: ignore[attr-defined]
-                session=session,
-                task_id=body.task_id,
-                item_id=body.item_id,
-                qty=body.qty,
-                scan_ref=body.ref,
-                location_id=body.location_id or 0,
-                device_id=body.device_id,
-                operator=body.operator,
-            )
-            await session.commit()
-            return PickOut(**result)
-        except PermissionError as e:
-            await session.rollback()
-            raise HTTPException(status_code=403, detail=str(e))
-        except ValueError as e:
-            await session.rollback()
-            raise HTTPException(status_code=409, detail=str(e))
+    occurred_at = body.occurred_at or datetime.now(timezone.utc)
 
-    # 2) 回退：by_context 不可用 → 网关兜底定位一条 OPEN/PARTIAL 行
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT ptl.id
-                  FROM pick_task_lines ptl
-                 WHERE ptl.task_id = :tid
-                   AND ptl.item_id = :itm
-                   AND ptl.status IN ('OPEN','PARTIAL')
-                 ORDER BY ptl.id
-                 LIMIT 1
-                """
-            ),
-            {"tid": body.task_id, "itm": body.item_id},
-        )
-    ).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="no OPEN/PARTIAL line for task & item")
-
-    tlid = int(row[0])
     try:
         result = await svc.record_pick(
             session=session,
-            task_line_id=tlid,
-            from_location_id=body.location_id or 0,
             item_id=body.item_id,
             qty=body.qty,
-            scan_ref=body.ref,
-            device_id=body.device_id,
-            operator=body.operator,
+            ref=body.ref,
+            occurred_at=occurred_at,
+            batch_code=body.batch_code,
+            warehouse_id=body.warehouse_id,
+            task_line_id=body.task_line_id,
         )
         await session.commit()
-        return PickOut(**result)
-    except PermissionError as e:
-        await session.rollback()
-        raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
+        # 典型业务错误（库存不足 / 批次不合法等）
         await session.rollback()
         raise HTTPException(status_code=409, detail=str(e))
+    except Exception:
+        await session.rollback()
+        raise
+
+    return PickOut(
+        item_id=body.item_id,
+        warehouse_id=result.get("warehouse_id", body.warehouse_id),
+        batch_code=result.get("batch_code", body.batch_code),
+        picked=result.get("picked", body.qty),
+        stock_after=result.get("stock_after"),
+        ref=result.get("ref", body.ref),
+        status=result.get("status", "OK"),
+    )

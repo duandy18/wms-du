@@ -21,6 +21,7 @@ api_router = APIRouter()
 # /stores/*
 try:
     from app.routers.store import router as store_router  # type: ignore
+
     api_router.include_router(store_router)
     log.info("api_router: mounted new /stores/*")
 except Exception as e:
@@ -29,6 +30,7 @@ except Exception as e:
 # /snapshot/*
 try:
     from app.routers import admin_snapshot  # type: ignore
+
     api_router.include_router(admin_snapshot.router)
     log.info("api_router: mounted new /snapshot/*")
 except Exception as e:
@@ -37,6 +39,7 @@ except Exception as e:
 # /orders/*（reserve/cancel/ship/preview-visible）
 try:
     from app.routers import orders as orders_router  # type: ignore
+
     api_router.include_router(orders_router.router)
     log.info("api_router: mounted new /orders/*")
 except Exception as e:
@@ -45,6 +48,7 @@ except Exception as e:
 # /webhook/*（平台回调）
 try:
     from app.routers import webhooks as webhooks_router  # type: ignore
+
     api_router.include_router(webhooks_router.router)
     log.info("api_router: mounted new /webhook/*")
 except Exception as e:
@@ -53,6 +57,7 @@ except Exception as e:
 # /auth/*（用户/鉴权）
 try:
     from app.routers import users as users_router  # type: ignore
+
     api_router.include_router(users_router.router)
     log.info("api_router: mounted new /auth/*")
 except Exception as e:
@@ -66,6 +71,7 @@ except Exception as e:
 # - 便于你逐步删减/迁移老的 API 模块，而不影响现在的访问。
 # ============================================================
 
+
 def _mount_legacy(modpath: str, attr: str = "router") -> None:
     try:
         mod = __import__(modpath, fromlist=[attr])
@@ -75,6 +81,7 @@ def _mount_legacy(modpath: str, attr: str = "router") -> None:
             log.info("api_router: mounted legacy %s", modpath)
     except Exception as e:
         log.debug("api_router: legacy %s not mounted: %s", modpath, e)
+
 
 # 逐个尝试（存在就挂，不存在就跳过 → 无侵入）
 for _m in (
