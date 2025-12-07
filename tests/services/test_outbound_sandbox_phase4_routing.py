@@ -159,8 +159,15 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
         (wh_b, 1, "S3-FBOK"): 0,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
-        key = (warehouse_id, item_id, shop_id_)
+    async def fake_get_available(
+        self,
+        session,
+        platform,
+        shop_id,
+        warehouse_id,
+        item_id,
+    ) -> int:
+        key = (warehouse_id, item_id, shop_id)
         return int(stock_map.get(key, 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)

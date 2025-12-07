@@ -163,7 +163,14 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
         (backup_wid, 1): 10,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(
+        self,
+        session,
+        platform,
+        shop_id,
+        warehouse_id,
+        item_id,
+    ):
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(

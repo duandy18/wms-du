@@ -341,7 +341,8 @@ def _summarize_stages(stages: List[LifecycleStage]) -> LifecycleSummary:
     # 有后续阶段但缺 reserved（意味着链路起点有问题）
     if created and created.present:
         later_present = any(
-            st.present for st in [reserved_consumed, outbound, shipped, returned, delivered]
+            getattr(st, "present", False)
+            for st in (reserved_consumed, outbound, shipped, returned, delivered)
         )
         if (not reserved or not reserved.present) and later_present:
             issues.append("存在后续生命周期事件，但缺少预占创建记录（reservations）。")

@@ -41,6 +41,9 @@ help:
 	@echo "  make prepilot             - 中试前体检：跑 pre_pilot 黄金链路三板斧"
 	@echo "  make check                - 兼容旧入口：一键全测(Mini流水)"
 	@echo "  make phase0-verify        - 兼容旧入口：Phase0 校验脚本（如存在）"
+	@echo "  make lint-backend         - 后端 pre-commit lint（ruff 等）"
+	@echo "  make test-backend-quick   - 后端快速回归（少量金丝雀用例）"
+	@echo "  make test-backend-smoke   - 后端 v2 烟囱 Smoke 套餐（CI 主闸门）"
 	@echo ""
 
 .PHONY: venv
@@ -251,3 +254,25 @@ phase0-verify:
 	else \
 	  echo "[phase0-verify] skip: tools/audits/phase0/verify.sh not found or not executable"; \
 	fi
+
+.PHONY: lint-backend test-backend-quick
+
+lint-backend:
+	@pre-commit run --all-files
+
+test-backend-quick:
+	@pytest -q tests/phase2p9/test_fefo_outbound_three_books.py \
+	           tests/services/test_outbound_sandbox_phase4_routing.py
+
+.PHONY: test-backend-smoke
+
+test-backend-smoke:
+	@pytest -q \
+		tests/quick/test_inbound_smoke_pg.py \
+		tests/quick/test_outbound_core_v2.py \
+		tests/quick/test_outbound_commit_v2.py \
+		tests/quick/test_snapshot_inventory_pg.py \
+		tests/phase2p9/test_fefo_outbound_three_books.py \
+		tests/services/test_order_lifecycle_v2.py \
+		tests/services/test_outbound_e2e_phase4_routing.py \
+		tests/smoke/test_platform_events_smoke_pg.py

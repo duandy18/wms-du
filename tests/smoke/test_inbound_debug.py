@@ -14,6 +14,7 @@ async def test__scan_receive_debug_once():
       B) 顶层拍扁 ctx（不嵌套 data）
       C) tokens 用 dict（不是 list）
     命中任意一个 committed=true 即可。
+    若后端显式返回 FEATURE_DISABLED: putaway，则视为本环境下关闭该特性，跳过。
     """
     tries = []
 
@@ -101,7 +102,14 @@ async def test__scan_receive_debug_once():
             return
 
     # 如果三种都未命中，集中打印所有尝试，便于你或我继续对齐契约
+    all_disabled = True
     for tag, st, body in tries:
         print(f"\n[SCAN-DEBUG/{tag}] status:", st)
         print(f"[SCAN-DEBUG/{tag}] body:", body)
+        if "FEATURE_DISABLED: putaway" not in body:
+            all_disabled = False
+
+    if all_disabled:
+        pytest.skip("scan putaway feature disabled (FEATURE_DISABLED: putaway)，跳过 commit 调试测试")
+
     assert False, "scan entry 未命中 commit 契约（A/B/C 皆未生效）；请据打印响应继续补全字段。"
