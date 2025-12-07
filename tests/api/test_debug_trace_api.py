@@ -10,7 +10,7 @@ pytestmark = pytest.mark.asyncio
 
 async def _seed_trace_case(session: AsyncSession) -> str:
     """
-    构造一个最小 trace 场景：
+    构造一个最小 trace 场景（幂等版）：
 
     - trace_id = 'ORD-UT-1'
     - event_store: trace_id='ORD-UT-1', topic='ORDER.CREATED', key='ORD-UT-1'
@@ -23,6 +23,13 @@ async def _seed_trace_case(session: AsyncSession) -> str:
       - stock_ledger.trace_id    = 'ORD-UT-1'
       - reservations.trace_id    = 'ORD-UT-1'
       - reservations.ref         = 'ORD-UT-1'（兼容历史 ref 口径）
+
+    注意：
+      - reservations 有唯一约束 uq_reservations_platform_shop_wh_ref
+        (platform, shop_id, warehouse_id, ref)
+      - reservation_lines 有唯一约束/索引 ix_reservation_lines_res_refline
+        (reservation_id, ref_line)
+      因此这里用 ON CONFLICT 保证幂等。
     """
     trace_id = "ORD-UT-1"
     platform = "PDD"
@@ -42,7 +49,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "key": order_ref},
     )
 
-    # reservation 头：现在以 trace_id 为主，ref 为退路
+    # reservation 头：现在以 trace_id 为主，ref 为退路（幂等）
     row = await session.execute(
         text(
             """
@@ -68,6 +75,10 @@ async def _seed_trace_case(session: AsyncSession) -> str:
                 now() + INTERVAL '1 hour',
                 :trace_id
             )
+            ON CONFLICT ON CONSTRAINT uq_reservations_platform_shop_wh_ref
+            DO UPDATE
+               SET trace_id   = EXCLUDED.trace_id,
+                   updated_at = now()
             RETURNING id
             """
         ),
@@ -81,7 +92,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     )
     rid = int(row.scalar_one())
 
-    # reservation line
+    # reservation line：按 (reservation_id, ref_line) 幂等
     await session.execute(
         text(
             """
@@ -103,6 +114,12 @@ async def _seed_trace_case(session: AsyncSession) -> str:
                 now(),
                 now()
             )
+            ON CONFLICT ON CONSTRAINT ix_reservation_lines_res_refline
+            DO UPDATE
+               SET item_id      = EXCLUDED.item_id,
+                   qty          = EXCLUDED.qty,
+                   consumed_qty = EXCLUDED.consumed_qty,
+                   updated_at   = now()
             """
         ),
         {"rid": rid, "item_id": item_id},

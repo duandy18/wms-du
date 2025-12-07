@@ -1,15 +1,21 @@
+# tests/services/test_outbound_e2e_phase4_routing.py
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
 from app.services.outbound_service import OutboundService, ShipLine
 
 
-async def _get_store_id_for_shop(session, platform: str, shop_id: str) -> int:
+async def _get_store_id_for_shop(session: AsyncSession, platform: str, shop_id: str) -> int:
+    """
+    获取或创建给定 platform/shop_id 的 store 记录，返回 store.id。
+    测试环境是干净库，不再依赖预先 seed 的 store。
+    """
     row = await session.execute(
         text(
             """
@@ -23,7 +29,18 @@ async def _get_store_id_for_shop(session, platform: str, shop_id: str) -> int:
         {"p": platform, "s": shop_id},
     )
     store_id = row.scalar()
-    assert store_id is not None, f"test precondition failed: no store for {platform}/{shop_id}"
+    if store_id is None:
+        row = await session.execute(
+            text(
+                """
+                INSERT INTO stores (platform, shop_id, name)
+                VALUES (:p, :s, :name)
+                RETURNING id
+                """
+            ),
+            {"p": platform, "s": shop_id, "name": f"UT-STORE-{platform}-{shop_id}"},
+        )
+        store_id = row.scalar_one()
     return int(store_id)
 
 
@@ -47,7 +64,6 @@ async def _ensure_two_warehouses(session):
     if needed <= 0:
         return ids[0], ids[1]
 
-    # 查找 NOT NULL 且没有默认值的列（排除 id）
     cols_rows = await session.execute(
         text(
             """
@@ -96,7 +112,7 @@ async def _ensure_two_warehouses(session):
 
 
 async def _bind_store_warehouses(
-    session,
+    session: AsyncSession,
     *,
     platform: str,
     shop_id: str,
@@ -137,11 +153,7 @@ async def _bind_store_warehouses(
 @pytest.mark.asyncio
 async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
     """
-    Phase 4：ingest → reserve → ship 全链路 E2E（单平台单店），验证：
-
-    - ingest 时订单被路由到主仓（orders.warehouse_id）
-    - reserve 时 reservations.warehouse_id 与订单仓一致
-    - ship 可以基于同一 order_id + warehouse_id 正常执行（即便库存不足，只要不崩溃）
+    Phase 4：ingest → reserve → ship 全链路 E2E（单平台单店）
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -252,9 +264,7 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
     res_wh = row.scalar()
     assert res_wh == order_wh == top_wid
 
-    # 3) ship：用 order_id + warehouse_id 出库。
-    # OutboundService.commit 需要 ShipLine，且每行必须有 warehouse_id 和 batch_code。
-    # 我们这里用一个“虚拟批次” 'DEFAULT'。由于没有真实库存，预期是 0 行成功、报 insufficient stock。
+    # 3) ship
     ship_lines = [
         ShipLine(
             item_id=1,
@@ -273,15 +283,12 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
         trace_id=trace_id,
     )
 
-    # 确认整体执行正常：返回结构合理，不抛异常
     assert isinstance(ship_result, dict)
     assert ship_result.get("order_id") == str(order_id)
     assert ship_result.get("status") == "OK"
 
-    # 由于没有真实库存，committed_lines 应该是 0
     assert ship_result.get("committed_lines") == 0
     results = ship_result.get("results") or []
     assert isinstance(results, list)
     assert len(results) == 1
-    # 错误信息应当是库存不足
     assert "insufficient stock" in (results[0].get("error") or "")

@@ -72,19 +72,18 @@ class ItemBarcode(Base):
     )
 
     __table_args__ = (
-        # barcode 仍然保持全局唯一
-        Index("uq_item_barcodes_barcode", "barcode", unique=True),
-        # 一个 item 只能有一个主条码
+        # 一个 item 只能有一个主条码（部分索引）
         Index(
             "uq_item_barcodes_primary",
             "item_id",
             unique=True,
             postgresql_where=text("is_primary = true"),
         ),
+        # 提示 Alembic 在 autogenerate 时跳过这个表（我们用手写迁移来保证结构）
         {"info": {"skip_autogen": True}},
     )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"<ItemBarcode id={self.id} item={self.item_id} "
             f"barcode={self.barcode!r} primary={self.is_primary}>"

@@ -1,18 +1,6 @@
 # tests/smoke/test_platform_events_smoke_pg.py
 """
 多平台平台事件 → pipeline 冒烟测试（v2 schema 版）。
-
-目标非常克制：
-
-- 验证 PDD / Taobao / JD 三个平台的“已发货”事件，喂给 handle_event_batch:
-    * 不抛异常
-    * stocks 里对应 item 的槽位存在（schema 对齐）
-- 不在这里死磕具体扣减数量和台账条数，那些由更精细的 v2 测试负责。
-
-注意：
-- stocks 采用 v2 三维槽位 (warehouse_id, item_id, batch_code)。
-- 出库扣减是否实际发生、台账写什么 reason，在业务逻辑演进中可能变化，
-  此处只作为“管线可用性”的健康检查。
 """
 
 import os
@@ -24,10 +12,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.services.platform_events import handle_event_batch
 
-ASYNC_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms",
-).replace("postgresql+psycopg", "postgresql+asyncpg")
+ASYNC_URL = (
+    os.getenv("WMS_TEST_DATABASE_URL")
+    or os.getenv("WMS_DATABASE_URL")
+    or "postgresql+asyncpg://postgres:wms@127.0.0.1:55432/postgres"
+)
 
 
 @pytest.mark.asyncio
@@ -84,7 +73,7 @@ async def test_smoke_multi_platform_end2end():
             {
                 "platform": "pdd",
                 "order_sn": ref_p,
-                "status": "SHIPPED",  # 属于 _SHIPPED_ALIASES → SHIP 分支
+                "status": "SHIPPED",
                 "lines": [
                     {
                         "item_id": 1,
@@ -97,7 +86,7 @@ async def test_smoke_multi_platform_end2end():
             {
                 "platform": "taobao",
                 "tid": ref_t,
-                "trade_status": "WAIT_BUYER_CONFIRM_GOODS",  # SHIPPED 别名
+                "trade_status": "WAIT_BUYER_CONFIRM_GOODS",
                 "lines": [
                     {
                         "item_id": 2,
@@ -110,7 +99,7 @@ async def test_smoke_multi_platform_end2end():
             {
                 "platform": "jd",
                 "orderId": ref_j,
-                "orderStatus": "DELIVERED",  # SHIPPED 别名
+                "orderStatus": "DELIVERED",
                 "lines": [
                     {
                         "item_id": 3,
@@ -122,7 +111,6 @@ async def test_smoke_multi_platform_end2end():
             },
         ]
 
-        # 不抛异常即视为基本健康
         await handle_event_batch(events, session=s)
         await s.commit()
 
@@ -141,7 +129,6 @@ async def test_smoke_multi_platform_end2end():
             )
         ).all()
         qtys = {r[0]: r[1] for r in rows}
-        # 只要求 1/2/3 这三条槽位存在且数量非负
         assert set(qtys.keys()) == {1, 2, 3}
         assert all(q >= 0 for q in qtys.values())
 

@@ -30,22 +30,26 @@ def _has_table(bind, table: str) -> bool:
 
 
 def _has_constraint(bind, table: str, conname: str) -> bool:
-    sql = sa.text("""
+    sql = sa.text(
+        """
         SELECT 1
         FROM pg_constraint
         WHERE conname=:n AND conrelid=('public.'||:t)::regclass
         LIMIT 1
-    """)
+    """
+    )
     return bind.execute(sql, {"n": conname, "t": table}).first() is not None
 
 
 def _has_column(bind, table: str, col: str) -> bool:
-    sql = sa.text("""
+    sql = sa.text(
+        """
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema='public' AND table_name=:t AND column_name=:c
         LIMIT 1
-    """)
+    """
+    )
     return bind.execute(sql, {"t": table, "c": col}).first() is not None
 
 
@@ -63,14 +67,21 @@ def upgrade() -> None:
     bind.execute(sa.text("ALTER TABLE orders ALTER COLUMN pay_amount   SET DEFAULT 0.00"))
     if not _has_constraint(bind, "orders", CHK_ORDERS_AMOUNT):
         bind.execute(
-            sa.text(f"""
+            sa.text(
+                f"""
             ALTER TABLE orders
             ADD CONSTRAINT {CHK_ORDERS_AMOUNT}
             CHECK (order_amount >= 0 AND pay_amount >= 0)
-        """)
+        """
+            )
         )
-    # 业务号+时间索引（按你的口径，如使用 order_no 就改成 order_no）
+
+    # 业务号+时间索引：
+    # - 如果有 ext_order_no，用 (ext_order_no, created_at)
+    # - 否则，确保有 order_no 列，再用 (order_no, created_at)
     if not _has_column(bind, "orders", "ext_order_no"):
+        if not _has_column(bind, "orders", "order_no"):
+            bind.execute(sa.text("ALTER TABLE orders ADD COLUMN order_no TEXT"))
         bind.execute(
             sa.text(
                 f"CREATE INDEX IF NOT EXISTS {IDX_ORDERS_NO_TIME} ON orders (order_no, created_at)"
@@ -130,10 +141,12 @@ def upgrade() -> None:
     # 约束：唯一 & 检查
     if not _has_constraint(bind, "order_items", UQ_ORDER_ITEMS_ORD_SKU):
         bind.execute(
-            sa.text(f"""
+            sa.text(
+                f"""
             ALTER TABLE order_items
             ADD CONSTRAINT {UQ_ORDER_ITEMS_ORD_SKU} UNIQUE (order_id, sku_id)
-        """)
+        """
+            )
         )
     if not _has_constraint(bind, "order_items", CHK_ORDER_ITEMS_QTY):
         bind.execute(
@@ -141,22 +154,26 @@ def upgrade() -> None:
         )
     if not _has_constraint(bind, "order_items", CHK_ORDER_ITEMS_AMT):
         bind.execute(
-            sa.text(f"""
+            sa.text(
+                f"""
             ALTER TABLE order_items
             ADD CONSTRAINT {CHK_ORDER_ITEMS_AMT}
             CHECK (price >= 0 AND discount >= 0 AND amount >= 0)
-        """)
+        """
+            )
         )
 
     # 外键：item_id -> items.id （SET NULL）
     fk_names = [fk.get("name") for fk in sa.inspect(bind).get_foreign_keys("order_items")]
     if FK_ORDER_ITEMS_ITEM not in fk_names:
         bind.execute(
-            sa.text(f"""
+            sa.text(
+                f"""
             ALTER TABLE order_items
             ADD CONSTRAINT {FK_ORDER_ITEMS_ITEM}
             FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL
-        """)
+        """
+            )
         )
 
     # -------------------- order_address（幂等） --------------------
@@ -203,7 +220,8 @@ def upgrade() -> None:
         )
     # 复合索引（若缺则补）
     bind.execute(
-        sa.text(f"""
+        sa.text(
+            f"""
         DO $$
         BEGIN
           IF NOT EXISTS (
@@ -214,7 +232,8 @@ def upgrade() -> None:
             CREATE INDEX {IDX_ORDLOG_ORD_TRK} ON order_logistics(order_id, tracking_no);
           END IF;
         END $$;
-    """)
+    """
+        )
     )
 
 

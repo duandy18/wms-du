@@ -45,7 +45,7 @@ class StockService:
         """
         若不存在批次主档则创建；若已存在，则不更新日期（避免覆盖历史业务档案）。
 
-        注意：保持批次码为主键，不做基于日期的区分。
+        注意：按 v2/v3 统一模型，批次维度为 (item_id, warehouse_id, batch_code)。
         """
         await session.execute(
             text(
@@ -108,7 +108,7 @@ class StockService:
               日期无需提供（不会改变批次元数据）。
 
         - 幂等：
-              按 (wh, item, batch_code, reason, ref, ref_line) 判断。
+              按 (warehouse_id, item_id, batch_code, reason, ref, ref_line) 判断。
         """
         reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
         rl = int(ref_line) if ref_line is not None else 1
@@ -330,9 +330,9 @@ class StockService:
                             SELECT s.batch_code, s.qty
                               FROM stocks s
                               LEFT JOIN batches b
-                                ON b.item_id = s.item_id
+                                ON b.item_id      = s.item_id
                                AND b.warehouse_id = s.warehouse_id
-                               AND b.batch_code = s.batch_code
+                               AND b.batch_code   = s.batch_code
                              WHERE s.item_id=:i AND s.warehouse_id=:w AND s.qty>0
                              ORDER BY b.expiry_date ASC NULLS LAST, s.id ASC
                              LIMIT 1

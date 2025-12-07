@@ -70,6 +70,33 @@ def _drop_index_or_constraint_if_exists(name: str, table: str) -> None:
     op.execute(f'DROP INDEX IF EXISTS "{name}"')
 
 
+def _has_column(table: str, col: str) -> bool:
+    bind = op.get_bind()
+    sql = sa.text(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=:t AND column_name=:c
+        LIMIT 1
+        """
+    )
+    return bind.execute(sql, {"t": table, "c": col}).first() is not None
+
+
+def _has_index(name: str) -> bool:
+    bind = op.get_bind()
+    sql = sa.text(
+        """
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname  = :n
+        LIMIT 1
+        """
+    )
+    return bind.execute(sql, {"n": name}).first() is not None
+
+
 def upgrade() -> None:
     """Upgrade schema（with safety prelude）."""
 
@@ -178,13 +205,20 @@ def upgrade() -> None:
         server_default=None,
     )
 
-    op.create_index(
-        "ix_event_error_log_key",
-        "event_error_log",
-        ["platform", "shop_id", "idempotency_key"],
-        unique=False,
-    )
-    op.create_index("ix_event_error_log_retry", "event_error_log", ["next_retry_at"], unique=False)
+    if not _has_index("ix_event_error_log_key"):
+        op.create_index(
+            "ix_event_error_log_key",
+            "event_error_log",
+            ["platform", "shop_id", "idempotency_key"],
+            unique=False,
+        )
+    if not _has_index("ix_event_error_log_retry"):
+        op.create_index(
+            "ix_event_error_log_retry",
+            "event_error_log",
+            ["next_retry_at"],
+            unique=False,
+        )
 
     # -----------------------------
     # inventory_movements：先建枚举 → 加列 → 回填 → 清洗 → 非空/索引/外键
@@ -200,28 +234,42 @@ def upgrade() -> None:
         """
     )
 
-    op.add_column("inventory_movements", sa.Column("item_sku", sa.String(), nullable=True))
-    op.add_column("inventory_movements", sa.Column("from_location_id", sa.Integer(), nullable=True))
-    op.add_column("inventory_movements", sa.Column("to_location_id", sa.Integer(), nullable=True))
-    op.add_column(
-        "inventory_movements",
-        sa.Column("quantity", sa.Float(), server_default=sa.text("0"), nullable=True),
-    )
-    op.add_column(
-        "inventory_movements",
-        sa.Column(
-            "movement_type",
-            sa.Enum("RECEIPT", "SHIPMENT", "TRANSFER", "ADJUSTMENT", name="movementtype"),
-            server_default=sa.text("'ADJUSTMENT'"),
-            nullable=True,
-        ),
-    )
-    op.add_column(
-        "inventory_movements",
-        sa.Column(
-            "timestamp", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
-        ),
-    )
+    # 列添加前先守卫，避免 DuplicateColumn
+    if not _has_column("inventory_movements", "item_sku"):
+        op.add_column("inventory_movements", sa.Column("item_sku", sa.String(), nullable=True))
+    if not _has_column("inventory_movements", "from_location_id"):
+        op.add_column(
+            "inventory_movements", sa.Column("from_location_id", sa.Integer(), nullable=True)
+        )
+    if not _has_column("inventory_movements", "to_location_id"):
+        op.add_column(
+            "inventory_movements", sa.Column("to_location_id", sa.Integer(), nullable=True)
+        )
+    if not _has_column("inventory_movements", "quantity"):
+        op.add_column(
+            "inventory_movements",
+            sa.Column("quantity", sa.Float(), server_default=sa.text("0"), nullable=True),
+        )
+    if not _has_column("inventory_movements", "movement_type"):
+        op.add_column(
+            "inventory_movements",
+            sa.Column(
+                "movement_type",
+                sa.Enum("RECEIPT", "SHIPMENT", "TRANSFER", "ADJUSTMENT", name="movementtype"),
+                server_default=sa.text("'ADJUSTMENT'"),
+                nullable=True,
+            ),
+        )
+    if not _has_column("inventory_movements", "timestamp"):
+        op.add_column(
+            "inventory_movements",
+            sa.Column(
+                "timestamp",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("now()"),
+                nullable=False,
+            ),
+        )
 
     op.execute(
         """
@@ -256,28 +304,42 @@ def upgrade() -> None:
     )
 
     op.execute("ALTER TABLE inventory_movements ALTER COLUMN id TYPE text USING id::text")
-    op.create_index("ix_inventory_movements_id", "inventory_movements", ["id"], unique=False)
-    op.create_index(
-        "ix_inventory_movements_item_sku", "inventory_movements", ["item_sku"], unique=False
-    )
-    op.create_index(
-        "ix_inventory_movements_movement_type",
-        "inventory_movements",
-        ["movement_type"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_inventory_movements_sku_time",
-        "inventory_movements",
-        ["item_sku", "timestamp"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_inventory_movements_type_time",
-        "inventory_movements",
-        ["movement_type", "timestamp"],
-        unique=False,
-    )
+
+    if not _has_index("ix_inventory_movements_id"):
+        op.create_index(
+            "ix_inventory_movements_id",
+            "inventory_movements",
+            ["id"],
+            unique=False,
+        )
+    if not _has_index("ix_inventory_movements_item_sku"):
+        op.create_index(
+            "ix_inventory_movements_item_sku",
+            "inventory_movements",
+            ["item_sku"],
+            unique=False,
+        )
+    if not _has_index("ix_inventory_movements_movement_type"):
+        op.create_index(
+            "ix_inventory_movements_movement_type",
+            "inventory_movements",
+            ["movement_type"],
+            unique=False,
+        )
+    if not _has_index("ix_inventory_movements_sku_time"):
+        op.create_index(
+            "ix_inventory_movements_sku_time",
+            "inventory_movements",
+            ["item_sku", "timestamp"],
+            unique=False,
+        )
+    if not _has_index("ix_inventory_movements_type_time"):
+        op.create_index(
+            "ix_inventory_movements_type_time",
+            "inventory_movements",
+            ["movement_type", "timestamp"],
+            unique=False,
+        )
 
     op.create_foreign_key(None, "inventory_movements", "locations", ["to_location_id"], ["id"])
     op.create_foreign_key(None, "inventory_movements", "locations", ["from_location_id"], ["id"])
@@ -340,10 +402,20 @@ def upgrade() -> None:
     )
     op.alter_column("platform_events", "dedup_key", existing_type=sa.TEXT(), nullable=True)
 
-    op.create_index("ix_reservation_lines_item", "reservation_lines", ["item_id"], unique=False)
-    op.create_index(
-        "ix_reservation_lines_ref_line", "reservation_lines", ["ref_line"], unique=False
-    )
+    if not _has_index("ix_reservation_lines_item"):
+        op.create_index(
+            "ix_reservation_lines_item",
+            "reservation_lines",
+            ["item_id"],
+            unique=False,
+        )
+    if not _has_index("ix_reservation_lines_ref_line"):
+        op.create_index(
+            "ix_reservation_lines_ref_line",
+            "reservation_lines",
+            ["ref_line"],
+            unique=False,
+        )
     op.create_foreign_key(None, "reservation_lines", "reservations", ["reservation_id"], ["id"])
 
     # ---- 捕获并删除所有依赖 stock_ledger 的视图，再改列类型 ----

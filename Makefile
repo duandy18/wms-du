@@ -9,6 +9,11 @@ PIP   := $(VENV)/bin/pip
 ALEMB := $(PY) -m alembic
 PYTEST:= $(VENV)/bin/pytest
 
+# ========================
+# Test DSN （中试黄金库）
+# ========================
+TEST_DB_DSN := postgresql+psycopg://postgres:wms@127.0.0.1:55432/postgres
+
 # ---- 自动加载 .env.local 环境（仅用于 Makefile 变量，不强制 export）----
 # 说明：
 #   - include .env.local 可以让你在 Make 里用 $(FOO) 这些变量；
@@ -24,26 +29,31 @@ endif
 help:
 	@echo ""
 	@echo "WMS-DU Makefile 帮助："
-	@echo "  make venv                 - 创建虚拟环境并升级 pip"
-	@echo "  make deps                 - 安装依赖 (requirements.txt)"
-	@echo "  make clean-pyc            - 清理 __pycache__ 和 *.py[co]"
-	@echo "  make alembic-check        - 结构一致性检测 (alembic check)"
-	@echo "  make day0                 - Day-0 体检 (clean-pyc + alembic-check)"
-	@echo "  make mark-ac              - 为 A/C 组测试注入 pytest 标记(如无则添加)"
-	@echo "  make test-core            - 运行 grp_core（A组：核心服务）"
-	@echo "  make test-flow            - 运行 grp_flow（C组：FEFO/出库分配）"
-	@echo "  make test-snapshot        - 运行 grp_snapshot（D组相关视图/三账）"
-	@echo "  make test-routing-metrics - Phase4 路由观测专用测试组"
-	@echo "  make fefo-smoke           - FEFO 最小烟雾（两条关键用例）"
-	@echo "  make check-ac             - 按计划先跑 A + C"
-	@echo "  make check-bd             - 再跑 B + D（约束+三账）"
-	@echo "  make gate-structure-fefo  - CI 最小闸门（结构+FEFO烟雾）"
-	@echo "  make prepilot             - 中试前体检：跑 pre_pilot 黄金链路三板斧"
-	@echo "  make check                - 兼容旧入口：一键全测(Mini流水)"
-	@echo "  make phase0-verify        - 兼容旧入口：Phase0 校验脚本（如存在）"
-	@echo "  make lint-backend         - 后端 pre-commit lint（ruff 等）"
-	@echo "  make test-backend-quick   - 后端快速回归（少量金丝雀用例）"
-	@echo "  make test-backend-smoke   - 后端 v2 烟囱 Smoke 套餐（CI 主闸门）"
+	@echo "  make venv                     - 创建虚拟环境并升级 pip"
+	@echo "  make deps                     - 安装依赖 (requirements.txt)"
+	@echo "  make clean-pyc                - 清理 __pycache__ 和 *.py[co]"
+	@echo "  make alembic-check            - 结构一致性检测 (alembic check)"
+	@echo "  make upgrade-head             - alembic 升级到 HEAD（默认 55432 黄金库）"
+	@echo "  make day0                     - Day-0 体检 (clean-pyc + alembic-check)"
+	@echo "  make mark-ac                  - 为 A/C 组测试注入 pytest 标记(如无则添加)"
+	@echo "  make test-core                - 运行 grp_core（A组：核心服务）"
+	@echo "  make test-flow                - 运行 grp_flow（C组：FEFO/出库分配）"
+	@echo "  make test-snapshot            - 运行 grp_snapshot（D组相关视图/三账）"
+	@echo "  make test-routing-metrics     - Phase4 路由观测专用测试组"
+	@echo "  make fefo-smoke               - FEFO 最小烟雾（两条关键用例）"
+	@echo "  make check-ac                 - 按计划先跑 A + C"
+	@echo "  make check-bd                 - 再跑 B + D（约束+三账）"
+	@echo "  make gate-structure-fefo      - CI 最小闸门（结构+FEFO烟雾）"
+	@echo "  make prepilot                 - 中试前体检：跑 pre_pilot 黄金链路三板斧"
+	@echo "  make check                    - 兼容旧入口：一键全测(Mini流水)"
+	@echo "  make phase0-verify            - 兼容旧入口：Phase0 校验脚本（如存在）"
+	@echo "  make lint-backend             - 后端 pre-commit lint（ruff 等）"
+	@echo "  make test-backend-quick       - 后端快速回归（少量金丝雀用例）"
+	@echo "  make test-backend-smoke       - 后端 v2 烟囱 Smoke 套餐（CI 主闸门）"
+	@echo ""
+	@echo "  make test-phase2p9-core       - phase2p9 黄金链路（三本账+软预占+生命周期）@ 55432"
+	@echo "  make test-diagnostics-core    - DebugTrace + DevConsole Orders 核心用例 @ 55432"
+	@echo "  make test-backend-smoke-55432 - 在 55432 黄金库上跑后端 Smoke 套餐"
 	@echo ""
 
 .PHONY: venv
@@ -260,14 +270,50 @@ phase0-verify:
 lint-backend:
 	@pre-commit run --all-files
 
-test-backend-quick:
-	@pytest -q tests/phase2p9/test_fefo_outbound_three_books.py \
-	           tests/services/test_outbound_sandbox_phase4_routing.py
+test-backend-quick: venv
+	@PYTHONPATH=. $(PYTEST) -q \
+		tests/phase2p9/test_fefo_outbound_three_books.py \
+		tests/services/test_outbound_sandbox_phase4_routing.py
 
 .PHONY: test-backend-smoke
 
-test-backend-smoke:
-	@pytest -q \
+test-backend-smoke: venv
+	@PYTHONPATH=. $(PYTEST) -q \
+		tests/quick/test_inbound_smoke_pg.py \
+		tests/quick/test_outbound_core_v2.py \
+		tests/quick/test_outbound_commit_v2.py \
+		tests/quick/test_snapshot_inventory_pg.py \
+		tests/phase2p9/test_fefo_outbound_three_books.py \
+		tests/services/test_order_lifecycle_v2.py \
+		tests/services/test_outbound_e2e_phase4_routing.py \
+		tests/smoke/test_platform_events_smoke_pg.py
+
+# =================================
+# 黄金库绑定测试线（55432）
+# =================================
+
+.PHONY: test-phase2p9-core
+test-phase2p9-core: venv
+	@echo ">>> Running phase2p9 core tests on $(TEST_DB_DSN)"
+	WMS_DATABASE_URL=$(TEST_DB_DSN) \
+	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
+	PYTHONPATH=. $(PYTEST) -q tests/phase2p9
+
+.PHONY: test-diagnostics-core
+test-diagnostics-core: venv
+	@echo ">>> Running diagnostics & devconsole tests on $(TEST_DB_DSN)"
+	WMS_DATABASE_URL=$(TEST_DB_DSN) \
+	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
+	PYTHONPATH=. $(PYTEST) -q \
+		tests/api/test_debug_trace_api.py \
+		tests/api/test_devconsole_orders_api.py
+
+.PHONY: test-backend-smoke-55432
+test-backend-smoke-55432: venv
+	@echo ">>> Running backend smoke tests on $(TEST_DB_DSN)"
+	WMS_DATABASE_URL=$(TEST_DB_DSN) \
+	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
+	PYTHONPATH=. $(PYTEST) -q \
 		tests/quick/test_inbound_smoke_pg.py \
 		tests/quick/test_outbound_core_v2.py \
 		tests/quick/test_outbound_commit_v2.py \

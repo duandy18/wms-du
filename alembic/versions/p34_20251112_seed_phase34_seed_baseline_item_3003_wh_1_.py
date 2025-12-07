@@ -20,7 +20,7 @@ def upgrade() -> None:
       ITEM=3003, WH=1, LOC=900, BATCH=NEAR, qty=10
     - 仅在目标表存在时写入
     - 动态探测列存在性；只插当前库真实存在的列
-    - 多次执行安全（ON CONFLICT/先删后插）
+    - 多次执行安全（基于 NOT EXISTS，而不是 ON CONFLICT）
     """
     ITEM_ID = 3003
     WH_ID = 1
@@ -106,14 +106,15 @@ def upgrade() -> None:
     END$$;
     """)
 
-    # 3) batches：按常见唯一键 (item_id, warehouse_id, location_id, batch_code)
+    # 3) batches：按常见键 (item_id, warehouse_id, location_id, batch_code)
+    #    但不再使用 ON CONFLICT，而是基于 NOT EXISTS 做幂等插入
     op.execute(f"""
     DO $$
     DECLARE
       tbl_exists boolean;
       c_item boolean; c_wh boolean; c_loc boolean; c_code boolean;
       cols text := ''; vals text := ''; sep text := '';
-      conflict_cols text := ''; sep2 text := '';
+      where_clause text := ''; sep3 text := '';
     BEGIN
       SELECT EXISTS (
         SELECT 1 FROM information_schema.tables
@@ -128,16 +129,44 @@ def upgrade() -> None:
         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='batches' AND column_name='batch_code')
       INTO c_item, c_wh, c_loc, c_code;
 
-      IF c_item THEN cols := cols||sep||'item_id';     vals := vals||sep||{ITEM_ID};          conflict_cols := conflict_cols||sep2||'item_id';     sep:=', '; sep2:=', '; END IF;
-      IF c_wh   THEN cols := cols||sep||'warehouse_id';vals := vals||sep||{WH_ID};            conflict_cols := conflict_cols||sep2||'warehouse_id'; sep:=', '; sep2:=', '; END IF;
-      IF c_loc  THEN cols := cols||sep||'location_id'; vals := vals||sep||{LOC_ID};           conflict_cols := conflict_cols||sep2||'location_id';  sep:=', '; sep2:=', '; END IF;
-      IF c_code THEN cols := cols||sep||'batch_code';  vals := vals||sep||quote_literal('{BATCH_CODE}'); conflict_cols := conflict_cols||sep2||'batch_code'; sep:=', '; sep2:=', '; END IF;
+      IF c_item THEN
+        cols := cols||sep||'item_id';
+        vals := vals||sep||{ITEM_ID};
+        where_clause := where_clause||sep3||'item_id='||{ITEM_ID};
+        sep:=', '; sep3:=' AND ';
+      END IF;
+
+      IF c_wh THEN
+        cols := cols||sep||'warehouse_id';
+        vals := vals||sep||{WH_ID};
+        where_clause := where_clause||sep3||'warehouse_id='||{WH_ID};
+        sep:=', '; sep3:=' AND ';
+      END IF;
+
+      IF c_loc THEN
+        cols := cols||sep||'location_id';
+        vals := vals||sep||{LOC_ID};
+        where_clause := where_clause||sep3||'location_id='||{LOC_ID};
+        sep:=', '; sep3:=' AND ';
+      END IF;
+
+      IF c_code THEN
+        cols := cols||sep||'batch_code';
+        vals := vals||sep||quote_literal('{BATCH_CODE}');
+        where_clause := where_clause||sep3||'batch_code='||quote_literal('{BATCH_CODE}');
+        sep:=', '; sep3:=' AND ';
+      END IF;
 
       IF cols <> '' THEN
-        IF conflict_cols = '' THEN
+        IF where_clause = '' THEN
+          -- 没有任何键列，就直接插一行（极端情况）
           EXECUTE format('INSERT INTO batches (%s) VALUES (%s)', cols, vals);
         ELSE
-          EXECUTE format('INSERT INTO batches (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING', cols, vals, conflict_cols);
+          -- 仅在不存在匹配行时插入
+          EXECUTE format(
+            'INSERT INTO batches (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM batches WHERE %s)',
+            cols, vals, where_clause
+          );
         END IF;
       END IF;
     END$$;

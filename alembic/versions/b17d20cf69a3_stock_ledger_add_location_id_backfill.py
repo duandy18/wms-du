@@ -124,6 +124,7 @@ def upgrade() -> None:
             """
             DO $$
             BEGIN
+              -- 如表不存在：创建完整表结构
               IF to_regclass('public.inventory_movements') IS NULL THEN
                 CREATE TABLE public.inventory_movements (
                   id           SERIAL PRIMARY KEY,
@@ -135,18 +136,133 @@ def upgrade() -> None:
                   ref          VARCHAR(255) NULL,
                   occurred_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
                 );
+              ELSE
+                -- 如表已存在：确保关键列存在（特别是 reason），以便后续 UQ 不炸
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='item_id'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN item_id INTEGER NOT NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='location_id'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN location_id INTEGER NOT NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='batch_code'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN batch_code VARCHAR(64) NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='qty'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN qty NUMERIC(18,6) NOT NULL DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='reason'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN reason VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN';
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='ref'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN ref VARCHAR(255) NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='inventory_movements'
+                     AND column_name='occurred_at'
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD COLUMN occurred_at TIMESTAMPTZ NOT NULL DEFAULT now();
+                END IF;
               END IF;
 
-              -- 幂等 UQ
-              IF NOT EXISTS (
+              -- 幂等 UQ（仅当 reason 等关键列确实存在时才创建）
+              IF EXISTS (
                 SELECT 1
-                  FROM pg_constraint
-                 WHERE conname='uq_inv_mov_idem_reason_ref_target'
-                   AND conrelid = 'public.inventory_movements'::regclass
-              ) THEN
-                ALTER TABLE public.inventory_movements
-                  ADD CONSTRAINT uq_inv_mov_idem_reason_ref_target
-                  UNIQUE (reason, ref, item_id, location_id, batch_code);
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='inventory_movements'
+                   AND column_name='reason'
+              )
+              AND EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='inventory_movements'
+                   AND column_name='ref'
+              )
+              AND EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='inventory_movements'
+                   AND column_name='item_id'
+              )
+              AND EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='inventory_movements'
+                   AND column_name='location_id'
+              )
+              AND EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='inventory_movements'
+                   AND column_name='batch_code'
+              )
+              THEN
+                IF NOT EXISTS (
+                  SELECT 1
+                    FROM pg_constraint
+                   WHERE conname='uq_inv_mov_idem_reason_ref_target'
+                     AND conrelid = 'public.inventory_movements'::regclass
+                ) THEN
+                  ALTER TABLE public.inventory_movements
+                    ADD CONSTRAINT uq_inv_mov_idem_reason_ref_target
+                    UNIQUE (reason, ref, item_id, location_id, batch_code);
+                END IF;
               END IF;
 
               -- 常用索引

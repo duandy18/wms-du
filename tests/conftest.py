@@ -19,23 +19,26 @@ os.environ["FULL_ROUTES"] = "1"
 os.environ["WMS_FULL_ROUTES"] = "1"
 
 # FULL_ROUTES 设置完毕后再加载 FastAPI app
-from app.main import app
+from app.main import app  # noqa: E402
 
 # ==========================
-# 数据库 DSN（强制 asyncpg）
+# 数据库 DSN（强制显式配置，禁止自适应 fallback）
 # ==========================
-DATABASE_URL = (
-    os.getenv("WMS_TEST_DATABASE_URL")
-    or os.getenv("WMS_DATABASE_URL")
-    or os.getenv("DATABASE_URL")
-    or "postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms"
-)
 
-# 规范化 DSN
+DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL") or os.getenv("WMS_DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "WMS_TEST_DATABASE_URL / WMS_DATABASE_URL 未设置。\n"
+        "请显式指定，例如：\n"
+        "  export WMS_TEST_DATABASE_URL=postgresql+psycopg://postgres:wms@127.0.0.1:55432/postgres"
+    )
+
+# 规范化 DSN：兼容老式 postgres:// / postgresql://
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 
 # =========================================
@@ -81,7 +84,9 @@ async def session(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
 # Soft Reserve 并发测试用长寿命 Session
 # =========================================
 @pytest_asyncio.fixture
-async def db_session_like_pg(async_session_maker) -> AsyncGenerator[AsyncSession, None]:
+async def db_session_like_pg(
+    async_session_maker,
+) -> AsyncGenerator[AsyncSession, None]:
     async with async_session_maker() as sess:
         await sess.execute(text("SET search_path TO public"))
         try:
@@ -99,48 +104,63 @@ def _maker(async_session_maker):
 
 # =========================================
 # 清库 + 最小种子数据（每测试一次）
+#   ★ 不再根据 schema 自适应，有问题直接炸，暴露迁移问题
 # =========================================
 @pytest_asyncio.fixture(autouse=True, scope="function")
 async def _db_clean_and_seed(async_engine: AsyncEngine):
     async with async_engine.begin() as conn:
         print("[TEST] 清理数据库并重建最小基线 ...")
 
+        # 这里假定数据库已经按 HEAD schema 完整迁移，
+        # 有 warehouses/items/batches/stocks/reservations 等表。
         await conn.execute(
             text(
                 """
             TRUNCATE TABLE
-              order_items, orders,
-              stock_ledger, stock_snapshots,
-              outbound_commits, event_error_log,
-              channel_inventory, store_items,
-              stocks, batches, warehouses, items
+              order_items,
+              orders,
+              stock_ledger,
+              stock_snapshots,
+              outbound_commits,
+              event_error_log,
+              channel_inventory,
+              store_items,
+              reservation_allocations,
+              reservation_lines,
+              reservations,
+              stocks,
+              batches,
+              warehouses,
+              items
             RESTART IDENTITY CASCADE
             """
             )
         )
 
-        # 仓库
+        # 仓库（HEAD schema 下 warehouses 至少有 id/name）
         await conn.execute(
-            text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
+            text(
+                "INSERT INTO warehouses (id, name) "
+                "VALUES (1,'WH-1')"
+            )
         )
 
-        # 商品
+        # 商品（用当前 HEAD 里的 items 结构：有 qty_available）
         await conn.execute(
             text(
                 """
-            INSERT INTO items (id,sku,name,qty_available)
+            INSERT INTO items (id, sku, name, qty_available)
             VALUES
-              (1,'SKU-0001','UT-ITEM-1',0),
-              (3001,'SKU-3001','SOFT-RESERVE-1',0),
-              (3002,'SKU-3002','SOFT-RESERVE-2',0),
-              (3003,'SKU-3003','SOFT-RESERVE-BASE',0),
-              (4001,'SKU-4001','OUTBOUND-MERGE',0)
-            ON CONFLICT (id) DO NOTHING
+              (1,    'SKU-0001','UT-ITEM-1',           0),
+              (3001, 'SKU-3001','SOFT-RESERVE-1',      0),
+              (3002, 'SKU-3002','SOFT-RESERVE-2',      0),
+              (3003, 'SKU-3003','SOFT-RESERVE-BASE',   0),
+              (4001, 'SKU-4001','OUTBOUND-MERGE',      0)
             """
             )
         )
 
-        # 修正序列
+        # 修正序列（以 HEAD schema 为准，有 serial/identity 时生效）
         await conn.execute(
             text(
                 """
@@ -164,35 +184,32 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
             )
         )
 
-        # 批次
+        # 批次：按最终世界观写，有 warehouse_id / item_id / batch_code / expiry_date
         await conn.execute(
             text(
                 """
             INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
             VALUES
-              (1,1,'NEAR',CURRENT_DATE + INTERVAL '10 day'),
-              (3001,1,'B-CONC-1',CURRENT_DATE + INTERVAL '7 day'),
-              (3002,1,'B-OOO-1',CURRENT_DATE + INTERVAL '7 day'),
-              (3003,1,'NEAR',CURRENT_DATE + INTERVAL '5 day'),
-              (4001,1,'B-MERGE-1',CURRENT_DATE + INTERVAL '10 day')
-            ON CONFLICT (item_id,warehouse_id,batch_code) DO NOTHING
+              (1,    1,'NEAR',      CURRENT_DATE + INTERVAL '10 day'),
+              (3001, 1,'B-CONC-1',  CURRENT_DATE + INTERVAL '7 day'),
+              (3002, 1,'B-OOO-1',   CURRENT_DATE + INTERVAL '7 day'),
+              (3003, 1,'NEAR',      CURRENT_DATE + INTERVAL '5 day'),
+              (4001, 1,'B-MERGE-1', CURRENT_DATE + INTERVAL '10 day')
             """
             )
         )
 
-        # 库存
+        # 库存：按最终世界观写，有 warehouse_id / item_id / batch_code / qty
         await conn.execute(
             text(
                 """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES
-              (1,1,'NEAR',10),
-              (3001,1,'B-CONC-1',3),
-              (3002,1,'B-OOO-1',3),
-              (3003,1,'NEAR',10),
-              (4001,1,'B-MERGE-1',10)
-            ON CONFLICT (item_id,warehouse_id,batch_code)
-            DO UPDATE SET qty = EXCLUDED.qty
+              (1,    1,'NEAR',      10),
+              (3001, 1,'B-CONC-1',   3),
+              (3002, 1,'B-OOO-1',    3),
+              (3003, 1,'NEAR',      10),
+              (4001, 1,'B-MERGE-1', 10)
             """
             )
         )
@@ -213,5 +230,7 @@ async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
 
 
 @pytest_asyncio.fixture
-async def client_like(client: httpx.AsyncClient) -> AsyncGenerator[httpx.AsyncClient, None]:
+async def client_like(
+    client: httpx.AsyncClient,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
     yield client

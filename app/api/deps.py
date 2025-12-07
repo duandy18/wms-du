@@ -1,42 +1,18 @@
 # app/api/deps.py
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
 
 from app.db.deps import get_db
+from app.db.session import get_async_session as _get_async_session
 from app.services.order_service import OrderService  # noqa: E402
 from app.services.user_service import UserService
-
-# 统一 DSN 至 asyncpg 方言
-DATABASE_URL = (
-    os.getenv("WMS_TEST_DATABASE_URL")
-    or os.getenv("WMS_DATABASE_URL")
-    or os.getenv("DATABASE_URL")
-    or "postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms"
-)
-
-# AsyncEngine（供业务异步 Session 使用）
-_engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    poolclass=NullPool,
-)
-
-# AsyncSession 工厂
-_AsyncSessionLocal = async_sessionmaker(
-    bind=_engine,
-    expire_on_commit=False,
-    class_=AsyncSession,
-)
 
 
 # ---------------------------
@@ -47,18 +23,15 @@ _AsyncSessionLocal = async_sessionmaker(
 @asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    提供一个生命周期受 FastAPI 管理的 AsyncSession。
+    统一走 app.db.session 里的 AsyncSession 工厂。
 
     用法（FastAPI 依赖）：
         async def handler(session: AsyncSession = Depends(get_session)): ...
     """
-    async with _AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            # 正常情况下 async_sessionmaker 会自动关闭连接，
-            # 这里留空只是占位，便于将来扩展。
-            ...
+    async for session in _get_async_session():
+        # _get_async_session 本身就是 async generator
+        yield session
+        break  # 理论上只会 yield 一次，这里显式 break 表明意图
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
@@ -113,7 +86,6 @@ async def get_current_user(
           在需要权限的接口上会被 check_permission 拒绝，
           不需要权限的接口则可以当作“未登录用户”使用。
     """
-    # 注意：OAuth2PasswordBearer 在没有 Authorization 时也会给一个空字符串
     token = (token or "").strip()
 
     # 无 token：返回匿名用户（用于公开/半公开接口）
@@ -150,7 +122,6 @@ async def get_order_service() -> OrderService:
 
 
 __all__ = (
-    "DATABASE_URL",
     "get_async_session",
     "get_session",
     "get_current_user",

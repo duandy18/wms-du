@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal
 
 from sqlalchemy import text
@@ -94,6 +94,16 @@ class TraceService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    def _normalize_ts(self, ts: datetime | None) -> datetime | None:
+        """
+        统一时间为 tz-aware UTC，避免 naive / aware 混用导致排序报错。
+        """
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc)
+
     async def get_trace(self, trace_id: str) -> TraceResult:
         events: List[TraceEvent] = []
 
@@ -105,11 +115,18 @@ class TraceService:
         events.extend(await self._from_orders(trace_id))
         events.extend(await self._from_outbound(trace_id))
 
-        # 过滤掉没有 ts 的，并按时间排序
-        events = [e for e in events if e.ts is not None]
-        events.sort(key=lambda e: e.ts)
+        # 过滤掉没有 ts 的，并统一成 tz-aware，再按时间排序
+        normalized: List[TraceEvent] = []
+        for e in events:
+            ts = self._normalize_ts(e.ts)
+            if ts is None:
+                continue
+            e.ts = ts
+            normalized.append(e)
 
-        return TraceResult(trace_id=trace_id, events=events)
+        normalized.sort(key=lambda e: e.ts)
+
+        return TraceResult(trace_id=trace_id, events=normalized)
 
     # ------------------------------------------------------------------
     # event_store
@@ -363,7 +380,10 @@ class TraceService:
                         source="reservation_consumed",
                         kind="reservation_consumed",
                         ref=None,
-                        summary=(f"res#{rid} consumed item={item_id} consumed_qty={consumed_int}"),
+                        summary=(
+                            f"res#{rid} consumed item={item_id} "
+                            f"consumed_qty={consumed_int}"
+                        ),
                         raw={
                             "reservation_id": rid,
                             "item_id": item_id,

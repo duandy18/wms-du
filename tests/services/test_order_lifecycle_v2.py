@@ -23,10 +23,6 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
         * RETURN_IN delta=+1
     - outbound_commits_v2: 一条 COMMITTED（如已有记录则跳过）
     - audit_events: 一条 flow=OUTBOUND（兜底）
-
-    目标：
-    - created / reserved / reserved_consumed / outbound / shipped / returned 全部 present
-    - health ∈ {OK, WARN}（不应该 BAD）
     """
     trace_id = "LIFE-UT-1"
     platform = "PDD"
@@ -36,7 +32,7 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-1"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
-    # 先插 items，满足 FK + NOT NULL 约束（sku / name）
+    # items
     await session.execute(
         text(
             """
@@ -78,7 +74,7 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
     order_id = int(row.scalar_one())
     assert order_id > 0
 
-    # reservations 头
+    # reservations 头（幂等：基于 uq_reservations_platform_shop_wh_ref）
     row = await session.execute(
         text(
             """
@@ -92,6 +88,10 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :ref, 'open', now(), now(),
                 now() + INTERVAL '1 hour', :trace_id
             )
+            ON CONFLICT ON CONSTRAINT uq_reservations_platform_shop_wh_ref
+            DO UPDATE
+               SET trace_id   = EXCLUDED.trace_id,
+                   updated_at = now()
             RETURNING id
             """
         ),
@@ -105,7 +105,7 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
     )
     rid = int(row.scalar_one())
 
-    # reservation_lines（consumed_qty=2，会触发 reservation_consumed）
+    # reservation_lines（幂等：基于 ix_reservation_lines_res_refline）
     await session.execute(
         text(
             """
@@ -117,6 +117,11 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :rid, 1, :item_id,
                 2, 2, now(), now()
             )
+            ON CONFLICT ON CONSTRAINT ix_reservation_lines_res_refline
+            DO UPDATE
+               SET qty          = EXCLUDED.qty,
+                   consumed_qty = EXCLUDED.consumed_qty,
+                   updated_at   = now()
             """
         ),
         {"rid": rid, "item_id": item_id},
@@ -160,9 +165,7 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：
-    # ck_ledger_delta_nonzero 强制 delta ≠ 0
-    # 旧库里仍可能有“负向唯一约束”，所以只保留一条负数（SHIPMENT）
+    # stock_ledger：RESERVE / SHIPMENT / RETURN_IN
     await session.execute(
         text(
             """
@@ -236,13 +239,6 @@ async def _seed_full_lifecycle_case(session: AsyncSession) -> str:
 async def _seed_missing_shipped_case(session: AsyncSession) -> str:
     """
     构造一个“只有预占，没有发货”的生命周期场景：
-
-    - 有订单 / reservation / reservation_lines（consumed_qty=0）
-    - 有 outbound（出库单）但没有任何发货 ledger
-
-    目标：
-    - reserved present，shipped 缺失
-    - summary.health ∈ { WARN, BAD }，且 issues 提到“发货”缺失
     """
     trace_id = "LIFE-UT-2"
     platform = "PDD"
@@ -291,7 +287,7 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
         },
     )
 
-    # reservations
+    # reservations（幂等）
     row = await session.execute(
         text(
             """
@@ -305,6 +301,10 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
                 :ref, 'open', now(), now(),
                 now() + INTERVAL '1 hour', :trace_id
             )
+            ON CONFLICT ON CONSTRAINT uq_reservations_platform_shop_wh_ref
+            DO UPDATE
+               SET trace_id   = EXCLUDED.trace_id,
+                   updated_at = now()
             RETURNING id
             """
         ),
@@ -318,6 +318,7 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
     )
     rid = int(row.scalar_one())
 
+    # reservation_lines（幂等）
     await session.execute(
         text(
             """
@@ -329,6 +330,11 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
                 :rid, 1, :item_id,
                 2, 0, now(), now()
             )
+            ON CONFLICT ON CONSTRAINT ix_reservation_lines_res_refline
+            DO UPDATE
+               SET qty          = EXCLUDED.qty,
+                   consumed_qty = EXCLUDED.consumed_qty,
+                   updated_at   = now()
             """
         ),
         {"rid": rid, "item_id": item_id},
@@ -355,7 +361,6 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
         },
     )
 
-    # 不插 stock_ledger，让 shipped 节点缺失
     await session.commit()
     return trace_id
 
@@ -363,23 +368,6 @@ async def _seed_missing_shipped_case(session: AsyncSession) -> str:
 async def _seed_reserve_only_case(session: AsyncSession) -> str:
     """
     构造一个“只有预占，没有消耗 / 出库 / 发货 / 退货”的生命周期场景：
-
-    - 有订单（orders.trace_id）
-    - 有 reservations + reservation_lines（consumed_qty=0）
-    - 没有 outbound_commits_v2
-    - 没有任何 SHIP / RETURN_* / RECEIPT ledger
-
-    目标：
-    - stages:
-        created           present=True
-        reserved          present=True
-        reserved_consumed present=False
-        outbound          present=False
-        shipped           present=False
-        returned          present=False
-    - summary:
-        health ∈ {WARN, BAD}
-        issues 至少包含一条“预占已创建但未检测到消耗记录”。
     """
     trace_id = "LIFE-UT-3"
     platform = "PDD"
@@ -389,7 +377,7 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-3"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
-    # items：满足 FK + NOT NULL 约束
+    # items
     await session.execute(
         text(
             """
@@ -405,7 +393,7 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
         },
     )
 
-    # 订单头（只需一条，有 trace_id 即可）
+    # 订单头
     await session.execute(
         text(
             """
@@ -428,7 +416,7 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
         },
     )
 
-    # reservation 头：trace_id + ref=order_ref
+    # reservation 头（幂等）
     row = await session.execute(
         text(
             """
@@ -442,6 +430,10 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
                 :ref, 'open', now(), now(),
                 now() + INTERVAL '1 hour', :trace_id
             )
+            ON CONFLICT ON CONSTRAINT uq_reservations_platform_shop_wh_ref
+            DO UPDATE
+               SET trace_id   = EXCLUDED.trace_id,
+                   updated_at = now()
             RETURNING id
             """
         ),
@@ -455,7 +447,7 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
     )
     rid = int(row.scalar_one())
 
-    # reservation_lines：qty>0 但 consumed_qty=0，不触发 reservation_consumed 事件
+    # reservation_lines（幂等：qty>0, consumed_qty=0）
     await session.execute(
         text(
             """
@@ -467,13 +459,15 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
                 :rid, 1, :item_id,
                 2, 0, now(), now()
             )
+            ON CONFLICT ON CONSTRAINT ix_reservation_lines_res_refline
+            DO UPDATE
+               SET qty          = EXCLUDED.qty,
+                   consumed_qty = EXCLUDED.consumed_qty,
+                   updated_at   = now()
             """
         ),
         {"rid": rid, "item_id": item_id},
     )
-
-    # 不插 outbound_commits_v2
-    # 不插任何 stock_ledger（ship / return / receipt）
 
     await session.commit()
     return trace_id
@@ -483,9 +477,6 @@ async def _seed_reserve_only_case(session: AsyncSession) -> str:
 
 
 async def test_order_lifecycle_v2_full_case(session: AsyncSession):
-    """
-    验证：完整链路（含退货）时，Lifecycle v2 能识别所有阶段，并给出 OK/WARN 的 health。
-    """
     trace_id = await _seed_full_lifecycle_case(session)
 
     svc = OrderLifecycleV2Service(session)
@@ -504,10 +495,6 @@ async def test_order_lifecycle_v2_full_case(session: AsyncSession):
 
 
 async def test_order_lifecycle_v2_missing_shipped(session: AsyncSession):
-    """
-    验证：有预占，但没有发货时，Lifecycle v2 summary 中会给出缺失发货相关的问题，
-    且 health 至少不是 OK。
-    """
     trace_id = await _seed_missing_shipped_case(session)
 
     svc = OrderLifecycleV2Service(session)
@@ -523,11 +510,6 @@ async def test_order_lifecycle_v2_missing_shipped(session: AsyncSession):
 
 
 async def test_order_lifecycle_v2_reserve_only(session: AsyncSession):
-    """
-    验证：只有预占（无消耗 / 无出库 / 无发货 / 无退货）时，
-    Lifecycle v2 只点亮 created/reserved，其他阶段保持灰色，
-    且 summary.health 至少为 WARN，并提示“预占未消耗”问题。
-    """
     trace_id = await _seed_reserve_only_case(session)
 
     svc = OrderLifecycleV2Service(session)
@@ -546,7 +528,6 @@ async def test_order_lifecycle_v2_reserve_only(session: AsyncSession):
     assert summary.health in ("WARN", "BAD")
 
     joined = "\n".join(summary.issues)
-    # 文案来自 _summarize_stages，模糊匹配关键字即可
     assert (
         "预占已创建" in joined
         or "未检测到预占被消耗" in joined

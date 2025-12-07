@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
@@ -11,36 +12,60 @@ from app.services.stock_service import StockService
 
 
 class SameLocationError(ValueError):
-    """业务异常：源库位与目标库位相同，不应执行搬运。"""
+    """Putaway 左右库位相同的业务错误。"""
 
-    def __init__(self, location_id: int):
-        super().__init__(f"source and target locations are the same: {location_id}")
+    def __init__(self, location_id: int) -> None:
+        super().__init__(f"from_location_id 和 to_location_id 不能相同：{location_id}")
         self.location_id = location_id
 
 
 class PutawayService:
     """
-    上架 / 搬运服务（核心库存原子能力）
+    Putaway 业务服务（v2 版）
 
-    重要说明：
-    - 当前“无 location 概念”仅适用于 /scan 通路；
-    - 系统内部（inventory_ops、RMA、quick tests 等）仍需要“从 A → B 搬运”能力；
-    - 因此 PutawayService 本身必须保持可用，不应被 disable。
+    重要约定（结合当前 HEAD）：
 
-    使用场景：
-      • RMA / 调拨 / 运维修正
-      • 后台批量库存迁移
-      • tests/quick/test_putaway_* 系列用于保证正确性
-
-    执行逻辑（原子两腿）：
-      1) 左腿：从 from_location 扣减 delta=-qty
-      2) 右腿：向 to_location 增加 delta=+qty
-      3) 幂等：基于 (ref, ref_line) 保证两腿不重复落账
+    - StockService.adjust 仅按 (warehouse_id, item_id, batch_code) 维度调整库存 + 写台账；
+      不再接受 location_id 参数。
+    - 但作业层仍保留“库位”概念，因此：
+        * 通过 locations 表反查 from_location_id / to_location_id 对应的 warehouse_id；
+        * 要求两者 warehouse_id 一致（同一仓内移库）；
+        * adjust 只动仓维度库存，location 颗粒度由上层视图 / 辅助工具解释。
+    - 审计契约：
+        * 左腿（源位扣减，delta < 0）：必须有 batch_code；
+        * 右腿（目标位入库，delta > 0）：必须有 batch_code，
+          且 production_date / expiry_date 至少提供一个。
     """
 
     def __init__(self, stock: Optional[StockService] = None) -> None:
         self.stock = stock or StockService()
 
+    # ------------------------------------------------------------------ #
+    # 内部工具：根据 location_id 解析 warehouse_id
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    async def _resolve_warehouse_for_location(
+        session: AsyncSession,
+        location_id: int,
+    ) -> int:
+        row = await session.execute(
+            text(
+                """
+                SELECT warehouse_id
+                  FROM locations
+                 WHERE id = :loc_id
+                """
+            ),
+            {"loc_id": location_id},
+        )
+        wh_id = row.scalar()
+        if wh_id is None:
+            raise ValueError(f"location_id={location_id} 不存在或未绑定仓库")
+        return int(wh_id)
+
+    # ------------------------------------------------------------------ #
+    # 核心接口：putaway
+    # ------------------------------------------------------------------ #
     async def putaway(
         self,
         session: AsyncSession,
@@ -55,6 +80,14 @@ class PutawayService:
         expiry_date: Optional[datetime] = None,
         left_ref_line: int = 1,
     ) -> Dict[str, Any]:
+        """
+        SRC → DST 搬运 qty 件，保持台账 + 库存在 v2 世界观下自洽。
+
+        - qty > 0
+        - from_location_id != to_location_id
+        - batch_code 必填
+        - production_date / expiry_date 至少一个非空（右腿要求）
+        """
         if qty <= 0:
             raise ValueError("qty must be > 0")
 
@@ -67,36 +100,55 @@ class PutawayService:
         if production_date is None and expiry_date is None:
             raise ValueError("putaway 操作必须提供 production_date 或 expiry_date 至少其一")
 
-        # 左腿：源位扣减
+        # 解析两侧库位对应的仓库，要求在同一仓内移库
+        from_wh = await self._resolve_warehouse_for_location(session, from_location_id)
+        to_wh = await self._resolve_warehouse_for_location(session, to_location_id)
+
+        if from_wh != to_wh:
+            raise ValueError(
+                f"跨仓 putaway 暂不支持：from_location_id={from_location_id} → to_location_id={to_location_id}，"
+                f"warehouse_id 分别为 {from_wh} / {to_wh}"
+            )
+
+        now = datetime.now().astimezone()
+
+        # 左腿：源位扣减（仓维度视角 → 同一仓出库）
         await self.stock.adjust(
             session=session,
             item_id=item_id,
-            location_id=from_location_id,
+            warehouse_id=from_wh,
             delta=-qty,
             reason=MovementType.PUTAWAY,
             ref=ref,
             ref_line=left_ref_line,
+            occurred_at=now,
             batch_code=batch_code,
             production_date=production_date,
             expiry_date=expiry_date,
         )
 
-        # 右腿：目标位增加
+        # 右腿：目标位入库（同仓 +qty），ref_line = left_ref_line + 1
         await self.stock.adjust(
             session=session,
             item_id=item_id,
-            location_id=to_location_id,
+            warehouse_id=to_wh,
             delta=qty,
             reason=MovementType.PUTAWAY,
             ref=ref,
             ref_line=left_ref_line + 1,
+            occurred_at=now,
             batch_code=batch_code,
             production_date=production_date,
             expiry_date=expiry_date,
         )
 
         return {
+            "status": "OK",
             "moved": qty,
-            "from": from_location_id,
-            "to": to_location_id,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "warehouse_id": from_wh,
+            "ref": ref,
+            "left_ref_line": left_ref_line,
+            "right_ref_line": left_ref_line + 1,
         }

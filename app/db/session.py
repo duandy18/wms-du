@@ -49,11 +49,18 @@ def _normalize_async_dsn(url: str) -> str:
 
 
 # 优先级：
-#  1) WMS_DATABASE_URL（你用来跑 Alembic 的）
+#  1) WMS_DATABASE_URL（你用来跑 Alembic / 本地 docker 的）
 #  2) DATABASE_URL
 #  3) 默认 dev DSN: 5433/wms
 _DEFAULT_DSN = "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
-RAW_URL = os.getenv("WMS_DATABASE_URL") or os.getenv("DATABASE_URL") or _DEFAULT_DSN
+_raw = os.getenv("WMS_DATABASE_URL") or os.getenv("DATABASE_URL") or _DEFAULT_DSN
+
+# 有些环境会把值写成 '"postgresql+psycopg://.../wms"'，这里统一剥掉两侧引号
+_raw = _raw.strip()
+if (_raw.startswith('"') and _raw.endswith('"')) or (_raw.startswith("'") and _raw.endswith("'")):
+    _raw = _raw[1:-1].strip()
+
+RAW_URL = _raw
 
 SYNC_URL = _normalize_sync_dsn(RAW_URL)
 ASYNC_URL = _normalize_async_dsn(RAW_URL)

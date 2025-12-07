@@ -22,8 +22,15 @@ def upgrade() -> None:
 
     说明：
     - 部分环境中 event_store.trace_id 可能已经通过手工或其它迁移创建；
-    - 这里使用 PostgreSQL 的 IF NOT EXISTS，保证重复执行不会报错。
+    - 这里先检测表是否存在，再使用 IF NOT EXISTS，保证在无表/有表两种情况下都安全。
     """
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+
+    # 若当前库不存在 event_store，则不做任何操作（v2 线路可以完全没有该表）
+    if not insp.has_table("event_store", schema="public"):
+        return
+
     op.execute(
         sa.text(
             """
@@ -36,6 +43,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+
+    if not insp.has_table("event_store", schema="public"):
+        return
+
     op.execute(
         sa.text(
             """
