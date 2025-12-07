@@ -58,7 +58,7 @@ help:
 
 .PHONY: venv
 venv:
-	@test -d $(VENV) || python -m venv $(VENV)
+	@test -d $(VENV) || python3 -m venv $(VENV)
 	@$(PY) -m pip install -U pip
 
 .PHONY: deps
