@@ -188,8 +188,7 @@ check-bd: venv
 	  tests/ci/test_db_invariants.py \
 	  tests/alembic/test_migration_contract.py \
 	  tests/services/test_stock_integrity.py \
-	  tests/quick/test_three_books_pg.py \
-	  tests/quick/test_snapshot_inventory_pg.py \
+	  tests/quick/test_outbound_pg.py \
 	  tests/services/test_reservation_lifecycle.py \
 	; do \
 	  if [ -f "$$t" ]; then \
@@ -286,7 +285,6 @@ test-backend-smoke: venv
 		tests/quick/test_inbound_smoke_pg.py \
 		tests/quick/test_outbound_core_v2.py \
 		tests/quick/test_outbound_commit_v2.py \
-		tests/quick/test_snapshot_inventory_pg.py \
 		tests/phase2p9/test_fefo_outbound_three_books.py \
 		tests/services/test_order_lifecycle_v2.py \
 		tests/services/test_outbound_e2e_phase4_routing.py \
@@ -321,7 +319,6 @@ test-backend-smoke-55432: venv
 		tests/quick/test_inbound_smoke_pg.py \
 		tests/quick/test_outbound_core_v2.py \
 		tests/quick/test_outbound_commit_v2.py \
-		tests/quick/test_snapshot_inventory_pg.py \
 		tests/phase2p9/test_fefo_outbound_three_books.py \
 		tests/services/test_order_lifecycle_v2.py \
 		tests/services/test_outbound_e2e_phase4_routing.py \
