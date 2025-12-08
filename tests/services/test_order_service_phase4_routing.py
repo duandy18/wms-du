@@ -1,3 +1,4 @@
+# tests/services/test_order_service_phase4_routing.py
 import uuid
 from datetime import datetime, timezone
 
@@ -6,6 +7,10 @@ from sqlalchemy import text
 
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
+
+
+UTC = timezone.utc
+pytestmark = pytest.mark.asyncio
 
 
 async def _get_store_id_for_shop(session, platform: str, shop_id: str) -> int:
@@ -33,14 +38,12 @@ async def _pick_two_warehouses(session):
     """
     返回两个 warehouse_id，作为主仓 / 备仓。
 
-    如果当前 warehouses 表里的数量不足 2 个，则在测试里动态插入测试仓：
-    - 通过 information_schema.columns 探测 NOT NULL 且无默认值的列；
-    - 对这些列填入 dummy 值（字符串列用随机后缀，int 用 0，时间列用 now 等）；
-    - 这样不会触碰业务迁移逻辑，也不会依赖全局 seed。
-
-    最终保证返回的列表长度 >= 2。
+    策略：
+      - 先读取现有 warehouses；
+      - 若不足 2 个，则用最小合法 INSERT 语句补齐：
+          INSERT INTO warehouses (name) VALUES (:name) RETURNING id
+      - 不再动态 introspect 所有列，只保证 name 非空即可。
     """
-    # 先取已有仓
     rows = await session.execute(
         text(
             """
@@ -52,61 +55,12 @@ async def _pick_two_warehouses(session):
     )
     ids = [int(r[0]) for r in rows.fetchall()]
 
-    needed = 2 - len(ids)
-    if needed <= 0:
-        return ids[0], ids[1]
-
-    # 查找 NOT NULL 且没有默认值的列（排除 id）
-    cols_rows = await session.execute(
-        text(
-            """
-            SELECT column_name, data_type
-              FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name   = 'warehouses'
-               AND is_nullable  = 'NO'
-               AND column_default IS NULL
-               AND column_name <> 'id'
-            """
+    while len(ids) < 2:
+        name = f"AUTO-WH-{uuid.uuid4().hex[:8]}"
+        row = await session.execute(
+            text("INSERT INTO warehouses (name) VALUES (:name) RETURNING id"),
+            {"name": name},
         )
-    )
-    col_info = [(str(r[0]), str(r[1])) for r in cols_rows.fetchall()]
-
-    # 如果没有这种列，说明 DEFAULT VALUES 就足够（极端情况）
-    if not col_info:
-        for _ in range(needed):
-            row = await session.execute(text("INSERT INTO warehouses DEFAULT VALUES RETURNING id"))
-            ids.append(int(row.scalar()))
-        return ids[0], ids[1]
-
-    # 构造 INSERT 语句
-    columns = ", ".join(c for c, _ in col_info)
-    placeholders = ", ".join(f":{c}" for c, _ in col_info)
-    sql = f"INSERT INTO warehouses ({columns}) VALUES ({placeholders}) RETURNING id"
-
-    for _ in range(needed):
-        params = {}
-        for col, dtype in col_info:
-            dt = dtype.lower()
-            # 字符串类：用随机字符串避免唯一冲突
-            if "char" in dt or "text" in dt:
-                params[col] = f"TEST_{col}_{uuid.uuid4().hex[:8]}"
-            # 整型
-            elif "int" in dt:
-                params[col] = 0
-            # 布尔
-            elif "bool" in dt:
-                params[col] = False
-            # 时间戳 / 时间
-            elif "timestamp" in dt or "time" in dt:
-                params[col] = datetime.now(timezone.utc)
-            elif dt == "date":
-                params[col] = datetime.now(timezone.utc).date()
-            # 兜底
-            else:
-                params[col] = f"TEST_{col}_{uuid.uuid4().hex[:4]}"
-
-        row = await session.execute(text(sql), params)
         ids.append(int(row.scalar()))
 
     return ids[0], ids[1]
@@ -177,12 +131,15 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
         backup_warehouse_id=backup_wid,
     )
 
+    # 主仓与备仓都有足够库存
     stock_map = {
         (top_wid, 1): 10,
         (backup_wid, 1): 10,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(
@@ -192,7 +149,7 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
     )
 
     ext_order_no = "E-top-1"
-    occurred_at = datetime.now(timezone.utc)
+    occurred_at = datetime.now(UTC)
 
     result = await OrderService.ingest(
         session,
@@ -232,15 +189,15 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
 
 
 @pytest.mark.asyncio
-async def test_ingest_does_not_route_to_backup_when_top_insufficient(
+async def test_ingest_routes_to_backup_when_top_insufficient(
     db_session_like_pg, monkeypatch
 ):
     """
-    极简语义 2：
+    极简语义 2（FALLBACK 模式）：
 
     - 主仓库存不足；
     - 备仓库存足够；
-    - 系统 **不** 自动 fallback 到备仓，只在主仓可满足整单时自动写入 warehouse_id。
+    - 默认 route_mode=FALLBACK 下，应自动 fallback 到备仓。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -256,11 +213,13 @@ async def test_ingest_does_not_route_to_backup_when_top_insufficient(
     )
 
     stock_map = {
-        (top_wid, 1): 2,  # 主仓不够
-        (backup_wid, 1): 10,
+        (top_wid, 1): 2,   # 主仓不够
+        (backup_wid, 1): 10,  # 备仓足够
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(
@@ -270,7 +229,7 @@ async def test_ingest_does_not_route_to_backup_when_top_insufficient(
     )
 
     ext_order_no = "E-backup-1"
-    occurred_at = datetime.now(timezone.utc)
+    occurred_at = datetime.now(UTC)
 
     result = await OrderService.ingest(
         session,
@@ -306,8 +265,8 @@ async def test_ingest_does_not_route_to_backup_when_top_insufficient(
         {"id": order_id},
     )
     warehouse_id = row.scalar()
-    # 极简语义：主仓不够时不自动选备仓，由人工/上层决定
-    assert warehouse_id in (None, 0)
+    # 当前业务语义：fallback 模式下，应路由到备仓
+    assert warehouse_id == backup_wid
 
 
 @pytest.mark.asyncio
@@ -333,7 +292,9 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
         (backup_wid, 1): 3,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(
@@ -343,7 +304,7 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
     )
 
     ext_order_no = "E-insufficient-1"
-    occurred_at = datetime.now(timezone.utc)
+    occurred_at = datetime.now(UTC)
 
     result = await OrderService.ingest(
         session,
@@ -394,7 +355,8 @@ async def test_ingest_without_store_warehouse_config_does_not_crash(
     platform = "PDD"
     shop_id = "S-NO-CONFIG"
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        # 代表“库存足够”，实际路由逻辑会发现没有 store_warehouse 绑定
         return 100
 
     monkeypatch.setattr(
@@ -404,7 +366,7 @@ async def test_ingest_without_store_warehouse_config_does_not_crash(
     )
 
     ext_order_no = "E-noconfig-1"
-    occurred_at = datetime.now(timezone.utc)
+    occurred_at = datetime.now(UTC)
 
     result = await OrderService.ingest(
         session,

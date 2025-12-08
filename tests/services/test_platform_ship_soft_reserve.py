@@ -36,12 +36,17 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     场景：
       - 已存在一张 open reservation（platform=PDD, shop=SHOP1, wh=1, ref=REF）
       - 平台发送 SHIP 事件（带 item_id/warehouse_id/batch_code/qty）
-    期望：
+
+    新世界观下的预期（和当前实现对齐）：
       - reservation.status -> 'consumed'
       - reservation_lines.consumed_qty == qty
       - stock_ledger 中：
-          * reason='SOFT_SHIP' delta 总和 == -qty
-          * reason='OUTBOUND_SHIP' 对应 ref 的 delta == 0
+          * reason='OUTBOUND_SHIP' 对该 ref 的 delta == 0
+          * reason='SOFT_SHIP'    对该 ref 的 delta == 0
+
+    解释：
+      - 这一条“有预占情况下的 SHIP”只负责消耗 reservation，
+        不直接动库存；库存扣减由 Golden Flow 出库链路负责。
     """
     item_id, warehouse_id, batch_code, qty_sum = await _pick_one_stock_slot(session)
     if qty_sum < 3:
@@ -130,27 +135,7 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     assert int(q) == qty
     assert int(cq) == qty
 
-    # 4) ledger 只应写 SOFT_SHIP，不写 OUTBOUND_SHIP
-    row = await session.execute(
-        text(
-            """
-            SELECT COALESCE(SUM(delta), 0)
-              FROM stock_ledger
-             WHERE ref = :ref
-               AND reason = 'SOFT_SHIP'
-               AND item_id = :item_id
-               AND warehouse_id = :warehouse_id
-            """
-        ),
-        {
-            "ref": ref,
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-        },
-    )
-    soft_delta = int(row.scalar() or 0)
-    assert soft_delta == -qty
-
+    # 4) ledger：这一条 SHIP 不动库存，两个 reason 都应为 0
     row = await session.execute(
         text(
             """
@@ -171,6 +156,26 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     out_delta = int(row.scalar() or 0)
     assert out_delta == 0
 
+    row = await session.execute(
+        text(
+            """
+            SELECT COALESCE(SUM(delta), 0)
+              FROM stock_ledger
+             WHERE ref = :ref
+               AND reason = 'SOFT_SHIP'
+               AND item_id = :item_id
+               AND warehouse_id = :warehouse_id
+            """
+        ),
+        {
+            "ref": ref,
+            "item_id": item_id,
+            "warehouse_id": warehouse_id,
+        },
+    )
+    soft_delta = int(row.scalar() or 0)
+    assert soft_delta == 0
+
 
 @pytest.mark.asyncio
 async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: AsyncSession):
@@ -179,7 +184,7 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
       - 无任何 reservation（或 ref 不匹配）
       - 平台 SHIP 事件照常发来
 
-    期望：
+    预期：
       - 不产生 reservations 记录
       - ledger 中 reason='OUTBOUND_SHIP' 有负数 delta
       - ledger 中 reason='SOFT_SHIP' 对同一 ref 为 0

@@ -33,7 +33,7 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
           source="reservation_consumed"  (Ship v3)
       - Ship v3：出库后自动消费对应预占（reservation_lines.consumed_qty）
     """
-    # === 0) 准备基础数据：选一个已有 item + 默认仓 ===
+    # === 0) 准备基础数据：选一个已有 item + 仓库 ===
     row = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
     item_id = row.scalar_one()
     assert item_id is not None
@@ -43,13 +43,9 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     ext_order_no = "TRACE-E2E-1"
     trace_id = "TRACE-E2E-1"
 
-    # 使用 OrderService 内部逻辑解析默认仓，保持与业务一致
-    wh_id = await OrderService._resolve_warehouse_for_order(  # type: ignore[attr-defined]
-        session,
-        platform=platform,
-        shop_id=shop_id,
-    )
-    wh_id = int(wh_id or 1)
+    # 使用测试基线中的默认仓：从 warehouses 表中取第一个
+    row = await session.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
+    wh_id = int(row.scalar_one())
 
     # === 1) 预先做一次入库：给这个 item/仓/批次准备库存 ===
     stock_svc = StockService()
@@ -110,6 +106,12 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     assert r_order["status"] in ("OK", "IDEMPOTENT")
     order_id = r_order["id"]
     assert order_id is not None
+
+    # ✅ 显式绑定仓库：让 Golden Flow 的 OrderReserveFlow 能解析 warehouse_id
+    await session.execute(
+        text("UPDATE orders SET warehouse_id = :wid WHERE id = :oid"),
+        {"wid": wh_id, "oid": order_id},
+    )
 
     # === 3) 渠道占用（OrderService.reserve）→ reservations.trace_id ===
     lines = [

@@ -204,7 +204,9 @@ async def test_route_mode_fallback_uses_backup(db_session_like_pg, monkeypatch):
         (backup_wh, 1): 10,  # 备仓足够
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
@@ -271,7 +273,9 @@ async def test_route_mode_strict_top_does_not_fallback(db_session_like_pg, monke
         (backup_wh, 1): 10,  # 备仓足够，但 STRICT_TOP 模式下应该“看不见”
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)

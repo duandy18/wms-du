@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.outbound import OutboundLine
 from app.services.outbound_service import OutboundService
 
 UTC = timezone.utc
@@ -17,7 +16,7 @@ pytestmark = pytest.mark.asyncio
 
 async def _seed_minimal_order_for_outbound(
     session: AsyncSession,
-) -> tuple[int, str, int, int, str]:
+) -> tuple[str, int, int, str]:
     """
     为出库写台账准备一条最小订单头：
 
@@ -52,8 +51,8 @@ async def _seed_minimal_order_for_outbound(
         },
     )
 
-    # 插入一条订单头
-    row = await session.execute(
+    # 插入一条订单头（如已存在则跳过）
+    await session.execute(
         text(
             """
             INSERT INTO orders (
@@ -76,7 +75,7 @@ async def _seed_minimal_order_for_outbound(
                 now(),
                 now()
             )
-            RETURNING id
+            ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
             """
         ),
         {
@@ -87,28 +86,25 @@ async def _seed_minimal_order_for_outbound(
             "trace_id": trace_id,
         },
     )
-    order_id = int(row.scalar_one())
 
     await session.commit()
-    return order_id, order_ref, wh_id, item_id, trace_id
+    return order_ref, wh_id, item_id, trace_id
 
 
 @pytest.mark.asyncio
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
-    验证：出库 commit 之后，台账中的 SHIPMENT 记录在维度上与 stocks 槽位一致。
+    验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 stocks 槽位一致。
 
-    这里不关心业务流程细节（reserve / audit / trace 等），只关心：
+    这里不关心完整业务流程（soft reserve / audit / platform events），只关心：
 
-    - OutboundService.commit 能在当前 HEAD schema 下正常运行；
+    - OutboundService.commit 能在当前 schema 下正常运行；
     - 写出来的 stock_ledger 行：
-        * reason = 'SHIPMENT'
-        * warehouse_id / item_id / batch_code维度正确
+        * reason = 'OUTBOUND_SHIP'
+        * warehouse_id / item_id / batch_code 维度正确
         * delta < 0（出库）
     """
-    order_id, order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(
-        session
-    )
+    order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 
     # 使用 conftest 的种子：stocks(warehouse_id=1, item_id=1, batch_code='NEAR', qty=10)
     batch_code = "NEAR"
@@ -116,27 +112,27 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
 
     svc = OutboundService()
     lines = [
-        OutboundLine(
-            item_id=item_id,
-            batch_code=batch_code,
-            qty=qty_to_ship,
-            warehouse_id=wh_id,
-        )
+        {
+            "item_id": item_id,
+            "batch_code": batch_code,
+            "qty": qty_to_ship,
+            "warehouse_id": wh_id,
+        }
     ]
 
     occurred_at = datetime.now(UTC)
 
-    # 不抛异常即可；返回结果结构因版本演进可能变化，不在此强约束
+    # 使用字符串型的 order_ref 作为 order_id，这样 ledger.ref 就等于 ORD:... 形式
     result = await svc.commit(
         session=session,
-        order_id=order_id,
+        order_id=order_ref,
         lines=lines,
         occurred_at=occurred_at,
         trace_id=trace_id,
     )
     assert isinstance(result, dict)
 
-    # 查找 SHIPMENT 台账记录（按 ref + reason）
+    # 查找 OUTBOUND_SHIP 台账记录（按 ref + reason）
     rows = (
         await session.execute(
             text(
@@ -150,7 +146,7 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
                     delta,
                     after_qty
                   FROM stock_ledger
-                 WHERE reason = 'SHIPMENT'
+                 WHERE reason = 'OUTBOUND_SHIP'
                    AND ref = :ref
                  ORDER BY occurred_at, id
                 """
@@ -159,11 +155,11 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
         )
     ).mappings().all()
 
-    assert rows, "expected at least one SHIPMENT ledger row for outbound commit"
+    assert rows, "expected at least one OUTBOUND_SHIP ledger row for outbound commit"
 
     for r in rows:
         assert int(r["warehouse_id"]) == wh_id
         assert int(r["item_id"]) == item_id
         assert r["batch_code"] == batch_code
-        assert r["reason"] == "SHIPMENT"
+        assert r["reason"] == "OUTBOUND_SHIP"
         assert int(r["delta"]) < 0  # 出库必须是负数

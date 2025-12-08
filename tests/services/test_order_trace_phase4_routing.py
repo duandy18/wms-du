@@ -29,52 +29,11 @@ async def _ensure_two_warehouses(session):
     )
     ids = [int(r[0]) for r in rows.fetchall()]
 
-    needed = 2 - len(ids)
-    if needed <= 0:
-        return ids[0], ids[1]
-
-    cols_rows = await session.execute(
-        text(
-            """
-            SELECT column_name, data_type
-              FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name   = 'warehouses'
-               AND is_nullable  = 'NO'
-               AND column_default IS NULL
-               AND column_name <> 'id'
-            """
+    while len(ids) < 2:
+        row = await session.execute(
+            text("INSERT INTO warehouses (name) VALUES (:name) RETURNING id"),
+            {"name": f"AUTO-WH-{uuid.uuid4().hex[:8]}"},
         )
-    )
-    col_info = [(str(r[0]), str(r[1])) for r in cols_rows.fetchall()]
-
-    if not col_info:
-        for _ in range(needed):
-            row = await session.execute(text("INSERT INTO warehouses DEFAULT VALUES RETURNING id"))
-            ids.append(int(row.scalar()))
-        return ids[0], ids[1]
-
-    columns = ", ".join(c for c, _ in col_info)
-    placeholders = ", ".join(f":{c}" for c, _ in col_info)
-    sql = f"INSERT INTO warehouses ({columns}) VALUES ({placeholders}) RETURNING id"
-
-    for _ in range(needed):
-        params = {}
-        for col, dtype in col_info:
-            dt = dtype.lower()
-            if "char" in dt or "text" in dt:
-                params[col] = f"TEST_{col}_{uuid.uuid4().hex[:8]}"
-            elif "int" in dt:
-                params[col] = 0
-            elif "bool" in dt:
-                params[col] = False
-            elif "timestamp" in dt or "time" in dt:
-                params[col] = datetime.now(UTC)
-            elif dt == "date":
-                params[col] = datetime.now(UTC).date()
-            else:
-                params[col] = f"TEST_{col}_{uuid.uuid4().hex[:4]}"
-        row = await session.execute(text(sql), params)
         ids.append(int(row.scalar()))
 
     return ids[0], ids[1]
@@ -134,11 +93,12 @@ async def _bind_store_warehouses_for_trace(
     )
 
 
-@pytest.mark.asyncio
 async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypatch):
     """
-    验证：ingest 之后，audit_events 中存在一条 WAREHOUSE_ROUTED 事件，
-    meta 中包含选中仓、platform/shop、trace_id 等信息。
+    合同语义（Phase 4 路由审计）：
+
+      ingest 之后，audit_events 中存在一条 WAREHOUSE_ROUTED 事件，
+      meta 中包含选中仓、platform/shop、trace_id 等信息。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -159,7 +119,9 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
         (backup_wid, 1): 10,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
@@ -224,6 +186,7 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
     assert meta["platform"] == platform.upper()
     assert meta["shop"] == shop_id
     assert meta["warehouse_id"] == top_wid
+    # Phase4 约定：路由 reason 以 auto_routed 开头
     assert meta.get("reason", "").startswith("auto_routed")
     assert top_wid in meta.get("considered", [])
     if trace_id:

@@ -10,10 +10,11 @@ from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import MovementType
 from app.models.pick_task import PickTask
 from app.models.pick_task_line import PickTaskLine
-from app.services.stock_service import StockService
+from app.services.order_service import OrderService
+from app.services.pick_service import PickService
+from app.services.soft_reserve_service import SoftReserveService
 
 UTC = timezone.utc
 
@@ -157,14 +158,34 @@ class PickTaskService:
         source: str = "ORDER",
         priority: int = 100,
     ) -> PickTask:
+        """
+        从订单创建拣货任务：
+
+        - 必须先保证订单有 warehouse_id（或调用方显式指定 warehouse_id）；
+        - 同步构造/更新软预占：OrderService.reserve → OrderReserveFlow → SoftReserveService；
+        - 再创建 pick_tasks + pick_task_lines。
+        """
         order = await self._load_order_head(order_id)
         if not order:
             raise ValueError(f"Order not found: id={order_id}")
 
-        wh_id = warehouse_id or int(order.get("warehouse_id") or 0) or 1
         platform = str(order["platform"]).upper()
         shop_id = str(order["shop_id"])
         ext_no = str(order["ext_order_no"])
+        trace_id = order.get("trace_id")
+
+        # 仓库决策：优先使用显式传入的 warehouse_id，其次订单上的 warehouse_id。
+        order_wh = order.get("warehouse_id")
+        if warehouse_id is not None:
+            wh_id = int(warehouse_id)
+        elif order_wh:
+            wh_id = int(order_wh)
+        else:
+            # 不再偷偷 fallback=1，避免“假仓库”破坏 Golden Flow
+            raise ValueError(
+                f"Order {order_id} has no warehouse_id, cannot create pick task or soft reservation. "
+                f"请先确保订单绑定仓库（/dev/orders/.../ensure-warehouse 或店铺默认仓绑定）。"
+            )
 
         order_ref = f"ORD:{platform}:{shop_id}:{ext_no}"
 
@@ -172,6 +193,19 @@ class PickTaskService:
         if not items:
             raise ValueError(f"Order {order_id} has no items, cannot create pick task.")
 
+        # ✅ 先走 Golden Flow：按订单构建软预占（Reservation v2）
+        #    - 幂等：OrderReserveFlow/SoftReserveService 自己处理
+        #    - 若库存不足，抛 ValueError，由上层返回 409/400
+        await OrderService.reserve(
+            session=self.session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=order_ref,
+            lines=[{"item_id": r["item_id"], "qty": r["qty"]} for r in items],
+            trace_id=trace_id,
+        )
+
+        # ✅ 再创建拣货任务 & 行项目
         now = datetime.now(UTC)
 
         task = PickTask(
@@ -212,7 +246,7 @@ class PickTaskService:
         await self.session.flush()
         return await self._load_task(task.id)
 
-    # ---------------- 扫码拣货（只更新任务） ---------------- #
+    # ---------------- 扫码拣货（只更新任务，不动库存） ---------------- #
 
     async def record_scan(
         self,
@@ -222,6 +256,10 @@ class PickTaskService:
         qty: int,
         batch_code: Optional[str],
     ) -> PickTask:
+        """
+        扫码拣货：只更新拣货任务行（req_qty / picked_qty / batch_code），
+        不直接动库存。库存扣减统一在 commit_ship 中通过 PickService 完成。
+        """
         if qty == 0:
             return await self._load_task(task_id)
 
@@ -241,6 +279,7 @@ class PickTaskService:
         now = datetime.now(UTC)
 
         if target is None:
+            # 新增一行“临时计划”+实际拣货
             target = PickTaskLine(
                 task_id=task.id,
                 order_id=None,
@@ -363,7 +402,7 @@ class PickTaskService:
             has_under=has_under,
         )
 
-    # ---------------- commit 出库（按批次扣库存 + outbound_commits_v2） ---------------- #
+    # ---------------- commit 出库（Golden Flow：PICK + 消耗软预占） ---------------- #
 
     async def commit_ship(
         self,
@@ -374,6 +413,19 @@ class PickTaskService:
         trace_id: Optional[str] = None,
         allow_diff: bool = True,
     ) -> Dict[str, Any]:
+        """
+        拣货任务提交（Golden Flow 版）：
+
+        - 不再直接 StockService.adjust(reason=SHIP) 硬出库；
+        - 改为：
+            1) 通过 PickService.record_pick 扣减库存（MovementType.PICK）；
+            2) 通过 SoftReserveService.pick_consume 消耗该订单 ref 的软预占；
+            3) 写 outbound_commits_v2 标记“出库提交完成”；
+            4) 标记任务及明细为 DONE。
+
+        - 仅当 ref 是 ORD:{PLAT}:{shop_id}:ext_order_no 且来源为 ORDER 时，
+          才会尝试消耗软预占；否则只视为“非订单任务”的扣库操作。
+        """
         task = await self._load_task(task_id, for_update=True)
 
         # 差异分析（按 item 汇总，req 只看订单行）
@@ -393,15 +445,21 @@ class PickTaskService:
         shop = str(shop_id)
         wh_id = int(task.warehouse_id)
         order_ref = str(task.ref or f"PICKTASK:{task.id}")
+        occurred_at = datetime.now(UTC)
+
+        pick_svc = PickService()
+        soft_reserve = SoftReserveService()
 
         # 聚合 per (item_id, batch_code) 扣库存
-        agg: Dict[Tuple[int, Optional[str]], int] = {}
+        from typing import Tuple as _Tuple  # 避免和上面 type hints 混淆
+        agg: Dict[_Tuple[int, Optional[str]], int] = {}
         for line in commit_lines:
             key = (line.item_id, (line.batch_code or None))
             agg[key] = agg.get(key, 0) + line.picked_qty
 
-        stock = StockService()
+        ref_line = 1
 
+        # 1) 拣货扣库（PICK）
         for (item_id, batch_code), total_picked in agg.items():
             if total_picked <= 0:
                 continue
@@ -411,20 +469,32 @@ class PickTaskService:
                     f"but missing batch_code; cannot commit safely."
                 )
 
-            await stock.adjust(
+            result = await pick_svc.record_pick(
                 session=self.session,
                 item_id=item_id,
-                warehouse_id=wh_id,
-                delta=-int(total_picked),
-                reason=MovementType.SHIP,  # value='SHIPMENT'
+                qty=total_picked,
                 ref=order_ref,
-                ref_line=1,
-                occurred_at=datetime.now(UTC),
+                occurred_at=occurred_at,
                 batch_code=batch_code,
+                warehouse_id=wh_id,
+                trace_id=trace_id,
+                start_ref_line=ref_line,
+            )
+            ref_line = int(result.get("ref_line", ref_line)) + 1
+
+        # 2) Golden Flow：仅对“订单来源的任务”消耗软预占
+        if task.source == "ORDER" and order_ref.startswith(f"ORD:{plat}:{shop}:"):
+            await soft_reserve.pick_consume(
+                session=self.session,
+                platform=plat,
+                shop_id=shop,
+                warehouse_id=wh_id,
+                ref=order_ref,
+                occurred_at=occurred_at,
                 trace_id=trace_id,
             )
 
-        # 写 outbound_commits_v2
+        # 3) 写 outbound_commits_v2，标记 ref 出库完成（逻辑口径）
         eff_trace_id = trace_id or order_ref
         await self.session.execute(
             SA(
@@ -458,7 +528,7 @@ class PickTaskService:
             },
         )
 
-        # 标记任务 DONE
+        # 4) 标记任务 DONE
         now = datetime.now(UTC)
         task.status = "DONE"
         task.updated_at = now

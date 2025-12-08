@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,26 +8,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class StoreService:
     """
-    店铺档案与仓库绑定服务。
+    店铺档案与仓库绑定服务 + 最小 CRUD。
 
-    目前提供四个静态方法：
+    现阶段提供两类能力：
 
-    - ensure_store:
-        按 (platform, shop_id) UPSERT 店铺，返回 store_id。
+    1）店铺 + 仓库路由相关（已在 Phase 3.x 使用）：
+        - ensure_store
+        - bind_warehouse
+        - resolve_default_warehouse
+        - resolve_default_warehouse_for_platform_shop
 
-    - bind_warehouse:
-        绑定店铺与仓库（支持 is_default / is_top / priority），
-        保证每个店铺最多只有一个“主仓”（is_top = true）。
-
-    - resolve_default_warehouse:
-        按 store_id 解析“默认仓”（优先主仓，再看 is_default，再看 priority）。
-
-    - resolve_default_warehouse_for_platform_shop:
-        按 (platform, shop_id) 解析默认仓（内部会自动 ensure_store）。
+    2）最小 CRUD（供 tests/services/test_store_service.py 使用）：
+        - create_store(session, name, code, platform="INTERNAL", shop_id=None)
+        - get_store(session, store_id)
     """
 
     # ------------------------------------------------------------------
-    # 店铺 UPSERT
+    # 店铺 UPSERT（store 主数据，按 platform + shop_id）
     # ------------------------------------------------------------------
     @staticmethod
     async def ensure_store(
@@ -95,26 +92,21 @@ class StoreService:
         """
         幂等绑定店铺与仓库。
 
-        参数：
-        - store_id     : 店铺 ID
-        - warehouse_id : 仓库 ID
-        - is_default   : 是否“默认仓”（历史字段，仍然保留）
-        - priority     : 路由优先级，数字越小越靠前
-        - is_top       : 是否“主仓”；若为 None，则默认等同于 is_default
-
-        规则（C.1 收口）：
-        - is_top 为 True 时，保证同一 store 仅有一个 is_top = True：
-            先把该 store 所有记录 is_top 置为 False，再 upsert 当前记录为 True。
-        - is_default 为 True 时，同时复用 is_top 语义（即默认同时是主仓）；
-        - 老数据场景：
-            若历史上只有 is_default，没有 is_top，仍能正常工作：
-            - 本方法第一次被调用时会把这条记录的 is_top 设置为 True。
+        表结构（参考模型）：
+        - 表：store_warehouse
+        - 字段：
+            id           BIGINT PK
+            store_id     INT  NOT NULL
+            warehouse_id INT  NOT NULL
+            is_top       BOOL NOT NULL DEFAULT FALSE
+            is_default   BOOL NOT NULL DEFAULT FALSE
+            priority     INT  NOT NULL DEFAULT 100
         """
         if is_top is None:
             # 默认策略：跟随 is_default
             is_top = is_default
 
-        # 若要设置主仓 / 默认仓，先清空同店其他记录的 is_top
+        # 若要设置主仓 / 默认仓，先清空同店其他记录的 is_top / is_default
         if is_top or is_default:
             await session.execute(
                 text(
@@ -164,7 +156,7 @@ class StoreService:
         """
         解析“默认仓”（可用于路由/默认选仓）。
 
-        排序规则（C.1 定稿）：
+        排序规则：
         1. 优先 is_top = TRUE 的记录（主仓）
         2. 其次 is_default = TRUE 的记录
         3. 再按 priority 升序
@@ -220,3 +212,76 @@ class StoreService:
         )
 
         return await StoreService.resolve_default_warehouse(session, store_id=store_id)
+
+    # ------------------------------------------------------------------
+    # 最小 CRUD（给 test_store_service 用）
+    # ------------------------------------------------------------------
+    async def create_store(
+        self,
+        session: AsyncSession,
+        *,
+        name: str,
+        code: str,
+        platform: str = "INTERNAL",
+        shop_id: Optional[str] = None,
+    ) -> int:
+        """
+        创建一个基础店铺记录，返回 store_id。
+
+        说明：
+        - Store 模型当前字段：
+            platform (NOT NULL)
+            shop_id  (NOT NULL)
+            name     (NOT NULL, 默认 'NO-STORE')
+            active   (NOT NULL, default TRUE)
+            email / contact_name / contact_phone / timestamps 等可空或有默认值
+        - 这里只写入 platform / shop_id / name，其他走默认值。
+        - code 目前只作为测试入参，不写入 DB。
+        """
+        plat = platform.upper()
+        shop = shop_id or code
+
+        row = await session.execute(
+            text(
+                """
+                INSERT INTO stores (platform, shop_id, name)
+                VALUES (:p, :s, :n)
+                RETURNING id
+                """
+            ),
+            {"p": plat, "s": shop, "n": name},
+        )
+        store_id = row.scalar()
+        return int(store_id)
+
+    async def get_store(
+        self,
+        session: AsyncSession,
+        *,
+        store_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        按 ID 查询店铺。
+
+        当前测试只要求 “返回非 None”，但这里返回一个 dict，便于以后演进为 DTO。
+        """
+        rec = await session.execute(
+            text(
+                """
+                SELECT id,
+                       platform,
+                       shop_id,
+                       name,
+                       active,
+                       email,
+                       contact_name,
+                       contact_phone
+                  FROM stores
+                 WHERE id = :id
+                 LIMIT 1
+                """
+            ),
+            {"id": store_id},
+        )
+        row = rec.mappings().first()
+        return dict(row) if row else None

@@ -59,6 +59,12 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     )
     order_id = int(result["id"])
 
+    # ✅ 显式绑定仓库：Golden Flow 要求订单有 warehouse_id
+    await session.execute(
+        text("UPDATE orders SET warehouse_id = :wid WHERE id = :oid"),
+        {"wid": 1, "oid": order_id},
+    )
+
     # 2) Seed 库存：给 item_id=1 / wh=1 / batch=BATCH-TEST-001 做一笔入库
     stock = StockService()
     prod = date.today()
@@ -93,7 +99,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession):
     4) /pick-tasks/{task_id}/commit 执行出库；
     5) 验证：
        - 任务状态为 DONE；
-       - ledger 里有 SHIPMENT 记录；
+       - ledger 里有拣货出库记录（PICK）；
        - outbound_commits_v2 有记录；
        - diff 结构正常。
     """
@@ -176,7 +182,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession):
     assert diff_line["picked_qty"] == 2
     assert diff_line["status"] == "OK"
 
-    # 5) 验证 ledger 中存在 SHIPMENT 记录；严格按批次扣库存
+    # 5) 验证 ledger 中存在拣货出库记录（PICK）；严格按批次扣库存
     row = (
         await session.execute(
             text(
@@ -198,7 +204,8 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession):
     ).first()
     assert row is not None, f"no ledger row found for ref={ref}"
     reason, batch_code, delta, warehouse_id, item_id = row
-    assert reason in ("SHIPMENT", "SHIP"), reason
+    # Golden Flow：PickTask 提交 = MovementType.PICK
+    assert reason in ("PICK", MovementType.PICK), reason
     assert batch_code == "BATCH-TEST-001"
     assert delta < 0  # 出库为负数
     assert warehouse_id == 1

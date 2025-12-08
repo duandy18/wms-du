@@ -82,7 +82,9 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
     await session.commit()
 
     # 4) 路由/预占使用的 ChannelInventoryService：简单 monkeypatch，保证可用量足够
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id_):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id_ = kwargs.get("item_id")
         # 在 wh/item_id 上返回足够可用量，其他组合返回 0
         if warehouse_id == wh and item_id_ == item_id:
             return 100
