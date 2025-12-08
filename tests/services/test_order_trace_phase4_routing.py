@@ -31,7 +31,8 @@ async def _ensure_two_warehouses(session):
 
     while len(ids) < 2:
         row = await session.execute(
-            text("INSERT INTO warehouses DEFAULT VALUES RETURNING id")
+            text("INSERT INTO warehouses (name) VALUES (:name) RETURNING id"),
+            {"name": f"AUTO-WH-{uuid.uuid4().hex[:8]}"},
         )
         ids.append(int(row.scalar()))
 
@@ -92,22 +93,12 @@ async def _bind_store_warehouses_for_trace(
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "WAREHOUSE_ROUTED audit event 尚未在当前实现中落地；"
-        "该测试保留为 Phase 4 路由审计的规划，用于未来实现到位后启用。"
-    ),
-    strict=False,
-)
-@pytest.mark.asyncio
 async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypatch):
     """
-    计划中的合同（当前实现尚未完全达成）：
+    合同语义（Phase 4 路由审计）：
 
       ingest 之后，audit_events 中存在一条 WAREHOUSE_ROUTED 事件，
       meta 中包含选中仓、platform/shop、trace_id 等信息。
-
-    目前代码尚未写入该事件，因此本测试标记为 xfail，保留为未来演进目标。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -184,7 +175,6 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
         {"ref": order_ref},
     )
     meta_obj = row.scalar()
-    # 现在实现中 meta_obj 很可能为 None，从而触发 xfail
     assert meta_obj is not None, "WAREHOUSE_ROUTED audit event not found"
 
     # meta 可能是 jsonb → dict，也可能是 text → str
@@ -196,6 +186,7 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
     assert meta["platform"] == platform.upper()
     assert meta["shop"] == shop_id
     assert meta["warehouse_id"] == top_wid
+    # Phase4 约定：路由 reason 以 auto_routed 开头
     assert meta.get("reason", "").startswith("auto_routed")
     assert top_wid in meta.get("considered", [])
     if trace_id:

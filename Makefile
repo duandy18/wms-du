@@ -51,6 +51,10 @@ help:
 	@echo "  make test-backend-quick       - 后端快速回归（少量金丝雀用例）"
 	@echo "  make test-backend-smoke       - 后端 v2 烟囱 Smoke 套餐（CI 主闸门）"
 	@echo ""
+	@echo "  make test-all                 - 全量 pytest -q（当前全绿 134 用例）"
+	@echo "  make test-svc-core            - 核心服务 CRUD/UoW 自检（Store/User/UoW）"
+	@echo "  make test-phase4-routing      - Phase 4 路由 + 审计（WAREHOUSE_ROUTED）专项"
+	@echo ""
 	@echo "  make test-phase2p9-core       - phase2p9 黄金链路（三本账+软预占+生命周期）@ 55432"
 	@echo "  make test-diagnostics-core    - DebugTrace + DevConsole Orders 核心用例 @ 55432"
 	@echo "  make test-backend-smoke-55432 - 在 55432 黄金库上跑后端 Smoke 套餐"
@@ -322,3 +326,28 @@ test-backend-smoke-55432: venv
 		tests/services/test_order_lifecycle_v2.py \
 		tests/services/test_outbound_e2e_phase4_routing.py \
 		tests/smoke/test_platform_events_smoke_pg.py
+
+# =================================
+# 新增：全量 / 核心服务 / Phase 4 路由专项
+# =================================
+
+.PHONY: test-all
+test-all: venv
+	@echo "[pytest] running full test suite (all tests)"
+	@PYTHONPATH=. $(PYTEST) -q
+
+.PHONY: test-svc-core
+test-svc-core: venv
+	@echo "[pytest] core service CRUD/UoW checks"
+	@PYTHONPATH=. $(PYTEST) -q \
+		tests/services/test_store_service.py \
+		tests/services/test_user_service.py \
+		tests/services/test_uow.py
+
+.PHONY: test-phase4-routing
+test-phase4-routing: venv
+	@echo "[pytest] Phase 4 routing + WAREHOUSE_ROUTED audit"
+	@PYTHONPATH=. $(PYTEST) -q \
+		tests/services/test_order_service_phase4_routing.py \
+		tests/services/test_order_route_mode_phase4.py \
+		tests/services/test_order_trace_phase4_routing.py

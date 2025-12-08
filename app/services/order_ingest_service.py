@@ -324,10 +324,10 @@ class OrderIngestService:
                 trace_id=trace_id,
             )
         except Exception:
-            # 不让审计事件影响主流程
+            # 不让事件总线影响主流程
             pass
 
-        # ------------------ 路由选仓（orders.warehouse_id） ------------------
+        # ------------------ 路由选仓（orders.warehouse_id + 审计事件） ------------------
         if items and orders_has_whid:
             # 汇总每个 item 的总需求量
             target_qty: Dict[int, int] = {}
@@ -340,14 +340,15 @@ class OrderIngestService:
                 target_qty[iid] = target_qty.get(iid, 0) + qty
 
             if target_qty:
+                # 读取店铺绑定的仓 + 路由模式
                 rows = await session.execute(
                     text(
                         """
                         SELECT
                             sw.warehouse_id,
-                            COALESCE(sw.is_top, FALSE)    AS is_top,
-                            COALESCE(sw.priority, 100)    AS priority,
-                            COALESCE(s.route_mode, 'FALLBACK') AS route_mode
+                            COALESCE(sw.is_top, FALSE)                AS is_top,
+                            COALESCE(sw.priority, 100)                AS priority,
+                            COALESCE(s.route_mode, 'FALLBACK')        AS route_mode
                           FROM store_warehouse AS sw
                           JOIN stores AS s
                             ON sw.store_id = s.id
@@ -379,6 +380,8 @@ class OrderIngestService:
 
                     route_mode = (route_mode_raw or "FALLBACK").upper()
                     plat_norm = platform.upper()
+
+                    # route_mode = STRICT_TOP 只看主仓；否则 FALLBACK = 主仓优先，备仓兜底
                     if route_mode == "STRICT_TOP":
                         candidates_to_try = candidates_top
                     else:
@@ -386,10 +389,13 @@ class OrderIngestService:
 
                     selected_wid: Optional[int] = None
                     selected_reason: Optional[str] = None
+                    considered: List[int] = []
 
                     if candidates_to_try:
                         channel_svc = ChannelInventoryService()
                         for wid in candidates_to_try:
+                            considered.append(wid)
+
                             can_fulfill = True
                             for item_id, qty in target_qty.items():
                                 available_raw = await channel_svc.get_available_for_item(
@@ -399,23 +405,24 @@ class OrderIngestService:
                                     warehouse_id=wid,
                                     item_id=item_id,
                                 )
-                                incr = qty
-                                if incr > available_raw:
+                                if qty > available_raw:
                                     can_fulfill = False
                                     break
 
                             if can_fulfill:
                                 selected_wid = wid
+                                # 为审计事件准备一个带 auto_routed 前缀的 reason
                                 if route_mode == "STRICT_TOP":
-                                    selected_reason = "strict_top_primary"
+                                    selected_reason = "auto_routed_strict_top"
                                 else:
                                     if wid in candidates_top:
-                                        selected_reason = "fallback_primary"
+                                        selected_reason = "auto_routed_top"
                                     else:
-                                        selected_reason = "fallback_backup"
+                                        selected_reason = "auto_routed_backup"
                                 break
 
                     if selected_wid is not None:
+                        # orders 表上写 warehouse_id（仅在原值为空/0 时写入）
                         await session.execute(
                             text(
                                 """
@@ -427,25 +434,28 @@ class OrderIngestService:
                             ),
                             {"wid": selected_wid, "oid": order_id},
                         )
+
+                        # 写 WAREHOUSE_ROUTED 审计事件（供 Trace / Phase4 使用）
                         try:
                             route_meta = {
                                 "platform": plat_norm,
                                 "shop": shop_id,
                                 "warehouse_id": selected_wid,
                                 "route_mode": route_mode,
-                                "reason": selected_reason,
+                                "reason": selected_reason or "auto_routed",
+                                "considered": considered,
                             }
-                            # 🚫 不再使用 flow="OUTBOUND"，避免 lifecycle 误判为出库节点
                             await AuditEventWriter.write(
                                 session,
-                                flow="ORDER",
-                                event="WAREHOUSE_ROUTED",
+                                flow="OUTBOUND",          # category = 'OUTBOUND'
+                                event="WAREHOUSE_ROUTED",  # meta['event']
                                 ref=order_ref,
                                 trace_id=trace_id,
                                 meta=route_meta,
                                 auto_commit=False,
                             )
                         except Exception:
+                            # 审计失败不影响主流程
                             pass
 
         return {

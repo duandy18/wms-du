@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 
-from sqlalchemy import exc
+from sqlalchemy import exc, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.security import (
@@ -26,6 +27,11 @@ class DuplicateUserError(Exception):
 
 class NotFoundError(Exception):
     """实体不存在"""
+
+
+# =============================================================================
+# 同步版 UserService（保持原样，给现有代码 / 路由使用）
+# =============================================================================
 
 
 class UserService:
@@ -252,3 +258,70 @@ class UserService:
         if not ok:
             raise AuthorizationError("你没有访问该资源的权限")
         return True
+
+
+# =============================================================================
+# 异步版 AsyncUserService：给 tests/services/test_user_service.py 用
+# =============================================================================
+
+
+class AsyncUserService:
+    """
+    AsyncUserService：专门给 AsyncSession / 测试用的最小 CRUD。
+
+    不动现有同步 UserService，只提供：
+      - async create_user(session, username, password?)
+      - async get_user(session, user_id)
+    """
+
+    @staticmethod
+    async def create_user(
+        *,
+        session: AsyncSession,
+        username: str,
+        password: Optional[str] = None,
+    ) -> int:
+        """
+        创建用户并返回 user_id。
+
+        - 使用 AsyncSession；
+        - 若未指定密码，则使用固定默认值（仅用于测试）；
+        - 不在此处 commit，由外层事务统一控制。
+        """
+        hashed = get_password_hash(password or "changeme")
+
+        row = await session.execute(
+            text(
+                """
+                INSERT INTO users (username, password_hash)
+                VALUES (:u, :ph)
+                RETURNING id
+                """
+            ),
+            {"u": username, "ph": hashed},
+        )
+        user_id = row.scalar()
+        return int(user_id)
+
+    @staticmethod
+    async def get_user(
+        *,
+        session: AsyncSession,
+        user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        按 ID 查询用户，返回 dict 或 None。
+        """
+        rec = await session.execute(
+            text(
+                """
+                SELECT id, username, is_active
+                  FROM users
+                 WHERE id = :uid
+                 LIMIT 1
+                """
+            ),
+            {"uid": user_id},
+        )
+        row = rec.mappings().first()
+        return dict(row) if row else None
