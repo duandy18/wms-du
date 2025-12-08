@@ -134,6 +134,12 @@ async def test_rma_commit_updates_counters_and_status(session: AsyncSession) -> 
       - OrderReconcileService 能算出 ordered=2, shipped=2, returned=1, remaining=1；
       - apply_counters 将 shipped_qty=2 / returned_qty=1 写回 order_items；
       - orders.status 变为 PARTIALLY_RETURNED。
+
+    注意：
+      - 当前实现要求：任何 scanned_qty != 0 的行，在 commit 前必须具备：
+          * 非空 batch_code
+          * 至少一个日期（production_date 或 expiry_date）
+        因此本测试在 record_scan 时必须补齐 batch + 日期。
     """
     # 确保环境中没有历史 RMA 任务污染
     await session.execute(text("DELETE FROM receive_task_lines"))
@@ -205,13 +211,15 @@ async def test_rma_commit_updates_counters_and_status(session: AsyncSession) -> 
         lines=[OrderReturnLineIn(item_id=1, qty=1)],
     )
 
-    # 模拟扫码：scanned_qty=1
+    # 模拟扫码：scanned_qty=1，补齐 batch_code + 至少一个日期（与 commit 的硬校验一致）
     await rma_svc.record_scan(
         session,
         task_id=task.id,
         item_id=1,
         qty=1,
         batch_code="RMA-BATCH-2",
+        production_date=date.today(),
+        expiry_date=None,
     )
 
     # 5) commit：会写入 ledger + 更新任务 + apply_counters + 更新订单状态
