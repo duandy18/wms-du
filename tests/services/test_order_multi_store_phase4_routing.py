@@ -225,7 +225,9 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
         (wh_b, 1): 10,
     }
 
-    async def fake_get_available(self, session_, platform_, shop_id_, warehouse_id, item_id):
+    async def fake_get_available(self, *_, **kwargs):
+        warehouse_id = kwargs.get("warehouse_id")
+        item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
