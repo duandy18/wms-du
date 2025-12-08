@@ -134,9 +134,7 @@ class UnitOfWork(AbstractContextManager, AbstractAsyncContextManager):
             # 认为是异步 Session 工厂
             factory = self._session_or_factory  # type: ignore[assignment]
             if not callable(factory):
-                raise TypeError(
-                    "异步上下文下，UnitOfWork 期望传入 AsyncSession 或 async_session 工厂。"
-                )
+                raise TypeError("异步上下文下，UnitOfWork 期望传入 AsyncSession 或 async_session 工厂。")
             maybe_session: Any = factory()  # type: ignore[call-arg]
 
             if isinstance(maybe_session, AsyncSession):
@@ -207,5 +205,4 @@ class AsyncUnitOfWork(UnitOfWork):
 
     实际行为完全复用 UnitOfWork，只用于语义上的区分。
     """
-
     pass
