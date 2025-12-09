@@ -14,10 +14,10 @@ PYTEST:= $(VENV)/bin/pytest
 # ========================
 TEST_DB_DSN := postgresql+psycopg://postgres:wms@127.0.0.1:55432/postgres
 
-# ---- 自动加载 .env.local 环境（仅用于 Makefile 变量，不强制 export）----
-# 说明：
-#   - include .env.local 可以让你在 Make 里用 $(FOO) 这些变量；
-#   - 不再 export 全量变量，避免 DATABASE_URL= 这类空值覆盖测试用 URL。
+# 本地 dev 库 DSN（5433）
+DEV_DB_DSN  := postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+
+# ---- 自动加载 .env.local ----
 ifneq (,$(wildcard .env.local))
 include .env.local
 endif
@@ -29,35 +29,17 @@ endif
 help:
 	@echo ""
 	@echo "WMS-DU Makefile 帮助："
-	@echo "  make venv                     - 创建虚拟环境并升级 pip"
-	@echo "  make deps                     - 安装依赖 (requirements.txt)"
-	@echo "  make clean-pyc                - 清理 __pycache__ 和 *.py[co]"
-	@echo "  make alembic-check            - 结构一致性检测 (alembic check)"
-	@echo "  make upgrade-head             - alembic 升级到 HEAD（默认 55432 黄金库）"
-	@echo "  make day0                     - Day-0 体检 (clean-pyc + alembic-check)"
-	@echo "  make mark-ac                  - 为 A/C 组测试注入 pytest 标记(如无则添加)"
-	@echo "  make test-core                - 运行 grp_core（A组：核心服务）"
-	@echo "  make test-flow                - 运行 grp_flow（C组：FEFO/出库分配）"
-	@echo "  make test-snapshot            - 运行 grp_snapshot（D组相关视图/三账）"
-	@echo "  make test-routing-metrics     - Phase4 路由观测专用测试组"
-	@echo "  make fefo-smoke               - FEFO 最小烟雾（两条关键用例）"
-	@echo "  make check-ac                 - 按计划先跑 A + C"
-	@echo "  make check-bd                 - 再跑 B + D（约束+三账）"
-	@echo "  make gate-structure-fefo      - CI 最小闸门（结构+FEFO烟雾）"
-	@echo "  make prepilot                 - 中试前体检：跑 pre_pilot 黄金链路三板斧"
-	@echo "  make check                    - 兼容旧入口：一键全测(Mini流水)"
-	@echo "  make phase0-verify            - 兼容旧入口：Phase0 校验脚本（如存在）"
-	@echo "  make lint-backend             - 后端 pre-commit lint（ruff 等）"
-	@echo "  make test-backend-quick       - 后端快速回归（少量金丝雀用例）"
-	@echo "  make test-backend-smoke       - 后端 v2 烟囱 Smoke 套餐（CI 主闸门）"
+	@echo "  make venv                     - 创建虚拟环境"
+	@echo "  make deps                     - 安装依赖"
+	@echo "  make clean-pyc                - 清缓存"
+	@echo "  make alembic-check            - alembic check"
+	@echo "  make upgrade-head             - alembic 升级到 HEAD"
 	@echo ""
-	@echo "  make test-all                 - 全量 pytest -q（当前全绿 134 用例）"
-	@echo "  make test-svc-core            - 核心服务 CRUD/UoW 自检（Store/User/UoW）"
-	@echo "  make test-phase4-routing      - Phase 4 路由 + 审计（WAREHOUSE_ROUTED）专项"
+	@echo "  make dev-reset-db             - 重置 5433 开发库（慎用）"
+	@echo "  make dev-ensure-admin         - 在 5433 开发库添加 admin/admin123"
+	@echo "  make pilot-ensure-admin       - 在 55432 中试库添加 admin（自定义密码）"
 	@echo ""
-	@echo "  make test-phase2p9-core       - phase2p9 黄金链路（三本账+软预占+生命周期）@ 55432"
-	@echo "  make test-diagnostics-core    - DebugTrace + DevConsole Orders 核心用例 @ 55432"
-	@echo "  make test-backend-smoke-55432 - 在 55432 黄金库上跑后端 Smoke 套餐"
+	@echo "  make test-internal-outbound   - 测内部出库 Golden Flow E2E"
 	@echo ""
 
 .PHONY: venv
@@ -67,7 +49,7 @@ venv:
 
 .PHONY: deps
 deps: venv
-	@test -f requirements.txt && $(PIP) install -r requirements.txt || echo "[deps] skip: requirements.txt not found"
+	@test -f requirements.txt && $(PIP) install -r requirements.txt || echo "[deps] skip"
 
 # =================================
 # Alembic / DB
@@ -88,38 +70,60 @@ downgrade-base: venv
 revision-auto: venv
 	@$(ALEMB) revision --autogenerate -m "auto"
 
+# ==========================================
+# Dev / Pilot DB Helpers（新增自动种 admin）
+# ==========================================
+
+.PHONY: dev-reset-db dev-ensure-admin pilot-ensure-admin
+
+dev-reset-db: venv
+	@echo "!!! DANGER: DROP & RECREATE dev DB on 5433/wms !!!"
+	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms;"
+	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms;"
+	WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) upgrade head
+	@echo "[dev-reset-db] Done."
+
+dev-ensure-admin: venv
+	@echo "[dev-ensure-admin] Ensuring admin on DEV (5433/wms)..."
+	WMS_DATABASE_URL="$(DEV_DB_DSN)" \
+	ADMIN_USERNAME="admin" \
+	ADMIN_PASSWORD="admin123" \
+	ADMIN_FULL_NAME="Dev Admin" \
+	$(PY) scripts/ensure_admin.py
+
+pilot-ensure-admin: venv
+	@echo "[pilot-ensure-admin] Ensuring admin on PILOT ($(TEST_DB_DSN))..."
+	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
+	ADMIN_USERNAME="admin" \
+	ADMIN_PASSWORD="$(or $(PILOT_ADMIN_PASSWORD),Pilot-Admin-Strong-Password)" \
+	ADMIN_FULL_NAME="Pilot Admin" \
+	$(PY) scripts/ensure_admin.py
+
 # =================================
 # 清理
 # =================================
 .PHONY: clean-pyc
 clean-pyc:
-	@find app -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-	@find app -name '*.py[co]' -delete 2>/dev/null || true
+	@find app -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+	@find app -name '*.py[co]' -delete || true
 
-# Day-0：体检（清缓存 + 结构一致性）
+# Day-0：体检
 .PHONY: day0
 day0: clean-pyc alembic-check
-	@echo 'Day-0 done: cache cleaned & alembic check executed.'
+	@echo 'Day-0 done.'
 
 # =================================
-# 分组标记注入（A 组 + C 组）
+# 分组标记注入（A + C）
 # =================================
-# 说明：仅在目标文件未包含 "pytestmark =" 时才插入，避免重复；需要 ripgrep/rg 与 sed。
 .PHONY: mark-ac
 mark-ac:
 	@bash -c 'set -euo pipefail; \
 	  apply_mark() { \
 	    local mark="$$1"; shift; \
 	    for f in "$$@"; do \
-	      if [ -f "$$f" ]; then \
-	        if ! rg -q "pytestmark\\s*=" "$$f"; then \
-	          sed -i "1i import pytest\npytestmark = pytest.mark.$$mark\n" "$$f"; \
-	          echo "[mark] added $$mark -> $$f"; \
-	        else \
-	          echo "[mark] skip (exists) $$f"; \
-	        fi; \
-	      else \
-	        echo "[mark] skip (missing) $$f"; \
+	      if [ -f "$$f" ] && ! rg -q "pytestmark" "$$f"; then \
+	        sed -i "1i import pytest\npytestmark = pytest.mark.$$mark\n" "$$f"; \
+	        echo "[mark] added $$mark -> $$f"; \
 	      fi; \
 	    done; \
 	  }; \
@@ -134,7 +138,7 @@ mark-ac:
 	    tests/services/test_stock_service_fefo.py;'
 
 # =================================
-# 三统一后测试推进（A + C + B + D）
+# 核心测试
 # =================================
 .PHONY: test-core
 test-core: venv
@@ -148,152 +152,47 @@ test-flow: venv
 test-snapshot: venv
 	@PYTHONPATH=. $(PYTEST) -q -m grp_snapshot -s
 
-# Phase 4：路由指标 + 视图 + 沙盘 专线
-.PHONY: test-routing-metrics
-test-routing-metrics: venv
-	@PYTHONPATH=. $(PYTEST) -q -s \
+# ---------------------------------
+# 新增：Internal Outbound 单元测试入口
+# ---------------------------------
+.PHONY: test-internal-outbound
+test-internal-outbound: venv
+	@echo "[pytest] Internal Outbound Golden Flow E2E"
+	@PYTHONPATH=. $(PYTEST) -q -s tests/services/test_internal_outbound_service.py
+
+# =================================
+# Phase 4：Routing 测试线
+# =================================
+.PHONY: test-phase4-routing
+test-phase4-routing: venv
+	@echo "[pytest] Phase 4 routing tests"
+	@PYTHONPATH=. $(PYTEST) -q \
 		tests/services/test_order_service_phase4_routing.py \
-		tests/db/test_vw_routing_metrics_daily.py \
-		tests/services/test_routing_metrics_emit.py \
-		tests/sandbox/test_routing_sandbox_multi_warehouse.py
-
-# FEFO 烟雾闸门（用于本地和 CI 的最小门槛）
-.PHONY: fefo-smoke
-fefo-smoke: venv
-	@set -e; \
-	if [ -f tests/services/test_outbound_service.py ]; then \
-	  PYTHONPATH=. $(PYTEST) -q -s tests/services/test_outbound_service.py::test_outbound_fefo_basic; \
-	else echo "[fefo-smoke] skip: tests/services/test_outbound_service.py not found"; fi; \
-	if [ -f tests/services/test_outbound_ledger_consistency.py ]; then \
-	  PYTHONPATH=. $(PYTEST) -q -s tests/services/test_outbound_ledger_consistency.py::test_ledger_after_qty_consistency; \
-	else echo "[fefo-smoke] skip: tests/services/test_outbound_ledger_consistency.py not found"; fi
+		tests/services/test_order_route_mode_phase4.py \
+		tests/services/test_order_trace_phase4_routing.py
 
 # =================================
-# Pre-pilot：中试前黄金链路体检
+# 全量回归
 # =================================
-.PHONY: prepilot
-prepilot: venv
-	@echo "[prepilot] running pytest -m pre_pilot ..."
-	@PYTHONPATH=. $(PYTEST) -q -m pre_pilot
-
-# A+C 仅验证（优先）
-.PHONY: check-ac
-check-ac: day0 mark-ac test-core test-flow
-
-# B+D 验证（在 A+C 通过后执行）
-.PHONY: check-bd
-check-bd: venv
-	@set -e; \
-	for t in \
-	  tests/ci/test_db_invariants.py \
-	  tests/alembic/test_migration_contract.py \
-	  tests/services/test_stock_integrity.py \
-	  tests/quick/test_outbound_pg.py \
-	  tests/services/test_reservation_lifecycle.py \
-	; do \
-	  if [ -f "$$t" ]; then \
-	    echo "[pytest] $$t"; PYTHONPATH=. $(PYTEST) -q -s "$$t"; \
-	  else \
-	    echo "[pytest] skip: $$t not found"; \
-	  fi; \
-	done
-
-# CI 最小结构+FEFO 闸门（供分支保护引用）
-.PHONY: gate-structure-fefo
-gate-structure-fefo: alembic-check fefo-smoke
-	@echo 'Structure OK + FEFO smoke passed.'
+.PHONY: test-all
+test-all: venv
+	@echo "[pytest] Running full test suite"
+	@PYTHONPATH=. $(PYTEST) -q
 
 # =================================
-# 兼容：你原有的 Mini 流水 & 校验入口
+# 核心服务 CRUD/UoW
 # =================================
-# 说明：这些目标采用“存在性检测”，最大化与历史用法兼容。
-.PHONY: test-outbound-mini
-test-outbound-mini: venv
-	@set -e; \
-	if [ -f tests/services/test_outbound_service.py ]; then \
-	  PYTHONPATH=. $(PYTEST) -q -s tests/services/test_outbound_service.py::test_outbound_fefo_basic || exit $$?; \
-	else echo "[mini] skip outbound: tests/services/test_outbound_service.py not found"; fi
-
-.PHONY: test-platform-mini
-test-platform-mini: venv
-	@set -e; \
-	for f in tests/services/test_platform_adapter.py tests/services/test_platform_events.py; do \
-	  if [ -f "$$f" ]; then \
-	    echo "[mini] $$f"; PYTHONPATH=. $(PYTEST) -q -s "$$f" || exit $$?; \
-	  else \
-	    echo "[mini] skip platform: $$f not found"; \
-	  fi; \
-	done
-
-.PHONY: test-reserve-mini
-test-reserve-mini: venv
-	@set -e; \
-	if [ -f tests/services/test_reservation_lifecycle.py ]; then \
-	  PYTHONPATH=. $(PYTEST) -q -s tests/services/test_reservation_lifecycle.py::test_basic_reserve || true; \
-	else echo "[mini] skip reserve-mini: tests/services/test_reservation_lifecycle.py not found"; fi
-
-.PHONY: test-reserve-lifecycle
-test-reserve-lifecycle: venv
-	@set -e; \
-	if [ -f tests/services/test_reservation_lifecycle.py ]; then \
-	  PYTHONPATH=. $(PYTEST) -q -s tests/services/test_reservation_lifecycle.py; \
-	else echo "[mini] skip reserve-lifecycle: tests/services/test_reservation_lifecycle.py not found"; fi
-
-.PHONY: test-metrics-mini
-test-metrics-mini: venv
-	@set -e; \
-	for f in tests/services/test_audit_logger.py tests/services/test_metrics.py; do \
-	  if [ -f "$$f" ]; then \
-	    echo "[mini] $$f"; PYTHONPATH=. $(PYTEST) -q -s "$$f" || exit $$?; \
-	  else \
-	    echo "[mini] skip metrics: $$f not found"; \
-	  fi; \
-	done
-
-# 一键全测 (Mini) —— 保持与历史一致
-.PHONY: check
-check:
-	@$(MAKE) test-outbound-mini
-	@$(MAKE) test-platform-mini
-	@$(MAKE) test-reserve-mini
-	@$(MAKE) test-reserve-lifecycle
-	@$(MAKE) test-metrics-mini
-
-# 历史脚本（如存在则执行）
-.PHONY: phase0-verify
-phase0-verify:
-	@if [ -x tools/audits/phase0/verify.sh ]; then \
-	  bash tools/audits/phase0/verify.sh; \
-	else \
-	  echo "[phase0-verify] skip: tools/audits/phase0/verify.sh not found or not executable"; \
-	fi
-
-.PHONY: lint-backend test-backend-quick
-
-lint-backend:
-	@pre-commit run --all-files
-
-test-backend-quick: venv
+.PHONY: test-svc-core
+test-svc-core: venv
+	@echo "[pytest] Core Service CRUD/UoW"
 	@PYTHONPATH=. $(PYTEST) -q \
-		tests/phase2p9/test_fefo_outbound_three_books.py \
-		tests/services/test_outbound_sandbox_phase4_routing.py
-
-.PHONY: test-backend-smoke
-
-test-backend-smoke: venv
-	@PYTHONPATH=. $(PYTEST) -q \
-		tests/quick/test_inbound_smoke_pg.py \
-		tests/quick/test_outbound_core_v2.py \
-		tests/quick/test_outbound_commit_v2.py \
-		tests/phase2p9/test_fefo_outbound_three_books.py \
-		tests/services/test_order_lifecycle_v2.py \
-		tests/services/test_outbound_e2e_phase4_routing.py \
-		tests/smoke/test_platform_events_smoke_pg.py
+		tests/services/test_store_service.py \
+		tests/services/test_user_service.py \
+		tests/services/test_uow.py
 
 # =================================
-# 黄金库绑定测试线（55432）
+# 黄金库 CI 绑定（55432）
 # =================================
-
 .PHONY: test-phase2p9-core
 test-phase2p9-core: venv
 	@echo ">>> Running phase2p9 core tests on $(TEST_DB_DSN)"
@@ -303,48 +202,64 @@ test-phase2p9-core: venv
 
 .PHONY: test-diagnostics-core
 test-diagnostics-core: venv
-	@echo ">>> Running diagnostics & devconsole tests on $(TEST_DB_DSN)"
 	WMS_DATABASE_URL=$(TEST_DB_DSN) \
 	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
 	PYTHONPATH=. $(PYTEST) -q \
 		tests/api/test_debug_trace_api.py \
 		tests/api/test_devconsole_orders_api.py
 
-.PHONY: test-backend-smoke-55432
-test-backend-smoke-55432: venv
-	@echo ">>> Running backend smoke tests on $(TEST_DB_DSN)"
-	WMS_DATABASE_URL=$(TEST_DB_DSN) \
-	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
-	PYTHONPATH=. $(PYTEST) -q \
-		tests/quick/test_inbound_smoke_pg.py \
-		tests/quick/test_outbound_core_v2.py \
-		tests/quick/test_outbound_commit_v2.py \
-		tests/phase2p9/test_fefo_outbound_three_books.py \
-		tests/services/test_order_lifecycle_v2.py \
-		tests/services/test_outbound_e2e_phase4_routing.py \
-		tests/smoke/test_platform_events_smoke_pg.py
+# =================================
+# 双库策略：DEV（5433） vs TEST/PILOT（55432）
+# =================================
+.PHONY: upgrade-dev upgrade-test check-dev check-test
+
+# 升级本地开发库（5433/wms）
+upgrade-dev: venv
+	@echo ">>> Alembic upgrade head on DEV_DB_DSN ($(DEV_DB_DSN))"
+	WMS_DATABASE_URL="$(DEV_DB_DSN)" \
+	WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(ALEMB) upgrade head
+
+# 升级本地“黄金库/测试库”（55432/postgres）
+upgrade-test: venv
+	@echo ">>> Alembic upgrade head on TEST_DB_DSN ($(TEST_DB_DSN))"
+	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
+	WMS_TEST_DATABASE_URL="$(TEST_DB_DSN)" \
+	$(ALEMB) upgrade head
+
+# 对 5433 开发库做 alembic-check
+check-dev: venv
+	@echo ">>> Alembic check on DEV_DB_DSN ($(DEV_DB_DSN))"
+	WMS_DATABASE_URL="$(DEV_DB_DSN)" \
+	WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(ALEMB) check
+
+# 对 55432 黄金库做 alembic-check
+check-test: venv
+	@echo ">>> Alembic check on TEST_DB_DSN ($(TEST_DB_DSN))"
+	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
+	WMS_TEST_DATABASE_URL="$(TEST_DB_DSN)" \
+	$(ALEMB) check
 
 # =================================
-# 新增：全量 / 核心服务 / Phase 4 路由专项
+# Pilot DB 备份（在中试服务器上运行）
 # =================================
+.PHONY: backup-pilot-db
+backup-pilot-db:
+	@bash scripts/backup_pilot_db.sh
 
-.PHONY: test-all
-test-all: venv
-	@echo "[pytest] running full test suite (all tests)"
-	@PYTHONPATH=. $(PYTEST) -q
+# =================================
+# Lint backend（CI 调用 pre-commit）
+# =================================
+.PHONY: lint-backend
+lint-backend:
+	@echo "[lint] Running ruff via pre-commit ..."
+	pre-commit run --all-files
 
-.PHONY: test-svc-core
-test-svc-core: venv
-	@echo "[pytest] core service CRUD/UoW checks"
-	@PYTHONPATH=. $(PYTEST) -q \
-		tests/services/test_store_service.py \
-		tests/services/test_user_service.py \
-		tests/services/test_uow.py
-
-.PHONY: test-phase4-routing
-test-phase4-routing: venv
-	@echo "[pytest] Phase 4 routing + WAREHOUSE_ROUTED audit"
-	@PYTHONPATH=. $(PYTEST) -q \
-		tests/services/test_order_service_phase4_routing.py \
-		tests/services/test_order_route_mode_phase4.py \
-		tests/services/test_order_trace_phase4_routing.py
+# =================================
+# Backend smoke tests（CI 兼容）
+# =================================
+.PHONY: test-backend-smoke
+test-backend-smoke: venv
+	@echo "[smoke] Running quick backend smoke tests..."
+	@PYTHONPATH=. $(PYTEST) -q tests/services/test_store_service.py

@@ -154,6 +154,11 @@ from app.api.routers.stock_batch import router as stock_batch_router
 from app.api.routers.stock_ledger import router as stock_ledger_router
 
 # ===========================
+#   内部出库（新增）
+# ===========================
+from app.api.routers.internal_outbound import router as internal_outbound_router
+
+# ===========================
 #        基础配置
 # ===========================
 from app.api.routers.stores import router as stores_router
@@ -178,6 +183,9 @@ app.include_router(outbound_router)
 
 # 发货：/ship/calc + /ship/confirm = ShipService（费用计算 + 发货审计）
 app.include_router(outbound_ship_router)
+
+# 内部出库：InternalOutboundService（非订单出库：样品 / 内部领用 / 报废）
+app.include_router(internal_outbound_router)
 
 # 旧版出库操作（已 410，占位用）
 app.include_router(outbound_ops_router)
