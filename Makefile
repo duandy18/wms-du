@@ -211,7 +211,6 @@ test-diagnostics-core: venv
 # =================================
 # 双库策略：DEV（5433） vs TEST/PILOT（55432）
 # =================================
-
 .PHONY: upgrade-dev upgrade-test check-dev check-test
 
 # 升级本地开发库（5433/wms）
@@ -248,3 +247,11 @@ check-test: venv
 .PHONY: backup-pilot-db
 backup-pilot-db:
 	@bash scripts/backup_pilot_db.sh
+
+# =================================
+# Lint backend（CI 调用 pre-commit）
+# =================================
+.PHONY: lint-backend
+lint-backend:
+	@echo "[lint] Running ruff via pre-commit ..."
+	pre-commit run --all-files
