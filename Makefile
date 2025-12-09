@@ -241,3 +241,10 @@ check-test: venv
 	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
 	WMS_TEST_DATABASE_URL="$(TEST_DB_DSN)" \
 	$(ALEMB) check
+
+# =================================
+# Pilot DB 备份（在中试服务器上运行）
+# =================================
+.PHONY: backup-pilot-db
+backup-pilot-db:
+	@bash scripts/backup_pilot_db.sh
