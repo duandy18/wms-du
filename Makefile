@@ -255,3 +255,11 @@ backup-pilot-db:
 lint-backend:
 	@echo "[lint] Running ruff via pre-commit ..."
 	pre-commit run --all-files
+
+# =================================
+# Backend smoke tests（CI 兼容）
+# =================================
+.PHONY: test-backend-smoke
+test-backend-smoke: venv
+	@echo "[smoke] Running quick backend smoke tests..."
+	@PYTHONPATH=. $(PYTEST) -q tests/services/test_store_service.py
