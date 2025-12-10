@@ -1,9 +1,10 @@
+# app/services/user_service.py
+
 from __future__ import annotations
 
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional
 
-from sqlalchemy import exc, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.security import (
@@ -14,7 +15,7 @@ from app.core.security import (
 )
 from app.models.permission import Permission
 from app.models.role import Role, role_permissions
-from app.models.user import User
+from app.models.user import User, user_roles
 
 
 class AuthorizationError(Exception):
@@ -29,83 +30,27 @@ class NotFoundError(Exception):
     """实体不存在"""
 
 
-# =============================================================================
-# 同步版 UserService（保持原样，给现有代码 / 路由使用）
-# =============================================================================
-
-
 class UserService:
     """
-    正式版用户服务（与当前 ORM / RBAC 对齐）：
-    - User.password_hash / primary_role_id / full_name / phone / email / is_active
-    - 角色权限通过 role_permissions 中间表解析
+    多角色 RBAC 版 UserService：
+    - 支持 primary_role_id（主角色）
+    - 支持 user_roles 多角色
+    - 权限 = 所有角色权限并集
     """
 
     def __init__(self, db_session: Session):
         self.db: Session = db_session
 
-    # ------------------------------------------------------------------
-    # 用户基本查询
-    # ------------------------------------------------------------------
-
+    # =======================================================
+    # 用户查询
+    # =======================================================
     def get_user_by_username(self, username: str) -> Optional[User]:
         return self.db.query(User).filter(User.username == username).first()
 
-    # ------------------------------------------------------------------
-    # 注册 / 认证
-    # ------------------------------------------------------------------
-
-    def create_user(
-        self,
-        username: str,
-        password: str,
-        role_id: int,
-        *,
-        full_name: Optional[str] = None,
-        phone: Optional[str] = None,
-        email: Optional[str] = None,
-    ) -> User:
-        """
-        创建新用户并分配主角色。
-
-        可选字段：
-        - full_name: 姓名
-        - phone: 联系电话
-        - email: 邮件地址
-        """
-        try:
-            existed = self.db.query(User).filter(User.username == username).first()
-            if existed:
-                raise DuplicateUserError("用户名已存在")
-
-            role = self.db.query(Role).filter(Role.id == role_id).first()
-            if not role:
-                raise NotFoundError("角色不存在")
-
-            user = User(
-                username=username.strip(),
-                password_hash=get_password_hash(password),
-                primary_role_id=role_id,
-                full_name=(full_name or "").strip() or None,
-                phone=(phone or "").strip() or None,
-                email=(email or "").strip() or None,
-            )
-            self.db.add(user)
-            self.db.commit()
-            self.db.refresh(user)
-            return user
-
-        except (DuplicateUserError, NotFoundError):
-            self.db.rollback()
-            raise
-        except exc.SQLAlchemyError as e:
-            self.db.rollback()
-            raise e
-
+    # =======================================================
+    # 登录认证
+    # =======================================================
     def authenticate_user(self, username: str, password: str) -> Optional[User]:
-        """
-        校验用户名 + 密码，成功返回 User，失败返回 None。
-        """
         user = self.db.query(User).filter(User.username == username).first()
         if not user:
             return None
@@ -113,36 +58,69 @@ class UserService:
             return None
         return user
 
-    # ------------------------------------------------------------------
-    # 修改密码
-    # ------------------------------------------------------------------
+    # =======================================================
+    # 生成 JWT
+    # =======================================================
+    def create_token_for_user(self, user: User, *, expires_in: Optional[int] = None) -> str:
+        payload = {"sub": user.username}
+        return create_access_token(data=payload, expires_minutes=expires_in)
 
-    def change_password(
+    def get_user_from_token(self, token: str) -> Optional[User]:
+        payload = decode_access_token(token)
+        if not payload or "sub" not in payload:
+            return None
+        return self.get_user_by_username(payload["sub"])
+
+    # =======================================================
+    # 创建用户（主角色 + 多角色）
+    # =======================================================
+    def create_user(
         self,
-        user_id: int,
-        old_password: str,
-        new_password: str,
-    ) -> None:
-        try:
-            user = self.db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise NotFoundError("用户不存在")
-            if not verify_password(old_password, user.password_hash):
-                raise AuthorizationError("旧密码不正确")
+        username: str,
+        password: str,
+        primary_role_id: int,
+        *,
+        full_name: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        extra_role_ids: Optional[List[int]] = None,
+    ) -> User:
 
-            user.password_hash = get_password_hash(new_password)
-            self.db.commit()
-        except (NotFoundError, AuthorizationError):
-            self.db.rollback()
-            raise
-        except exc.SQLAlchemyError as e:
-            self.db.rollback()
-            raise e
+        existed = self.db.query(User).filter(User.username == username).first()
+        if existed:
+            raise DuplicateUserError("用户名已存在")
 
-    # ------------------------------------------------------------------
-    # 更新用户资料 / 启用停用 / 修改主角色
-    # ------------------------------------------------------------------
+        # 主角色必须存在
+        primary_role = self.db.query(Role).filter(Role.id == primary_role_id).first()
+        if not primary_role:
+            raise NotFoundError("主角色不存在")
 
+        # 创建用户
+        user = User(
+            username=username.strip(),
+            password_hash=get_password_hash(password),
+            primary_role_id=primary_role_id,
+            full_name=(full_name or "").strip() or None,
+            phone=(phone or "").strip() or None,
+            email=(email or "").strip() or None,
+        )
+        self.db.add(user)
+        self.db.flush()  # 获取 user.id
+
+        # 多角色绑定
+        if extra_role_ids:
+            for rid in extra_role_ids:
+                self.db.execute(
+                    user_roles.insert().values(user_id=user.id, role_id=rid)
+                )
+
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    # =======================================================
+    # 更新用户（基础信息 + 主角色 + 多角色）
+    # =======================================================
     def update_user(
         self,
         user_id: int,
@@ -150,178 +128,114 @@ class UserService:
         full_name: Optional[str] = None,
         phone: Optional[str] = None,
         email: Optional[str] = None,
-        role_id: Optional[int] = None,
+        primary_role_id: Optional[int] = None,
+        extra_role_ids: Optional[List[int]] = None,
         is_active: Optional[bool] = None,
     ) -> User:
-        try:
-            user = self.db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise NotFoundError("用户不存在")
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise NotFoundError("用户不存在")
 
-            if full_name is not None:
-                user.full_name = (full_name or "").strip() or None
-            if phone is not None:
-                user.phone = (phone or "").strip() or None
-            if email is not None:
-                user.email = (email or "").strip() or None
+        if full_name is not None:
+            user.full_name = full_name or None
+        if phone is not None:
+            user.phone = phone or None
+        if email is not None:
+            user.email = email or None
+        if is_active is not None:
+            user.is_active = bool(is_active)
 
-            if role_id is not None:
-                role = self.db.query(Role).filter(Role.id == role_id).first()
-                if not role:
-                    raise NotFoundError("角色不存在")
-                user.primary_role_id = role_id
+        # 更新主角色
+        if primary_role_id is not None:
+            role = self.db.query(Role).filter(Role.id == primary_role_id).first()
+            if not role:
+                raise NotFoundError("主角色不存在")
+            user.primary_role_id = primary_role_id
 
-            if is_active is not None:
-                user.is_active = bool(is_active)
+        # 更新多角色
+        if extra_role_ids is not None:
+            # 清空旧数据
+            self.db.execute(
+                user_roles.delete().where(user_roles.c.user_id == user_id)
+            )
+            # 插入新数据
+            for rid in extra_role_ids:
+                self.db.execute(
+                    user_roles.insert().values(user_id=user_id, role_id=rid)
+                )
 
-            self.db.commit()
-            self.db.refresh(user)
-            return user
-        except (NotFoundError,) as e:
-            self.db.rollback()
-            raise e
-        except exc.SQLAlchemyError as e:
-            self.db.rollback()
-            raise e
+        self.db.commit()
+        self.db.refresh(user)
+        return user
 
-    # ------------------------------------------------------------------
-    # Token
-    # ------------------------------------------------------------------
+    # =======================================================
+    # 密码修改
+    # =======================================================
+    def change_password(self, user_id: int, old_password: str, new_password: str):
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise NotFoundError("用户不存在")
+        if not verify_password(old_password, user.password_hash):
+            raise AuthorizationError("旧密码不正确")
 
-    def create_token_for_user(
-        self,
-        user: User,
-        *,
-        expires_in: Optional[int] = None,
-    ) -> str:
-        data = {"sub": user.username}
-        return create_access_token(data=data, expires_minutes=expires_in)
+        user.password_hash = get_password_hash(new_password)
+        self.db.commit()
 
-    def get_user_from_token(self, token: str) -> Optional[User]:
-        payload = decode_access_token(token)
-        if not payload or "sub" not in payload:
-            return None
-        username = payload["sub"]
-        return self.get_user_by_username(username)
-
-    # ------------------------------------------------------------------
-    # 权限
-    # ------------------------------------------------------------------
-
+    # =======================================================
+    # 权限查询（并集）
+    # =======================================================
     def get_user_permissions(self, user: Any) -> List[str]:
-        """
-        从用户主角色解析权限列表（去重）。
-
-        - 对于正常 ORM User：使用 primary_role_id。
-        - 对于测试桩 / 匿名用户（如 _TestUser）：若无 primary_role_id/role_id，
-          则视为“无权限”，返回空列表，而不是抛 AttributeError。
-        """
         if not user:
             return []
 
-        # 正式用户：primary_role_id
-        role_id: Optional[int] = getattr(user, "primary_role_id", None)
-        # 某些 stub（如 _TestUser）可能用 role_id 字段
-        if not role_id:
-            role_id = getattr(user, "role_id", None)
+        role_ids = set()
 
-        if not role_id:
+        # 主角色
+        if getattr(user, "primary_role_id", None):
+            role_ids.add(int(user.primary_role_id))
+
+        # 多角色
+        rows = self.db.execute(
+            text("SELECT role_id FROM user_roles WHERE user_id = :uid"),
+            {"uid": user.id},
+        ).fetchall()
+        for (rid,) in rows:
+            role_ids.add(int(rid))
+
+        if not role_ids:
             return []
 
+        # 查询所有角色权限（并集）
         rows = (
             self.db.query(Permission.name)
             .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-            .filter(role_permissions.c.role_id == role_id)
+            .filter(role_permissions.c.role_id.in_(role_ids))
             .all()
         )
 
         out: List[str] = []
         seen = set()
+
         for (name,) in rows:
             if name not in seen:
                 seen.add(name)
                 out.append(name)
+
         return out
 
-    def check_permission(
-        self,
-        user: Any,
-        required_permissions: List[str],
-        *,
-        any_of: bool = True,
-    ) -> bool:
+    # =======================================================
+    # 权限校验
+    # =======================================================
+    def check_permission(self, user: Any, required: List[str], *, any_of=True):
         perms = set(self.get_user_permissions(user))
-        req = set(required_permissions or [])
-        if not req:
-            return True
-        ok = (len(perms & req) > 0) if any_of else (req.issubset(perms))
+        req = set(required)
+
+        if any_of:
+            ok = bool(perms & req)
+        else:
+            ok = req.issubset(perms)
+
         if not ok:
             raise AuthorizationError("你没有访问该资源的权限")
+
         return True
-
-
-# =============================================================================
-# 异步版 AsyncUserService：给 tests/services/test_user_service.py 用
-# =============================================================================
-
-
-class AsyncUserService:
-    """
-    AsyncUserService：专门给 AsyncSession / 测试用的最小 CRUD。
-
-    不动现有同步 UserService，只提供：
-      - async create_user(session, username, password?)
-      - async get_user(session, user_id)
-    """
-
-    @staticmethod
-    async def create_user(
-        *,
-        session: AsyncSession,
-        username: str,
-        password: Optional[str] = None,
-    ) -> int:
-        """
-        创建用户并返回 user_id。
-
-        - 使用 AsyncSession；
-        - 若未指定密码，则使用固定默认值（仅用于测试）；
-        - 不在此处 commit，由外层事务统一控制。
-        """
-        hashed = get_password_hash(password or "changeme")
-
-        row = await session.execute(
-            text(
-                """
-                INSERT INTO users (username, password_hash)
-                VALUES (:u, :ph)
-                RETURNING id
-                """
-            ),
-            {"u": username, "ph": hashed},
-        )
-        user_id = row.scalar()
-        return int(user_id)
-
-    @staticmethod
-    async def get_user(
-        *,
-        session: AsyncSession,
-        user_id: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        按 ID 查询用户，返回 dict 或 None。
-        """
-        rec = await session.execute(
-            text(
-                """
-                SELECT id, username, is_active
-                  FROM users
-                 WHERE id = :uid
-                 LIMIT 1
-                """
-            ),
-            {"uid": user_id},
-        )
-        row = rec.mappings().first()
-        return dict(row) if row else None
