@@ -39,6 +39,8 @@ help:
 	@echo "  make dev-ensure-admin         - 在 5433 开发库添加 admin/admin123"
 	@echo "  make pilot-ensure-admin       - 在 55432 中试库添加 admin（自定义密码）"
 	@echo ""
+	@echo "  make test                     - pytest（支持 TESTS=... 指定文件）"
+	@echo "  make test-rbac                - 只跑 RBAC 相关测试（test_user_api.py）"
 	@echo "  make test-internal-outbound   - 测内部出库 Golden Flow E2E"
 	@echo ""
 
@@ -153,7 +155,30 @@ test-snapshot: venv
 	@PYTHONPATH=. $(PYTEST) -q -m grp_snapshot -s
 
 # ---------------------------------
-# 新增：Internal Outbound 单元测试入口
+# 通用 pytest 入口（支持 TESTS=...）
+# ---------------------------------
+.PHONY: test
+test: venv
+	@echo "[pytest] Running tests (DEV_DB_DSN=$(DEV_DB_DSN))..."
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	if [ -n "$(TESTS)" ]; then \
+	  echo ">>> TESTS=$(TESTS)"; \
+	  $(PYTEST) -q -s $(TESTS); \
+	else \
+	  $(PYTEST) -q; \
+	fi
+
+# ---------------------------------
+# RBAC 专用测试入口
+# ---------------------------------
+.PHONY: test-rbac
+test-rbac: venv
+	@echo "[pytest] RBAC tests – tests/api/test_user_api.py"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(PYTEST) -q -s tests/api/test_user_api.py
+
+# ---------------------------------
+# Internal Outbound 单元测试入口
 # ---------------------------------
 .PHONY: test-internal-outbound
 test-internal-outbound: venv
