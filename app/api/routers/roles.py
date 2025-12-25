@@ -15,31 +15,31 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 
 
 def get_role_service(db: Session = Depends(get_db)) -> RoleService:
-  return RoleService(db)
+    return RoleService(db)
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
-  return UserService(db)
+    return UserService(db)
 
 
 class RolePermissionsBody(BaseModel):
-  """
-  /roles/{role_id}/permissions 的请求体：
+    """
+    /roles/{role_id}/permissions 的请求体：
 
-  {
-    "permission_ids": ["1", "2", "3"]
-  }
-  """
+    {
+      "permission_ids": ["1", "2", "3"]
+    }
+    """
 
-  permission_ids: list[str]
+    permission_ids: list[str]
 
 
 @router.post("", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
 def create_role(
-  role_in: RoleCreate,
-  role_service: RoleService = Depends(get_role_service),
-  user_service: UserService = Depends(get_user_service),
-  current_user=Depends(get_current_user),
+    role_in: RoleCreate,
+    role_service: RoleService = Depends(get_role_service),
+    user_service: UserService = Depends(get_user_service),
+    current_user=Depends(get_current_user),
 ):
     """
     创建角色。
@@ -63,12 +63,12 @@ def create_role(
 
 @router.get("", response_model=list[RoleOut])
 def get_all_roles(
-  role_service: RoleService = Depends(get_role_service),
-  user_service: UserService = Depends(get_user_service),
-  current_user=Depends(get_current_user),
+    role_service: RoleService = Depends(get_role_service),
+    user_service: UserService = Depends(get_user_service),
+    current_user=Depends(get_current_user),
 ):
-  """
-  获取全部角色列表。
+    """
+    获取全部角色列表。
 
     需要权限: system.role.manage
     """
@@ -84,10 +84,10 @@ def get_all_roles(
 
 @router.get("/{role_id}", response_model=RoleOut)
 def get_role_by_id(
-  role_id: str,
-  role_service: RoleService = Depends(get_role_service),
-  user_service: UserService = Depends(get_user_service),
-  current_user=Depends(get_current_user),
+    role_id: str,
+    role_service: RoleService = Depends(get_role_service),
+    user_service: UserService = Depends(get_user_service),
+    current_user=Depends(get_current_user),
 ):
     """
     按 ID 获取角色详情。
@@ -113,11 +113,11 @@ def get_role_by_id(
 @router.put("/{role_id}/permissions", response_model=RoleOut)
 @router.patch("/{role_id}/permissions", response_model=RoleOut)
 def set_role_permissions(
-  role_id: str,
-  body: RolePermissionsBody = Body(...),
-  role_service: RoleService = Depends(get_role_service),
-  user_service: UserService = Depends(get_user_service),
-  current_user=Depends(get_current_user),
+    role_id: str,
+    body: RolePermissionsBody = Body(...),
+    role_service: RoleService = Depends(get_role_service),
+    user_service: UserService = Depends(get_user_service),
+    current_user=Depends(get_current_user),
 ):
     """
     为某个角色批量绑定权限（幂等覆盖）。
