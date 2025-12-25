@@ -21,7 +21,7 @@ class PurchaseOrderLineBase(BaseModel):
     # 分组（猫条 / 双拼 / 鲜封包等）
     category: Optional[str] = Field(
         None,
-        description="业务分组，如 猫条/双拼/鲜封包",
+        description="业务分组，如 猫条/双拼/鲜封包（当前前端不编辑，保留兼容）",
     )
 
     # 价格体系
@@ -125,6 +125,12 @@ class PurchaseOrderWithLinesOut(BaseModel):
     supplier_id: Optional[int]
     supplier_name: Optional[str]
     total_amount: Optional[Decimal]
+
+    # 新增：采购人 + 采购时间
+    purchaser: str
+    purchase_time: datetime
+
+    # 备注（可选）
     remark: Optional[str]
 
     status: str
@@ -151,7 +157,9 @@ class PurchaseOrderCreateV2(BaseModel):
     - supplier_id: 可选，关联 suppliers.id
     - supplier_name: 可选，不传则后端用 supplier 回填
     - warehouse_id: 必填
-    - remark: 整单备注
+    - purchaser: 必填，采购人
+    - purchase_time: 必填，采购时间（ISO 时间）
+    - remark: 整单备注（可选）
     - lines: 多行明细列表
     """
 
@@ -166,7 +174,11 @@ class PurchaseOrderCreateV2(BaseModel):
         None,
         description="供应商名称快照（可选，不填则用 supplier）",
     )
-    remark: Optional[str] = Field(None, description="采购单备注")
+
+    purchaser: str = Field(..., description="采购人姓名或编码")
+    purchase_time: datetime = Field(..., description="采购时间（下单/确认时间）")
+
+    remark: Optional[str] = Field(None, description="采购单备注（可选）")
 
     lines: List[PurchaseOrderLineCreate] = Field(
         ...,

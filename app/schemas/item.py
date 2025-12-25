@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-# ========= 通用基类 =========
 class _Base(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
@@ -16,7 +15,14 @@ class _Base(BaseModel):
     )
 
 
-# ========= 基础字段（含保质期 + 重量） =========
+def _norm_text(v):
+    return v.strip() if isinstance(v, str) else v
+
+
+class NextSkuOut(_Base):
+    sku: str
+
+
 class ItemBase(_Base):
     sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
@@ -27,45 +33,49 @@ class ItemBase(_Base):
     enabled: bool = True
     supplier_id: Annotated[int | None, Field(default=None)] = None
 
-    # 新增：保质期结构
-    shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
-    shelf_life_unit: Annotated[
-        Literal["DAY", "MONTH"] | None,
-        Field(default=None),
-    ] = None
+    has_shelf_life: Annotated[bool | None, Field(default=None)] = None
 
-    # ⭐ 新增：单件净重（kg），用于运费预估
+    shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
+    shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
+
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
     @field_validator("sku", "name", "spec", "uom", "barcode", mode="before")
     @classmethod
     def _trim_text(cls, v):
-        return v.strip() if isinstance(v, str) else v
+        return _norm_text(v)
 
 
-# ========= 创建 =========
-class ItemCreate(ItemBase):
-    model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {
-                "sku": "CAT-FOOD-15KG",
-                "name": "顽皮双拼猫粮 1.5kg",
-                "spec": "鸡肉+牛肉",
-                "uom": "bag",
-                "barcode": "6901234567890",
-                "enabled": True,
-                "supplier_id": 1,
-                "shelf_life_value": 18,
-                "shelf_life_unit": "MONTH",
-                "weight_kg": 1.5,
-            }
-        }
-    }
+class ItemCreate(_Base):
+    """
+    Create Item（统一由后端生成 SKU）：
+    - 不接受 sku 输入
+    """
+
+    name: Annotated[str, Field(min_length=1, max_length=128)]
+    spec: Annotated[str | None, Field(default=None, max_length=128)] = None
+    uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+    barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
+
+    enabled: bool = True
+    supplier_id: int | None = None
+
+    has_shelf_life: bool | None = None
+    shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
+    shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
+
+    weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
+
+    @field_validator("name", "spec", "uom", "barcode", mode="before")
+    @classmethod
+    def _trim_text(cls, v):
+        return _norm_text(v)
 
 
-# ========= 更新 =========
 class ItemUpdate(_Base):
+    # 允许更新 sku 吗？——本轮先不开放（保持字段存在，但你也可以后续删掉这个字段）
     sku: Annotated[str | None, Field(default=None, max_length=128)] = None
+
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
@@ -74,19 +84,16 @@ class ItemUpdate(_Base):
     enabled: bool | None = None
     supplier_id: int | None = None
 
+    has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
-    shelf_life_unit: Annotated[
-        Literal["DAY", "MONTH"] | None,
-        Field(default=None),
-    ] = None
+    shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
 
-    # ⭐ 新增：更新时允许修改重量
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
     @field_validator("sku", "name", "spec", "uom", "barcode", mode="before")
     @classmethod
     def _trim_text(cls, v):
-        return v.strip() if isinstance(v, str) else v
+        return _norm_text(v)
 
     @model_validator(mode="after")
     def _at_least_one(self):
@@ -100,6 +107,7 @@ class ItemUpdate(_Base):
                 "barcode",
                 "enabled",
                 "supplier_id",
+                "has_shelf_life",
                 "shelf_life_value",
                 "shelf_life_unit",
                 "weight_kg",
@@ -109,28 +117,30 @@ class ItemUpdate(_Base):
         return self
 
 
-# ========= 按 ID 创建 =========
 class ItemCreateById(_Base):
+    """
+    这个接口本身就是“例外通道”，用于历史兼容/修复。
+    如果你也想“完全统一标准”，建议在 router 层直接禁用该接口（删除 /by-id 路由）。
+    """
+
     id: Annotated[int, Field(gt=0)]
+
     sku: Annotated[str | None, Field(default=None, max_length=128)] = None
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
+
     enabled: bool | None = True
     supplier_id: int | None = None
 
+    has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
-    shelf_life_unit: Annotated[
-        Literal["DAY", "MONTH"] | None,
-        Field(default=None),
-    ] = None
+    shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
 
-    # ⭐ 按 ID 创建时也可带上 weight_kg
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
 
-# ========= 输出 =========
 class ItemOut(ItemBase):
     id: int
     supplier_name: str | None = None
@@ -138,8 +148,13 @@ class ItemOut(ItemBase):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    requires_batch: bool = True
+    requires_dates: bool = True
+    default_batch_code: Optional[str] = None
+
 
 __all__ = [
+    "NextSkuOut",
     "ItemBase",
     "ItemCreate",
     "ItemUpdate",

@@ -83,7 +83,7 @@
   - `/reserve/release`
   入口在 `app/api/routers/reserve_soft.py` 中。
 
-> ✅ 旧的 lock-based Reserve（`reservation_lock / reservation_release / reservation_alloc / reservation_plan` 等）已经放入 `_deprecated`，
+> ✅ 旧的 lock-based Reserve（`_deprecated legacy reservation modules` 等）已经放入 `_deprecated`，
 > Soft Reserve v2 是**唯一现役预占引擎**。
 
 ---
@@ -208,7 +208,7 @@ app/services/_staged/
     reservation_plan.py
     reservation_alloc.py
   outbound/
-    outbound_v2_service.py
+    _deprecated outbound v2 module
   inventory/
     inventory_adjust.py (旧大引擎)
     inventory_ops_v1.py (若有)
