@@ -19,23 +19,23 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
         ports:
           # 容器 5432 → 宿主 5433
           - 5433:5432
         options: >-
-          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-cmd="pg_isready -U wms -d wms"
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
 
     env:
       # 后端统一 DSN（sync/async 引擎都会从这里和 WMS_* 中取）
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
-      WMS_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
-      WMS_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5433/postgres
+      DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+      WMS_DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+      WMS_TEST_DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
     steps:
       - name: Checkout
