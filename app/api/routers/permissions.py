@@ -14,19 +14,19 @@ router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 
 def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
-    return PermissionService(db)
+  return PermissionService(db)
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
-    return UserService(db)
+  return UserService(db)
 
 
 @router.post("", response_model=PermissionOut, status_code=status.HTTP_201_CREATED)
 def create_permission(
-    permission_in: PermissionCreate,
-    perm_service: PermissionService = Depends(get_permission_service),
-    user_service: UserService = Depends(get_user_service),
-    current_user=Depends(get_current_user),
+  permission_in: PermissionCreate,
+  perm_service: PermissionService = Depends(get_permission_service),
+  user_service: UserService = Depends(get_user_service),
+  current_user=Depends(get_current_user),
 ):
     """
     创建权限。
@@ -51,12 +51,12 @@ def create_permission(
 
 @router.get("", response_model=list[PermissionOut])
 def get_all_permissions(
-    perm_service: PermissionService = Depends(get_permission_service),
-    user_service: UserService = Depends(get_user_service),
-    current_user=Depends(get_current_user),
+  perm_service: PermissionService = Depends(get_permission_service),
+  user_service: UserService = Depends(get_user_service),
+  current_user=Depends(get_current_user),
 ):
-    """
-    获取全部权限列表。
+  """
+  获取全部权限列表。
 
     需要权限: system.permission.manage
     """
@@ -72,10 +72,10 @@ def get_all_permissions(
 
 @router.get("/{permission_id}", response_model=PermissionOut)
 def get_permission_by_id(
-    permission_id: str,
-    perm_service: PermissionService = Depends(get_permission_service),
-    user_service: UserService = Depends(get_user_service),
-    current_user=Depends(get_current_user),
+  permission_id: str,
+  perm_service: PermissionService = Depends(get_permission_service),
+  user_service: UserService = Depends(get_user_service),
+  current_user=Depends(get_current_user),
 ):
     """
     按 ID 获取权限详情。
