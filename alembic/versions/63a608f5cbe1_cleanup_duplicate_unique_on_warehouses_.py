@@ -21,7 +21,7 @@ def upgrade() -> None:
     """
     清理 warehouses.name 上重复的唯一约束 / 索引。
 
-    现状（psql \d warehouses）：
+    现状（psql \\d warehouses）：
       - ix_warehouses_name_uq  UNIQUE, btree (name)
       - uq_warehouses_name     UNIQUE, btree (name)
 

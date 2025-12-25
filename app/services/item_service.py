@@ -3,57 +3,69 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
 
+NOEXP_BATCH_CODE = "NOEXP"
+
+SKU_SEQ_NAME = "items_sku_seq"
+SKU_PREFIX = "AKT-"
+SKU_PAD_WIDTH = 6
+
+
+def _decorate_rules(obj: Item) -> Item:
+    has_sl = bool(getattr(obj, "has_shelf_life", False))
+    setattr(obj, "requires_batch", True if has_sl else False)
+    setattr(obj, "requires_dates", True if has_sl else False)
+    setattr(obj, "default_batch_code", None if has_sl else NOEXP_BATCH_CODE)
+    return obj
+
 
 class ItemService:
-    """Item 领域服务（同步 Session 版）。"""
-
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # -----------------------------
-    # 1) 按 SKU 创建商品
-    # -----------------------------
+    def next_sku(self) -> str:
+        n = self.db.execute(text(f"SELECT nextval('{SKU_SEQ_NAME}')")).scalar_one()
+        num = str(int(n)).zfill(SKU_PAD_WIDTH)
+        return f"{SKU_PREFIX}{num}"
+
     def create_item(
         self,
         *,
-        sku: str,
         name: str,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
+        has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,  # ⭐ 新增
+        weight_kg: Optional[float] = None,
     ) -> Item:
-        sku = (sku or "").strip()
         name = (name or "").strip()
+        if not name:
+            raise ValueError("name is required")
+
         spec_val = spec.strip() if isinstance(spec, str) else None
         unit_val = (uom or "PCS").strip().upper() or "PCS"
 
-        if not sku or not name:
-            raise ValueError("SKU and name are required")
-
-        exists = self.db.execute(select(Item).where(Item.sku == sku)).scalar_one_or_none()
-        if exists:
-            raise ValueError("SKU duplicate")
+        sku_val = self.next_sku()
 
         obj = Item(
-            sku=sku,
+            sku=sku_val,
             name=name,
             unit=unit_val,
             spec=spec_val,
             enabled=bool(enabled),
             supplier_id=supplier_id,
+            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
-            weight_kg=weight_kg,  # ⭐ 新增
+            weight_kg=weight_kg,
         )
 
         self.db.add(obj)
@@ -63,15 +75,13 @@ class ItemService:
             self.db.rollback()
             raw = str(getattr(e, "orig", e)).lower()
             if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
+                # 理论上不会发生（sequence 保证唯一），但保留防御
                 raise ValueError("SKU duplicate") from e
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return obj
+        return _decorate_rules(obj)
 
-    # -----------------------------
-    # 2) 按 ID 创建商品（幂等）
-    # -----------------------------
     def create_item_by_id(
         self,
         *,
@@ -82,16 +92,17 @@ class ItemService:
         uom: Optional[str] = None,
         enabled: Optional[bool] = True,
         supplier_id: Optional[int] = None,
+        has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,  # ⭐ 新增
+        weight_kg: Optional[float] = None,
     ) -> Item:
         if not id or id <= 0:
             raise ValueError("id 必须为正整数")
 
         exists = self.db.get(Item, id)
         if exists is not None:
-            return exists
+            return _decorate_rules(exists)
 
         sku_val = (sku or str(id)).strip()
         name_val = (name or f"ITEM-{id}").strip()
@@ -107,9 +118,10 @@ class ItemService:
             spec=spec_val,
             enabled=enabled_val,
             supplier_id=supplier_id,
+            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
-            weight_kg=weight_kg,  # ⭐ 新增
+            weight_kg=weight_kg,
         )
 
         self.db.add(obj)
@@ -125,29 +137,25 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return obj
+        return _decorate_rules(obj)
 
-    # -----------------------------
-    # 3) 查询
-    # -----------------------------
     def get_all_items(self) -> List[Item]:
         rows = self.db.execute(select(Item).order_by(Item.id.asc())).scalars().all()
-        return list(rows)
+        return [_decorate_rules(r) for r in rows]
 
     def get_item_by_id(self, id: int) -> Optional[Item]:
         if not id or id <= 0:
             return None
-        return self.db.get(Item, id)
+        obj = self.db.get(Item, id)
+        return _decorate_rules(obj) if obj else None
 
     def get_item_by_sku(self, sku: str) -> Optional[Item]:
         sku = (sku or "").strip()
         if not sku:
             return None
-        return self.db.execute(select(Item).where(Item.sku == sku)).scalar_one_or_none()
+        obj = self.db.execute(select(Item).where(Item.sku == sku)).scalar_one_or_none()
+        return _decorate_rules(obj) if obj else None
 
-    # -----------------------------
-    # 4) 更新
-    # -----------------------------
     def update_item(
         self,
         *,
@@ -157,9 +165,10 @@ class ItemService:
         uom: Optional[str] = None,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
+        has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,  # ⭐ 新增
+        weight_kg: Optional[float] = None,
     ) -> Item:
         obj = self.db.get(Item, id)
         if obj is None:
@@ -191,6 +200,10 @@ class ItemService:
             obj.supplier_id = supplier_id
             changed = True
 
+        if has_shelf_life is not None:
+            obj.has_shelf_life = bool(has_shelf_life)
+            changed = True
+
         if shelf_life_value is not None:
             obj.shelf_life_value = shelf_life_value
             changed = True
@@ -204,7 +217,7 @@ class ItemService:
             changed = True
 
         if not changed:
-            return obj
+            return _decorate_rules(obj)
 
         try:
             self.db.commit()
@@ -213,4 +226,4 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return obj
+        return _decorate_rules(obj)

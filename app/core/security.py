@@ -1,13 +1,12 @@
 # app/core/security.py
 """
-安全工具：
+安全工具（统一入口）：
+
 - 正式路径：PyJWT + passlib[pbkdf2_sha256]
-- 从 app.core.config 加载配置：优先 `settings`，否则 `get_settings()`
-- 若缺依赖或配置，则回退到开发期最小实现（仅本地/CI，不要用于生产）
-- 对外提供统一接口：
-    - get_password_hash / verify_password
-    - create_access_token / decode_access_token
-    - hash_password (get_password_hash 的别名，兼容旧代码)
+- 强制规则（2025-12）：
+    * 非 dev 环境必须显式配置 JWT_SECRET
+    * 禁止使用 dev 默认 secret 启动服务
+- dev / CI 环境允许最小实现兜底
 """
 
 from __future__ import annotations
@@ -32,15 +31,38 @@ except Exception:
     except Exception:
 
         class _Settings:
-            JWT_SECRET: str = os.environ.get("JWT_SECRET", "dev-secret-change-me")
+            ENV: str = os.environ.get("ENV", "dev")
+            JWT_SECRET: str = os.environ.get("JWT_SECRET", "dev-temp-secret")
             ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
                 os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
             )
 
         settings = _Settings()  # type: ignore[assignment]
 
-_JWT_SECRET = getattr(settings, "JWT_SECRET", "dev-secret-change-me")
+# ---------------------------
+# 强制安全检查（启动即执行）
+# ---------------------------
+_ENV = getattr(settings, "ENV", "dev")
+_JWT_SECRET = getattr(settings, "JWT_SECRET", "")
 _JWT_EXP_MIN = int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60))
+
+_DEV_SECRETS = {
+    "",
+    "dev-temp-secret",
+    "dev-secret-change-me",
+}
+
+if _ENV != "dev":
+    if not _JWT_SECRET or _JWT_SECRET in _DEV_SECRETS:
+        raise RuntimeError(
+            "❌ SECURITY ERROR: JWT_SECRET is not properly configured.\n\n"
+            f"ENV = {_ENV!r}\n"
+            "You are running in a non-dev environment, but JWT_SECRET is missing "
+            "or still using a development default value.\n\n"
+            "Fix:\n"
+            "  - Set a strong JWT_SECRET via environment variable or .env file\n"
+            "  - Restart the application\n"
+        )
 
 # ---------------------------
 # 正式依赖路径：PyJWT + passlib[pbkdf2_sha256]
@@ -49,54 +71,49 @@ try:
     import jwt  # PyJWT
     from passlib.context import CryptContext
 
-    # 使用 pbkdf2_sha256，避免 bcrypt 72 字节限制
-    _pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+    _pwd_context = CryptContext(
+        schemes=["pbkdf2_sha256"],
+        deprecated="auto",
+    )
     _JWT_ALG = "HS256"
 
     def get_password_hash(password: str) -> str:
-        """
-        生成密码哈希（pbkdf2_sha256）。
-        """
         return _pwd_context.hash(password)
 
     def verify_password(plain_password: str, password_hash: str) -> bool:
-        """
-        校验明文密码是否匹配给定哈希。
-        """
         try:
             return _pwd_context.verify(plain_password, password_hash)
         except Exception:
             return False
 
-    def create_access_token(data: Dict[str, Any], expires_minutes: Optional[int] = None) -> str:
-        """
-        创建 JWT 访问令牌。
-        """
+    def create_access_token(
+        data: Dict[str, Any],
+        expires_minutes: Optional[int] = None,
+    ) -> str:
         payload = dict(data)
         payload["exp"] = int(time.time()) + 60 * (expires_minutes or _JWT_EXP_MIN)
         return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALG)
 
     def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
-        """
-        解码并验证 JWT 访问令牌。
-        """
         try:
-            return jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALG])  # type: ignore[no-any-return]
+            return jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALG])  # type: ignore
         except Exception:
             return None
 
-
 # ---------------------------
-# 兜底：开发期最小实现（无外部依赖）
+# 兜底：开发期最小实现（仅 dev / CI）
 # ---------------------------
 except Exception:
     #
-    # 注意：仅在 PyJWT 或 passlib 无法导入时使用。
-    # 生产环境请确保安装正式依赖。
+    # ⚠️ 只允许在 dev 环境使用
     #
+    if _ENV != "dev":
+        raise RuntimeError(
+            "❌ SECURITY ERROR: PyJWT / passlib not available in non-dev environment.\n"
+            "Install required dependencies instead of relying on fallback."
+        )
 
     def get_password_hash(password: str) -> str:
-        """sha256 + 随机盐，格式：sha256$salt$hexdigest（仅开发/CI）"""
         salt = base64.urlsafe_b64encode(os.urandom(12)).decode("utf-8").rstrip("=")
         digest = hashlib.sha256((salt + ":" + password).encode("utf-8")).hexdigest()
         return f"sha256${salt}${digest}"
@@ -111,11 +128,10 @@ except Exception:
         except Exception:
             return False
 
-    def create_access_token(data: Dict[str, Any], expires_minutes: Optional[int] = None) -> str:
-        """
-        超轻 token：base64(header).base64(payload).exp_ts
-        仅开发/CI使用；无签名校验。
-        """
+    def create_access_token(
+        data: Dict[str, Any],
+        expires_minutes: Optional[int] = None,
+    ) -> str:
         exp = int(time.time()) + 60 * (expires_minutes or _JWT_EXP_MIN)
         header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').decode("utf-8").rstrip("=")
         payload_bytes = str({**data, "exp": exp}).encode("utf-8")

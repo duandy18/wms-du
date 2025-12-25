@@ -16,7 +16,7 @@ class AppSettings(BaseSettings):
     # 数据库 —— 这里强制要求必须从环境变量或 .env 文件读取
     DATABASE_URL: str = Field(
         default=...,
-        description="PostgreSQL 连接串，例如：postgresql+psycopg://wms:wms@127.0.0.1:5435/wms"
+        description="PostgreSQL 连接串，例如：postgresql+psycopg://wms:wms@127.0.0.1:5435/wms",
     )
     SQL_ECHO: bool = Field(default=False)
 

@@ -15,8 +15,8 @@ class ReservationAllocations(Base):
     LEGACY MODEL —— 旧版锁定来源台账（Lock-based Reservation）
 
     说明：
-    - 该表最初用于“硬占用”流程（reservation_lock / reservation_release）：
-        * reservation_lock: 扣减 stocks，写负向 RESERVE 台账，同时写入本表记录来源明细
+    - 该表最初用于“硬占用”流程（legacy lock-based reservation flow）：
+        * legacy lock-based reservation flow: 扣减 stocks，写负向 RESERVE 台账，同时写入本表记录来源明细
         * reservation_release: 依据本表逐项恢复 stocks，写正向 RELEASE / RESERVE_EXPIRED 台账
     - 在当前 Soft Reserve v2 结构下：
         * 真实库存扣减统一通过 StockService.adjust + stock_ledger 完成

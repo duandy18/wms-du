@@ -32,8 +32,10 @@ help:
 	@echo "  make venv                     - 创建虚拟环境"
 	@echo "  make deps                     - 安装依赖"
 	@echo "  make clean-pyc                - 清缓存"
-	@echo "  make alembic-check            - alembic check"
-	@echo "  make upgrade-head             - alembic 升级到 HEAD"
+	@echo "  make alembic-check            - alembic check (默认 DEV 5433)"
+	@echo "  make upgrade-head             - alembic 升级到 HEAD (默认 DEV 5433)"
+	@echo "  make alembic-current-dev      - 查看当前 DEV 库 revision（5433）"
+	@echo "  make alembic-history-dev      - 查看 DEV 库最近迁移历史（tail 30）"
 	@echo ""
 	@echo "  make dev-reset-db             - 重置 5433 开发库（慎用）"
 	@echo "  make dev-ensure-admin         - 在 5433 开发库添加 admin/admin123"
@@ -42,6 +44,7 @@ help:
 	@echo "  make test                     - pytest（支持 TESTS=... 指定文件）"
 	@echo "  make test-rbac                - 只跑 RBAC 相关测试（test_user_api.py）"
 	@echo "  make test-internal-outbound   - 测内部出库 Golden Flow E2E"
+	@echo "  make test-pricing-smoke       - 计价系统 smoke（quote + unique + copy）"
 	@echo ""
 
 .PHONY: venv
@@ -56,21 +59,40 @@ deps: venv
 # =================================
 # Alembic / DB
 # =================================
+# ✅ 关键原则：
+# - 通用目标（upgrade-head / alembic-check / downgrade-base / revision-auto）
+#   默认绑定 DEV_DB_DSN，避免误跑到 TEST/PILOT。
+# - 若你需要跑别的库，请使用 upgrade-test/check-test 或显式覆写 WMS_DATABASE_URL。
+
 .PHONY: alembic-check
 alembic-check: venv
-	@$(ALEMB) check
+	@echo ">>> Alembic check on DEV_DB_DSN ($(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) check
 
 .PHONY: upgrade-head
 upgrade-head: venv
-	@$(ALEMB) upgrade head
+	@echo ">>> Alembic upgrade head on DEV_DB_DSN ($(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) upgrade head
 
 .PHONY: downgrade-base
 downgrade-base: venv
-	@$(ALEMB) downgrade base
+	@echo ">>> Alembic downgrade base on DEV_DB_DSN ($(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) downgrade base
 
 .PHONY: revision-auto
 revision-auto: venv
-	@$(ALEMB) revision --autogenerate -m "auto"
+	@echo ">>> Alembic revision --autogenerate (DEV_DB_DSN=$(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) revision --autogenerate -m "auto"
+
+# ✅ 固化：查 current/history（DEV 5433），避免手敲 env 前缀连错库
+.PHONY: alembic-current-dev alembic-history-dev
+alembic-current-dev: venv
+	@echo ">>> Alembic current on DEV_DB_DSN ($(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) current
+
+alembic-history-dev: venv
+	@echo ">>> Alembic history (tail 30) on DEV_DB_DSN ($(DEV_DB_DSN))"
+	@WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) history | tail -n 30
 
 # ==========================================
 # Dev / Pilot DB Helpers（新增自动种 admin）
@@ -160,13 +182,16 @@ test-snapshot: venv
 .PHONY: test
 test: venv
 	@echo "[pytest] Running tests (DEV_DB_DSN=$(DEV_DB_DSN))..."
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
-	if [ -n "$(TESTS)" ]; then \
-	  echo ">>> TESTS=$(TESTS)"; \
-	  $(PYTEST) -q -s $(TESTS); \
-	else \
-	  $(PYTEST) -q; \
-	fi
+	@bash -c 'set -euo pipefail; \
+	  export PYTHONPATH=. ; \
+	  export WMS_DATABASE_URL="$(DEV_DB_DSN)"; \
+	  export WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)"; \
+	  if [ -n "$${TESTS:-}" ]; then \
+	    echo ">>> TESTS=$${TESTS}"; \
+	    "$(PYTEST)" -q -s $${TESTS}; \
+	  else \
+	    "$(PYTEST)" -q; \
+	  fi'
 
 # ---------------------------------
 # RBAC 专用测试入口
@@ -238,28 +263,24 @@ test-diagnostics-core: venv
 # =================================
 .PHONY: upgrade-dev upgrade-test check-dev check-test
 
-# 升级本地开发库（5433/wms）
 upgrade-dev: venv
 	@echo ">>> Alembic upgrade head on DEV_DB_DSN ($(DEV_DB_DSN))"
 	WMS_DATABASE_URL="$(DEV_DB_DSN)" \
 	WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
 	$(ALEMB) upgrade head
 
-# 升级本地“黄金库/测试库”（55432/postgres）
 upgrade-test: venv
 	@echo ">>> Alembic upgrade head on TEST_DB_DSN ($(TEST_DB_DSN))"
 	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
 	WMS_TEST_DATABASE_URL="$(TEST_DB_DSN)" \
 	$(ALEMB) upgrade head
 
-# 对 5433 开发库做 alembic-check
 check-dev: venv
 	@echo ">>> Alembic check on DEV_DB_DSN ($(DEV_DB_DSN))"
 	WMS_DATABASE_URL="$(DEV_DB_DSN)" \
 	WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
 	$(ALEMB) check
 
-# 对 55432 黄金库做 alembic-check
 check-test: venv
 	@echo ">>> Alembic check on TEST_DB_DSN ($(TEST_DB_DSN))"
 	WMS_DATABASE_URL="$(TEST_DB_DSN)" \
@@ -287,4 +308,16 @@ lint-backend:
 .PHONY: test-backend-smoke
 test-backend-smoke: venv
 	@echo "[smoke] Running quick backend smoke tests..."
-	@PYTHONPATH=. $(PYTEST) -q tests/services/test_store_service.py
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(PYTEST) -q tests/services/test_store_service.py
+
+# =================================
+# Pricing smoke tests（quote + unique + copy）
+# =================================
+.PHONY: test-pricing-smoke
+test-pricing-smoke: venv
+	@echo "[pytest] Pricing smoke (quote + unique + copy)"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(PYTEST) -q -s \
+	  tests/api/test_shipping_quote_pricing_api.py \
+	  tests/api/test_zone_brackets_constraints_and_copy.py

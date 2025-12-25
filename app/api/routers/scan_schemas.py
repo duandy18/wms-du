@@ -1,0 +1,175 @@
+# app/api/routers/scan_schemas.py
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+# ==========================
+# Request / Response models
+# ==========================
+
+
+class ScanRequest(BaseModel):
+    """
+    v2 通用 Scan 请求体（与前端 ScanRequest 对齐）：
+
+    - mode: "receive" | "pick" | "count"
+    - item_id + qty: 主参数
+    - warehouse_id: 仓库维度（当前版本已无 scan-level location 概念）
+    - batch_code / production_date / expiry_date: 猫粮批次/保质期信息
+    - task_line_id: 拣货任务行（mode=pick 时可用）
+    - probe: 探针模式，只试算不落账
+    - ctx: 扩展上下文（device_id / operator 等），用于生成 scan_ref 与审计
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    mode: str = Field(..., description="receive | pick | count")
+
+    item_id: Optional[int] = Field(None, description="商品 ID")
+    qty: Optional[int] = Field(1, ge=0, description="本次扫描数量，缺省为 1")
+
+    # 原始条码内容（可选；可传 GS1 串）
+    barcode: Optional[str] = Field(None, description="原始扫码内容（可选）")
+
+    # v2：只认仓库，不认库位
+    warehouse_id: Optional[int] = Field(None, description="仓库 ID（缺省时由后端兜底为 1）")
+
+    # 猫粮批次 / 日期信息
+    batch_code: Optional[str] = Field(None, description="批次编码（可选）")
+    production_date: Optional[str] = Field(
+        None, description="生产日期，建议 YYYY-MM-DD 或 YYYYMMDD"
+    )
+    expiry_date: Optional[str] = Field(None, description="到期日期，建议 YYYY-MM-DD 或 YYYYMMDD")
+
+    # 拣货任务行
+    task_line_id: Optional[int] = Field(None, description="拣货任务行 ID（mode=pick 时可用）")
+
+    # 探针模式：只试算不落账
+    probe: bool = Field(False, description="探针模式，仅试算不落账")
+
+    # 扩展上下文
+    ctx: Optional[Dict[str, Any]] = Field(
+        default=None, description="扩展上下文（device_id/operator 等）"
+    )
+
+
+# ========== 旧模型：仅用于 legacy 接口 / 测试兼容，/scan 已不再使用 ==========
+
+
+class ScanReceiveRequest(BaseModel):
+    """
+    LEGACY：旧版 /scan（receive）专用模型，带 location_id/ref/occurred_at。
+    新架构下，/scan 已使用 ScanRequest，不再依赖本模型。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    mode: str = Field(..., description="固定 'receive'")
+    item_id: int
+    location_id: int
+    qty: int = Field(..., ge=0)
+    ref: str
+    batch_code: str
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+    warehouse_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScanReceiveRequest":
+        if self.mode.lower() != "receive":
+            raise ValueError("unsupported scan mode; only 'receive' is allowed here")
+        if not self.batch_code:
+            raise ValueError("猫粮收货必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮收货必须提供 production_date 或 expiry_date（至少一项）。")
+        if self.occurred_at.tzinfo is None:
+            self.occurred_at = self.occurred_at.replace(tzinfo=timezone.utc)
+        return self
+
+
+class ScanPutawayCommitRequest(BaseModel):
+    """
+    LEGACY：基于 location 的上架 / 移库请求。
+    当前无 scan-level location 概念，putaway 功能在扫描通路中已禁用。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    item_id: int
+    from_location_id: int
+    to_location_id: int
+    qty: int = Field(..., ge=1)
+    ref: str
+    batch_code: str
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+    # 兼容历史/不同命名
+    start_ref_line: Optional[int] = None
+    left_ref_line: Optional[int] = None
+    warehouse_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScanPutawayCommitRequest":
+        if not self.batch_code:
+            raise ValueError("猫粮搬运必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮搬运必须提供 production_date 或 expiry_date（至少一项）。")
+        return self
+
+
+class ScanCountCommitRequest(BaseModel):
+    """
+    LEGACY：基于 location 的盘点请求。
+    当前 /scan/count/commit 仍按旧合同工作，未来可并入 /scan + ScanRequest(mode='count')。
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    item_id: int
+    location_id: int
+    qty: int = Field(..., ge=0, description="盘点后的绝对量")
+    ref: str
+    batch_code: str
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    production_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScanCountCommitRequest":
+        if not self.batch_code:
+            raise ValueError("猫粮盘点必须提供 batch_code。")
+        if self.production_date is None and self.expiry_date is None:
+            raise ValueError("猫粮盘点必须提供 production_date 或 expiry_date（至少一项）。")
+        if self.occurred_at.tzinfo is None:
+            self.occurred_at = self.occurred_at.replace(tzinfo=timezone.utc)
+        return self
+
+
+class ScanResponse(BaseModel):
+    ok: bool = True
+    committed: bool = True
+    scan_ref: str
+    event_id: Optional[int] = None
+    source: str
+    # 可选回显
+    item_id: Optional[int] = None
+    location_id: Optional[int] = None
+    qty: Optional[int] = None
+    batch_code: Optional[str] = None
+
+    # v2：盘点 / 收货 enriched 字段（按仓库 + 商品 + 批次）
+    warehouse_id: Optional[int] = None
+    actual: Optional[int] = None
+    before: Optional[int] = None
+    before_qty: Optional[int] = None
+    after: Optional[int] = None
+    after_qty: Optional[int] = None
+    delta: Optional[int] = None
+    production_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+
+    # v2：承接 orchestrator 的审计信息
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)

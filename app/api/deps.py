@@ -19,6 +19,7 @@ from app.services.user_service import UserService
 # 异步 Session 依赖（业务用）
 # ---------------------------
 
+
 @asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -84,6 +85,7 @@ async def get_current_user(
 # ---------------------------
 # 其他依赖
 # ---------------------------
+
 
 async def get_order_service() -> OrderService:
     """

@@ -24,10 +24,11 @@ class PurchaseOrder(Base):
     - 所有数量与金额都以行表（purchase_order_lines）为事实来源；
     - 头表只负责表达单据级别信息：
         * 供应商 / 仓库
+        * 采购人 / 采购时间
         * 汇总金额
         * 状态
         * 时间信息
-        * 备注
+        * 备注（可选）
     """
 
     __tablename__ = "purchase_orders"
@@ -52,6 +53,20 @@ class PurchaseOrder(Base):
     # 仓库
     warehouse_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
 
+    # 采购人（必填）
+    purchaser: Mapped[str] = mapped_column(
+        sa.String(64),
+        nullable=False,
+        comment="采购人姓名或编码",
+    )
+
+    # 采购时间（必填）
+    purchase_time: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        comment="采购单创建/确认时间",
+    )
+
     # 汇总金额（通常 = 行金额之和）
     total_amount: Mapped[Optional[Decimal]] = mapped_column(
         sa.Numeric(14, 2),
@@ -66,11 +81,11 @@ class PurchaseOrder(Base):
         default="CREATED",
     )
 
-    # 头部备注
+    # 头部备注（可选）
     remark: Mapped[Optional[str]] = mapped_column(
         sa.String(255),
         nullable=True,
-        comment="采购单头部备注",
+        comment="采购单头部备注（可选）",
     )
 
     # 时间信息
@@ -112,6 +127,6 @@ class PurchaseOrder(Base):
     def __repr__(self) -> str:
         return (
             f"<PO id={self.id} supplier={self.supplier!r} "
-            f"wh={self.warehouse_id} status={self.status} "
-            f"total_amount={self.total_amount}>"
+            f"wh={self.warehouse_id} purchaser={self.purchaser!r} "
+            f"status={self.status} total_amount={self.total_amount}>"
         )
