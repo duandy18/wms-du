@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 
-from app.services.user_errors import DuplicateUserError, NotFoundError
 from typing import Any, List, Optional
+
+from app.services.user_errors import DuplicateUserError, NotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
