@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from app.services.user_errors import DuplicateUserError, NotFoundError
+from app.services.user_errors import AuthorizationError, DuplicateUserError, NotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -206,3 +206,12 @@ class AsyncUserService:
         if not row:
             return None
         return {"id": int(row["id"]), "username": str(row["username"])}
+
+
+__all__ = [
+    "AuthorizationError",
+    "DuplicateUserError",
+    "NotFoundError",
+    "UserService",
+    "AsyncUserService",
+]
