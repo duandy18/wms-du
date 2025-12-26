@@ -4,7 +4,24 @@ from .common import WeightSegmentIn, ZoneMemberOut
 from .bracket import ZoneBracketOut, ZoneBracketCreateIn, ZoneBracketUpdateIn
 from .zone import ZoneOut, ZoneCreateIn, ZoneUpdateIn, ZoneCreateAtomicIn, ZoneMemberCreateIn
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
-from .scheme import SchemeOut, SchemeListOut, SchemeDetailOut, SchemeCreateIn, SchemeUpdateIn
+from .scheme import (
+    SchemeOut,
+    SchemeSegmentOut,
+    SchemeListOut,
+    SchemeDetailOut,
+    SchemeCreateIn,
+    SchemeUpdateIn,
+)
+from .segment_template import (
+    SegmentTemplateOut,
+    SegmentTemplateItemOut,
+    SegmentTemplateItemIn,
+    SegmentTemplateListOut,
+    SegmentTemplateDetailOut,
+    SegmentTemplateCreateIn,
+    SegmentTemplateItemsPutIn,
+    SegmentTemplateItemActivePatchIn,
+)
 
 __all__ = [
     # common
@@ -26,8 +43,18 @@ __all__ = [
     "SurchargeUpdateIn",
     # scheme
     "SchemeOut",
+    "SchemeSegmentOut",
     "SchemeListOut",
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
+    # segment templates
+    "SegmentTemplateOut",
+    "SegmentTemplateItemOut",
+    "SegmentTemplateItemIn",
+    "SegmentTemplateListOut",
+    "SegmentTemplateDetailOut",
+    "SegmentTemplateCreateIn",
+    "SegmentTemplateItemsPutIn",
+    "SegmentTemplateItemActivePatchIn",
 ]

@@ -19,6 +19,9 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_brackets import (
 from app.api.routers.shipping_provider_pricing_schemes_routes_surcharges import (
     register_surcharges_routes,
 )
+from app.api.routers.shipping_provider_pricing_schemes_routes_segment_templates import (
+    register_segment_templates_routes,
+)
 
 # ==========================
 # Router 聚合（唯一出口）
@@ -27,6 +30,7 @@ router = APIRouter(tags=["shipping-provider-pricing"])
 
 # 注意：顺序是**业务阅读顺序**，不是技术顺序
 register_scheme_routes(router)  # pricing-schemes CRUD
+register_segment_templates_routes(router)  # ✅ segments templates (draft/publish/activate)
 register_zones_routes(router)  # zones / zones-atomic
 register_members_routes(router)  # zone members
 register_brackets_routes(router)  # brackets + copy

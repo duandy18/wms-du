@@ -6,7 +6,8 @@
 - 强制规则（2025-12）：
     * 非 dev 环境必须显式配置 JWT_SECRET
     * 禁止使用 dev 默认 secret 启动服务
-- dev / CI 环境允许最小实现兜底
+    * 任何环境禁止 alg=none
+- dev / CI 环境允许最小实现兜底（但仍必须是 HS256）
 """
 
 from __future__ import annotations
@@ -14,9 +15,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import time
 from typing import Any, Dict, Optional
+
 
 # ---------------------------
 # 配置加载：优先 settings，其次 get_settings()
@@ -39,12 +42,14 @@ except Exception:
 
         settings = _Settings()  # type: ignore[assignment]
 
+
 # ---------------------------
 # 强制安全检查（启动即执行）
 # ---------------------------
 _ENV = getattr(settings, "ENV", "dev")
 _JWT_SECRET = getattr(settings, "JWT_SECRET", "")
 _JWT_EXP_MIN = int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60))
+_JWT_ALG = "HS256"
 
 _DEV_SECRETS = {
     "",
@@ -64,6 +69,73 @@ if _ENV != "dev":
             "  - Restart the application\n"
         )
 
+
+# ---------------------------
+# HS256 (no external deps) minimal JWT helpers (dev/CI fallback)
+# - 禁止 alg=none
+# - 仅用于 PyJWT 不可用时
+# ---------------------------
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * ((4 - (len(s) % 4)) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+
+def _hs256_sign(message: bytes, secret: str) -> str:
+    sig = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
+    return _b64url_encode(sig)
+
+
+def _create_jwt_hs256(payload: Dict[str, Any], secret: str) -> str:
+    header = {"alg": _JWT_ALG, "typ": "JWT"}
+    header_b64 = _b64url_encode(json.dumps(header, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    sig_b64 = _hs256_sign(signing_input, secret)
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+
+def _decode_jwt_hs256(token: str, secret: str) -> Optional[Dict[str, Any]]:
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        header_b64, payload_b64, sig_b64 = parts
+        header = json.loads(_b64url_decode(header_b64).decode("utf-8"))
+        if not isinstance(header, dict):
+            return None
+
+        # 禁止 alg=none，且仅接受 HS256
+        if header.get("alg") != _JWT_ALG:
+            return None
+
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+        expected_sig = _hs256_sign(signing_input, secret)
+        if not hmac.compare_digest(expected_sig, sig_b64):
+            return None
+
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+
+        # exp 校验（与 PyJWT 行为一致：过期返回 None）
+        exp = payload.get("exp")
+        if exp is not None:
+            try:
+                exp_int = int(exp)
+            except Exception:
+                return None
+            if int(time.time()) >= exp_int:
+                return None
+
+        return payload
+    except Exception:
+        return None
+
+
 # ---------------------------
 # 正式依赖路径：PyJWT + passlib[pbkdf2_sha256]
 # ---------------------------
@@ -75,7 +147,6 @@ try:
         schemes=["pbkdf2_sha256"],
         deprecated="auto",
     )
-    _JWT_ALG = "HS256"
 
     def get_password_hash(password: str) -> str:
         return _pwd_context.hash(password)
@@ -96,17 +167,16 @@ try:
 
     def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         try:
-            return jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALG])  # type: ignore
+            out = jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALG])  # type: ignore
+            return out if isinstance(out, dict) else None
         except Exception:
             return None
 
 # ---------------------------
 # 兜底：开发期最小实现（仅 dev / CI）
+# - 注意：即使兜底，也必须生成/校验 HS256（禁止 alg=none）
 # ---------------------------
 except Exception:
-    #
-    # ⚠️ 只允许在 dev 环境使用
-    #
     if _ENV != "dev":
         raise RuntimeError(
             "❌ SECURITY ERROR: PyJWT / passlib not available in non-dev environment.\n"
@@ -132,29 +202,12 @@ except Exception:
         data: Dict[str, Any],
         expires_minutes: Optional[int] = None,
     ) -> str:
-        exp = int(time.time()) + 60 * (expires_minutes or _JWT_EXP_MIN)
-        header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').decode("utf-8").rstrip("=")
-        payload_bytes = str({**data, "exp": exp}).encode("utf-8")
-        payload = base64.urlsafe_b64encode(payload_bytes).decode("utf-8").rstrip("=")
-        return f"{header}.{payload}.{exp}"
+        payload = dict(data)
+        payload["exp"] = int(time.time()) + 60 * (expires_minutes or _JWT_EXP_MIN)
+        return _create_jwt_hs256(payload, _JWT_SECRET)
 
     def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
-        try:
-            parts = token.split(".")
-            if len(parts) < 3:
-                return None
-            payload = base64.urlsafe_b64decode(parts[1] + "==")
-            s = payload.decode("utf-8").strip()
-            if s.startswith("{") and s.endswith("}"):
-                s = s[1:-1]
-            out: Dict[str, Any] = {}
-            for part in s.split(","):
-                if ":" in part:
-                    k, v = part.split(":", 1)
-                    out[k.strip().strip("'\"")] = v.strip().strip("'\"")
-            return out
-        except Exception:
-            return None
+        return _decode_jwt_hs256(token, _JWT_SECRET)
 
 
 # ---------------------------

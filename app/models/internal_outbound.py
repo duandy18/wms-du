@@ -98,3 +98,11 @@ class InternalOutboundLine(Base):
 
     doc: Mapped["InternalOutboundDoc"] = relationship("InternalOutboundDoc", back_populates="lines")
     item = relationship("Item", backref="internal_outbound_lines")
+
+
+# -----------------------------------------------------------------------------
+# Backward-compatible alias
+# -----------------------------------------------------------------------------
+# app/models/__init__.py（以及模型扫描）仍可能导入 InternalOutbound。
+# 内部出库 v1 的主模型类名是 InternalOutboundDoc，这里提供兼容别名，避免 ImportError。
+InternalOutbound = InternalOutboundDoc

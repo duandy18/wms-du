@@ -5,12 +5,14 @@ from typing import List
 
 from app.api.routers.shipping_provider_pricing_schemes_schemas import (
     SchemeOut,
+    SchemeSegmentOut,
     SurchargeOut,
     ZoneBracketOut,
     ZoneMemberOut,
     ZoneOut,
 )
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
@@ -67,6 +69,17 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
     )
 
 
+def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSegmentOut:
+    return SchemeSegmentOut(
+        id=seg.id,
+        scheme_id=seg.scheme_id,
+        ord=seg.ord,
+        min_kg=seg.min_kg,
+        max_kg=seg.max_kg,
+        active=bool(seg.active),
+    )
+
+
 def to_scheme_out(
     sch: ShippingProviderPricingScheme,
     zones: List[ZoneOut],
@@ -74,6 +87,8 @@ def to_scheme_out(
 ) -> SchemeOut:
     # default_pricing_mode 已落库：若旧库/旧环境暂时缺列，用 getattr 兜底
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
+
+    segs = getattr(sch, "segments", None) or []
 
     return SchemeOut(
         id=sch.id,
@@ -88,6 +103,7 @@ def to_scheme_out(
         billable_weight_rule=sch.billable_weight_rule,
         segments_json=getattr(sch, "segments_json", None),
         segments_updated_at=getattr(sch, "segments_updated_at", None),
+        segments=[to_scheme_segment_out(x) for x in segs],
         zones=zones,
         surcharges=surcharges,
     )
