@@ -133,6 +133,3 @@ __all__ = [
     "Batches",
     "ReservationAllocations",
 ]
-
-# internal_outbound (v1)
-from app.models.internal_outbound import InternalOutbound  # noqa: F401
