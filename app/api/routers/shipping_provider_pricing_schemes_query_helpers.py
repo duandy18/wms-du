@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_surcharge_out, to_zone_out
 from app.api.routers.shipping_provider_pricing_schemes_schemas import SurchargeOut, ZoneOut
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_segment import (  # noqa: F401
+    ShippingProviderPricingSchemeSegment,
+)
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket

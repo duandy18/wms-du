@@ -31,9 +31,7 @@ _ALLOWED_MEMBER_LEVELS = {"province", "city", "district", "text"}
 def norm_level(v: str) -> str:
     lvl = (v or "").strip().lower()
     if lvl not in _ALLOWED_MEMBER_LEVELS:
-        raise HTTPException(
-            status_code=422, detail="level must be one of: province/city/district/text"
-        )
+        raise HTTPException(status_code=422, detail="level must be one of: province/city/district/text")
     return lvl
 
 
@@ -44,9 +42,7 @@ def norm_nonempty(v: Optional[str], field: str) -> str:
     return t
 
 
-def validate_effective_window(
-    effective_from: Optional[datetime], effective_to: Optional[datetime]
-) -> None:
+def validate_effective_window(effective_from: Optional[datetime], effective_to: Optional[datetime]) -> None:
     if effective_from is not None and effective_to is not None:
         if effective_to < effective_from:
             raise HTTPException(status_code=422, detail="effective_to must be >= effective_from")
@@ -81,9 +77,7 @@ def _parse_decimal_str(s: str, field: str, idx: int) -> Decimal:
     try:
         d = Decimal(t)
     except (InvalidOperation, ValueError):
-        raise HTTPException(
-            status_code=422, detail=f"segments_json[{idx}].{field} must be a number string"
-        )
+        raise HTTPException(status_code=422, detail=f"segments_json[{idx}].{field} must be a number string")
     return d
 
 
@@ -135,9 +129,7 @@ def normalize_segments_json(raw: object) -> Optional[List[dict]]:
             if mx <= mn:
                 raise HTTPException(status_code=422, detail=f"segments_json[{i}].max must be > min")
 
-        norm.append(
-            (mn, mx, {"min": _fmt_decimal(mn), "max": "" if mx is None else _fmt_decimal(mx)})
-        )
+        norm.append((mn, mx, {"min": _fmt_decimal(mn), "max": "" if mx is None else _fmt_decimal(mx)}))
 
     if norm[0][0] != Decimal("0"):
         raise HTTPException(status_code=422, detail="segments_json[0].min must be 0")
@@ -145,9 +137,7 @@ def normalize_segments_json(raw: object) -> Optional[List[dict]]:
     # 升序检查（不自动排序）
     for i in range(1, len(norm)):
         if norm[i][0] < norm[i - 1][0]:
-            raise HTTPException(
-                status_code=422, detail="segments_json must be ordered by min ascending"
-            )
+            raise HTTPException(status_code=422, detail="segments_json must be ordered by min ascending")
 
     # 连续性 + ∞ 段最后
     for i in range(1, len(norm)):
@@ -155,9 +145,7 @@ def normalize_segments_json(raw: object) -> Optional[List[dict]]:
         cur_mn, cur_mx, _ = norm[i]
 
         if prev_mx is None:
-            raise HTTPException(
-                status_code=422, detail="segments_json has INF segment; it must be the last segment"
-            )
+            raise HTTPException(status_code=422, detail="segments_json has INF segment; it must be the last segment")
 
         if cur_mn != prev_mx:
             raise HTTPException(
@@ -169,3 +157,20 @@ def normalize_segments_json(raw: object) -> Optional[List[dict]]:
             raise HTTPException(status_code=422, detail=f"segments_json[{i}].max must be > min")
 
     return [x[2] for x in norm]
+
+
+# -----------------------
+# segments table helpers
+# -----------------------
+def segments_norm_to_rows(segs_norm: List[dict]) -> List[Tuple[int, Decimal, Optional[Decimal]]]:
+    """
+    将 normalize_segments_json 的输出（min/max 字符串）转为段表插入行：
+    返回：[(ord, min_kg, max_kg_or_none), ...]
+    """
+    rows: List[Tuple[int, Decimal, Optional[Decimal]]] = []
+    for i, item in enumerate(segs_norm):
+        mn = Decimal(str(item.get("min", "")).strip() or "0")
+        mx_raw = str(item.get("max", "")).strip()
+        mx = None if mx_raw == "" else Decimal(mx_raw)
+        rows.append((i, mn, mx))
+    return rows

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -21,10 +23,42 @@ from app.api.routers.shipping_provider_pricing_schemes_utils import (
     norm_nonempty,
     validate_effective_window,
     normalize_segments_json,
+    segments_norm_to_rows,
 )
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
+
+
+class SchemeSegmentActivePatchIn(BaseModel):
+    active: bool
+
+
+def _replace_segments_table(db: Session, scheme_id: int, segs_norm: Optional[list]) -> None:
+    """
+    将 segs_norm（normalize_segments_json 的输出）落到段表：
+    - v1：delete + insert（最稳、最简单）
+    - active 默认 true（暂停由专门 endpoint 管）
+    """
+    db.query(ShippingProviderPricingSchemeSegment).filter(
+        ShippingProviderPricingSchemeSegment.scheme_id == scheme_id
+    ).delete(synchronize_session=False)
+
+    if not segs_norm:
+        return
+
+    rows = segments_norm_to_rows(segs_norm)
+    for ord_i, mn, mx in rows:
+        db.add(
+            ShippingProviderPricingSchemeSegment(
+                scheme_id=scheme_id,
+                ord=int(ord_i),
+                min_kg=mn,
+                max_kg=mx,
+                active=True,
+            )
+        )
 
 
 def register(router: APIRouter) -> None:
@@ -56,9 +90,7 @@ def register(router: APIRouter) -> None:
         segs_norm = None
         segs_updated_at = None
         if payload.segments_json is not None:
-            segs_norm = normalize_segments_json(
-                [seg_item_to_dict(x) for x in payload.segments_json]
-            )
+            segs_norm = normalize_segments_json([seg_item_to_dict(x) for x in payload.segments_json])
             segs_updated_at = datetime.now(tz=timezone.utc)
 
         sch = ShippingProviderPricingScheme(
@@ -77,6 +109,12 @@ def register(router: APIRouter) -> None:
         db.add(sch)
         db.commit()
         db.refresh(sch)
+
+        # ✅ 同步落段表（新能力）
+        if segs_norm is not None:
+            _replace_segments_table(db, sch.id, segs_norm)
+            db.commit()
+            db.refresh(sch)
 
         return SchemeDetailOut(ok=True, data=to_scheme_out(sch, zones=[], surcharges=[]))
 
@@ -119,28 +157,53 @@ def register(router: APIRouter) -> None:
         # ✅ 修改默认口径：强校验（不允许 manual_quote）
         if "default_pricing_mode" in data:
             try:
-                sch.default_pricing_mode = validate_default_pricing_mode(
-                    data["default_pricing_mode"]
-                )
+                sch.default_pricing_mode = validate_default_pricing_mode(data["default_pricing_mode"])
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
 
-        # ✅ Phase 4.3：列结构写回（强校验 + 更新时间）
+        # ✅ Phase 4.3：列结构写回（强校验 + 更新时间） + 同步段表
         if "segments_json" in data:
             raw = data["segments_json"]
             if raw is None:
                 sch.segments_json = None
                 sch.segments_updated_at = None
+                _replace_segments_table(db, scheme_id, None)
             else:
                 segs_norm = normalize_segments_json([seg_item_to_dict(x) for x in raw])
                 sch.segments_json = segs_norm
                 sch.segments_updated_at = datetime.now(tz=timezone.utc)
+                _replace_segments_table(db, scheme_id, segs_norm)
 
         db.commit()
         db.refresh(sch)
 
-        # 返回“聚合详情”（zones/surcharges）
         sch2, zones, surcharges = load_scheme_entities(db, scheme_id)
-        return SchemeDetailOut(
-            ok=True, data=to_scheme_out(sch2, zones=zones, surcharges=surcharges)
-        )
+        return SchemeDetailOut(ok=True, data=to_scheme_out(sch2, zones=zones, surcharges=surcharges))
+
+    # ✅ 新增：切换某个段的 active（用于前端“暂停使用”）
+    @router.patch(
+        "/pricing-schemes/{scheme_id}/segments/{segment_id}",
+        response_model=SchemeDetailOut,
+    )
+    def patch_scheme_segment_active(
+        scheme_id: int = Path(..., ge=1),
+        segment_id: int = Path(..., ge=1),
+        payload: SchemeSegmentActivePatchIn = ...,
+        db: Session = Depends(get_db),
+        user=Depends(get_current_user),
+    ):
+        check_perm(db, user, "config.store.write")
+
+        sch = db.get(ShippingProviderPricingScheme, scheme_id)
+        if not sch:
+            raise HTTPException(status_code=404, detail="Scheme not found")
+
+        seg = db.get(ShippingProviderPricingSchemeSegment, segment_id)
+        if not seg or seg.scheme_id != scheme_id:
+            raise HTTPException(status_code=404, detail="Scheme segment not found")
+
+        seg.active = bool(payload.active)
+        db.commit()
+
+        sch2, zones, surcharges = load_scheme_entities(db, scheme_id)
+        return SchemeDetailOut(ok=True, data=to_scheme_out(sch2, zones=zones, surcharges=surcharges))

@@ -11,6 +11,17 @@ from .zone import ZoneOut
 from .surcharge import SurchargeOut
 
 
+class SchemeSegmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scheme_id: int
+    ord: int
+    min_kg: Any
+    max_kg: Any = None
+    active: bool = True
+
+
 class SchemeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -28,9 +39,12 @@ class SchemeOut(BaseModel):
 
     billable_weight_rule: Optional[Dict[str, Any]] = None
 
-    # ✅ Phase 4.3：列结构（重量分段模板）后端真相
+    # ✅ Phase 4.3：列结构（重量分段模板）后端真相（兼容/镜像）
     segments_json: Optional[List[WeightSegmentIn]] = None
     segments_updated_at: Optional[datetime] = None
+
+    # ✅ 新增：结构化段表输出（含 active/id）
+    segments: List[SchemeSegmentOut] = Field(default_factory=list)
 
     zones: List[ZoneOut] = Field(default_factory=list)
     surcharges: List[SurchargeOut] = Field(default_factory=list)
