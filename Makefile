@@ -208,7 +208,8 @@ test-rbac: venv
 .PHONY: test-internal-outbound
 test-internal-outbound: venv
 	@echo "[pytest] Internal Outbound Golden Flow E2E"
-	@PYTHONPATH=. $(PYTEST) -q -s tests/services/test_internal_outbound_service.py
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(PYTEST) -q -s tests/services/test_internal_outbound_service.py
 
 # =================================
 # Phase 4：Routing 测试线
@@ -216,7 +217,8 @@ test-internal-outbound: venv
 .PHONY: test-phase4-routing
 test-phase4-routing: venv
 	@echo "[pytest] Phase 4 routing tests"
-	@PYTHONPATH=. $(PYTEST) -q \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	$(PYTEST) -q \
 		tests/services/test_order_service_phase4_routing.py \
 		tests/services/test_order_route_mode_phase4.py \
 		tests/services/test_order_trace_phase4_routing.py

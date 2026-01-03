@@ -23,18 +23,14 @@ class ShippingProviderZone(Base):
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    priority: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=100, server_default="100"
-    )
-    active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="true"
-    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     scheme = relationship("ShippingProviderPricingScheme", back_populates="zones")

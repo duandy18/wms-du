@@ -18,11 +18,11 @@ def _match_zone(
     """
     生产级 Zone 匹配（Phase 4 过渡裁决）：
 
-    1) 优先匹配“有 members 命中”的 zone（按 zone.priority asc, zone.id asc）
+    1) 优先匹配“有 members 命中”的 zone（按 zone.id asc 稳定）
     2) 若全部不命中，则允许回退到“兜底 zone”：
        - zone.active=true
        - 且该 zone 下 members 为空（明确语义：默认覆盖）
-       - 仍按 zone.priority asc 选择最优兜底（建议你设 priority=9999）
+       - 仍按 zone.id asc 选择最优兜底
 
     返回 (zone, hit_member)。命中兜底时 hit_member=None，供 reasons 解释。
     """
@@ -51,7 +51,7 @@ def _match_zone(
             return (val in hay) or (hay in val) or (val == hay)
         return False
 
-    zones_sorted = sorted(zones, key=lambda z: (int(z.priority or 100), int(z.id)))
+    zones_sorted = sorted(zones, key=lambda z: int(z.id))
 
     # 1) 先找“有 member 命中”的 zone
     for z in zones_sorted:
@@ -101,7 +101,6 @@ def _match_bracket(
         mx = float(b.max_kg) if b.max_kg is not None else None
 
         # 左开：w 必须严格大于 min
-        # 为避免 1.0000000001 这类误差，使用 eps 做保护
         if w <= mn + eps:
             continue
 

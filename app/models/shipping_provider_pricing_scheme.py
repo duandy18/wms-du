@@ -38,7 +38,6 @@ class ShippingProviderPricingScheme(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
 
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="CNY", server_default="CNY")
 

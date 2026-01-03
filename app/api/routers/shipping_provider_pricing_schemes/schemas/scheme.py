@@ -29,7 +29,6 @@ class SchemeOut(BaseModel):
     shipping_provider_id: int
     name: str
     active: bool
-    priority: int
     currency: str
     effective_from: Optional[datetime] = None
     effective_to: Optional[datetime] = None
@@ -69,7 +68,6 @@ class SchemeCreateIn(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=128)
     active: bool = True
-    priority: int = Field(default=100, ge=0)
     currency: str = Field(default="CNY", min_length=1, max_length=8)
 
     # ✅ 方案默认口径（默认 linear_total）
@@ -88,7 +86,6 @@ class SchemeUpdateIn(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     active: Optional[bool] = None
-    priority: Optional[int] = Field(None, ge=0)
     currency: Optional[str] = Field(None, min_length=1, max_length=8)
 
     # ✅ 方案默认口径

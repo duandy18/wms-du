@@ -37,9 +37,7 @@ def recommend_quotes(
         schemes = (
             db.query(ShippingProviderPricingScheme)
             .filter(ShippingProviderPricingScheme.shipping_provider_id == p.id)
-            .order_by(
-                ShippingProviderPricingScheme.priority.asc(), ShippingProviderPricingScheme.id.asc()
-            )
+            .order_by(ShippingProviderPricingScheme.id.asc())
             .all()
         )
 

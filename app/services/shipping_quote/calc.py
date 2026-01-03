@@ -68,7 +68,7 @@ def calc_quote(
             ShippingProviderSurcharge.scheme_id == scheme_id,
             ShippingProviderSurcharge.active.is_(True),
         )
-        .order_by(ShippingProviderSurcharge.priority.asc(), ShippingProviderSurcharge.id.asc())
+        .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
 
@@ -87,9 +87,7 @@ def calc_quote(
 
     reasons: List[str] = []
     if hit_member is not None:
-        reasons.append(
-            f"zone_match: zone={zone.name} member({(hit_member.level or '').lower()}={hit_member.value})"
-        )
+        reasons.append(f"zone_match: zone={zone.name} member({(hit_member.level or '').lower()}={hit_member.value})")
     else:
         reasons.append(f"zone_match: zone={zone.name} (fallback)")
 
@@ -107,11 +105,7 @@ def calc_quote(
         breakdown = {
             "base": {"amount": float(base_amt), **base_detail},
             "surcharges": [],
-            "summary": {
-                "base_amount": float(base_amt),
-                "surcharge_amount": 0.0,
-                "total_amount": None,
-            },
+            "summary": {"base_amount": float(base_amt), "surcharge_amount": 0.0, "total_amount": None},
         }
 
         return {
@@ -126,7 +120,6 @@ def calc_quote(
             "zone": {
                 "id": zone.id,
                 "name": zone.name,
-                "priority": int(zone.priority or 100),
                 "hit_member": None
                 if hit_member is None
                 else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
@@ -169,11 +162,7 @@ def calc_quote(
     breakdown = {
         "base": {"amount": float(base_amt), **base_detail},
         "surcharges": s_details,
-        "summary": {
-            "base_amount": float(base_amt),
-            "surcharge_amount": float(s_sum),
-            "total_amount": float(total),
-        },
+        "summary": {"base_amount": float(base_amt), "surcharge_amount": float(s_sum), "total_amount": float(total)},
     }
 
     return {
@@ -188,7 +177,6 @@ def calc_quote(
         "zone": {
             "id": zone.id,
             "name": zone.name,
-            "priority": int(zone.priority or 100),
             "hit_member": None
             if hit_member is None
             else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},

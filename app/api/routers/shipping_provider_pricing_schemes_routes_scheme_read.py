@@ -46,7 +46,7 @@ def register(router: APIRouter) -> None:
             q = q.filter(ShippingProviderPricingScheme.active.is_(active))
 
         schemes = q.order_by(
-            ShippingProviderPricingScheme.priority.asc(),
+            ShippingProviderPricingScheme.active.desc(),
             ShippingProviderPricingScheme.id.asc(),
         ).all()
 
@@ -96,7 +96,6 @@ def register(router: APIRouter) -> None:
             id=123,
             scheme_id=scheme_id,
             name="DEBUG_ZONE",
-            priority=100,
             active=True,
             members=[_ZoneMemberOut(id=1, zone_id=123, level="province", value="北京市")],
             brackets=[
@@ -121,7 +120,6 @@ def register(router: APIRouter) -> None:
             shipping_provider_id=1,
             name="DEBUG_SCHEME",
             active=True,
-            priority=100,
             currency="CNY",
             default_pricing_mode="linear_total",
             billable_weight_rule=None,
@@ -137,7 +135,6 @@ def register(router: APIRouter) -> None:
                     id=1,
                     scheme_id=scheme_id,
                     name="S1",
-                    priority=100,
                     active=True,
                     condition_json={},
                     amount_json={},

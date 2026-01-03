@@ -97,7 +97,6 @@ def register(router: APIRouter) -> None:
             shipping_provider_id=provider_id,
             name=norm_nonempty(payload.name, "name"),
             active=bool(payload.active),
-            priority=int(payload.priority),
             currency=(payload.currency or "CNY").strip() or "CNY",
             default_pricing_mode=dpm,
             effective_from=payload.effective_from,
@@ -140,8 +139,6 @@ def register(router: APIRouter) -> None:
             sch.name = norm_nonempty(data.get("name"), "name")
         if "active" in data:
             sch.active = bool(data["active"])
-        if "priority" in data:
-            sch.priority = int(data["priority"])
         if "currency" in data:
             sch.currency = (data["currency"] or "CNY").strip() or "CNY"
         if "effective_from" in data:

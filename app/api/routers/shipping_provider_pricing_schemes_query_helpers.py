@@ -34,7 +34,7 @@ def load_scheme_entities(
     zones_raw = (
         db.query(ShippingProviderZone)
         .filter(ShippingProviderZone.scheme_id == scheme_id)
-        .order_by(ShippingProviderZone.priority.asc(), ShippingProviderZone.id.asc())
+        .order_by(ShippingProviderZone.id.asc())
         .all()
     )
     zone_ids = [z.id for z in zones_raw]
@@ -78,7 +78,7 @@ def load_scheme_entities(
     surcharges_raw = (
         db.query(ShippingProviderSurcharge)
         .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
-        .order_by(ShippingProviderSurcharge.priority.asc(), ShippingProviderSurcharge.id.asc())
+        .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
     surcharges: List[SurchargeOut] = [to_surcharge_out(s) for s in surcharges_raw]
