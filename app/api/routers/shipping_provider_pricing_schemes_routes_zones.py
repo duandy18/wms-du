@@ -1,7 +1,6 @@
 # app/api/routers/shipping_provider_pricing_schemes_routes_zones.py
 from __future__ import annotations
 
-
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -47,7 +46,6 @@ def register_zones_routes(router: APIRouter) -> None:
         z = ShippingProviderZone(
             scheme_id=scheme_id,
             name=norm_nonempty(payload.name, "name"),
-            priority=int(payload.priority),
             active=bool(payload.active),
         )
         db.add(z)
@@ -79,7 +77,6 @@ def register_zones_routes(router: APIRouter) -> None:
         z = ShippingProviderZone(
             scheme_id=scheme_id,
             name=norm_nonempty(payload.name, "name"),
-            priority=int(payload.priority),
             active=bool(payload.active),
         )
 
@@ -87,10 +84,7 @@ def register_zones_routes(router: APIRouter) -> None:
             db.add(z)
             db.flush()
 
-            members = [
-                ShippingProviderZoneMember(zone_id=z.id, level="province", value=p)
-                for p in provinces
-            ]
+            members = [ShippingProviderZoneMember(zone_id=z.id, level="province", value=p) for p in provinces]
             db.add_all(members)
 
             db.commit()
@@ -100,13 +94,9 @@ def register_zones_routes(router: APIRouter) -> None:
             msg = (str(e.orig) if getattr(e, "orig", None) is not None else str(e)).lower()
 
             if "uq_sp_zones_scheme_name" in msg:
-                raise HTTPException(
-                    status_code=409, detail="Zone name already exists in this scheme"
-                )
+                raise HTTPException(status_code=409, detail="Zone name already exists in this scheme")
             if "uq_sp_zone_members_zone_level_value" in msg:
-                raise HTTPException(
-                    status_code=409, detail="Zone members conflict (duplicate level/value)"
-                )
+                raise HTTPException(status_code=409, detail="Zone members conflict (duplicate level/value)")
             raise HTTPException(status_code=409, detail="Conflict while creating zone and members")
 
         members_db = (
@@ -140,8 +130,6 @@ def register_zones_routes(router: APIRouter) -> None:
         data = payload.dict(exclude_unset=True)
         if "name" in data:
             z.name = norm_nonempty(data.get("name"), "name")
-        if "priority" in data:
-            z.priority = int(data["priority"])
         if "active" in data:
             z.active = bool(data["active"])
 

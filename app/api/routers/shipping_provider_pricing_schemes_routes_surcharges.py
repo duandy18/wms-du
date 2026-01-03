@@ -38,7 +38,6 @@ def register_surcharges_routes(router: APIRouter) -> None:
         s = ShippingProviderSurcharge(
             scheme_id=scheme_id,
             name=norm_nonempty(payload.name, "name"),
-            priority=int(payload.priority),
             active=bool(payload.active),
             condition_json=payload.condition_json,
             amount_json=payload.amount_json,
@@ -68,8 +67,6 @@ def register_surcharges_routes(router: APIRouter) -> None:
 
         if "name" in data:
             s.name = norm_nonempty(data.get("name"), "name")
-        if "priority" in data:
-            s.priority = int(data["priority"])
         if "active" in data:
             s.active = bool(data["active"])
         if "condition_json" in data and data["condition_json"] is not None:

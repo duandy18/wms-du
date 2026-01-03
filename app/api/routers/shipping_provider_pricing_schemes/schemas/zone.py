@@ -15,7 +15,6 @@ class ZoneOut(BaseModel):
     id: int
     scheme_id: int
     name: str
-    priority: int
     active: bool
     members: List[ZoneMemberOut] = Field(default_factory=list)
     brackets: List[ZoneBracketOut] = Field(default_factory=list)
@@ -25,7 +24,6 @@ class ZoneCreateIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str = Field(..., min_length=1, max_length=128)
-    priority: int = Field(default=100, ge=0)
     active: bool = True
 
 
@@ -33,7 +31,6 @@ class ZoneUpdateIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
-    priority: Optional[int] = Field(None, ge=0)
     active: Optional[bool] = None
 
 
@@ -41,7 +38,6 @@ class ZoneCreateAtomicIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str = Field(..., min_length=1, max_length=128)
-    priority: int = Field(default=100, ge=0)
     active: bool = True
     provinces: List[str] = Field(default_factory=list, description="省份集合（必填，至少 1 个）")
 
