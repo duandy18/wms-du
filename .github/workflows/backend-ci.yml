@@ -40,6 +40,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -76,6 +78,12 @@ jobs:
         run: |
           . .venv/bin/activate
           make lint-backend
+
+      - name: Ruff gate (new alembic migrations only)
+        run: |
+          . .venv/bin/activate
+          chmod +x scripts/ruff_new_migrations.sh
+          scripts/ruff_new_migrations.sh origin/main
 
       - name: Backend smoke tests
         env:
