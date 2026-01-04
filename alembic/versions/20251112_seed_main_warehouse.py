@@ -7,7 +7,6 @@ Create Date: 2025-11-12 13:05:00
 from __future__ import annotations
 from typing import Sequence, Union
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "20251112_seed_main_warehouse"
 down_revision: Union[str, Sequence[str], None] = "ca7532173d7f"

@@ -7,7 +7,6 @@ Create Date: 2025-11-12 13:45:00
 from __future__ import annotations
 from typing import Sequence, Union
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "20251112_add_warehouse_id_to_batches"
 down_revision: Union[str, Sequence[str], None] = "20251112_create_warehouses_if_missing"

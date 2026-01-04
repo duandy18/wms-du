@@ -9,7 +9,6 @@ from typing import Any
 
 from alembic import context
 from sqlalchemy import MetaData, create_engine
-from sqlalchemy.engine import Connection
 from sqlalchemy.pool import NullPool
 
 # Alembic 基本配置

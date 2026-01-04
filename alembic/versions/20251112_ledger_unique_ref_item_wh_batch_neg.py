@@ -7,7 +7,6 @@ Create Date: 2025-11-12 15:10:00
 from __future__ import annotations
 from typing import Sequence, Union
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "20251112_ledger_unique_ref_item_wh_batch_neg"
 down_revision: Union[str, Sequence[str], None] = "20251112_batches_constraint_cleanup"
