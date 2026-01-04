@@ -12,6 +12,7 @@ from app.api.routers.shipping_provider_pricing_schemes_schemas import (
     ZoneCreateIn,
     ZoneOut,
     ZoneUpdateIn,
+    ZoneProvinceMembersReplaceIn,
 )
 from app.api.routers.shipping_provider_pricing_schemes_utils import (
     check_perm,
@@ -135,6 +136,69 @@ def register_zones_routes(router: APIRouter) -> None:
 
         db.commit()
         db.refresh(z)
+
+        members = (
+            db.query(ShippingProviderZoneMember)
+            .filter(ShippingProviderZoneMember.zone_id == zone_id)
+            .order_by(
+                ShippingProviderZoneMember.level.asc(),
+                ShippingProviderZoneMember.value.asc(),
+                ShippingProviderZoneMember.id.asc(),
+            )
+            .all()
+        )
+        brackets = (
+            db.query(ShippingProviderZoneBracket)
+            .filter(ShippingProviderZoneBracket.zone_id == zone_id)
+            .order_by(
+                ShippingProviderZoneBracket.min_kg.asc(),
+                ShippingProviderZoneBracket.max_kg.asc().nulls_last(),
+                ShippingProviderZoneBracket.id.asc(),
+            )
+            .all()
+        )
+        return to_zone_out(z, members, brackets)
+
+    # ✅ 新增：原子替换某个 Zone 的 province members（用于“编辑省份”）
+    @router.put(
+        "/zones/{zone_id}/province-members",
+        response_model=ZoneOut,
+    )
+    def replace_zone_province_members(
+        zone_id: int = Path(..., ge=1),
+        payload: ZoneProvinceMembersReplaceIn = ...,
+        db: Session = Depends(get_db),
+        user=Depends(get_current_user),
+    ):
+        check_perm(db, user, "config.store.write")
+
+        z = db.get(ShippingProviderZone, zone_id)
+        if not z:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        provinces = clean_list_str(payload.provinces)
+        if not provinces:
+            raise HTTPException(status_code=422, detail="provinces is required (>=1)")
+
+        try:
+            # 只替换 province 级别 members，其他 level 不动
+            db.query(ShippingProviderZoneMember).filter(
+                ShippingProviderZoneMember.zone_id == zone_id,
+                ShippingProviderZoneMember.level == "province",
+            ).delete(synchronize_session=False)
+
+            db.add_all(
+                [ShippingProviderZoneMember(zone_id=zone_id, level="province", value=p) for p in provinces]
+            )
+
+            db.commit()
+            db.refresh(z)
+        except IntegrityError as e:
+            db.rollback()
+            msg = (str(e.orig) if getattr(e, "orig", None) is not None else str(e)).lower()
+            if "uq_sp_zone_members_zone_level_value" in msg:
+                raise HTTPException(status_code=409, detail="Zone members conflict (duplicate level/value)")
+            raise HTTPException(status_code=409, detail="Conflict while replacing zone province members")
 
         members = (
             db.query(ShippingProviderZoneMember)
