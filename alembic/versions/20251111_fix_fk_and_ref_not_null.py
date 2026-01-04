@@ -14,7 +14,6 @@ depends_on = None
 
 
 def upgrade():
-    conn = op.get_bind()
 
     # 1) 回填并强制非空：stock_ledger.ref
     op.execute("""
