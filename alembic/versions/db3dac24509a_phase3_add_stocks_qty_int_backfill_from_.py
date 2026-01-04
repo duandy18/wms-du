@@ -1,6 +1,5 @@
 """phase3: add stocks.qty int & backfill from qty_on_hand"""
 from alembic import op
-import sqlalchemy as sa
 
 # 按你当前 heads 输出设置
 revision = "20251111_add_stocks_qty_int"

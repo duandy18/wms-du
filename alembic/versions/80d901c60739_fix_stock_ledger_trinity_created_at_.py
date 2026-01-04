@@ -5,7 +5,6 @@ Revises: 567351fff27e
 Create Date: 2025-11-10 01:31:21.714806
 """
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "80d901c60739"
 down_revision: str | None = "567351fff27e"

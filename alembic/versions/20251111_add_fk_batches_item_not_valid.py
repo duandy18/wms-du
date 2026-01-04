@@ -5,7 +5,6 @@ Revises: 20251111_v2_core_drop_ledger_loc_and_create_snapshots
 Create Date: 2025-11-11
 """
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.engine.reflection import Inspector
 
 revision = "20251111_add_fk_batches_item_not_valid"

@@ -8,7 +8,6 @@ Create Date: 2025-11-06
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
 
 
 revision = "20251106_bootstrap_stage_location_and_ids"

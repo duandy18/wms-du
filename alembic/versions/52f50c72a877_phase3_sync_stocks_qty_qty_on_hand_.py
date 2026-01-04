@@ -1,7 +1,6 @@
 """phase3: sync stocks.qty <-> qty_on_hand during transition"""
 
 from alembic import op
-import sqlalchemy as sa
 
 # 替换为你当前 head
 revision = "20251111_sync_qty_columns"
