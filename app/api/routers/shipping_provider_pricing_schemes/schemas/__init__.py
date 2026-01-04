@@ -2,7 +2,14 @@
 
 from .common import WeightSegmentIn, ZoneMemberOut
 from .bracket import ZoneBracketOut, ZoneBracketCreateIn, ZoneBracketUpdateIn
-from .zone import ZoneOut, ZoneCreateIn, ZoneUpdateIn, ZoneCreateAtomicIn, ZoneMemberCreateIn
+from .zone import (
+    ZoneOut,
+    ZoneCreateIn,
+    ZoneUpdateIn,
+    ZoneCreateAtomicIn,
+    ZoneMemberCreateIn,
+    ZoneProvinceMembersReplaceIn,
+)
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
 from .scheme import (
     SchemeOut,
@@ -37,6 +44,7 @@ __all__ = [
     "ZoneUpdateIn",
     "ZoneCreateAtomicIn",
     "ZoneMemberCreateIn",
+    "ZoneProvinceMembersReplaceIn",
     # surcharge
     "SurchargeOut",
     "SurchargeCreateIn",

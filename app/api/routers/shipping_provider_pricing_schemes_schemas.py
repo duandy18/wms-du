@@ -15,6 +15,7 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     ZoneUpdateIn,
     ZoneCreateAtomicIn,
     ZoneMemberCreateIn,
+    ZoneProvinceMembersReplaceIn,
     # surcharge
     SurchargeOut,
     SurchargeCreateIn,
@@ -55,6 +56,7 @@ __all__ = [
     "ZoneUpdateIn",
     "ZoneCreateAtomicIn",
     "ZoneMemberCreateIn",
+    "ZoneProvinceMembersReplaceIn",
     # surcharge
     "SurchargeOut",
     "SurchargeCreateIn",

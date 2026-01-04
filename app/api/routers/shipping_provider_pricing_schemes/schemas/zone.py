@@ -47,3 +47,10 @@ class ZoneMemberCreateIn(BaseModel):
 
     level: str = Field(..., min_length=1, max_length=16)  # province/city/district/text
     value: str = Field(..., min_length=1, max_length=64)
+
+
+# ✅ 新增：原子替换某个 Zone 的 province members
+class ZoneProvinceMembersReplaceIn(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    provinces: List[str] = Field(default_factory=list, description="省份集合（必填，至少 1 个）")
