@@ -6,7 +6,10 @@ from typing import Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.receive_task import ReceiveTask, ReceiveTaskLine
-from app.schemas.receive_task import OrderReturnLineIn
+from app.schemas.receive_task import (
+    OrderReturnLineIn,
+    ReceiveTaskCreateFromPoSelectedLineIn,
+)
 
 from app.services.receive_task_loaders import (
     load_order_item_qty_map,
@@ -71,6 +74,113 @@ async def create_for_po(
         raise ValueError(f"采购单 {po.id} 已无剩余可收数量，无法创建收货任务")
 
     for rtl in lines_to_create:
+        session.add(rtl)
+
+    await session.flush()
+    return await get_with_lines(session, task.id)
+
+
+async def create_for_po_selected(
+    session: AsyncSession,
+    *,
+    po_id: int,
+    warehouse_id: Optional[int] = None,
+    lines: Sequence[ReceiveTaskCreateFromPoSelectedLineIn],
+) -> ReceiveTask:
+    """
+    从采购单“选择部分行”创建收货任务（本次到货批次）
+
+    规则：
+    - 每个 po_line_id 必须属于该 po_id
+    - qty_planned > 0
+    - qty_planned <= remaining（qty_ordered - qty_received）
+    - 仅创建被选择的行（expected_qty = qty_planned）
+    """
+    if not lines:
+        raise ValueError("lines 不能为空")
+
+    po = await load_po(session, po_id)
+    wh_id = warehouse_id or po.warehouse_id
+
+    # 构建 po_line map
+    po_lines_map: dict[int, any] = {}
+    for ln in po.lines or []:
+        po_lines_map[int(ln.id)] = ln
+
+    # 校验 + 去重
+    seen: set[int] = set()
+    normalized: list[tuple[int, int]] = []
+    for req in lines:
+        plid = int(req.po_line_id)
+        if plid in seen:
+            raise ValueError(f"lines 中存在重复 po_line_id={plid}")
+        seen.add(plid)
+
+        if plid not in po_lines_map:
+            raise ValueError(f"po_line_id={plid} 不属于采购单 {po.id}")
+
+        qty_planned = int(req.qty_planned)
+        if qty_planned <= 0:
+            raise ValueError(f"po_line_id={plid} 的 qty_planned 必须 > 0")
+
+        pol = po_lines_map[plid]
+        remaining = int(pol.qty_ordered) - int(pol.qty_received or 0)
+        if remaining <= 0:
+            raise ValueError(f"po_line_id={plid} 已无剩余应收，不能选择")
+        if qty_planned > remaining:
+            raise ValueError(
+                f"po_line_id={plid} 本次计划量超出剩余应收："
+                f"ordered={int(pol.qty_ordered)} received={int(pol.qty_received or 0)} "
+                f"remaining={remaining} qty_planned={qty_planned}"
+            )
+
+        normalized.append((plid, qty_planned))
+
+    if not normalized:
+        raise ValueError(f"采购单 {po.id} 未选择任何有效行，无法创建收货任务")
+
+    task = ReceiveTask(
+        source_type="PO",
+        source_id=po.id,
+        po_id=po.id,
+        supplier_id=po.supplier_id,
+        supplier_name=po.supplier_name or po.supplier,
+        warehouse_id=wh_id,
+        status="DRAFT",
+        remark=f"from PO-{po.id} selected",
+    )
+    session.add(task)
+    await session.flush()
+
+    created_lines: list[ReceiveTaskLine] = []
+    for plid, qty_planned in normalized:
+        pol = po_lines_map[plid]
+        created_lines.append(
+            ReceiveTaskLine(
+                task_id=task.id,
+                po_line_id=pol.id,
+                item_id=pol.item_id,
+                item_name=pol.item_name,
+                item_sku=pol.item_sku,
+                category=pol.category,
+                spec_text=pol.spec_text,
+                base_uom=pol.base_uom,
+                purchase_uom=pol.purchase_uom,
+                units_per_case=pol.units_per_case,
+                batch_code=None,
+                production_date=None,
+                expiry_date=None,
+                expected_qty=qty_planned,
+                scanned_qty=0,
+                committed_qty=None,
+                status="DRAFT",
+            )
+        )
+
+    if not created_lines:
+        raise ValueError(f"采购单 {po.id} 未创建任何任务行，无法创建收货任务")
+
+    for rtl in created_lines:
         session.add(rtl)
 
     await session.flush()

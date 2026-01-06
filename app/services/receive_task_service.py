@@ -7,12 +7,16 @@ from typing import Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.receive_task import ReceiveTask
-from app.schemas.receive_task import OrderReturnLineIn
+from app.schemas.receive_task import (
+    OrderReturnLineIn,
+    ReceiveTaskCreateFromPoSelectedLineIn,
+)
 from app.services.inbound_service import InboundService
 
 from app.services.receive_task_commit import commit as _commit
 from app.services.receive_task_create import create_for_order as _create_for_order
 from app.services.receive_task_create import create_for_po as _create_for_po
+from app.services.receive_task_create import create_for_po_selected as _create_for_po_selected
 from app.services.receive_task_query import get_with_lines as _get_with_lines
 from app.services.receive_task_scan import record_scan as _record_scan
 
@@ -53,6 +57,21 @@ class ReceiveTaskService:
             po_id=po_id,
             warehouse_id=warehouse_id,
             include_fully_received=include_fully_received,
+        )
+
+    async def create_for_po_selected(
+        self,
+        session: AsyncSession,
+        *,
+        po_id: int,
+        warehouse_id: Optional[int] = None,
+        lines: Sequence[ReceiveTaskCreateFromPoSelectedLineIn],
+    ) -> ReceiveTask:
+        return await _create_for_po_selected(
+            session,
+            po_id=po_id,
+            warehouse_id=warehouse_id,
+            lines=lines,
         )
 
     async def create_for_order(
