@@ -92,6 +92,42 @@ class ReceiveTaskCreateFromPo(BaseModel):
     )
 
 
+class ReceiveTaskCreateFromPoSelectedLineIn(BaseModel):
+    """
+    选择式创建：本次到货的某一行
+    """
+
+    po_line_id: int = Field(..., description="采购单行 ID（必须属于该采购单）")
+    qty_planned: int = Field(..., gt=0, description="本次计划收货量（>0，且不超过剩余应收）")
+
+
+class ReceiveTaskCreateFromPoSelected(BaseModel):
+    """
+    从采购单“选择部分行”创建收货任务（本次到货批次）
+    """
+
+    warehouse_id: Optional[int] = Field(
+        None,
+        description="收货仓库 ID；不传则默认用采购单上的 warehouse_id",
+    )
+    lines: List[ReceiveTaskCreateFromPoSelectedLineIn] = Field(
+        ...,
+        description="本次到货行清单（至少一行）",
+    )
+
+    @field_validator("lines")
+    @classmethod
+    def _lines_non_empty_and_unique(cls, v: List[ReceiveTaskCreateFromPoSelectedLineIn]):
+        if not v:
+            raise ValueError("lines 不能为空")
+        seen: set[int] = set()
+        for ln in v:
+            if ln.po_line_id in seen:
+                raise ValueError(f"lines 中存在重复 po_line_id={ln.po_line_id}")
+            seen.add(ln.po_line_id)
+        return v
+
+
 class OrderReturnLineIn(BaseModel):
     """
     客户退货行（from-order 用）
