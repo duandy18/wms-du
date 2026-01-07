@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -79,6 +79,31 @@ def create_barcode(
     return obj
 
 
+# ---------- 批量读取条码（用于前端 itemsStore 避免 N+1） ----------
+# 说明：
+# - query 采用重复参数：/by-items?item_id=1&item_id=2
+# - 返回扁平列表，前端按 item_id 分组即可
+# - 默认只返回 active=true 的条码，避免历史脏数据干扰主条码推断
+
+
+@router.get("/by-items", response_model=List[ItemBarcodeOut])
+def list_barcodes_for_items(
+    item_id: List[int] = Query(..., description="item_id 可重复：item_id=1&item_id=2"),
+    active_only: bool = Query(True, description="默认只返回 active=true"),
+    db: Session = Depends(get_db),
+):
+    ids = [int(x) for x in item_id if int(x) > 0]
+    if not ids:
+        return []
+
+    stmt = select(ItemBarcode).where(ItemBarcode.item_id.in_(ids))
+    if active_only:
+        stmt = stmt.where(ItemBarcode.active.is_(True))
+
+    rows = db.execute(stmt.order_by(ItemBarcode.item_id.asc(), ItemBarcode.id.asc())).scalars().all()
+    return list(rows)
+
+
 # ---------- 按 ItemId 读取条码 ----------
 
 
@@ -115,6 +140,17 @@ def set_primary(id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(bc)
     return bc
+
+
+# ---------- 兼容旧路径：POST /{id}/primary（返回 204） ----------
+# 历史上曾存在 item_barcodes_primary.py 提供该路径，但未挂载到 main。
+# 为避免历史客户端/脚本混乱，这里保留兼容入口，内部复用 set_primary 的逻辑。
+
+
+@router.post("/{id}/primary", status_code=status.HTTP_204_NO_CONTENT)
+def set_primary_compat(id: int, db: Session = Depends(get_db)):
+    _ = set_primary(id, db)
+    return None
 
 
 # ---------- PATCH 更新条码 ----------
