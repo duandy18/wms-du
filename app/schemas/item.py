@@ -30,6 +30,10 @@ class ItemBase(_Base):
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
+    # ✅ 新增：品牌/品类
+    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
+    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+
     enabled: bool = True
     supplier_id: Annotated[int | None, Field(default=None)] = None
 
@@ -40,7 +44,16 @@ class ItemBase(_Base):
 
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
-    @field_validator("sku", "name", "spec", "uom", "barcode", mode="before")
+    @field_validator(
+        "sku",
+        "name",
+        "spec",
+        "uom",
+        "barcode",
+        "brand",
+        "category",
+        mode="before",
+    )
     @classmethod
     def _trim_text(cls, v):
         return _norm_text(v)
@@ -57,6 +70,10 @@ class ItemCreate(_Base):
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
+    # ✅ 新增：品牌/品类
+    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
+    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+
     enabled: bool = True
     supplier_id: int | None = None
 
@@ -66,7 +83,7 @@ class ItemCreate(_Base):
 
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
-    @field_validator("name", "spec", "uom", "barcode", mode="before")
+    @field_validator("name", "spec", "uom", "barcode", "brand", "category", mode="before")
     @classmethod
     def _trim_text(cls, v):
         return _norm_text(v)
@@ -81,6 +98,10 @@ class ItemUpdate(_Base):
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
+    # ✅ 新增：品牌/品类
+    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
+    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+
     enabled: bool | None = None
     supplier_id: int | None = None
 
@@ -90,7 +111,16 @@ class ItemUpdate(_Base):
 
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
-    @field_validator("sku", "name", "spec", "uom", "barcode", mode="before")
+    @field_validator(
+        "sku",
+        "name",
+        "spec",
+        "uom",
+        "barcode",
+        "brand",
+        "category",
+        mode="before",
+    )
     @classmethod
     def _trim_text(cls, v):
         return _norm_text(v)
@@ -105,6 +135,8 @@ class ItemUpdate(_Base):
                 "spec",
                 "uom",
                 "barcode",
+                "brand",
+                "category",
                 "enabled",
                 "supplier_id",
                 "has_shelf_life",
@@ -130,6 +162,10 @@ class ItemCreateById(_Base):
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
+
+    # ✅ 新增：品牌/品类
+    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
+    category: Annotated[str | None, Field(default=None, max_length=64)] = None
 
     enabled: bool | None = True
     supplier_id: int | None = None

@@ -66,6 +66,10 @@ class Item(Base):
         server_default=text("true"),
     )
 
+    # ✅ 新增：品牌/品类（主数据字段，允许为空，逐步治理）
+    brand: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
     # ✅ 新增：有效期管理开关（事实字段）
     has_shelf_life: Mapped[bool] = mapped_column(
         Boolean,
@@ -128,5 +132,6 @@ class Item(Base):
     def __repr__(self) -> str:
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
+            f"brand={self.brand!r} category={self.category!r} "
             f"has_shelf_life={self.has_shelf_life}>"
         )

@@ -12,13 +12,12 @@ from app.services.snapshot_time import UTC
 
 async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]]:
     """
-    返回扁平化的 inventory 列表，每行包含：
-      - item_id
-      - item_name
-      - total_qty
-      - top2_locations（字段名沿用旧结构，语义为“前两条明细”）
-      - earliest_expiry（最早过期日）
-      - near_expiry（在 30 天内即将过期）
+    Snapshot /inventory 主列表（事实视图）：
+
+    - 库存事实：完全来自 stocks 聚合（不受主数据 join 影响）
+    - 主数据字段：来自 items（1:1 join，不放大）
+    - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
+    - 日期相关：后端统一 UTC 计算，前端不推导
     """
     rows = (
         (
@@ -27,11 +26,28 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                     """
                 SELECT
                     s.item_id,
-                    i.name AS item_name,
+                    i.name      AS item_name,
+                    i.sku       AS item_code,
+                    i.unit      AS uom,
+                    i.spec      AS spec,
+                    i.brand     AS brand,
+                    i.category  AS category,
+
                     s.warehouse_id,
                     s.batch_code,
                     s.qty,
-                    b.expiry_date AS expiry_date
+
+                    b.expiry_date AS expiry_date,
+
+                    (
+                        SELECT ib.barcode
+                        FROM item_barcodes AS ib
+                        WHERE ib.item_id = s.item_id
+                          AND ib.active = true
+                        ORDER BY ib.is_primary DESC, ib.id ASC
+                        LIMIT 1
+                    ) AS main_barcode
+
                 FROM stocks AS s
                 JOIN items AS i
                   ON i.id = s.item_id
@@ -55,28 +71,32 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
 
     for r in rows:
         item_id = int(r["item_id"])
-        item_name = r["item_name"]
-        wh_id = int(r["warehouse_id"])
-        batch_code = r["batch_code"]
         qty = int(r["qty"] or 0)
         expiry_date = r.get("expiry_date")
 
         if item_id not in by_item:
             by_item[item_id] = {
                 "item_id": item_id,
-                "item_name": item_name,
+                "item_name": r["item_name"],
+                "item_code": r["item_code"],
+                "uom": r["uom"],
+                "spec": r["spec"],
+                "brand": r["brand"],
+                "category": r["category"],
+                "main_barcode": r["main_barcode"],
                 "total_qty": 0,
                 "buckets": [],
                 "earliest_expiry": None,
                 "near_expiry": False,
+                "days_to_expiry": None,
             }
 
         rec = by_item[item_id]
         rec["total_qty"] += qty
         rec["buckets"].append(
             {
-                "warehouse_id": wh_id,
-                "batch_code": batch_code,
+                "warehouse_id": int(r["warehouse_id"]),
+                "batch_code": r["batch_code"],
                 "qty": qty,
                 "expiry_date": expiry_date,
             }
@@ -89,7 +109,7 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 rec["near_expiry"] = True
 
     result: List[Dict[str, Any]] = []
-    for _item_id, rec in by_item.items():
+    for rec in by_item.values():
         buckets = sorted(rec["buckets"], key=lambda b: b["qty"], reverse=True)
         top2 = [
             {
@@ -99,14 +119,25 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
             }
             for b in buckets[:2]
         ]
+
+        if isinstance(rec["earliest_expiry"], date):
+            rec["days_to_expiry"] = int((rec["earliest_expiry"] - today).days)
+
         result.append(
             {
                 "item_id": rec["item_id"],
                 "item_name": rec["item_name"],
+                "item_code": rec["item_code"],
+                "uom": rec["uom"],
+                "spec": rec["spec"],
+                "brand": rec["brand"],
+                "category": rec["category"],
+                "main_barcode": rec["main_barcode"],
                 "total_qty": rec["total_qty"],
                 "top2_locations": top2,
                 "earliest_expiry": rec["earliest_expiry"],
                 "near_expiry": rec["near_expiry"],
+                "days_to_expiry": rec["days_to_expiry"],
             }
         )
 
@@ -122,13 +153,18 @@ async def query_inventory_snapshot_paged(
     limit: int = 20,
 ) -> Dict[str, Any]:
     """
-    基于 query_inventory_snapshot 的结果做内存分页 / 模糊搜索。
+    内存分页 + 模糊搜索（item_name / item_code）
     """
     full = await query_inventory_snapshot(session)
 
     if q:
         q_lower = q.lower()
-        full = [r for r in full if q_lower in (r["item_name"] or "").lower()]
+        full = [
+            r
+            for r in full
+            if q_lower in (r.get("item_name") or "").lower()
+            or q_lower in (r.get("item_code") or "").lower()
+        ]
 
     total = len(full)
     rows = full[offset : offset + limit]
