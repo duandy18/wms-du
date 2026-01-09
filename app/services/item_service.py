@@ -39,6 +39,9 @@ class ItemService:
         name: str,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
+        barcode: Optional[str] = None,
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
         has_shelf_life: Optional[bool] = None,
@@ -53,6 +56,9 @@ class ItemService:
         spec_val = spec.strip() if isinstance(spec, str) else None
         unit_val = (uom or "PCS").strip().upper() or "PCS"
 
+        brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
+        category_val = category.strip() if isinstance(category, str) and category.strip() else None
+
         sku_val = self.next_sku()
 
         obj = Item(
@@ -62,6 +68,8 @@ class ItemService:
             spec=spec_val,
             enabled=bool(enabled),
             supplier_id=supplier_id,
+            brand=brand_val,
+            category=category_val,
             has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
@@ -90,6 +98,9 @@ class ItemService:
         name: Optional[str] = None,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
+        barcode: Optional[str] = None,
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
         enabled: Optional[bool] = True,
         supplier_id: Optional[int] = None,
         has_shelf_life: Optional[bool] = None,
@@ -110,6 +121,9 @@ class ItemService:
         unit_val = (uom or "PCS").strip().upper() or "PCS"
         enabled_val = True if enabled is None else bool(enabled)
 
+        brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
+        category_val = category.strip() if isinstance(category, str) and category.strip() else None
+
         obj = Item(
             id=id,
             sku=sku_val,
@@ -118,6 +132,8 @@ class ItemService:
             spec=spec_val,
             enabled=enabled_val,
             supplier_id=supplier_id,
+            brand=brand_val,
+            category=category_val,
             has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
@@ -169,6 +185,11 @@ class ItemService:
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
+        # ✅ 新增：brand/category（并支持显式置空）
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
+        brand_set: bool = False,
+        category_set: bool = False,
     ) -> Item:
         obj = self.db.get(Item, id)
         if obj is None:
@@ -214,6 +235,15 @@ class ItemService:
 
         if weight_kg is not None:
             obj.weight_kg = weight_kg
+            changed = True
+
+        # ✅ brand/category：字段出现在 payload 就更新（哪怕是 None => 清空）
+        if brand_set:
+            obj.brand = brand.strip() if isinstance(brand, str) and brand.strip() else None
+            changed = True
+
+        if category_set:
+            obj.category = category.strip() if isinstance(category, str) and category.strip() else None
             changed = True
 
         if not changed:

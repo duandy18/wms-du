@@ -45,6 +45,9 @@ def create_item(
             name=item_in.name,
             spec=item_in.spec,
             uom=item_in.uom,
+            barcode=item_in.barcode,
+            brand=item_in.brand,
+            category=item_in.category,
             enabled=item_in.enabled,
             supplier_id=item_in.supplier_id,
             has_shelf_life=item_in.has_shelf_life,
@@ -114,6 +117,11 @@ def update_item(
             shelf_life_value=data.get("shelf_life_value"),
             shelf_life_unit=data.get("shelf_life_unit"),
             weight_kg=data.get("weight_kg"),
+            # ✅ brand/category：需要区分“未提供” vs “显式置空(null)”
+            brand=data.get("brand"),
+            category=data.get("category"),
+            brand_set=("brand" in data),
+            category_set=("category" in data),
         )
     except ValueError as e:
         detail = str(e)
