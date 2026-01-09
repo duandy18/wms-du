@@ -13,15 +13,15 @@ from app.db.base import Base
 
 class ReturnTask(Base):
     """
-    采购退货任务头表（Return Task）
+    订单退货回仓任务头表（Return Task）
 
-    一个任务代表一次“退货作业”：
-    - 通常关联某张采购单（po_id 非空）；
-    - 从仓库退回给供应商（库存减少）。
+    一个任务代表一次“订单退货回仓作业”：
+    - order_id（order_ref）非空：用于关联出库台账 stock_ledger.ref（字符串）；
+    - 回仓入库（库存增加）。
 
     状态：
-    - DRAFT: 草稿 / 退货进行中，只能改 expected/picked；
-    - COMMITTED: 已出库，写过 ledger + stocks，不能再改；
+    - DRAFT: 草稿 / 回仓进行中；
+    - COMMITTED: 已入库，写过 ledger + stocks，不能再改；
     - CANCELLED: 作废，不再使用（不写 ledger）。
     """
 
@@ -29,23 +29,11 @@ class ReturnTask(Base):
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
 
-    po_id: Mapped[Optional[int]] = mapped_column(
-        sa.Integer,
-        nullable=True,
+    order_id: Mapped[str] = mapped_column(
+        sa.String(128),
+        nullable=False,
         index=True,
-        comment="关联采购单 purchase_orders.id，可为空",
-    )
-
-    supplier_id: Mapped[Optional[int]] = mapped_column(
-        sa.Integer,
-        nullable=True,
-        index=True,
-        comment="供应商 ID（冗余自采购单）",
-    )
-    supplier_name: Mapped[Optional[str]] = mapped_column(
-        sa.String(255),
-        nullable=True,
-        comment="供应商名称快照（冗余自采购单）",
+        comment="订单来源键（order_ref）：用于关联出库台账 stock_ledger.ref（字符串），必填",
     )
 
     warehouse_id: Mapped[int] = mapped_column(
@@ -87,21 +75,21 @@ class ReturnTask(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<ReturnTask id={self.id} po_id={self.po_id} "
-            f"wh={self.warehouse_id} status={self.status}>"
-        )
+        return f"<ReturnTask id={self.id} order_id={self.order_id} wh={self.warehouse_id} status={self.status}>"
 
 
 class ReturnTaskLine(Base):
     """
-    采购退货任务行（Return Task Line）
+    订单退货回仓任务行（Return Task Line）
 
-    一行代表一个 item 在本任务中的退货情况：
+    一行代表一个 item（自动回原批次回仓）：
 
-    - expected_qty: 计划退货数量（来自采购单已收数量或人工录入）；
-    - picked_qty: 实际从仓内挑出的退货数量（扫码/拣货累积）；
-    - committed_qty: 最终确认出库数量（commit 时写入）。
+    - expected_qty: 计划回仓数量（来自订单原出库数量）；
+    - picked_qty: 已扫码/录入的回仓数量（累积）；
+    - committed_qty: 最终确认入库数量（commit 时写入）。
+
+    核心约束：
+    - batch_code 必须由系统自动回原批次（来自出库台账），不允许人工补录。
     """
 
     __tablename__ = "return_task_lines"
@@ -115,11 +103,11 @@ class ReturnTaskLine(Base):
         index=True,
     )
 
-    po_line_id: Mapped[Optional[int]] = mapped_column(
-        sa.Integer,
+    order_line_id: Mapped[Optional[int]] = mapped_column(
+        sa.BigInteger,
         nullable=True,
         index=True,
-        comment="关联采购单行 purchase_order_lines.id，可为空",
+        comment="可选：关联订单行 order_lines.id（用于更强边界/追溯）",
     )
 
     item_id: Mapped[int] = mapped_column(
@@ -128,34 +116,37 @@ class ReturnTaskLine(Base):
         index=True,
         comment="商品 ID",
     )
+
     item_name: Mapped[Optional[str]] = mapped_column(
         sa.String(255),
         nullable=True,
         comment="商品名称快照（可选）",
     )
 
-    batch_code: Mapped[Optional[str]] = mapped_column(
+    batch_code: Mapped[str] = mapped_column(
         sa.String(64),
-        nullable=True,
-        comment="批次编码（可选，不强制）",
+        nullable=False,
+        comment="批次编码（系统自动回原批次：来自订单出库台账，必填；不允许人工补录）",
     )
 
     expected_qty: Mapped[Optional[int]] = mapped_column(
         sa.Integer,
         nullable=True,
-        comment="计划退货数量（来自 PO 已收数量或人工录入）",
+        comment="计划回仓数量（来自订单原出库数量）",
     )
+
     picked_qty: Mapped[int] = mapped_column(
         sa.Integer,
         nullable=False,
         default=0,
         server_default="0",
-        comment="已拣选/扫码准备退货的数量（可正可负）",
+        comment="已扫码/录入的回仓数量（可正可负，用于撤销误扫）",
     )
+
     committed_qty: Mapped[Optional[int]] = mapped_column(
         sa.Integer,
         nullable=True,
-        comment="最终出库数量（commit 时写入）",
+        comment="最终入库数量（commit 时写入）",
     )
 
     status: Mapped[str] = mapped_column(

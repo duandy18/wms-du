@@ -2,16 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional, Set
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import MovementType
-from app.models.purchase_order import PurchaseOrder
-from app.models.purchase_order_line import PurchaseOrderLine
 from app.models.return_task import ReturnTask, ReturnTaskLine
+from app.models.stock_ledger import StockLedger
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -19,90 +18,164 @@ UTC = timezone.utc
 
 class ReturnTaskServiceImpl:
     """
-    采购退货任务服务（实现层）：
+    订单退货回仓任务服务（实现层）
 
-    - create_for_po: 从采购单创建退货任务（expected 来自已收数量）；
-    - get_with_lines: 获取任务（头 + 行）；
-    - record_pick: 在任务上累积拣货数量（只改 picked_qty，不动库存）；
-    - commit: 根据 picked_qty 写入 ledger + stocks（delta<0），并更新采购单收货进度。
+    核心设计原则：
+    ----------------
+    1) 退货回仓必须基于“真实出库事实（ledger）”
+    2) 批次自动回原批次，不允许人工输入
+    3) 所有数量约束由 expected_qty 控制，防止超退
 
-    核心约束：
-    - 退货出库必须知道是哪个批次：record_pick 必须带 batch_code；
-    - 真正出库动作只有 commit() → StockService.adjust(delta<0, reason=RETURN_OUT)。
+    出库事实判定规则（当前版本）：
+    --------------------------------
+    - stock_ledger.delta < 0
+    - 且 reason ∈ SHIP_OUT_REASONS
+
+    ⚠️ 说明：
+    后续若系统统一出库 reason（例如全部收敛为 OUTBOUND_SHIP），
+    只需修改 SHIP_OUT_REASONS，不影响其他逻辑。
     """
+
+    # ==============================
+    # 出库事实识别（统一入口）
+    # ==============================
+    SHIP_OUT_REASONS: Set[str] = {
+        "SHIPMENT",        # 当前系统存在
+        "OUTBOUND_SHIP",   # 标准出库
+    }
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self.stock_svc = stock_svc or StockService()
 
-    # ------------ 工具：加载采购单 + 行 ------------ #
+    async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
+        """
+        从 stock_ledger 反查订单的出库事实（自动回原批次）：
 
-    async def _load_po(self, session: AsyncSession, po_id: int) -> PurchaseOrder:
-        stmt = (
-            select(PurchaseOrder)
-            .options(selectinload(PurchaseOrder.lines))
-            .where(PurchaseOrder.id == po_id)
+        判定条件：
+        - ref == order_ref
+        - delta < 0
+        - reason ∈ SHIP_OUT_REASONS
+        """
+        res = await session.execute(
+            select(
+                StockLedger.item_id,
+                StockLedger.warehouse_id,
+                StockLedger.batch_code,
+                StockLedger.delta,
+                StockLedger.reason,
+            )
+            .where(StockLedger.ref == str(order_ref))
+            .where(StockLedger.delta < 0)
         )
-        res = await session.execute(stmt)
-        po = res.scalars().first()
-        if po is None:
-            raise ValueError(f"PurchaseOrder not found: id={po_id}")
-        if po.lines:
-            po.lines.sort(key=lambda line: (line.line_no, line.id))
-        return po
 
-    # ------------ 创建退货任务 ------------ #
+        agg: dict[tuple[int, int, str], int] = {}
 
-    async def create_for_po(
+        for item_id, wh_id, batch_code, delta, reason in res.all():
+            r = str(reason or "").strip().upper()
+            if r not in self.SHIP_OUT_REASONS:
+                continue
+
+            key = (int(item_id), int(wh_id), str(batch_code))
+            agg[key] = agg.get(key, 0) + int(-int(delta or 0))  # 转为正数出库量
+
+        out: list[dict[str, Any]] = []
+        for (item_id, wh_id, batch_code), shipped_qty in agg.items():
+            if shipped_qty <= 0:
+                continue
+            out.append(
+                {
+                    "item_id": item_id,
+                    "warehouse_id": wh_id,
+                    "batch_code": batch_code,
+                    "shipped_qty": shipped_qty,
+                }
+            )
+        return out
+
+    # -----------------------------
+    # Public methods
+    # -----------------------------
+
+    async def create_for_order(
         self,
         session: AsyncSession,
         *,
-        po_id: int,
+        order_id: str,  # order_ref
         warehouse_id: Optional[int] = None,
-        include_zero_received: bool = False,
+        include_zero_shipped: bool = False,
     ) -> ReturnTask:
-        po = await self._load_po(session, po_id)
-        wh_id = warehouse_id or po.warehouse_id
+        """
+        从订单出库事实（ledger）创建退货回仓任务。
+
+        - 唯一入口：order_id（即 order_ref 字符串）
+        - 批次：来自 ledger.batch_code（自动回原批次）
+        - expected_qty：来自出库事实 shipped_qty
+        - picked_qty：初始为 0（等待 record_receive）
+        """
+        order_ref = str(order_id).strip()
+        if not order_ref:
+            raise ValueError("order_id(order_ref) is required")
+
+        # 幂等：若已有未提交任务，直接返回（避免重复创建导致用户困惑）
+        existing_stmt: Select = (
+            select(ReturnTask)
+            .where(ReturnTask.order_id == order_ref)
+            .where(ReturnTask.status != "COMMITTED")
+            .order_by(ReturnTask.id.desc())
+            .options(selectinload(ReturnTask.lines))
+            .limit(1)
+        )
+        existing = (await session.execute(existing_stmt)).scalars().first()
+        if existing is not None:
+            return existing
+
+        shipped = await self._load_shipped_summary(session, order_ref)
+
+        if warehouse_id is not None:
+            shipped = [x for x in shipped if int(x["warehouse_id"]) == int(warehouse_id)]
+
+        if not include_zero_shipped:
+            shipped = [x for x in shipped if int(x.get("shipped_qty") or 0) > 0]
+
+        if not shipped:
+            raise ValueError(f"order_ref={order_ref} has no shippable ledger facts for return")
+
+        # 退货回仓任务目前要求“单仓作业”（与前端作业台一致）
+        wh_ids = sorted({int(x["warehouse_id"]) for x in shipped})
+        if len(wh_ids) != 1:
+            raise ValueError(f"order_ref={order_ref} is multi-warehouse: {wh_ids}")
+        wh_id = wh_ids[0]
 
         task = ReturnTask(
-            po_id=po.id,
-            supplier_id=po.supplier_id,
-            supplier_name=po.supplier_name or po.supplier,
+            order_id=order_ref,
             warehouse_id=wh_id,
-            status="DRAFT",
-            remark=f"return from PO-{po.id}",
+            status="OPEN",
+            remark=None,
         )
+
         session.add(task)
-        await session.flush()
+        await session.flush()  # 获取 task.id
 
-        lines_to_create: list[ReturnTaskLine] = []
-        for line in po.lines or []:
-            received = int(line.qty_received or 0)
-            if received <= 0 and not include_zero_received:
-                continue
+        for x in shipped:
+            item_id = int(x["item_id"])
+            batch_code = str(x["batch_code"])
+            expected_qty = int(x["shipped_qty"])
 
-            rtl = ReturnTaskLine(
+            line = ReturnTaskLine(
                 task_id=task.id,
-                po_line_id=line.id,
-                item_id=line.item_id,
-                item_name=line.item_name,
-                batch_code=None,
-                expected_qty=received if received > 0 else 0,
+                order_line_id=None,
+                item_id=item_id,
+                batch_code=batch_code,
+                expected_qty=expected_qty,
                 picked_qty=0,
-                committed_qty=None,
-                status="DRAFT",
+                committed_qty=0,
+                status="OPEN",
+                remark=None,
             )
-            lines_to_create.append(rtl)
-
-        if not lines_to_create:
-            raise ValueError(f"采购单 {po.id} 当前没有已收数量可退货，无法创建退货任务")
-
-        for rtl in lines_to_create:
-            session.add(rtl)
+            session.add(line)
 
         await session.flush()
-        return await self.get_with_lines(session, task.id)
-
-    # ------------ 查询任务 ------------ #
+        return await self.get_with_lines(session, task_id=int(task.id), for_update=False)
 
     async def get_with_lines(
         self,
@@ -113,83 +186,57 @@ class ReturnTaskServiceImpl:
     ) -> ReturnTask:
         stmt = (
             select(ReturnTask)
+            .where(ReturnTask.id == int(task_id))
             .options(selectinload(ReturnTask.lines))
-            .where(ReturnTask.id == task_id)
         )
         if for_update:
             stmt = stmt.with_for_update()
 
-        res = await session.execute(stmt)
-        task = res.scalars().first()
+        task = (await session.execute(stmt)).scalars().first()
         if task is None:
-            raise ValueError(f"ReturnTask not found: id={task_id}")
-
-        if task.lines:
-            task.lines.sort(key=lambda line: (line.id,))
+            raise ValueError(f"return_task not found: id={task_id}")
         return task
 
-    # ------------ 在任务上累积拣货 ------------ #
-
-    async def record_pick(
+    async def record_receive(
         self,
         session: AsyncSession,
         *,
         task_id: int,
         item_id: int,
         qty: int,
-        batch_code: Optional[str] = None,
     ) -> ReturnTask:
-        if qty == 0:
-            return await self.get_with_lines(session, task_id)
+        """
+        记录一次数量（增量）：
 
-        if not batch_code or not str(batch_code).strip():
-            raise ValueError("退货拣货必须指定批次 batch_code")
+        - qty 可正可负（撤销误录）
+        - 强约束：最终 picked_qty ∈ [0, expected_qty]
+        """
+        task = await self.get_with_lines(session, task_id=task_id, for_update=True)
+        if task.status == "COMMITTED":
+            return task
 
-        task = await self.get_with_lines(session, task_id, for_update=True)
-        if task.status != "DRAFT":
-            raise ValueError(f"任务 {task.id} 状态为 {task.status}，不能再修改")
-
-        norm_code = str(batch_code).strip()
-
-        target: Optional[ReturnTaskLine] = None
-        for line in task.lines or []:
-            if int(line.item_id) == int(item_id) and (line.batch_code or "") == norm_code:
-                target = line
+        lines = list(task.lines or [])
+        target = None
+        for ln in lines:
+            if int(ln.item_id) == int(item_id):
+                target = ln
                 break
-
         if target is None:
-            target = ReturnTaskLine(
-                task_id=task.id,
-                po_line_id=None,
-                item_id=item_id,
-                item_name=None,
-                batch_code=norm_code,
-                expected_qty=None,
-                picked_qty=0,
-                committed_qty=None,
-                status="DRAFT",
-            )
-            session.add(target)
-            await session.flush()
-        else:
-            if not target.batch_code:
-                target.batch_code = norm_code
+            raise ValueError(f"task_line not found for item_id={item_id}")
 
-        target.picked_qty = int(target.picked_qty or 0) + int(qty)
+        expected = int(target.expected_qty or 0)
+        current = int(target.picked_qty or 0)
+        next_qty = current + int(qty)
 
-        if target.expected_qty is not None:
-            target.status = (
-                "MATCHED"
-                if int(target.picked_qty or 0) == int(target.expected_qty or 0)
-                else "MISMATCH"
-            )
-        else:
-            target.status = "DRAFT"
+        if next_qty < 0:
+            raise ValueError("picked_qty cannot be < 0")
+        if next_qty > expected:
+            raise ValueError(f"picked_qty({next_qty}) > expected_qty({expected})")
 
+        target.picked_qty = next_qty
         await session.flush()
-        return await self.get_with_lines(session, task.id)
 
-    # ------------ commit：真正写 ledger + stocks ------------ #
+        return await self.get_with_lines(session, task_id=task_id, for_update=False)
 
     async def commit(
         self,
@@ -199,61 +246,47 @@ class ReturnTaskServiceImpl:
         trace_id: Optional[str] = None,
         occurred_at: Optional[datetime] = None,
     ) -> ReturnTask:
-        task = await self.get_with_lines(session, task_id, for_update=True)
-        if task.status != "DRAFT":
-            raise ValueError(f"任务 {task.id} 状态为 {task.status}，不能重复 commit")
+        """
+        提交回仓：把 picked_qty 入库到原批次（RECEIPT 口径）。
 
-        if not task.lines:
-            raise ValueError(f"任务 {task.id} 没有任何行，不能 commit")
+        - 幂等：若任务已 COMMITTED，直接返回
+        - 逐行入库：delta = picked_qty（正数）
+        - 批次：line.batch_code（自动回原批次）
+        """
+        task = await self.get_with_lines(session, task_id=task_id, for_update=True)
+        if task.status == "COMMITTED":
+            return task
 
-        now = occurred_at or datetime.now(UTC)
-        ref = f"RTN-{task.id}"
+        ts = occurred_at or datetime.now(UTC)
 
-        for line in task.lines:
-            if int(line.picked_qty or 0) != 0 and not line.batch_code:
-                raise ValueError(f"退货 commit 失败：行 item_id={line.item_id} 缺失 batch_code")
+        lines = list(task.lines or [])
+        applied_any = False
 
-        po_lines_map: dict[int, PurchaseOrderLine] = {}
-        if task.po_id is not None:
-            po = await self._load_po(session, task.po_id)
-            for line in po.lines or []:
-                po_lines_map[int(line.id)] = line
-
-        ref_line_counter = 0
-
-        for line in task.lines:
-            picked = int(line.picked_qty or 0)
-
-            if picked == 0:
-                line.committed_qty = 0
-                line.status = "COMMITTED"
+        for ln in lines:
+            picked = int(ln.picked_qty or 0)
+            if picked <= 0:
                 continue
-
-            commit_qty = picked
-            line.committed_qty = commit_qty
-            ref_line_counter += 1
 
             await self.stock_svc.adjust(
                 session=session,
-                item_id=int(line.item_id),
+                item_id=int(ln.item_id),
+                delta=+picked,
+                reason=MovementType.RETURN,  # 映射为 RECEIPT（回仓入库）
+                ref=str(task.order_id),
+                ref_line=int(getattr(ln, "id", 1) or 1),
+                occurred_at=ts,
+                batch_code=str(ln.batch_code),
                 warehouse_id=int(task.warehouse_id),
-                delta=-int(commit_qty),
-                reason=MovementType.RETURN_OUT,
-                ref=ref,
-                ref_line=ref_line_counter,
-                batch_code=str(line.batch_code or "").strip(),
-                occurred_at=now,
                 trace_id=trace_id,
             )
 
-            line.status = "COMMITTED"
-
-            if line.po_line_id is not None and int(line.po_line_id) in po_lines_map:
-                po_line = po_lines_map[int(line.po_line_id)]
-                po_line.qty_received = int(po_line.qty_received or 0) - int(commit_qty)
-                if po_line.qty_received < 0:
-                    po_line.qty_received = 0
+            ln.committed_qty = picked
+            ln.status = "COMMITTED"
+            applied_any = True
 
         task.status = "COMMITTED"
+        if applied_any:
+            task.updated_at = ts  # 若模型没有该字段也不会影响（SQLAlchemy 会忽略不存在属性）
+
         await session.flush()
-        return await self.get_with_lines(session, task.id)
+        return await self.get_with_lines(session, task_id=task_id, for_update=False)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# Legacy shim
-
 from datetime import datetime
 from typing import Optional
 
@@ -16,19 +14,19 @@ class ReturnTaskService:
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self._impl = ReturnTaskServiceImpl(stock_svc=stock_svc)
 
-    async def create_for_po(
+    async def create_for_order(
         self,
         session: AsyncSession,
         *,
-        po_id: int,
+        order_id: str,  # order_ref
         warehouse_id: Optional[int] = None,
-        include_zero_received: bool = False,
+        include_zero_shipped: bool = False,
     ) -> ReturnTask:
-        return await self._impl.create_for_po(
+        return await self._impl.create_for_order(
             session,
-            po_id=po_id,
+            order_id=order_id,
             warehouse_id=warehouse_id,
-            include_zero_received=include_zero_received,
+            include_zero_shipped=include_zero_shipped,
         )
 
     async def get_with_lines(
@@ -40,21 +38,19 @@ class ReturnTaskService:
     ) -> ReturnTask:
         return await self._impl.get_with_lines(session, task_id=task_id, for_update=for_update)
 
-    async def record_pick(
+    async def record_receive(
         self,
         session: AsyncSession,
         *,
         task_id: int,
         item_id: int,
         qty: int,
-        batch_code: Optional[str] = None,
     ) -> ReturnTask:
-        return await self._impl.record_pick(
+        return await self._impl.record_receive(
             session,
             task_id=task_id,
             item_id=item_id,
             qty=qty,
-            batch_code=batch_code,
         )
 
     async def commit(

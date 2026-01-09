@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,11 @@ class PickService:
     - 允许调用方传入 trace_id，用于将本次扣减挂到订单 trace 上；
     - trace_id 透传到 StockService.adjust → stock_ledger.trace_id；
     - 订单驱动的 HTTP 层可以从 orders.trace_id 获取该 trace_id 并传入。
+
+    语义约束（非常重要）：
+    - “扣减库存”只是动作；台账 reason 必须表达业务语义。
+    - 默认：通用拣货使用 MovementType.PICK（当前映射为 ADJUSTMENT）。
+    - 订单出库：调用方应显式传入 movement_type=MovementType.SHIP（落库为 SHIPMENT）。
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -42,15 +47,19 @@ class PickService:
         trace_id: Optional[str] = None,  # ⭐ 新增：可选 trace_id（订单驱动时传入）
         start_ref_line: Optional[int] = None,
         task_line_id: Optional[int] = None,  # 预留：任务/拣货单整合
+        movement_type: Union[str, MovementType] = MovementType.PICK,
     ) -> Dict[str, Any]:
         """
         人工拣货（扫码确认）→ 直接扣减 (item_id, warehouse_id, batch_code) 槽位上的库存。
-        幂等键由台账唯一键保障：(warehouse_id, batch_code, item_id, reason, ref, ref_line)
+        幂等键由台账唯一键保障：(warehouse_id, item_id, batch_code, reason, ref, ref_line)
 
         参数说明：
           - trace_id: 若为订单驱动拣货，可传入对应订单的 trace_id；
                       将透传给 StockService.adjust，最终写入 stock_ledger.trace_id，
                       便于 TraceService 统一聚合。
+          - movement_type:
+                      本次扣减应落入 stock_ledger.reason 的业务语义（MovementType 映射）。
+                      默认 PICK；订单出库应传 SHIP（落库为 SHIPMENT）。
         """
         # —— 基础校验 ——
         if qty <= 0:
@@ -68,7 +77,7 @@ class PickService:
                 session=session,
                 item_id=item_id,
                 delta=-int(qty),
-                reason=MovementType.PICK,  # 与审计/报表口径一致
+                reason=movement_type,  # ✅ 由调用方决定落库 reason 语义
                 ref=ref,
                 ref_line=ref_line,
                 occurred_at=occurred_at,
