@@ -2,42 +2,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class ReturnTaskLineBase(BaseModel):
-    item_id: int = Field(..., description="商品 ID")
-    expected_qty: Optional[int] = Field(
-        None,
-        description="计划退货数量（来自采购单或人工录入）",
-    )
-
-
-class ReturnTaskLineCreate(ReturnTaskLineBase):
-    po_line_id: Optional[int] = Field(
-        None,
-        description="关联采购单行 ID（可选）",
-    )
-    item_name: Optional[str] = Field(
-        None,
-        description="商品名称快照（可选）",
-    )
-    batch_code: Optional[str] = Field(
-        None,
-        description="批次编码（可选）",
-    )
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices
 
 
 class ReturnTaskLineOut(BaseModel):
     id: int
     task_id: int
 
-    po_line_id: Optional[int]
+    order_line_id: Optional[int] = None
+
     item_id: int
     item_name: Optional[str]
-    batch_code: Optional[str]
+    batch_code: str
 
     expected_qty: Optional[int]
     picked_qty: int
@@ -49,38 +27,32 @@ class ReturnTaskLineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ReturnTaskCreateFromPo(BaseModel):
+class ReturnTaskCreateFromOrder(BaseModel):
     warehouse_id: Optional[int] = Field(
         None,
-        description="退货仓库 ID；不传则默认用采购单上的 warehouse_id",
+        description="回仓仓库 ID；不传则由服务层决定（默认=原出库仓库，若不唯一则要求显式传入）",
     )
-    include_zero_received: bool = Field(
+    include_zero_shipped: bool = Field(
         False,
-        description="是否包含未收货的行（通常不需要）",
+        description="是否包含出库数量为 0 的行（通常不需要）",
     )
 
 
-class ReturnTaskPickIn(BaseModel):
+class ReturnTaskReceiveIn(BaseModel):
     item_id: int = Field(..., description="商品 ID")
-    qty: int = Field(..., description="本次退货拣出数量（可正可负）")
-    batch_code: Optional[str] = Field(
-        None,
-        description="批次编码（可选）",
-    )
+    qty: int = Field(..., description="本次回仓数量（可正可负，用于撤销误扫）")
 
 
 class ReturnTaskCommitIn(BaseModel):
     trace_id: Optional[str] = Field(
         None,
-        description="用于跨表追踪的 trace_id，可选",
+        description="用于跨表追踪的 trace_id，可选（建议填订单 trace_id）",
     )
 
 
 class ReturnTaskOut(BaseModel):
     id: int
-    po_id: Optional[int]
-    supplier_id: Optional[int]
-    supplier_name: Optional[str]
+    order_id: str  # order_ref
     warehouse_id: int
     status: str
     remark: Optional[str]
@@ -90,3 +62,70 @@ class ReturnTaskOut(BaseModel):
     lines: List[ReturnTaskLineOut] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# =========================================================
+# 退货回仓作业台：order_ref 左侧上下文（台账驱动，只读）
+# =========================================================
+class ReturnOrderRefItem(BaseModel):
+    order_ref: str
+    warehouse_id: Optional[int] = None
+    last_ship_at: datetime
+    total_lines: int
+
+    # ✅ 语义收敛：剩余可退（shipped - returned）
+    # 兼容旧字段名 total_shipped_qty：允许读取，但对外只输出 remaining_qty
+    remaining_qty: int = Field(
+        ...,
+        validation_alias=AliasChoices("remaining_qty", "total_shipped_qty"),
+        description="剩余可退数量（shipped - returned）",
+    )
+
+
+class ReturnOrderRefSummaryLine(BaseModel):
+    warehouse_id: int
+    item_id: int
+    batch_code: str
+    shipped_qty: int
+
+
+class ReturnOrderRefSummaryOut(BaseModel):
+    order_ref: str
+    ship_reasons: List[str] = Field(default_factory=list)
+    lines: List[ReturnOrderRefSummaryLine]
+
+
+# =========================================================
+# 退货回仓作业台：订单详情（只读）
+# =========================================================
+class ReturnOrderRefReceiverOut(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class ReturnOrderRefShippingOut(BaseModel):
+    tracking_no: Optional[str] = None
+    carrier_code: Optional[str] = None
+    carrier_name: Optional[str] = None
+    status: Optional[str] = None
+    shipped_at: Optional[datetime] = None
+    gross_weight_kg: Optional[float] = None
+    cost_estimated: Optional[float] = None
+    receiver: Optional[ReturnOrderRefReceiverOut] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+class ReturnOrderRefDetailOut(BaseModel):
+    order_ref: str
+    platform: Optional[str] = None
+    shop_id: Optional[str] = None
+    ext_order_no: Optional[str] = None
+
+    remaining_qty: Optional[int] = None
+
+    shipping: Optional[ReturnOrderRefShippingOut] = None
+    summary: ReturnOrderRefSummaryOut

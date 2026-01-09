@@ -67,5 +67,26 @@ curl -s -X POST "$BASE/orders/$PLAT/$SHOP/$EXT_NO/ship-with-waybill" \
     \"province\": \"广东省\",
     \"city\": \"深圳市\",
     \"district\": \"南山区\",
-    \"address_detail\": \"科技园某路 123 号\"
+    \"address_detail\": \"科技园某路 123 号\",
+    \"meta\": {
+      \"quote_snapshot\": {
+        \"input\": {
+          \"platform\": \"$PLAT\",
+          \"shop_id\": \"$SHOP\",
+          \"warehouse_id\": 1,
+          \"carrier_code\": \"FAKE\",
+          \"weight_kg\": 2.5,
+          \"province\": \"广东省\",
+          \"city\": \"深圳市\",
+          \"district\": \"南山区\"
+        },
+        \"selected_quote\": {
+          \"carrier_code\": \"FAKE\",
+          \"carrier_name\": \"Fake Express\",
+          \"total_amount\": 0,
+          \"currency\": \"CNY\",
+          \"reasons\": [\"DEMO_QUOTE_SNAPSHOT\"]
+        }
+      }
+    }
   }" | jq

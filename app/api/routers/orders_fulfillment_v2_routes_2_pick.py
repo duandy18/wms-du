@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import PickRequest, PickResponse
+from app.models.enums import MovementType
 from app.services.pick_service import PickService
 from app.services.soft_reserve_service import SoftReserveService
 
@@ -57,6 +58,8 @@ def register(router: APIRouter) -> None:
                     warehouse_id=body.warehouse_id,
                     trace_id=trace_id,
                     start_ref_line=ref_line,
+                    # ✅ 关键修复：订单出库扣减必须记为 SHIPMENT（而不是 ADJUSTMENT）
+                    movement_type=MovementType.SHIP,
                 )
                 ref_line = result.get("ref_line", ref_line) + 1
 

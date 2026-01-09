@@ -186,8 +186,8 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     # reservation 事件（头或行）
     assert any(k.startswith("reservation_") or k == "reservation_line" for k in kinds), kinds
 
-    # ledger 事件（当前 reason 为 ADJUSTMENT）
-    assert any(k == "ADJUSTMENT" for k in kinds), kinds
+    # ledger 事件（订单出库应落为 SHIPMENT）
+    assert any(k == "SHIPMENT" for k in kinds), kinds
 
     # SHIP_COMMIT 审计事件
     assert any("SHIP_COMMIT" in s for s in summaries), summaries
