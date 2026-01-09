@@ -73,8 +73,6 @@ class ReturnOrderRefItem(BaseModel):
     last_ship_at: datetime
     total_lines: int
 
-    # ✅ 语义收敛：剩余可退（shipped - returned）
-    # 兼容旧字段名 total_shipped_qty：允许读取，但对外只输出 remaining_qty
     remaining_qty: int = Field(
         ...,
         validation_alias=AliasChoices("remaining_qty", "total_shipped_qty"),
@@ -85,6 +83,7 @@ class ReturnOrderRefItem(BaseModel):
 class ReturnOrderRefSummaryLine(BaseModel):
     warehouse_id: int
     item_id: int
+    item_name: Optional[str] = None  # ✅ 新增：用于详情展示（作业人员视角）
     batch_code: str
     shipped_qty: int
 

@@ -115,21 +115,24 @@ def register_order_refs(router: APIRouter) -> None:
         wh_cond = ""
         params: dict = {"ref": order_ref, "reasons": list(SHIP_OUT_REASONS)}
         if warehouse_id is not None:
-            wh_cond = "AND warehouse_id = :wid"
+            wh_cond = "AND l.warehouse_id = :wid"
             params["wid"] = int(warehouse_id)
 
+        # ✅ 作业人员视角：把 item_name 一并 join 出来，前端不再只能展示 item_id
         sql = f"""
-        SELECT warehouse_id,
-               item_id,
-               batch_code,
-               COALESCE(SUM(-delta), 0)::int AS shipped_qty
-          FROM stock_ledger
-         WHERE ref = :ref
-           AND delta < 0
-           AND reason = ANY(:reasons)
+        SELECT l.warehouse_id,
+               l.item_id,
+               i.name AS item_name,
+               l.batch_code,
+               COALESCE(SUM(-l.delta), 0)::int AS shipped_qty
+          FROM stock_ledger l
+          LEFT JOIN items i ON i.id = l.item_id
+         WHERE l.ref = :ref
+           AND l.delta < 0
+           AND l.reason = ANY(:reasons)
            {wh_cond}
-         GROUP BY warehouse_id, item_id, batch_code
-         ORDER BY warehouse_id, item_id, batch_code
+         GROUP BY l.warehouse_id, l.item_id, i.name, l.batch_code
+         ORDER BY l.warehouse_id, l.item_id, l.batch_code
         """
 
         lines_raw = (await session.execute(sa.text(sql), params)).mappings().all()
