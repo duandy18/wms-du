@@ -42,6 +42,11 @@ class OutboundService:
     ----------------------
     出库成功后，自动将与 trace_id 对应的 open reservation_lines.consumed_qty 补齐，
     使“预占 → 出库”形成闭环。
+
+    Phase 3.10（本次）：
+    ----------------------
+    引入 sub_reason（业务细分）：
+    - 订单发货出库：sub_reason = ORDER_SHIP
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -54,20 +59,6 @@ class OutboundService:
         trace_id: Optional[str],
         shipped_by_item: Dict[int, int],
     ) -> None:
-        """
-        Ship v3: 自动消费预占（reservation_lines.consumed_qty）
-
-        策略（保守版）：
-
-        - 如果 trace_id 为空，直接跳过；
-        - shipped_by_item: {item_id: 本次实际发货数量}；
-        - 对每个 item_id：
-            * 找到 trace_id 匹配且 status='open' 的 reservation_lines；
-            * 按 created_at 顺序依次扣减 consumed_qty，最多扣到 shipped_qty；
-        - 不修改 reservations.status，只调整 reservation_lines.consumed_qty。
-
-        仅在出库成功（有实际 need>0）时才更新 shipped_by_item。
-        """
         if not trace_id:
             return
         if not shipped_by_item:
@@ -78,7 +69,6 @@ class OutboundService:
             if remain <= 0:
                 continue
 
-            # 找到 trace_id + item_id 对应的 open reservation_lines
             res2 = await session.execute(
                 sa.text(
                     """
@@ -142,7 +132,6 @@ class OutboundService:
         if ts.tzinfo is None:
             ts = datetime.now(UTC)
 
-        # 1) 归一化 + 合并：同一 (item_id, warehouse_id, batch_code) 汇总为一行
         agg_qty: Dict[Tuple[int, int, str], int] = defaultdict(int)
         for raw in lines:
             ln = self._coerce_line(raw)
@@ -155,12 +144,9 @@ class OutboundService:
         total_qty = 0
         results: List[Dict[str, Any]] = []
 
-        # 记录本次实际发货量（按 item_id 聚合），供 Ship v3 消耗预占使用
         shipped_by_item: Dict[int, int] = defaultdict(int)
 
-        # 2) 对每个合并后的槽位做一次“已扣 + 剩余扣减”逻辑
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
-            # 已扣数量（负数，例如 -3）
             row = await session.execute(
                 sa.text(
                     """
@@ -179,7 +165,6 @@ class OutboundService:
             need = int(want_qty) + already  # 目标是总 delta = -want_qty
 
             if need <= 0:
-                # 已经满足（或超扣，不太可能），视为幂等
                 results.append(
                     {
                         "item_id": item_id,
@@ -204,10 +189,13 @@ class OutboundService:
                     warehouse_id=wh_id,
                     batch_code=batch_code,
                     trace_id=trace_id,  # Phase 3.7-A：trace_id 透传到底层 ledger 写入
+                    meta={
+                        "sub_reason": "ORDER_SHIP",
+                    },
                 )
                 committed += 1
                 total_qty += need
-                shipped_by_item[item_id] += need  # 记录本次实际发货量（Ship v3 使用）
+                shipped_by_item[item_id] += need
                 results.append(
                     {
                         "item_id": item_id,
@@ -230,7 +218,6 @@ class OutboundService:
                     }
                 )
 
-        # 3) Ship v3：出库成功后，自动消费 trace 对应的预占
         try:
             await self._consume_reservations_for_trace(
                 session=session,
@@ -238,8 +225,6 @@ class OutboundService:
                 shipped_by_item=shipped_by_item,
             )
         except Exception:
-            # 自动 consume 失败不能影响出库主流程；
-            # 如需观察，可接入 event_log / logging 记录 warning。
             pass
 
         return {
@@ -248,8 +233,6 @@ class OutboundService:
             "total_qty": total_qty,
             "committed_lines": committed,
             "results": results,
-            # trace_id 不放在返回体里，以免破坏现有 tests；
-            # 如需关联，请通过 audit_events(meta.trace_id / trace_id) + ref 进行查询。
         }
 
     @staticmethod
@@ -270,14 +253,13 @@ class OutboundService:
         )
 
 
-# 便捷函数（与历史签名兼容）
 async def ship_commit(
     session: AsyncSession,
     order_id: str | int,
     lines: Sequence[Dict[str, Any] | ShipLine],
     warehouse_code: Optional[str] = None,
     occurred_at: Optional[datetime] = None,
-    trace_id: Optional[str] = None,  # HTTP / API 层可直接传 trace_id
+    trace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     svc = OutboundService()
     return await svc.commit(
@@ -290,5 +272,4 @@ async def ship_commit(
     )
 
 
-# 历史别名
 commit_outbound = ship_commit

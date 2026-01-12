@@ -18,6 +18,24 @@ EnsureBatchFn = Callable[
 ]
 
 
+def _meta_bool(meta: Optional[Dict[str, Any]], key: str) -> bool:
+    if not meta:
+        return False
+    return meta.get(key) is True
+
+
+def _meta_str(meta: Optional[Dict[str, Any]], key: str) -> Optional[str]:
+    if not meta:
+        return None
+    v = meta.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"meta.{key} 必须为字符串")
+    s = v.strip()
+    return s or None
+
+
 async def adjust_impl(  # noqa: C901
     *,
     session: AsyncSession,
@@ -51,6 +69,12 @@ async def adjust_impl(  # noqa: C901
           只需要 batch_code；
           日期无需提供（不会改变批次元数据）。
 
+    - delta==0：
+          默认不写台账（避免噪声）；
+          但如果 meta.allow_zero_delta_ledger=true，则允许写入“确认类事件流水账”：
+            * 必须提供 meta.sub_reason（例如 COUNT_ADJUST）
+            * 会写 stock_ledger（delta=0, after_qty=当前 qty），不会更新 stocks
+
     - 幂等：
           按 (warehouse_id, item_id, batch_code, reason, ref, ref_line) 判断。
     """
@@ -58,10 +82,16 @@ async def adjust_impl(  # noqa: C901
     rl = int(ref_line) if ref_line is not None else 1
     ts = occurred_at or utc_now()
 
-    # ---------- 基础校验 ----------
-    if delta == 0:
+    allow_zero = _meta_bool(meta, "allow_zero_delta_ledger")
+    sub_reason = _meta_str(meta, "sub_reason")
+
+    if delta == 0 and not allow_zero:
         return {"idempotent": True, "applied": False}
 
+    if delta == 0 and allow_zero and not sub_reason:
+        raise ValueError("delta==0 记账必须提供 meta.sub_reason（例如 COUNT_ADJUST）")
+
+    # ---------- 基础校验 ----------
     if not batch_code or not str(batch_code).strip():
         raise ValueError("批次操作必须指定 batch_code。")
     batch_code = str(batch_code).strip()
@@ -161,17 +191,23 @@ async def adjust_impl(  # noqa: C901
         )
 
     stock_id, before_qty = int(row["sid"]), int(row["q"])
-    new_qty = before_qty + int(delta)
-    if new_qty < 0:
-        raise ValueError(f"insufficient stock: before={before_qty}, delta={delta}")
 
-    # ---------- 写台账（带上 trace_id + 日期） ----------
+    # delta==0 的确认类事件：after_qty 就是当前 qty
+    if delta == 0:
+        new_qty = before_qty
+    else:
+        new_qty = before_qty + int(delta)
+        if new_qty < 0:
+            raise ValueError(f"insufficient stock: before={before_qty}, delta={delta}")
+
+    # ---------- 写台账（带上 trace_id + 日期 + sub_reason） ----------
     await write_ledger(
         session=session,
         warehouse_id=int(warehouse_id),
         item_id=item_id,
         batch_code=batch_code,
         reason=reason_val,
+        sub_reason=sub_reason,
         delta=int(delta),
         after_qty=new_qty,
         ref=ref,
@@ -182,11 +218,12 @@ async def adjust_impl(  # noqa: C901
         expiry_date=expiry_date,
     )
 
-    # ---------- 更新余额 ----------
-    await session.execute(
-        text("UPDATE stocks SET qty = qty + :d WHERE id = :sid"),
-        {"d": int(delta), "sid": stock_id},
-    )
+    # ---------- 更新余额（delta==0 不更新 stocks） ----------
+    if delta != 0:
+        await session.execute(
+            text("UPDATE stocks SET qty = qty + :d WHERE id = :sid"),
+            {"d": int(delta), "sid": stock_id},
+        )
 
     meta_out: Dict[str, Any] = dict(meta or {})
     if trace_id:
