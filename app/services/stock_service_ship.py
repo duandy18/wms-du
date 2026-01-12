@@ -28,6 +28,10 @@ async def ship_commit_direct_impl(
 ) -> Dict[str, Any]:
     """
     本方法保持原有行为，但 FEFO 选择更稳定（优先 expiry_date，再按 stock_id 排序）。
+
+    Phase 3.10（本次）：
+    - 引入 sub_reason（业务细分）：
+      直接发货/出库链路统一标记为 ORDER_SHIP（若未来需要区分 INTERNAL_SHIP，可在调用方传 meta 覆盖）。
     """
     _ = platform
     _ = shop_id
@@ -103,6 +107,9 @@ async def ship_commit_direct_impl(
                 occurred_at=ts,
                 batch_code=batch_code,
                 trace_id=trace_id,
+                meta={
+                    "sub_reason": "ORDER_SHIP",
+                },
             )
 
             remain -= take

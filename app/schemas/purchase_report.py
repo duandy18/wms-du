@@ -34,6 +34,12 @@ class ItemPurchaseReportItem(_Base):
     item_id: int
     item_sku: str | None = None
     item_name: str | None = None
+
+    # ✅ 严格后端对齐：报表接口直接返回（不依赖前端补齐）
+    barcode: str | None = Field(default=None, description="主条码（来自 item_barcodes 主条码）")
+    brand: str | None = Field(default=None, description="品牌（来自 items.brand）")
+    category: str | None = Field(default=None, description="分类（来自 items.category）")
+
     spec_text: str | None = None
 
     supplier_id: int | None = None

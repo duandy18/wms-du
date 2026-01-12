@@ -63,6 +63,8 @@ class InboundService:
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
         trace_id: Optional[str] = None,
+        # ✅ 合同化：业务细分（采购入库/退货入库/杂项入库等）
+        sub_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         if qty <= 0:
             raise ValueError("Receive quantity must be positive.")
@@ -108,6 +110,8 @@ class InboundService:
             if not (batch_code and str(batch_code).strip()):
                 code = NOEXP_BATCH_CODE
 
+        meta = {"sub_reason": sub_reason} if (sub_reason and str(sub_reason).strip()) else None
+
         res = await self.stock_svc.adjust(
             session=session,
             item_id=iid,
@@ -117,6 +121,7 @@ class InboundService:
             ref=str(ref),
             ref_line=int(ref_line),
             occurred_at=occurred_at or datetime.now(UTC),
+            meta=meta,
             batch_code=code,
             production_date=production_date,
             expiry_date=expiry_date,
@@ -135,9 +140,7 @@ class InboundService:
 
     @staticmethod
     async def _ensure_item_id(session: AsyncSession, sku: str) -> int:
-        row = await session.execute(
-            sa.text("SELECT id FROM items WHERE sku=:s LIMIT 1"), {"s": sku}
-        )
+        row = await session.execute(sa.text("SELECT id FROM items WHERE sku=:s LIMIT 1"), {"s": sku})
         found = row.scalar_one_or_none()
         if found is not None:
             return int(found)
@@ -157,7 +160,5 @@ class InboundService:
         if new_id is not None:
             return int(new_id)
 
-        row2 = await session.execute(
-            sa.text("SELECT id FROM items WHERE sku=:s LIMIT 1"), {"s": sku}
-        )
+        row2 = await session.execute(sa.text("SELECT id FROM items WHERE sku=:s LIMIT 1"), {"s": sku})
         return int(row2.scalar_one())
