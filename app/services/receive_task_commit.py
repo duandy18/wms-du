@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.services.inbound_service import InboundService
 from app.services.order_event_bus import OrderEventBus
@@ -16,6 +17,46 @@ from app.services.receive_task_query import get_with_lines
 
 
 NOEXP_BATCH_CODE = "NOEXP"
+
+
+def _recalc_po_line_status(line: PurchaseOrderLine) -> None:
+    """
+    采购行状态推进（与 purchase_order_receive.py 保持同口径）
+    """
+    if int(line.qty_received or 0) <= 0:
+        line.status = "CREATED"
+    elif int(line.qty_received or 0) < int(line.qty_ordered or 0):
+        line.status = "PARTIAL"
+    elif int(line.qty_received or 0) == int(line.qty_ordered or 0):
+        line.status = "RECEIVED"
+    else:
+        line.status = "CLOSED"
+
+
+def _recalc_po_header(po: PurchaseOrder, now: datetime) -> None:
+    """
+    采购单头状态推进（与 purchase_order_receive.py 保持同口径）
+    - all_zero  -> CREATED
+    - all_full  -> RECEIVED (+ closed_at)
+    - otherwise -> PARTIAL
+    并更新 last_received_at / updated_at
+    """
+    lines = list(po.lines or [])
+    all_zero = all(int(line.qty_received or 0) == 0 for line in lines)
+    all_full = all(int(line.qty_received or 0) >= int(line.qty_ordered or 0) for line in lines)
+
+    if all_zero:
+        po.status = "CREATED"
+        po.closed_at = None
+    elif all_full:
+        po.status = "RECEIVED"
+        po.closed_at = now
+    else:
+        po.status = "PARTIAL"
+        po.closed_at = None
+
+    po.last_received_at = now
+    po.updated_at = now
 
 
 async def commit(
@@ -68,13 +109,17 @@ async def commit(
 
     now = occurred_at or datetime.now(utc)
 
-    ref = (
-        f"RT-{task.id}"
-        if task.source_type != "ORDER"
-        else f"RMA-{int(task.source_id or 0) or task.id}"
-    )
+    ref = f"RT-{task.id}" if task.source_type != "ORDER" else f"RMA-{int(task.source_id or 0) or task.id}"
+
+    # ✅ 合同化：sub_reason（业务细分）
+    # - PO/非订单来源：采购收货入库
+    # - ORDER 来源：客户退货回仓入库
+    sub_reason = "RETURN_RECEIPT" if task.source_type == "ORDER" else "PO_RECEIPT"
 
     po_lines_map: dict[int, PurchaseOrderLine] = {}
+    po: Optional[PurchaseOrder] = None
+    touched_po_qty = False
+
     if task.po_id is not None:
         po = await load_po(session, task.po_id)
         for line in po.lines or []:
@@ -110,6 +155,7 @@ async def commit(
             production_date=line.production_date,
             expiry_date=line.expiry_date,
             trace_id=trace_id,
+            sub_reason=sub_reason,  # ✅ 关键：把业务细分写进台账
         )
 
         line.status = "COMMITTED"
@@ -117,9 +163,15 @@ async def commit(
         if line.po_line_id is not None and line.po_line_id in po_lines_map:
             po_line = po_lines_map[line.po_line_id]
             po_line.qty_received += qty_purchase
+            _recalc_po_line_status(po_line)
+            touched_po_qty = True
 
         if task.source_type == "ORDER":
             returned_by_item[line.item_id] = returned_by_item.get(line.item_id, 0) + qty_purchase
+
+    # ✅ 补齐：如果发生了 PO 行回写，则推进 PO 单头状态/时间
+    if po is not None and touched_po_qty:
+        _recalc_po_header(po, now)
 
     task.status = "COMMITTED"
     await session.flush()
@@ -159,9 +211,7 @@ async def commit(
             result = await recon.reconcile_order(order_id)
             await recon.apply_counters(order_id)
 
-            full_returned = all(
-                line_result.remaining_refundable == 0 for line_result in result.lines
-            )
+            full_returned = all(line_result.remaining_refundable == 0 for line_result in result.lines)
             new_status = "RETURNED" if full_returned else "PARTIALLY_RETURNED"
 
             await session.execute(
