@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.services.inbound_service import InboundService
@@ -109,7 +111,11 @@ async def commit(
 
     now = occurred_at or datetime.now(utc)
 
-    ref = f"RT-{task.id}" if task.source_type != "ORDER" else f"RMA-{int(task.source_id or 0) or task.id}"
+    ref = (
+        f"RT-{task.id}"
+        if task.source_type != "ORDER"
+        else f"RMA-{int(task.source_id or 0) or task.id}"
+    )
 
     # ✅ 合同化：sub_reason（业务细分）
     # - PO/非订单来源：采购收货入库
@@ -125,6 +131,7 @@ async def commit(
         for line in po.lines or []:
             po_lines_map[line.id] = line
 
+    receipt: Optional[InboundReceipt] = None
     ref_line_counter = 0
     returned_by_item: dict[int, int] = {}
 
@@ -138,14 +145,15 @@ async def commit(
         factor = int(line.units_per_case or 1)
         if factor <= 0:
             factor = 1
-        qty_base = qty_purchase * factor
+        qty_units = qty_purchase * factor
 
         line.committed_qty = qty_purchase
         ref_line_counter += 1
 
+        # 1) 写库存/台账（底座事实）
         await inbound_svc.receive(
             session=session,
-            qty=qty_base,
+            qty=qty_units,
             ref=ref,
             ref_line=ref_line_counter,
             warehouse_id=task.warehouse_id,
@@ -155,19 +163,86 @@ async def commit(
             production_date=line.production_date,
             expiry_date=line.expiry_date,
             trace_id=trace_id,
-            sub_reason=sub_reason,  # ✅ 关键：把业务细分写进台账
+            sub_reason=sub_reason,
         )
 
         line.status = "COMMITTED"
 
+        # 2) 回写 PO 行
+        po_line: Optional[PurchaseOrderLine] = None
         if line.po_line_id is not None and line.po_line_id in po_lines_map:
             po_line = po_lines_map[line.po_line_id]
             po_line.qty_received += qty_purchase
             _recalc_po_line_status(po_line)
             touched_po_qty = True
 
+        # 3) 收货事实层：第一次遇到实际收货行时创建 header
+        if receipt is None:
+            supplier_id_val = getattr(task, "supplier_id", None)
+            supplier_name_val = getattr(task, "supplier_name", None)
+
+            src_type = str(task.source_type or "PO")
+            src_id = (
+                int(task.source_id)
+                if task.source_id is not None
+                else (int(task.po_id) if task.po_id is not None else None)
+            )
+
+            receipt = InboundReceipt(
+                warehouse_id=int(task.warehouse_id),
+                supplier_id=int(supplier_id_val) if supplier_id_val is not None else None,
+                supplier_name=str(supplier_name_val) if supplier_name_val else None,
+                source_type=src_type,
+                source_id=src_id,
+                receive_task_id=int(task.id),
+                ref=str(ref),
+                trace_id=str(trace_id) if trace_id else None,
+                status="CONFIRMED",
+                remark=str(getattr(task, "remark", "") or ""),
+                occurred_at=now,
+            )
+            session.add(receipt)
+            # flush 以获得 receipt.id（用于明细 FK）
+            await session.flush()
+
+        # 4) 收货事实层：插 line
+        unit_cost: Optional[Decimal] = None
+        line_amount: Optional[Decimal] = None
+        item_name_snap: Optional[str] = None
+        item_sku_snap: Optional[str] = None
+        po_line_id_val: Optional[int] = None
+
+        if po_line is not None:
+            po_line_id_val = int(po_line.id)
+            item_name_snap = po_line.item_name
+            item_sku_snap = po_line.item_sku
+            if po_line.supply_price is not None:
+                unit_cost = Decimal(str(po_line.supply_price))
+            if unit_cost is not None:
+                line_amount = (Decimal(int(qty_units)) * unit_cost).quantize(Decimal("0.01"))
+
+        receipt_line = InboundReceiptLine(
+            receipt_id=int(receipt.id),  # type: ignore[arg-type]
+            line_no=int(ref_line_counter),
+            po_line_id=po_line_id_val,
+            item_id=int(line.item_id),
+            item_name=item_name_snap or line.item_name or None,
+            item_sku=item_sku_snap or line.item_sku or None,
+            batch_code=str(line.batch_code),
+            production_date=line.production_date,
+            expiry_date=line.expiry_date,
+            qty_received=int(qty_purchase),
+            units_per_case=int(factor),
+            qty_units=int(qty_units),
+            unit_cost=unit_cost,
+            line_amount=line_amount,
+            remark=str(line.remark or "") if getattr(line, "remark", None) else None,
+        )
+        session.add(receipt_line)
+
+        # 5) ORDER 来源：为 order_returned event 准备聚合
         if task.source_type == "ORDER":
-            returned_by_item[line.item_id] = returned_by_item.get(line.item_id, 0) + qty_purchase
+            returned_by_item[int(line.item_id)] = returned_by_item.get(int(line.item_id), 0) + qty_purchase
 
     # ✅ 补齐：如果发生了 PO 行回写，则推进 PO 单头状态/时间
     if po is not None and touched_po_qty:

@@ -62,6 +62,7 @@ from app.api.routers.devconsole_orders import router as devconsole_orders_router
 from app.api.routers.fake_platform import router as fake_platform_router
 from app.api.routers.finance_overview import router as finance_overview_router
 from app.api.routers.flow_replay import router as flow_replay_router
+from app.api.routers.inbound_receipts import router as inbound_receipts_router
 from app.api.routers.intelligence import router as intelligence_router
 from app.api.routers.item_barcodes import router as item_barcodes_router
 from app.api.routers.items import router as items_router
@@ -160,6 +161,7 @@ app.include_router(outbound_ops_router)
 app.include_router(purchase_orders_router)
 app.include_router(purchase_reports_router)
 app.include_router(receive_tasks_router)
+app.include_router(inbound_receipts_router)
 app.include_router(return_tasks_router)
 app.include_router(reserve_soft_router)
 app.include_router(pick_tasks_router)
