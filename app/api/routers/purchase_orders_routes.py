@@ -38,24 +38,20 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         )
         await session.commit()
 
-        po_with_lines = await svc.get_po_with_lines(session, po.id)
-        if po_with_lines is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to load created PurchaseOrder with lines",
-            )
-
-        return PurchaseOrderWithLinesOut.model_validate(po_with_lines)
+        po_out = await svc.get_po_with_lines(session, po.id)
+        if po_out is None:
+            raise HTTPException(status_code=500, detail="Failed to load created PurchaseOrder with lines")
+        return po_out
 
     @router.get("/{po_id}", response_model=PurchaseOrderWithLinesOut)
     async def get_purchase_order(
         po_id: int,
         session: AsyncSession = Depends(get_session),
     ) -> PurchaseOrderWithLinesOut:
-        po = await svc.get_po_with_lines(session, po_id)
-        if po is None:
+        po_out = await svc.get_po_with_lines(session, po_id)
+        if po_out is None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found")
-        return PurchaseOrderWithLinesOut.model_validate(po)
+        return po_out
 
     @router.post("/{po_id}/receive-line", response_model=PurchaseOrderWithLinesOut)
     async def receive_purchase_order_line(
@@ -64,10 +60,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         session: AsyncSession = Depends(get_session),
     ) -> PurchaseOrderWithLinesOut:
         if payload.line_id is None and payload.line_no is None:
-            raise HTTPException(
-                status_code=400,
-                detail="line_id 和 line_no 不能同时为空",
-            )
+            raise HTTPException(status_code=400, detail="line_id 和 line_no 不能同时为空")
 
         po = await svc.receive_po_line(
             session,
@@ -78,11 +71,10 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         )
         await session.commit()
 
-        po_with_lines = await svc.get_po_with_lines(session, po.id)
-        if po_with_lines is None:
+        po_out = await svc.get_po_with_lines(session, po.id)
+        if po_out is None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found after receive")
-
-        return PurchaseOrderWithLinesOut.model_validate(po_with_lines)
+        return po_out
 
     @router.get("/", response_model=List[PurchaseOrderWithLinesOut])
     async def list_purchase_orders(
@@ -112,6 +104,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             if po.lines:
                 po.lines.sort(key=lambda line: (line.line_no, line.id))
 
+        # 列表不做主数据补齐（避免性能陷阱）；详情页口径由 get_po_with_lines 保证严格对齐
         return [PurchaseOrderWithLinesOut.model_validate(po) for po in rows]
 
     @router.post("/dev-demo", response_model=PurchaseOrderWithLinesOut)
@@ -142,13 +135,21 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             item_name = row.get("name") or f"ITEM-{item_id}"
             qty_ordered = base_qty * idx
 
+            # 让 demo 更像真实业务数据：给出可读的规格与分组
+            # - spec_text：给一个稳定的可读格式（示例：85g*12袋 / 170g*6袋 ...）
+            # - category：业务分组示例（猫条/双拼），仅用于演示
+            is_odd = (idx % 2) == 1
+            spec_text = f"{85 * idx}g*{12 if is_odd else 6}袋"
+            category = "猫条" if is_odd else "双拼"
+
             lines.append(
                 {
                     "line_no": idx,
                     "item_id": item_id,
                     "item_name": item_name,
                     "qty_ordered": qty_ordered,
-                    "spec_text": None,
+                    "category": category,
+                    "spec_text": spec_text,
                     "base_uom": "袋",
                     "purchase_uom": "件",
                     "supply_price": 10 * idx,
@@ -171,11 +172,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         )
         await session.commit()
 
-        po_with_lines = await svc.get_po_with_lines(session, po.id)
-        if po_with_lines is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to load demo PurchaseOrder with lines",
-            )
-
-        return PurchaseOrderWithLinesOut.model_validate(po_with_lines)
+        po_out = await svc.get_po_with_lines(session, po.id)
+        if po_out is None:
+            raise HTTPException(status_code=500, detail="Failed to load demo PurchaseOrder with lines")
+        return po_out

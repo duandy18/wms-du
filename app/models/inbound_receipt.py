@@ -93,6 +93,12 @@ class InboundReceiptLine(Base):
     item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     item_sku: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
+    # ✅ 新增：商品/采购行快照字段（事实层可解释）
+    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    spec_text: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    base_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    purchase_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
     batch_code: Mapped[str] = mapped_column(String(64), nullable=False)
     production_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)

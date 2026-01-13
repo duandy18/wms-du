@@ -9,61 +9,54 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routers.purchase_reports_helpers import apply_common_filters, time_mode_query
 from app.db.session import get_session
+from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
-from app.models.purchase_order_line import PurchaseOrderLine
+from app.models.receive_task import ReceiveTask
 from app.schemas.purchase_report import SupplierPurchaseReportItem
-
-from app.api.routers.purchase_reports_helpers import apply_common_filters
 
 
 def register(router: APIRouter) -> None:
     @router.get("/suppliers", response_model=List[SupplierPurchaseReportItem])
     async def purchase_report_by_suppliers(
         session: AsyncSession = Depends(get_session),
-        date_from: Optional[date] = Query(None, description="起始日期（含），按采购单创建时间过滤"),
-        date_to: Optional[date] = Query(None, description="结束日期（含），按采购单创建时间过滤"),
-        warehouse_id: Optional[int] = Query(None, description="按仓库 ID 过滤"),
-        supplier_id: Optional[int] = Query(None, description="按供应商 ID 过滤"),
+        date_from: Optional[date] = Query(None, description="起始日期（含）"),
+        date_to: Optional[date] = Query(None, description="结束日期（含）"),
+        warehouse_id: Optional[int] = Query(None, description="按仓库 ID 过滤（事实维度）"),
+        supplier_id: Optional[int] = Query(None, description="按供应商 ID 过滤（事实维度）"),
         status: Optional[str] = Query(
             None,
-            description="按采购单状态过滤，例如 CREATED / PARTIAL / RECEIVED / CLOSED",
+            description="按采购单状态过滤（维度），例如 CREATED / PARTIAL / RECEIVED / CLOSED",
         ),
+        time_mode: str = time_mode_query("occurred"),
     ) -> List[SupplierPurchaseReportItem]:
         """
-        按供应商聚合的采购报表：
+        按供应商聚合的采购报表（Receipt 事实口径）：
 
-        - 聚合维度：supplier_id + supplier_name（supplier_name 为空时回退 supplier）
-        - 指标：
-            * order_count：采购单数量
-            * total_qty_cases：订购件数合计（qty_ordered 之和）
-            * total_units：折算最小单位数量合计（qty_ordered × units_per_case，缺省 units_per_case=1）
-            * total_amount：行金额合计（优先使用 line_amount，否则 qty_ordered × units_per_case × supply_price）
-            * avg_unit_price：金额 / 最小单位数
+        - 统计事实来源：inbound_receipts + inbound_receipt_lines
+        - 仅统计 source_type=PO 的收货事实
+        - supplier 维度优先使用 InboundReceipt.supplier_id/supplier_name（事实快照）
         """
-        # qty_units = qty_ordered * COALESCE(units_per_case, 1)
-        qty_units_expr = PurchaseOrderLine.qty_ordered * func.coalesce(
-            PurchaseOrderLine.units_per_case, 1
-        )
+        # ⚠️ 关键：必须复用同一个表达式对象（否则会变成不同 bindparam，PG 会报 grouping error）
+        supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label("supplier_name")
 
         stmt = (
             select(
-                PurchaseOrder.supplier_id,
-                func.coalesce(PurchaseOrder.supplier_name, PurchaseOrder.supplier).label(
-                    "supplier_name"
-                ),
-                func.count(distinct(PurchaseOrder.id)).label("order_count"),
-                func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0).label("total_qty_cases"),
-                func.coalesce(func.sum(qty_units_expr), 0).label("total_units"),
-                func.coalesce(func.sum(PurchaseOrderLine.line_amount), 0).label(
-                    "total_amount",
-                ),
+                InboundReceipt.supplier_id,
+                supplier_name_expr,
+                # order_count：发生收货事实的 PO 数（distinct po_id）
+                func.count(distinct(InboundReceipt.source_id)).label("order_count"),
+                func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label("total_qty_cases"),
+                func.coalesce(func.sum(InboundReceiptLine.qty_units), 0).label("total_units"),
+                func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label("total_amount"),
             )
-            .select_from(PurchaseOrder)
-            .join(
-                PurchaseOrderLine,
-                PurchaseOrderLine.po_id == PurchaseOrder.id,
-            )
+            .select_from(InboundReceipt)
+            .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
+            # 维度 join（只用于 status / po_* 时间维度；不作为统计来源）
+            .outerjoin(ReceiveTask, ReceiveTask.id == InboundReceipt.receive_task_id)
+            .outerjoin(PurchaseOrder, PurchaseOrder.id == ReceiveTask.po_id)
+            .where(InboundReceipt.source_type == "PO")
         )
 
         stmt = apply_common_filters(
@@ -73,32 +66,25 @@ def register(router: APIRouter) -> None:
             warehouse_id=warehouse_id,
             supplier_id=supplier_id,
             status=status,
+            time_mode=time_mode,
         )
 
         stmt = stmt.group_by(
-            PurchaseOrder.supplier_id,
-            func.coalesce(PurchaseOrder.supplier_name, PurchaseOrder.supplier),
+            InboundReceipt.supplier_id,
+            supplier_name_expr,
         ).order_by("supplier_name")
 
         res = await session.execute(stmt)
         rows = res.all()
 
         items: List[SupplierPurchaseReportItem] = []
-        for (
-            supplier_id_val,
-            supplier_name,
-            order_count,
-            total_qty_cases,
-            total_units,
-            total_amount,
-        ) in rows:
+        for supplier_id_val, supplier_name, order_count, total_qty_cases, total_units, total_amount in rows:
             total_units_int = int(total_units or 0)
             total_amount_dec = Decimal(str(total_amount or 0))
+
             avg_unit_price: Optional[Decimal]
-            if total_units_int > 0 and total_amount_dec is not None:
-                avg_unit_price = (total_amount_dec / total_units_int).quantize(
-                    Decimal("0.0001"),
-                )
+            if total_units_int > 0:
+                avg_unit_price = (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
             else:
                 avg_unit_price = None
 

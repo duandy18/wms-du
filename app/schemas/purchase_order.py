@@ -11,14 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 # Phase 2 — 多行采购单模型（唯一形态）
 # =======================================================
 
-# ----- 行表基础字段 -----
-
 
 class PurchaseOrderLineBase(BaseModel):
     line_no: int = Field(..., gt=0, description="行号，从 1 开始递增")
     item_id: int = Field(..., description="商品 ID")
 
-    # 分组（猫条 / 双拼 / 鲜封包等）
+    # 分组（猫条 / 双拼 / 鲜封包等）——这是 PO 行自己的业务分组快照，不等于 Item 主数据的“品类”
     category: Optional[str] = Field(
         None,
         description="业务分组，如 猫条/双拼/鲜封包（当前前端不编辑，保留兼容）",
@@ -46,9 +44,6 @@ class PurchaseOrderLineBase(BaseModel):
     remark: Optional[str] = Field(None, description="行备注")
 
 
-# ----- 创建行 -----
-
-
 class PurchaseOrderLineCreate(PurchaseOrderLineBase):
     """
     创建行时可带商品快照信息和规格视图：
@@ -66,24 +61,39 @@ class PurchaseOrderLineCreate(PurchaseOrderLineBase):
     purchase_uom: Optional[str] = Field(None, description="采购单位，如 件/箱")
 
 
-# ----- 行的返回模型 -----
-
-
 class PurchaseOrderLineOut(BaseModel):
     id: int
     po_id: int
     line_no: int
 
-    # SKU
+    # ====== PO 行快照（历史兼容）======
     item_id: int
     item_name: Optional[str]
     item_sku: Optional[str]
-    category: Optional[str]
 
-    # 规格 & 单位
+    # ⚠️ PO 行的业务分组快照（不等于 Item 主数据的品类）
+    biz_category: Optional[str] = Field(None, description="PO 行业务分组快照（兼容旧 category）")
+
+    # 规格 & 单位（PO 行快照）
     spec_text: Optional[str]
     base_uom: Optional[str]
     purchase_uom: Optional[str]
+
+    # ====== Item 主数据字段（用于与商品主数据列完全对齐）======
+    sku: Optional[str] = None
+    primary_barcode: Optional[str] = None
+
+    brand: Optional[str] = None
+    category: Optional[str] = None  # Item 主数据“品类”
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    weight_kg: Optional[Decimal] = None
+    uom: Optional[str] = None
+
+    has_shelf_life: Optional[bool] = None
+    shelf_life_value: Optional[int] = None
+    shelf_life_unit: Optional[str] = None
+    enabled: Optional[bool] = None
 
     # 价格体系
     supply_price: Optional[Decimal]
@@ -106,9 +116,6 @@ class PurchaseOrderLineOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-# ----- 带行的头表详情视图 -----
 
 
 class PurchaseOrderWithLinesOut(BaseModel):
@@ -146,13 +153,9 @@ class PurchaseOrderWithLinesOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ----- 创建头 + 行的请求体 -----
-
-
 class PurchaseOrderCreateV2(BaseModel):
     """
     创建“头 + 多行”的请求体（唯一入口）：
-
     - supplier: 展示用名称
     - supplier_id: 可选，关联 suppliers.id
     - supplier_name: 可选，不传则后端用 supplier 回填
@@ -166,41 +169,24 @@ class PurchaseOrderCreateV2(BaseModel):
     supplier: str = Field(..., description="供应商名称（展示用）")
     warehouse_id: int = Field(..., description="仓库 ID")
 
-    supplier_id: Optional[int] = Field(
-        None,
-        description="供应商 ID（可选，对应 suppliers.id）",
-    )
-    supplier_name: Optional[str] = Field(
-        None,
-        description="供应商名称快照（可选，不填则用 supplier）",
-    )
+    supplier_id: Optional[int] = Field(None, description="供应商 ID（可选，对应 suppliers.id）")
+    supplier_name: Optional[str] = Field(None, description="供应商名称快照（可选，不填则用 supplier）")
 
     purchaser: str = Field(..., description="采购人姓名或编码")
     purchase_time: datetime = Field(..., description="采购时间（下单/确认时间）")
 
     remark: Optional[str] = Field(None, description="采购单备注（可选）")
 
-    lines: List[PurchaseOrderLineCreate] = Field(
-        ...,
-        min_length=1,
-        description="采购行列表，至少一行",
-    )
+    lines: List[PurchaseOrderLineCreate] = Field(..., min_length=1, description="采购行列表，至少一行")
 
 
 class PurchaseOrderReceiveLineIn(BaseModel):
     """
     行级收货请求体（唯一收货入口）。
-
     - line_id / line_no 二选一，优先使用 line_id；
     - qty：本次收货件数（>0）。
     """
 
-    line_id: Optional[int] = Field(
-        None,
-        description="行 ID（可选，优先使用）",
-    )
-    line_no: Optional[int] = Field(
-        None,
-        description="行号（可选，line_id 缺失时用）",
-    )
+    line_id: Optional[int] = Field(None, description="行 ID（可选，优先使用）")
+    line_no: Optional[int] = Field(None, description="行号（可选，line_id 缺失时用）")
     qty: int = Field(..., gt=0, description="本次收货件数（>0）")

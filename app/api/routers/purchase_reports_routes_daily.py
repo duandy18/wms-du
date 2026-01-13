@@ -9,58 +9,62 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routers.purchase_reports_helpers import apply_common_filters, time_mode_query
 from app.db.session import get_session
+from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
-from app.models.purchase_order_line import PurchaseOrderLine
+from app.models.receive_task import ReceiveTask
 from app.schemas.purchase_report import DailyPurchaseReportItem
-
-from app.api.routers.purchase_reports_helpers import apply_common_filters
 
 
 def register(router: APIRouter) -> None:
     @router.get("/daily", response_model=List[DailyPurchaseReportItem])
     async def purchase_report_daily(
         session: AsyncSession = Depends(get_session),
-        date_from: Optional[date] = Query(None, description="起始日期（含），按采购单创建时间过滤"),
-        date_to: Optional[date] = Query(None, description="结束日期（含），按采购单创建时间过滤"),
-        warehouse_id: Optional[int] = Query(None, description="按仓库 ID 过滤"),
-        supplier_id: Optional[int] = Query(None, description="按供应商 ID 过滤"),
+        date_from: Optional[date] = Query(None, description="起始日期（含）"),
+        date_to: Optional[date] = Query(None, description="结束日期（含）"),
+        warehouse_id: Optional[int] = Query(None, description="按仓库 ID 过滤（事实维度）"),
+        supplier_id: Optional[int] = Query(None, description="按供应商 ID 过滤（事实维度）"),
         status: Optional[str] = Query(
             None,
-            description="按采购单状态过滤，例如 CREATED / PARTIAL / RECEIVED / CLOSED",
+            description="按采购单状态过滤（维度），例如 CREATED / PARTIAL / RECEIVED / CLOSED",
         ),
+        time_mode: str = time_mode_query("occurred"),
     ) -> List[DailyPurchaseReportItem]:
         """
-        按天聚合的采购报表：
+        按天聚合的采购报表（Receipt 事实口径）：
 
-        - 聚合维度：采购单创建日期（date）
-        - 指标：
-            * order_count：当日采购单数
-            * total_qty_cases：当日订购件数合计
-            * total_units：当日折算最小单位数合计
-            * total_amount：当日金额合计
+        - 统计事实来源：inbound_receipts + inbound_receipt_lines
+        - 仅统计 source_type=PO 的收货事实
+        - 时间口径（time_mode）：
+            * occurred（默认）：按收货发生时间（InboundReceipt.occurred_at）
+            * po_created：按 PO 创建时间（PurchaseOrder.created_at）作为维度切片
+            * po_purchase_time：按 PO 采购时间（PurchaseOrder.purchase_time）作为维度切片
+          注意：无论选哪个 time_mode，统计指标都只来自 Receipt（不从 PO/PO line 统计）。
         """
-        qty_units_expr = PurchaseOrderLine.qty_ordered * func.coalesce(
-            PurchaseOrderLine.units_per_case, 1
-        )
-
-        day_expr = func.date(PurchaseOrder.created_at).label("day")
+        # 时间维度表达式
+        if time_mode == "po_created":
+            day_expr = func.date(PurchaseOrder.created_at).label("day")
+        elif time_mode == "po_purchase_time":
+            day_expr = func.date(PurchaseOrder.purchase_time).label("day")
+        else:
+            day_expr = func.date(InboundReceipt.occurred_at).label("day")
 
         stmt = (
             select(
                 day_expr,
-                func.count(distinct(PurchaseOrder.id)).label("order_count"),
-                func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0).label("total_qty_cases"),
-                func.coalesce(func.sum(qty_units_expr), 0).label("total_units"),
-                func.coalesce(func.sum(PurchaseOrderLine.line_amount), 0).label(
-                    "total_amount",
-                ),
+                # order_count：为了保持历史字段名不破坏前端，含义改为“当日发生收货的 PO 数（distinct po_id）”
+                func.count(distinct(InboundReceipt.source_id)).label("order_count"),
+                func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label("total_qty_cases"),
+                func.coalesce(func.sum(InboundReceiptLine.qty_units), 0).label("total_units"),
+                func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label("total_amount"),
             )
-            .select_from(PurchaseOrder)
-            .join(
-                PurchaseOrderLine,
-                PurchaseOrderLine.po_id == PurchaseOrder.id,
-            )
+            .select_from(InboundReceipt)
+            .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
+            # 维度 join（只用于 status / po_* 时间维度；不作为统计来源）
+            .outerjoin(ReceiveTask, ReceiveTask.id == InboundReceipt.receive_task_id)
+            .outerjoin(PurchaseOrder, PurchaseOrder.id == ReceiveTask.po_id)
+            .where(InboundReceipt.source_type == "PO")
         )
 
         stmt = apply_common_filters(
@@ -70,6 +74,7 @@ def register(router: APIRouter) -> None:
             warehouse_id=warehouse_id,
             supplier_id=supplier_id,
             status=status,
+            time_mode=time_mode,
         )
 
         stmt = stmt.group_by(day_expr).order_by(day_expr.asc())
