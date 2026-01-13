@@ -107,15 +107,15 @@ alembic-history-dev: venv
 
 dev-reset-db: venv
 	@echo "!!! DANGER: DROP & RECREATE dev DB on 5433/wms !!!"
-	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms;"
-	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms;"
+	@PGPASSWORD="$${PGPASSWORD:-}" psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms;"
+	@PGPASSWORD="$${PGPASSWORD:-}" psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms;"
 	WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) upgrade head
 	@echo "[dev-reset-db] Done."
 
 dev-reset-test-db: venv
 	@echo "[dev-reset-test-db] DROP & RECREATE test DB on 5433/wms_test ..."
-	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms_test;"
-	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms_test;"
+	@PGPASSWORD="$${PGPASSWORD:-}" psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms_test;"
+	@PGPASSWORD="$${PGPASSWORD:-}" psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms_test;"
 	WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(ALEMB) upgrade head
 	@echo "[dev-reset-test-db] Done."
 
@@ -331,7 +331,7 @@ lint-backend:
 # Backend smoke tests（CI 兼容）
 # =================================
 .PHONY: test-backend-smoke
-test-backend-smoke: venv
+test-backend-smoke: dev-reset-test-db
 	@echo "[smoke] Running quick backend smoke tests on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))..."
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q tests/services/test_store_service.py
@@ -340,7 +340,7 @@ test-backend-smoke: venv
 # Pricing smoke tests（quote + unique + copy）
 # =================================
 .PHONY: test-pricing-smoke
-test-pricing-smoke: venv
+test-pricing-smoke: dev-reset-test-db
 	@echo "[pytest] Pricing smoke (quote + unique + copy)"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
