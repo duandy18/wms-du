@@ -35,7 +35,12 @@ jobs:
       # 后端统一 DSN（sync/async 引擎都会从这里和 WMS_* 中取）
       DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
       WMS_DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
-      WMS_TEST_DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+
+      # ✅ CI 里测试库语义明确：wms_test
+      WMS_TEST_DATABASE_URL: postgresql+psycopg://wms:wms@127.0.0.1:5433/wms_test
+
+      # ✅ 让 Makefile 里的 psql drop/create 非交互（需要仓库 secret: PGPASSWORD）
+      PGPASSWORD: ${{ secrets.PGPASSWORD }}
 
     steps:
       - name: Checkout
@@ -69,6 +74,7 @@ jobs:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           WMS_DATABASE_URL: ${{ env.WMS_DATABASE_URL }}
           WMS_TEST_DATABASE_URL: ${{ env.WMS_TEST_DATABASE_URL }}
+          PGPASSWORD: ${{ env.PGPASSWORD }}
         run: |
           . .venv/bin/activate
           export PYTHONPATH=.
@@ -89,6 +95,7 @@ jobs:
         env:
           WMS_DATABASE_URL: ${{ env.WMS_DATABASE_URL }}
           WMS_TEST_DATABASE_URL: ${{ env.WMS_TEST_DATABASE_URL }}
+          PGPASSWORD: ${{ env.PGPASSWORD }}
         run: |
           . .venv/bin/activate
           export PYTHONPATH=.
