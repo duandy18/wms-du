@@ -17,6 +17,9 @@ TEST_DB_DSN := postgresql+psycopg://postgres:wms@127.0.0.1:55432/postgres
 # 本地 dev 库 DSN（5433）
 DEV_DB_DSN  := postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 
+# ✅ 本地独立测试库 DSN（5433）—— pytest 默认只允许跑在这里，避免误伤 DEV_DB_DSN
+DEV_TEST_DB_DSN := postgresql+psycopg://wms:wms@127.0.0.1:5433/wms_test
+
 # ---- 自动加载 .env.local ----
 ifneq (,$(wildcard .env.local))
 include .env.local
@@ -37,11 +40,12 @@ help:
 	@echo "  make alembic-current-dev      - 查看当前 DEV 库 revision（5433）"
 	@echo "  make alembic-history-dev      - 查看 DEV 库最近迁移历史（tail 30）"
 	@echo ""
-	@echo "  make dev-reset-db             - 重置 5433 开发库（慎用）"
+	@echo "  make dev-reset-db             - 重置 5433 开发库（慎用，核爆）"
+	@echo "  make dev-reset-test-db        - 重置 5433 测试库 wms_test（推荐，pytest 使用）"
 	@echo "  make dev-ensure-admin         - 在 5433 开发库添加 admin/admin123"
 	@echo "  make pilot-ensure-admin       - 在 55432 中试库添加 admin（自定义密码）"
 	@echo ""
-	@echo "  make test                     - pytest（支持 TESTS=... 指定文件）"
+	@echo "  make test                     - pytest（默认跑 wms_test；支持 TESTS=... 指定文件）"
 	@echo "  make test-rbac                - 只跑 RBAC 相关测试（test_user_api.py）"
 	@echo "  make test-internal-outbound   - 测内部出库 Golden Flow E2E"
 	@echo "  make test-pricing-smoke       - 计价系统 smoke（quote + unique + copy）"
@@ -62,6 +66,7 @@ deps: venv
 # ✅ 关键原则：
 # - 通用目标（upgrade-head / alembic-check / downgrade-base / revision-auto）
 #   默认绑定 DEV_DB_DSN，避免误跑到 TEST/PILOT。
+# - pytest 默认绑定 DEV_TEST_DB_DSN（wms_test），避免误伤 DEV_DB_DSN（wms）。
 # - 若你需要跑别的库，请使用 upgrade-test/check-test 或显式覆写 WMS_DATABASE_URL。
 
 .PHONY: alembic-check
@@ -98,7 +103,7 @@ alembic-history-dev: venv
 # Dev / Pilot DB Helpers（新增自动种 admin）
 # ==========================================
 
-.PHONY: dev-reset-db dev-ensure-admin pilot-ensure-admin
+.PHONY: dev-reset-db dev-reset-test-db dev-ensure-admin pilot-ensure-admin
 
 dev-reset-db: venv
 	@echo "!!! DANGER: DROP & RECREATE dev DB on 5433/wms !!!"
@@ -106,6 +111,13 @@ dev-reset-db: venv
 	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms;"
 	WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" $(ALEMB) upgrade head
 	@echo "[dev-reset-db] Done."
+
+dev-reset-test-db: venv
+	@echo "[dev-reset-test-db] DROP & RECREATE test DB on 5433/wms_test ..."
+	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "DROP DATABASE IF EXISTS wms_test;"
+	psql -h 127.0.0.1 -p 5433 -U wms postgres -c "CREATE DATABASE wms_test;"
+	WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(ALEMB) upgrade head
+	@echo "[dev-reset-test-db] Done."
 
 dev-ensure-admin: venv
 	@echo "[dev-ensure-admin] Ensuring admin on DEV (5433/wms)..."
@@ -166,26 +178,37 @@ mark-ac:
 # =================================
 .PHONY: test-core
 test-core: venv
-	@PYTHONPATH=. $(PYTEST) -q -m grp_core -s
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_core -s
 
 .PHONY: test-flow
 test-flow: venv
-	@PYTHONPATH=. $(PYTEST) -q -m grp_flow -s
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_flow -s
 
 .PHONY: test-snapshot
 test-snapshot: venv
-	@PYTHONPATH=. $(PYTEST) -q -m grp_snapshot -s
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_snapshot -s
 
 # ---------------------------------
 # 通用 pytest 入口（支持 TESTS=...）
 # ---------------------------------
 .PHONY: test
 test: venv
-	@echo "[pytest] Running tests (DEV_DB_DSN=$(DEV_DB_DSN))..."
 	@bash -c 'set -euo pipefail; \
 	  export PYTHONPATH=. ; \
-	  export WMS_DATABASE_URL="$(DEV_DB_DSN)"; \
-	  export WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)"; \
+	  export WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
+	  export WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
+	  echo ""; \
+	  echo "=================================================="; \
+	  echo "[pytest] USING DATABASE:"; \
+	  echo "  WMS_DATABASE_URL      = $${WMS_DATABASE_URL}"; \
+	  echo "  WMS_TEST_DATABASE_URL = $${WMS_TEST_DATABASE_URL}"; \
+	  if echo "$${WMS_DATABASE_URL}" | grep -q "wms_test"; then \
+	    echo "  MODE = TEST (wms_test) ✅"; \
+	  else \
+	    echo "  MODE = DEV / OTHER ⚠️  (CHECK!)"; \
+	  fi; \
+	  echo "=================================================="; \
+	  echo ""; \
 	  if [ -n "$${TESTS:-}" ]; then \
 	    echo ">>> TESTS=$${TESTS}"; \
 	    "$(PYTEST)" -q -s $${TESTS}; \
@@ -199,7 +222,7 @@ test: venv
 .PHONY: test-rbac
 test-rbac: venv
 	@echo "[pytest] RBAC tests – tests/api/test_user_api.py"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/api/test_user_api.py
 
 # ---------------------------------
@@ -208,7 +231,7 @@ test-rbac: venv
 .PHONY: test-internal-outbound
 test-internal-outbound: venv
 	@echo "[pytest] Internal Outbound Golden Flow E2E"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/services/test_internal_outbound_service.py
 
 # =================================
@@ -217,7 +240,7 @@ test-internal-outbound: venv
 .PHONY: test-phase4-routing
 test-phase4-routing: venv
 	@echo "[pytest] Phase 4 routing tests"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q \
 		tests/services/test_order_service_phase4_routing.py \
 		tests/services/test_order_route_mode_phase4.py \
@@ -228,8 +251,8 @@ test-phase4-routing: venv
 # =================================
 .PHONY: test-all
 test-all: venv
-	@echo "[pytest] Running full test suite"
-	@PYTHONPATH=. $(PYTEST) -q
+	@echo "[pytest] Running full test suite on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q
 
 # =================================
 # 核心服务 CRUD/UoW
@@ -237,7 +260,7 @@ test-all: venv
 .PHONY: test-svc-core
 test-svc-core: venv
 	@echo "[pytest] Core Service CRUD/UoW"
-	@PYTHONPATH=. $(PYTEST) -q \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q \
 		tests/services/test_store_service.py \
 		tests/services/test_user_service.py \
 		tests/services/test_uow.py
@@ -309,8 +332,8 @@ lint-backend:
 # =================================
 .PHONY: test-backend-smoke
 test-backend-smoke: venv
-	@echo "[smoke] Running quick backend smoke tests..."
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	@echo "[smoke] Running quick backend smoke tests on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))..."
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q tests/services/test_store_service.py
 
 # =================================
@@ -319,7 +342,7 @@ test-backend-smoke: venv
 .PHONY: test-pricing-smoke
 test-pricing-smoke: venv
 	@echo "[pytest] Pricing smoke (quote + unique + copy)"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_DB_DSN)" \
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
 	  tests/api/test_shipping_quote_pricing_api.py \
 	  tests/api/test_zone_brackets_constraints_and_copy.py
