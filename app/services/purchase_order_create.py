@@ -5,10 +5,32 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.item import Item
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
+
+
+async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
+    if not item_ids:
+        return {}
+    rows = (
+        (await session.execute(select(Item).where(Item.id.in_(item_ids))))
+        .scalars()
+        .all()
+    )
+    return {int(it.id): it for it in rows}
+
+
+def _require_supplier_for_po(supplier_id: Optional[int]) -> int:
+    if supplier_id is None:
+        raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
+    sid = int(supplier_id)
+    if sid <= 0:
+        raise ValueError("supplier_id 非法：采购单必须绑定供应商")
+    return sid
 
 
 async def create_po_v2(
@@ -34,6 +56,43 @@ async def create_po_v2(
 
     if not isinstance(purchase_time, datetime):
         raise ValueError("purchase_time 必须为 datetime 类型")
+
+    # ✅ 采购事实硬闸：采购单必须绑定供应商（否则无法做到“供应商->商品”的事实约束）
+    po_supplier_id = _require_supplier_for_po(supplier_id)
+
+    # 先收集 item_ids，用于批量查 Item（避免 N+1）
+    raw_item_ids: List[int] = []
+    for idx, raw in enumerate(lines, start=1):
+        item_id = raw.get("item_id")
+        qty_ordered = raw.get("qty_ordered")
+        if item_id is None or qty_ordered is None:
+            raise ValueError("每一行必须包含 item_id 与 qty_ordered")
+        try:
+            raw_item_ids.append(int(item_id))
+        except Exception as e:
+            raise ValueError(f"第 {idx} 行：item_id 非法") from e
+
+    item_ids = sorted({x for x in raw_item_ids if x > 0})
+    items_map = await _load_items_map(session, item_ids)
+
+    # ✅ 行级校验：商品存在、启用、且属于同一供应商
+    for idx, raw in enumerate(lines, start=1):
+        item_id = int(raw.get("item_id"))
+        it = items_map.get(item_id)
+        if it is None:
+            raise ValueError(f"第 {idx} 行：商品不存在（item_id={item_id}）")
+
+        if getattr(it, "enabled", True) is not True:
+            raise ValueError(f"第 {idx} 行：商品已停用（item_id={item_id}）")
+
+        it_supplier_id = getattr(it, "supplier_id", None)
+        if it_supplier_id is None:
+            raise ValueError(f"第 {idx} 行：商品未绑定供应商，禁止用于采购（item_id={item_id}）")
+
+        if int(it_supplier_id) != int(po_supplier_id):
+            raise ValueError(
+                f"第 {idx} 行：商品不属于当前供应商（item_id={item_id}）"
+            )
 
     norm_lines: List[Dict[str, Any]] = []
     total_amount = Decimal("0")
@@ -103,7 +162,7 @@ async def create_po_v2(
 
     po = PurchaseOrder(
         supplier=supplier.strip(),
-        supplier_id=supplier_id,
+        supplier_id=po_supplier_id,
         supplier_name=(supplier_name or supplier).strip(),
         warehouse_id=int(warehouse_id),
         purchaser=purchaser.strip(),

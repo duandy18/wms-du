@@ -1,7 +1,7 @@
 # app/schemas/purchase_order.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -61,6 +61,31 @@ class PurchaseOrderLineCreate(PurchaseOrderLineBase):
     purchase_uom: Optional[str] = Field(None, description="采购单位，如 件/箱")
 
 
+# -----------------------
+# ✅ 列表态：轻量行输出（不含 qty_remaining，不做主数据补齐）
+# -----------------------
+class PurchaseOrderLineListOut(BaseModel):
+    """
+    列表态行输出：只保证行自身的最小字段，避免“详情态强合同字段”污染列表接口。
+    """
+    id: int
+    po_id: int
+    line_no: int
+    item_id: int
+
+    qty_ordered: int
+    qty_received: int
+    status: str
+
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# -----------------------
+# ✅ 详情态：强合同行输出（含 qty_remaining + 主数据补齐）
+# -----------------------
 class PurchaseOrderLineOut(BaseModel):
     id: int
     po_id: int
@@ -107,6 +132,9 @@ class PurchaseOrderLineOut(BaseModel):
     qty_ordered: int
     qty_received: int
 
+    # ✅ 强合同：剩余可收数量（事实字段，后端计算）
+    qty_remaining: int = Field(..., ge=0, description="剩余可收数量（qty_ordered - qty_received，底限为 0）")
+
     # 金额 & 状态
     line_amount: Optional[Decimal]
     status: str
@@ -118,28 +146,27 @@ class PurchaseOrderLineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class PurchaseOrderWithLinesOut(BaseModel):
+# -----------------------
+# ✅ 列表态：采购单列表输出
+# -----------------------
+class PurchaseOrderListItemOut(BaseModel):
     """
-    采购单详情（头 + 行）。
-    头表只表达单据级别属性，数量和金额全部由行聚合。
+    列表态采购单：用于 /purchase-orders/ 列表。
+    - 不做主数据补齐
+    - 行使用 PurchaseOrderLineListOut（无 qty_remaining）
     """
-
     id: int
     supplier: str
     warehouse_id: int
 
-    # Phase 2 头表字段
     supplier_id: Optional[int]
     supplier_name: Optional[str]
     total_amount: Optional[Decimal]
 
-    # 新增：采购人 + 采购时间
     purchaser: str
     purchase_time: datetime
 
-    # 备注（可选）
     remark: Optional[str]
-
     status: str
 
     created_at: datetime
@@ -147,7 +174,34 @@ class PurchaseOrderWithLinesOut(BaseModel):
     last_received_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
 
-    # 行集合
+    lines: List[PurchaseOrderLineListOut] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PurchaseOrderWithLinesOut(BaseModel):
+    """
+    采购单详情（头 + 行，强合同）。
+    """
+    id: int
+    supplier: str
+    warehouse_id: int
+
+    supplier_id: Optional[int]
+    supplier_name: Optional[str]
+    total_amount: Optional[Decimal]
+
+    purchaser: str
+    purchase_time: datetime
+
+    remark: Optional[str]
+    status: str
+
+    created_at: datetime
+    updated_at: datetime
+    last_received_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+
     lines: List[PurchaseOrderLineOut] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -155,17 +209,8 @@ class PurchaseOrderWithLinesOut(BaseModel):
 
 class PurchaseOrderCreateV2(BaseModel):
     """
-    创建“头 + 多行”的请求体（唯一入口）：
-    - supplier: 展示用名称
-    - supplier_id: 可选，关联 suppliers.id
-    - supplier_name: 可选，不传则后端用 supplier 回填
-    - warehouse_id: 必填
-    - purchaser: 必填，采购人
-    - purchase_time: 必填，采购时间（ISO 时间）
-    - remark: 整单备注（可选）
-    - lines: 多行明细列表
+    创建“头 + 多行”的请求体（唯一入口）
     """
-
     supplier: str = Field(..., description="供应商名称（展示用）")
     warehouse_id: int = Field(..., description="仓库 ID")
 
@@ -183,10 +228,10 @@ class PurchaseOrderCreateV2(BaseModel):
 class PurchaseOrderReceiveLineIn(BaseModel):
     """
     行级收货请求体（唯一收货入口）。
-    - line_id / line_no 二选一，优先使用 line_id；
-    - qty：本次收货件数（>0）。
     """
-
     line_id: Optional[int] = Field(None, description="行 ID（可选，优先使用）")
     line_no: Optional[int] = Field(None, description="行号（可选，line_id 缺失时用）")
     qty: int = Field(..., gt=0, description="本次收货件数（>0）")
+
+    production_date: Optional[date] = Field(None, description="生产日期（有效期商品必填）")
+    expiry_date: Optional[date] = Field(None, description="到期日期（无法推算时必填）")

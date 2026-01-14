@@ -155,9 +155,28 @@ class ItemService:
         self.db.refresh(obj)
         return _decorate_rules(obj)
 
-    def get_all_items(self) -> List[Item]:
-        rows = self.db.execute(select(Item).order_by(Item.id.asc())).scalars().all()
+    # ✅ 新增：支持 supplier_id / enabled 过滤（采购创建/收货用）
+    # - 不传参数：等价于旧行为（返回全量）
+    def get_items(
+        self,
+        *,
+        supplier_id: Optional[int] = None,
+        enabled: Optional[bool] = None,
+    ) -> List[Item]:
+        stmt = select(Item)
+
+        if supplier_id is not None:
+            stmt = stmt.where(Item.supplier_id == supplier_id)
+
+        if enabled is not None:
+            stmt = stmt.where(Item.enabled == enabled)
+
+        rows = self.db.execute(stmt.order_by(Item.id.asc())).scalars().all()
         return [_decorate_rules(r) for r in rows]
+
+    # 兼容旧接口：保留原方法名（供其它模块调用）
+    def get_all_items(self) -> List[Item]:
+        return self.get_items()
 
     def get_item_by_id(self, id: int) -> Optional[Item]:
         if not id or id <= 0:

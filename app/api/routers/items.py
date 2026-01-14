@@ -1,9 +1,9 @@
 # app/api/routers/items.py
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
@@ -67,8 +67,20 @@ def create_item(
 # Query
 # ===========================
 @router.get("", response_model=List[ItemOut])
-def get_all_items(item_service: ItemService = Depends(get_item_service)):
-    return item_service.get_all_items()
+def get_all_items(
+    supplier_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="按供应商过滤（采购单创建/收货用）",
+    ),
+    enabled: Optional[bool] = Query(
+        None,
+        description="按启用状态过滤（enabled=true 只取启用商品）",
+    ),
+    item_service: ItemService = Depends(get_item_service),
+):
+    # ✅ 向后兼容：不传参数时等价于旧行为（返回全量）
+    return item_service.get_items(supplier_id=supplier_id, enabled=enabled)
 
 
 @router.get("/{id}", response_model=ItemOut)

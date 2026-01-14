@@ -13,9 +13,12 @@ from app.db.session import get_session
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.purchase_order import (
     PurchaseOrderCreateV2,
+    PurchaseOrderListItemOut,
     PurchaseOrderReceiveLineIn,
     PurchaseOrderWithLinesOut,
 )
+from app.schemas.purchase_order_receipts import PurchaseOrderReceiptEventOut
+from app.services.purchase_order_receipts import list_po_receipt_events
 from app.services.purchase_order_service import PurchaseOrderService
 
 
@@ -25,18 +28,22 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         payload: PurchaseOrderCreateV2,
         session: AsyncSession = Depends(get_session),
     ) -> PurchaseOrderWithLinesOut:
-        po = await svc.create_po_v2(
-            session,
-            supplier=payload.supplier,
-            warehouse_id=payload.warehouse_id,
-            supplier_id=payload.supplier_id,
-            supplier_name=payload.supplier_name,
-            purchaser=payload.purchaser,
-            purchase_time=payload.purchase_time,
-            remark=payload.remark,
-            lines=[line.model_dump() for line in payload.lines],
-        )
-        await session.commit()
+        try:
+            po = await svc.create_po_v2(
+                session,
+                supplier=payload.supplier,
+                warehouse_id=payload.warehouse_id,
+                supplier_id=payload.supplier_id,
+                supplier_name=payload.supplier_name,
+                purchaser=payload.purchaser,
+                purchase_time=payload.purchase_time,
+                remark=payload.remark,
+                lines=[line.model_dump() for line in payload.lines],
+            )
+            await session.commit()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         po_out = await svc.get_po_with_lines(session, po.id)
         if po_out is None:
@@ -53,6 +60,17 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found")
         return po_out
 
+    # ✅ 采购单历史收货事实（读台账）
+    @router.get("/{po_id}/receipts", response_model=List[PurchaseOrderReceiptEventOut])
+    async def get_purchase_order_receipts(
+        po_id: int,
+        session: AsyncSession = Depends(get_session),
+    ) -> List[PurchaseOrderReceiptEventOut]:
+        try:
+            return await list_po_receipt_events(session, po_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
     @router.post("/{po_id}/receive-line", response_model=PurchaseOrderWithLinesOut)
     async def receive_purchase_order_line(
         po_id: int,
@@ -62,28 +80,35 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         if payload.line_id is None and payload.line_no is None:
             raise HTTPException(status_code=400, detail="line_id 和 line_no 不能同时为空")
 
-        po = await svc.receive_po_line(
-            session,
-            po_id=po_id,
-            line_id=payload.line_id,
-            line_no=payload.line_no,
-            qty=payload.qty,
-        )
-        await session.commit()
+        try:
+            po = await svc.receive_po_line(
+                session,
+                po_id=po_id,
+                line_id=payload.line_id,
+                line_no=payload.line_no,
+                qty=payload.qty,
+                production_date=getattr(payload, "production_date", None),
+                expiry_date=getattr(payload, "expiry_date", None),
+            )
+            await session.commit()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         po_out = await svc.get_po_with_lines(session, po.id)
         if po_out is None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found after receive")
         return po_out
 
-    @router.get("/", response_model=List[PurchaseOrderWithLinesOut])
+    # ✅ 列表态：返回 PurchaseOrderListItemOut（轻量，不含 qty_remaining）
+    @router.get("/", response_model=List[PurchaseOrderListItemOut])
     async def list_purchase_orders(
         session: AsyncSession = Depends(get_session),
         skip: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=200),
         supplier: Optional[str] = Query(None),
         status: Optional[str] = Query(None),
-    ) -> List[PurchaseOrderWithLinesOut]:
+    ) -> List[PurchaseOrderListItemOut]:
         stmt = (
             select(PurchaseOrder)
             .options(selectinload(PurchaseOrder.lines))
@@ -104,8 +129,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             if po.lines:
                 po.lines.sort(key=lambda line: (line.line_no, line.id))
 
-        # 列表不做主数据补齐（避免性能陷阱）；详情页口径由 get_po_with_lines 保证严格对齐
-        return [PurchaseOrderWithLinesOut.model_validate(po) for po in rows]
+        return [PurchaseOrderListItemOut.model_validate(po) for po in rows]
 
     @router.post("/dev-demo", response_model=PurchaseOrderWithLinesOut)
     async def create_demo_purchase_order(
@@ -135,9 +159,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             item_name = row.get("name") or f"ITEM-{item_id}"
             qty_ordered = base_qty * idx
 
-            # 让 demo 更像真实业务数据：给出可读的规格与分组
-            # - spec_text：给一个稳定的可读格式（示例：85g*12袋 / 170g*6袋 ...）
-            # - category：业务分组示例（猫条/双拼），仅用于演示
             is_odd = (idx % 2) == 1
             spec_text = f"{85 * idx}g*{12 if is_odd else 6}袋"
             category = "猫条" if is_odd else "双拼"
