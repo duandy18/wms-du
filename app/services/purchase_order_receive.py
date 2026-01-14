@@ -1,7 +1,7 @@
 # app/services/purchase_order_receive.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 from sqlalchemy import text
@@ -24,9 +24,15 @@ async def receive_po_line(
     line_no: Optional[int] = None,
     qty: int,
     occurred_at: Optional[datetime] = None,
+    production_date: Optional[date] = None,
+    expiry_date: Optional[date] = None,
 ) -> PurchaseOrder:
     """
     对某一行执行收货（行级收货）。
+
+    关键合同：
+    - stock_ledger 存在唯一约束 (reason, ref, ref_line)
+      => ref_line 必须在 (reason, ref) 维度全局递增，不能按 item_id 分桶。
     """
     if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
@@ -72,6 +78,7 @@ async def receive_po_line(
     ref = f"PO-{po.id}"
     reason_val = MovementType.INBOUND.value
 
+    # ✅ ref_line 必须在 (reason, ref) 维度全局递增
     row = await session.execute(
         text(
             """
@@ -79,15 +86,11 @@ async def receive_po_line(
               FROM stock_ledger
              WHERE ref = :ref
                AND reason = :reason
-               AND warehouse_id = :wid
-               AND item_id = :item_id
             """
         ),
         {
             "ref": ref,
             "reason": reason_val,
-            "wid": po.warehouse_id,
-            "item_id": target.item_id,
         },
     )
     max_ref_line = int(row.scalar() or 0)
@@ -101,6 +104,8 @@ async def receive_po_line(
         warehouse_id=po.warehouse_id,
         item_id=target.item_id,
         occurred_at=occurred_at or datetime.now(UTC),
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
 
     target.qty_received += int(qty)

@@ -1,7 +1,7 @@
 # app/services/purchase_order_service.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -43,7 +43,11 @@ async def _load_primary_barcodes(session: AsyncSession, item_ids: List[int]) -> 
             await session.execute(
                 select(ItemBarcode)
                 .where(ItemBarcode.item_id.in_(item_ids), ItemBarcode.active.is_(True))
-                .order_by(ItemBarcode.item_id.asc(), ItemBarcode.is_primary.desc(), ItemBarcode.id.asc())
+                .order_by(
+                    ItemBarcode.item_id.asc(),
+                    ItemBarcode.is_primary.desc(),
+                    ItemBarcode.id.asc(),
+                )
             )
         )
         .scalars()
@@ -113,29 +117,67 @@ class PurchaseOrderService:
 
         out_lines: List[PurchaseOrderLineOut] = []
         for ln in (po.lines or []):
-            line_out = PurchaseOrderLineOut.model_validate(ln)
+            # ✅ 不能对 ORM 直接 model_validate（因为 qty_remaining 是计算字段）
+            ordered = int(getattr(ln, "qty_ordered", 0) or 0)
+            received = int(getattr(ln, "qty_received", 0) or 0)
 
-            # 兼容：PO 行历史 category -> biz_category（避免与 Item.category=品类冲突）
-            line_out.biz_category = getattr(ln, "category", None)
+            data: Dict[str, Any] = {
+                "id": int(getattr(ln, "id")),
+                "po_id": int(getattr(ln, "po_id")),
+                "line_no": int(getattr(ln, "line_no")),
+                "item_id": int(getattr(ln, "item_id")),
+                "item_name": getattr(ln, "item_name", None),
+                "item_sku": getattr(ln, "item_sku", None),
+                "biz_category": getattr(ln, "category", None),
+                "spec_text": getattr(ln, "spec_text", None),
+                "base_uom": getattr(ln, "base_uom", None),
+                "purchase_uom": getattr(ln, "purchase_uom", None),
+                "supply_price": getattr(ln, "supply_price", None),
+                "retail_price": getattr(ln, "retail_price", None),
+                "promo_price": getattr(ln, "promo_price", None),
+                "min_price": getattr(ln, "min_price", None),
+                "qty_cases": getattr(ln, "qty_cases", None),
+                "units_per_case": getattr(ln, "units_per_case", None),
+                "qty_ordered": ordered,
+                "qty_received": received,
+                "qty_remaining": max(0, ordered - received),
+                "line_amount": getattr(ln, "line_amount", None),
+                "status": getattr(ln, "status", None),
+                "remark": getattr(ln, "remark", None),
+                "created_at": getattr(ln, "created_at"),
+                "updated_at": getattr(ln, "updated_at"),
+                # Optional 主数据字段先给 None，后面补齐
+                "sku": None,
+                "primary_barcode": None,
+                "brand": None,
+                "category": None,
+                "supplier_id": None,
+                "supplier_name": None,
+                "weight_kg": None,
+                "uom": None,
+                "has_shelf_life": None,
+                "shelf_life_value": None,
+                "shelf_life_unit": None,
+                "enabled": None,
+            }
 
-            it = items_map.get(int(ln.item_id))
+            it = items_map.get(int(getattr(ln, "item_id")))
             if it is not None:
-                # Item 主数据字段（与 ItemsListTable 列合同对齐）
-                line_out.sku = it.sku
-                line_out.brand = it.brand
-                line_out.category = it.category
-                line_out.supplier_id = it.supplier_id
-                line_out.supplier_name = it.supplier_name
-                line_out.weight_kg = getattr(it, "weight_kg", None)
-                line_out.uom = it.uom
+                data["sku"] = it.sku
+                data["brand"] = it.brand
+                data["category"] = it.category
+                data["supplier_id"] = it.supplier_id
+                data["supplier_name"] = it.supplier_name
+                data["weight_kg"] = getattr(it, "weight_kg", None)
+                data["uom"] = it.uom
+                data["has_shelf_life"] = it.has_shelf_life
+                data["shelf_life_value"] = it.shelf_life_value
+                data["shelf_life_unit"] = it.shelf_life_unit
+                data["enabled"] = it.enabled
 
-                line_out.has_shelf_life = it.has_shelf_life
-                line_out.shelf_life_value = it.shelf_life_value
-                line_out.shelf_life_unit = it.shelf_life_unit
-                line_out.enabled = it.enabled
+            data["primary_barcode"] = barcode_map.get(int(getattr(ln, "item_id")))
 
-            line_out.primary_barcode = barcode_map.get(int(ln.item_id))
-            out_lines.append(line_out)
+            out_lines.append(PurchaseOrderLineOut.model_validate(data))
 
         return PurchaseOrderWithLinesOut(
             id=po.id,
@@ -164,6 +206,8 @@ class PurchaseOrderService:
         line_no: Optional[int] = None,
         qty: int,
         occurred_at: Optional[datetime] = None,
+        production_date: Optional[date] = None,
+        expiry_date: Optional[date] = None,
     ):
         return await _receive_po_line(
             self.inbound_svc,
@@ -173,4 +217,6 @@ class PurchaseOrderService:
             line_no=line_no,
             qty=qty,
             occurred_at=occurred_at,
+            production_date=production_date,
+            expiry_date=expiry_date,
         )
