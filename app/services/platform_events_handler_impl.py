@@ -170,7 +170,15 @@ async def handle_event_batch(
                         for x in arr  # type: ignore[assignment]
                     )
 
-                mapped_ship = mapped.get("ship_lines") if isinstance(mapped, dict) else None
+                # ⭐ 核心改动在这里：
+                # 优先使用新 world 的 ship_lines（location_hint），
+                # 若不存在则回退到 legacy 的 ship_lines_legacy。
+                mapped_ship = None
+                if isinstance(mapped, dict):
+                    mapped_ship = (
+                        mapped.get("ship_lines")
+                    )
+
                 mapped_lines = mapped.get("lines") if isinstance(mapped, dict) else None
 
                 chosen = (
@@ -178,6 +186,7 @@ async def handle_event_batch(
                     if has_all(raw_lines)
                     else (mapped_ship or mapped_lines or task.get("lines") or [])
                 )
+
                 lines = [
                     {
                         "item_id": int(x["item_id"]),

@@ -34,8 +34,59 @@ audit-consistency:
 	  echo "  note: deprecated/* is ignored, but still recommended to delete/refactor"; \
 	  exit 1;'
 
+# =================================
+# Phase 4 清理封口（PR-1）：禁止新增 legacy 引用
+# =================================
+
+.PHONY: audit-no-deprecated-import
+audit-no-deprecated-import:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-no-deprecated-import] forbid importing app/services/_deprecated from non-deprecated code ..."; \
+	  hits="$$(rg -n "app\\.services\\._deprecated|services/_deprecated" app \
+	    --glob "!app/services/_deprecated/**" || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-no-deprecated-import] OK (no hits)"; exit 0; \
+	  fi; \
+	  echo "$$hits"; \
+	  echo "[audit-no-deprecated-import] FAIL: deprecated modules must not be imported by active code"; \
+	  exit 1;'
+
+.PHONY: audit-no-location-leak
+audit-no-location-leak:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-no-location-leak] forbid new location_id usage in active core code (allow explicit legacy/transition zones) ..."; \
+	  hits="$$(rg -n "\\blocation_id\\b" app \
+	    --glob "!app/api/routers/**" \
+	    --glob "!app/schemas/**" \
+	    --glob "!app/adapters/**" \
+	    --glob "!app/ports.py" \
+	    --glob "!app/domain/ports.py" \
+	    --glob "!app/models/_inventory_legacy.py" \
+	    --glob "!app/models/stock.py" \
+	    --glob "!app/models/reservation_allocation.py" \
+	    --glob "!app/models/inventory_movement.py" \
+	    --glob "!app/models/pick_task_line.py" \
+	    --glob "!app/services/_deprecated/**" \
+	    --glob "!app/services/stock_helpers_impl.py" \
+	    --glob "!app/services/inventory_adjust.py" \
+	    --glob "!app/services/reconcile_service.py" \
+	    --glob "!app/services/batch_service.py" \
+	    --glob "!app/services/inventory_ops.py" \
+	    --glob "!app/services/platform_adapter.py" \
+	    --glob "!app/services/putaway_service.py" \
+	    --glob "!app/services/pick_service.py" \
+	    --glob "!app/services/fefo_allocator.py" \
+	    --glob "!app/services/README.md" \
+	    || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-no-location-leak] OK (no hits)"; exit 0; \
+	  fi; \
+	  echo "$$hits"; \
+	  echo "[audit-no-location-leak] FAIL: location_id leaked into active core code; keep it inside legacy/transition zones only"; \
+	  exit 1;'
+
 .PHONY: audit-all
-audit-all: audit-uom audit-consistency
+audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak
 	@echo "[audit-all] OK"
 
 # =================================
