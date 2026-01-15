@@ -7,17 +7,20 @@ from typing import Optional
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.stock import Stock
 from app.models.warehouse import WarehouseCode
-from app.services.ledger_writer import write_ledger
+from app.services.stock_service import StockService
 
 
 class RMAService:
     """
-    退货三段式：
+    退货三段式（Phase 3：所有库存变化必须走 StockService.adjust）：
       1) RETURN_IN → RETURNS（净增退货池）
       2) RECLASSIFY RETURNS→MAIN（净零迁移，可售量+）
       3) RETURN_SCRAP@RETURNS（净减，报废）
+
+    ✅ Phase 3 合同：
+    - 禁止在业务服务里直接 write_ledger / 直接改 stocks
+    - 一切库存变化统一通过 StockService.adjust（内部完成：幂等 + 写台账 + 改库存）
     """
 
     async def return_in(
@@ -29,25 +32,24 @@ class RMAService:
         qty: int,
         rma_ref: str,
         occurred_at: Optional[datetime] = None,
+        trace_id: Optional[str] = None,
     ) -> None:
         occurred_at = occurred_at or datetime.now(UTC)
         wh = await self._wh_id(session, WarehouseCode.RETURNS)
-        stk = await self._lock_stock(session, wh, item_id, batch_code)
-        if stk is None:
-            stk = Stock(warehouse_id=wh, item_id=item_id, batch_code=batch_code, qty=0)
-            session.add(stk)
-        stk.qty += qty
-        await write_ledger(
-            session,
-            warehouse_id=wh,
-            item_id=item_id,
-            batch_code=batch_code,
+
+        # 入退货池：RETURNS +qty
+        await StockService.adjust(
+            session=session,
+            warehouse_id=int(wh),
+            item_id=int(item_id),
+            batch_code=str(batch_code),
+            delta=int(qty),
             reason="RETURN_IN",
-            delta=qty,
-            after_qty=stk.qty,
-            ref=rma_ref,
+            ref=str(rma_ref),
             ref_line=1,
             occurred_at=occurred_at,
+            trace_id=trace_id,
+            meta={"sub_reason": "RMA_RETURN_IN"},
         )
 
     async def reclassify_to_main(
@@ -59,46 +61,40 @@ class RMAService:
         qty: int,
         rma_ref: str,
         occurred_at: Optional[datetime] = None,
+        trace_id: Optional[str] = None,
     ) -> None:
         occurred_at = occurred_at or datetime.now(UTC)
         wh_ret = await self._wh_id(session, WarehouseCode.RETURNS)
         wh_main = await self._wh_id(session, WarehouseCode.MAIN)
 
-        # RETURNS 减
-        stk_ret = await self._lock_stock(session, wh_ret, item_id, batch_code)
-        if stk_ret is None or stk_ret.qty < qty:
-            raise ValueError("RETURNS pool insufficient")
-        stk_ret.qty -= qty
-        await write_ledger(
-            session,
-            warehouse_id=wh_ret,
-            item_id=item_id,
-            batch_code=batch_code,
+        # RETURNS 减（会在 StockService.adjust 内做不足校验）
+        await StockService.adjust(
+            session=session,
+            warehouse_id=int(wh_ret),
+            item_id=int(item_id),
+            batch_code=str(batch_code),
+            delta=-int(qty),
             reason="RETURN_RECLASSIFY",
-            delta=-qty,
-            after_qty=stk_ret.qty,
-            ref=rma_ref,
+            ref=str(rma_ref),
             ref_line=2,
             occurred_at=occurred_at,
+            trace_id=trace_id,
+            meta={"sub_reason": "RMA_RECLASSIFY_OUT"},
         )
 
         # MAIN 加
-        stk_main = await self._lock_stock(session, wh_main, item_id, batch_code)
-        if stk_main is None:
-            stk_main = Stock(warehouse_id=wh_main, item_id=item_id, batch_code=batch_code, qty=0)
-            session.add(stk_main)
-        stk_main.qty += qty
-        await write_ledger(
-            session,
-            warehouse_id=wh_main,
-            item_id=item_id,
-            batch_code=batch_code,
+        await StockService.adjust(
+            session=session,
+            warehouse_id=int(wh_main),
+            item_id=int(item_id),
+            batch_code=str(batch_code),
+            delta=int(qty),
             reason="RETURN_RECLASSIFY",
-            delta=qty,
-            after_qty=stk_main.qty,
-            ref=rma_ref,
+            ref=str(rma_ref),
             ref_line=3,
             occurred_at=occurred_at,
+            trace_id=trace_id,
+            meta={"sub_reason": "RMA_RECLASSIFY_IN"},
         )
 
     async def scrap_in_returns(
@@ -110,24 +106,24 @@ class RMAService:
         qty: int,
         rma_ref: str,
         occurred_at: Optional[datetime] = None,
+        trace_id: Optional[str] = None,
     ) -> None:
         occurred_at = occurred_at or datetime.now(UTC)
         wh = await self._wh_id(session, WarehouseCode.RETURNS)
-        stk = await self._lock_stock(session, wh, item_id, batch_code)
-        if stk is None or stk.qty < qty:
-            raise ValueError("RETURNS pool insufficient to scrap")
-        stk.qty -= qty
-        await write_ledger(
-            session,
-            warehouse_id=wh,
-            item_id=item_id,
-            batch_code=batch_code,
+
+        # RETURNS 报废：RETURNS -qty（不足校验由 StockService.adjust 负责）
+        await StockService.adjust(
+            session=session,
+            warehouse_id=int(wh),
+            item_id=int(item_id),
+            batch_code=str(batch_code),
+            delta=-int(qty),
             reason="RETURN_SCRAP",
-            delta=-qty,
-            after_qty=stk.qty,
-            ref=rma_ref,
+            ref=str(rma_ref),
             ref_line=4,
             occurred_at=occurred_at,
+            trace_id=trace_id,
+            meta={"sub_reason": "RMA_SCRAP"},
         )
 
     # helpers
@@ -151,12 +147,3 @@ class RMAService:
                 )
                 wid = r2.scalar_one()
         return int(wid)
-
-    @staticmethod
-    async def _lock_stock(session: AsyncSession, wh: int, item: int, code: str) -> Stock | None:
-        row = await session.execute(
-            sa.select(Stock)
-            .where(Stock.warehouse_id == wh, Stock.item_id == item, Stock.batch_code == code)
-            .with_for_update()
-        )
-        return row.scalar_one_or_none()

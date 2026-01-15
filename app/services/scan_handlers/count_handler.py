@@ -1,13 +1,14 @@
 # app/services/scan_handlers/count_handler.py
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
+from app.services.three_books_enforcer import enforce_three_books
 from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
 
@@ -26,11 +27,10 @@ async def handle_count(
     """
     盘点（Count）—— v2：按 仓库 + 商品 + 批次 粒度。
 
-    规则：
-    - actual >= 0
-    - 盘盈（delta > 0）属于“隐式入库”，必须有 production_date 或 expiry_date（至少其一）；
-      若仅有 production_date 且 Item 配置了保质期，则自动推算 expiry_date。
-    - 盘亏（delta < 0）只做扣减，不强制日期。
+    Phase 3 合同：
+    - delta != 0：写 ledger + 改 stocks + snapshot 可观测一致
+    - delta == 0：也写一条“确认类事件台账”（ledger），stocks 不变
+      * 通过 StockService.adjust 的 allow_zero_delta_ledger + sub_reason 实现
     """
     if actual < 0:
         raise ValueError("Actual quantity must be non-negative.")
@@ -39,6 +39,8 @@ async def handle_count(
     if warehouse_id is None or int(warehouse_id) <= 0:
         raise ValueError("盘点操作必须明确 warehouse_id。")
 
+    bcode = str(batch_code).strip()
+
     # 当前库存（按 warehouse + item + batch 粒度加锁读取）
     row = await session.execute(
         sa.text(
@@ -46,7 +48,7 @@ async def handle_count(
             "WHERE item_id=:i AND warehouse_id=:w AND batch_code=:c "
             "FOR UPDATE"
         ),
-        {"i": item_id, "w": warehouse_id, "c": str(batch_code).strip()},
+        {"i": item_id, "w": warehouse_id, "c": bcode},
     )
     current = int(row.scalar_one_or_none() or 0)
     delta = int(actual) - current
@@ -65,21 +67,45 @@ async def handle_count(
             expiry_date=expiry_date,
         )
 
-    if delta != 0:
-        await StockService().adjust(
-            session=session,
-            item_id=item_id,
-            warehouse_id=warehouse_id,
-            delta=delta,
-            reason=MovementType.COUNT,
-            ref=ref,
-            batch_code=str(batch_code).strip(),
-            production_date=production_date,
-            expiry_date=expiry_date,
-            trace_id=trace_id,
-        )
+    meta = {
+        "sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM",
+    }
+    if delta == 0:
+        meta["allow_zero_delta_ledger"] = True
 
-    # 统一返回 enriched payload，方便 orchestrator 直接挂到 ScanResponse
+    stock_svc = StockService()
+    await stock_svc.adjust(
+        session=session,
+        item_id=item_id,
+        warehouse_id=warehouse_id,
+        delta=delta,
+        reason=MovementType.COUNT,
+        ref=ref,
+        ref_line=1,
+        batch_code=bcode,
+        production_date=production_date,
+        expiry_date=expiry_date,
+        trace_id=trace_id,
+        meta=meta,
+    )
+
+    ts = datetime.now(timezone.utc)
+    await enforce_three_books(
+        session,
+        ref=str(ref),
+        effects=[
+            {
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "batch_code": str(bcode),
+                "qty": int(delta),
+                "ref": str(ref),
+                "ref_line": 1,
+            }
+        ],
+        at=ts,
+    )
+
     return {
         "item_id": int(item_id),
         "warehouse_id": int(warehouse_id),

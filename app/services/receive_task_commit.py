@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,8 @@ from app.services.order_event_bus import OrderEventBus
 from app.services.order_reconcile_service import OrderReconcileService
 from app.services.receive_task_loaders import load_item_policy_map, load_po
 from app.services.receive_task_query import get_with_lines
+from app.services.snapshot_run import run_snapshot
+from app.services.three_books_consistency import verify_receive_commit_three_books
 
 
 NOEXP_BATCH_CODE = "NOEXP"
@@ -30,8 +32,12 @@ def _safe_upc(v: Optional[int]) -> int:
 
 
 def _ordered_base(line: PurchaseOrderLine) -> int:
-    upc = _safe_upc(getattr(line, "units_per_case", None))
-    return int(line.qty_ordered or 0) * upc
+    """
+    ✅ Phase 2 冻结前提：ordered 的唯一事实口径是 qty_ordered_base
+    services 层不允许出现散落乘法。
+    """
+    v = getattr(line, "qty_ordered_base", None)
+    return int(v or 0)
 
 
 def _received_base(line: PurchaseOrderLine) -> int:
@@ -144,6 +150,11 @@ async def commit(
     ref_line_counter = 0
     returned_by_item: dict[int, int] = {}
 
+    # Phase 3 MVP：收集本次 commit 的“库存影响（effects）”
+    # 用于三账一致性校验：ledger(ref/ref_line) vs stocks vs snapshot(today)
+    effects: List[Dict[str, Any]] = []
+    touched_keys: set[Tuple[int, int, str]] = set()
+
     for line in task.lines:
         if line.scanned_qty == 0:
             line.committed_qty = 0
@@ -176,6 +187,20 @@ async def commit(
             trace_id=trace_id,
             sub_reason=sub_reason,
         )
+
+        # 记录 effect（用于强一致性验证）
+        bcode = str(line.batch_code)
+        effects.append(
+            {
+                "warehouse_id": int(task.warehouse_id),
+                "item_id": int(line.item_id),
+                "batch_code": bcode,
+                "qty": int(qty_base),
+                "ref": str(ref),
+                "ref_line": int(ref_line_counter),
+            }
+        )
+        touched_keys.add((int(task.warehouse_id), int(line.item_id), bcode))
 
         line.status = "COMMITTED"
 
@@ -282,6 +307,21 @@ async def commit(
 
     task.status = "COMMITTED"
     await session.flush()
+
+    # ------------------------------------------------------------------
+    # Phase 3 MVP：commit → 库存 → 快照 的强一致性验证（只覆盖 receive）
+    #
+    # 注意：run_snapshot 不能 rollback 外层事务（snapshot_run.py 已修复为 savepoint）
+    # ------------------------------------------------------------------
+    if effects:
+        await run_snapshot(session)
+        await verify_receive_commit_three_books(
+            session,
+            warehouse_id=int(task.warehouse_id),
+            ref=str(ref),
+            effects=effects,
+            at=now,
+        )
 
     if task.source_type == "ORDER" and task.source_id:
         order_id = int(task.source_id)

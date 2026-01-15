@@ -13,23 +13,30 @@ from app.services.snapshot_time import UTC
 async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
     """
     兼容 snapshot_v2/v3 合同的入口：
-    - 优先尝试调用存储过程 snapshot_today()（如存在）；
-    - 尝试读取视图 v_three_books（如存在）；
-    - 若上述对象不存在，则退回内建实现：
-      * 以当前日期为 snapshot_date，将 stocks 汇总写入 stock_snapshots；
-      * 返回一个总览字典 {sum_stocks, sum_ledger, sum_snapshot_on_hand, sum_snapshot_available}。
+
+    ⚠️ Phase 3 要求：
+    - run_snapshot 可能在“业务 commit 的同一个 session/事务”内被调用；
+    - 因此这里 **绝对不能** 用 session.rollback() 回滚外层事务，
+      否则会把刚写入的 stocks / stock_ledger 也一并回滚，导致“成功变失败、失败变成功”的幽灵状态。
+
+    实现策略：
+    - 对可能失败的 CALL / VIEW 读取，使用 SAVEPOINT（begin_nested）隔离失败；
+    - 失败只回滚到 savepoint，不污染外层事务。
     """
     today = datetime.now(UTC).date()
 
     # 1) 尝试执行存储过程 snapshot_today()
+    # 用 savepoint 隔离异常（例如过程不存在、权限不足等）
+    called_proc = False
     try:
-        await session.execute(text("CALL snapshot_today()"))
+        async with session.begin_nested():
+            await session.execute(text("CALL snapshot_today()"))
+            called_proc = True
     except Exception:
-        try:
-            await session.rollback()
-        except Exception:
-            pass
+        called_proc = False
 
+    # 若未成功调用过程，则退回内建实现（同样在当前事务内执行）
+    if not called_proc:
         await session.execute(
             text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"),
             {"d": today},
@@ -61,18 +68,15 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
             {"d": today},
         )
 
-    # 2) 尝试读取 v_three_books 视图
+    # 2) 尝试读取 v_three_books 视图（隔离异常，不污染外层事务）
     summary: Optional[Dict[str, Any]] = None
     try:
-        res = await session.execute(text("SELECT * FROM v_three_books"))
-        m = res.mappings().first()
-        if m:
-            summary = dict(m)
+        async with session.begin_nested():
+            res = await session.execute(text("SELECT * FROM v_three_books"))
+            m = res.mappings().first()
+            if m:
+                summary = dict(m)
     except Exception:
-        try:
-            await session.rollback()
-        except Exception:
-            pass
         summary = None
 
     # 3) 视图不存在时：手动汇总

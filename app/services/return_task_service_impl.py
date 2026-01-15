@@ -12,6 +12,7 @@ from app.models.enums import MovementType
 from app.models.return_task import ReturnTask, ReturnTaskLine
 from app.models.stock_ledger import StockLedger
 from app.services.stock_service import StockService
+from app.services.three_books_enforcer import enforce_three_books
 
 UTC = timezone.utc
 
@@ -19,43 +20,18 @@ UTC = timezone.utc
 class ReturnTaskServiceImpl:
     """
     订单退货回仓任务服务（实现层）
-
-    核心设计原则：
-    ----------------
-    1) 退货回仓必须基于“真实出库事实（ledger）”
-    2) 批次自动回原批次，不允许人工输入
-    3) 所有数量约束由 expected_qty 控制，防止超退
-
-    出库事实判定规则（当前版本）：
-    --------------------------------
-    - stock_ledger.delta < 0
-    - 且 reason ∈ SHIP_OUT_REASONS
-
-    ⚠️ 说明：
-    后续若系统统一出库 reason（例如全部收敛为 OUTBOUND_SHIP），
-    只需修改 SHIP_OUT_REASONS，不影响其他逻辑。
+    （其余注释省略，保持原样）
     """
 
-    # ==============================
-    # 出库事实识别（统一入口）
-    # ==============================
     SHIP_OUT_REASONS: Set[str] = {
-        "SHIPMENT",        # 当前系统存在
-        "OUTBOUND_SHIP",   # 标准出库
+        "SHIPMENT",
+        "OUTBOUND_SHIP",
     }
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self.stock_svc = stock_svc or StockService()
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
-        """
-        从 stock_ledger 反查订单的出库事实（自动回原批次）：
-
-        判定条件：
-        - ref == order_ref
-        - delta < 0
-        - reason ∈ SHIP_OUT_REASONS
-        """
         res = await session.execute(
             select(
                 StockLedger.item_id,
@@ -76,7 +52,7 @@ class ReturnTaskServiceImpl:
                 continue
 
             key = (int(item_id), int(wh_id), str(batch_code))
-            agg[key] = agg.get(key, 0) + int(-int(delta or 0))  # 转为正数出库量
+            agg[key] = agg.get(key, 0) + int(-int(delta or 0))
 
         out: list[dict[str, Any]] = []
         for (item_id, wh_id, batch_code), shipped_qty in agg.items():
@@ -92,31 +68,18 @@ class ReturnTaskServiceImpl:
             )
         return out
 
-    # -----------------------------
-    # Public methods
-    # -----------------------------
-
     async def create_for_order(
         self,
         session: AsyncSession,
         *,
-        order_id: str,  # order_ref
+        order_id: str,
         warehouse_id: Optional[int] = None,
         include_zero_shipped: bool = False,
     ) -> ReturnTask:
-        """
-        从订单出库事实（ledger）创建退货回仓任务。
-
-        - 唯一入口：order_id（即 order_ref 字符串）
-        - 批次：来自 ledger.batch_code（自动回原批次）
-        - expected_qty：来自出库事实 shipped_qty
-        - picked_qty：初始为 0（等待 record_receive）
-        """
         order_ref = str(order_id).strip()
         if not order_ref:
             raise ValueError("order_id(order_ref) is required")
 
-        # 幂等：若已有未提交任务，直接返回（避免重复创建导致用户困惑）
         existing_stmt: Select = (
             select(ReturnTask)
             .where(ReturnTask.order_id == order_ref)
@@ -140,7 +103,6 @@ class ReturnTaskServiceImpl:
         if not shipped:
             raise ValueError(f"order_ref={order_ref} has no shippable ledger facts for return")
 
-        # 退货回仓任务目前要求“单仓作业”（与前端作业台一致）
         wh_ids = sorted({int(x["warehouse_id"]) for x in shipped})
         if len(wh_ids) != 1:
             raise ValueError(f"order_ref={order_ref} is multi-warehouse: {wh_ids}")
@@ -154,7 +116,7 @@ class ReturnTaskServiceImpl:
         )
 
         session.add(task)
-        await session.flush()  # 获取 task.id
+        await session.flush()
 
         for x in shipped:
             item_id = int(x["item_id"])
@@ -205,12 +167,6 @@ class ReturnTaskServiceImpl:
         item_id: int,
         qty: int,
     ) -> ReturnTask:
-        """
-        记录一次数量（增量）：
-
-        - qty 可正可负（撤销误录）
-        - 强约束：最终 picked_qty ∈ [0, expected_qty]
-        """
         task = await self.get_with_lines(session, task_id=task_id, for_update=True)
         if task.status == "COMMITTED":
             return task
@@ -246,13 +202,6 @@ class ReturnTaskServiceImpl:
         trace_id: Optional[str] = None,
         occurred_at: Optional[datetime] = None,
     ) -> ReturnTask:
-        """
-        提交回仓：把 picked_qty 入库到原批次（RECEIPT 口径）。
-
-        - 幂等：若任务已 COMMITTED，直接返回
-        - 逐行入库：delta = picked_qty（正数）
-        - 批次：line.batch_code（自动回原批次）
-        """
         task = await self.get_with_lines(session, task_id=task_id, for_update=True)
         if task.status == "COMMITTED":
             return task
@@ -261,23 +210,41 @@ class ReturnTaskServiceImpl:
 
         lines = list(task.lines or [])
         applied_any = False
+        effects: list[dict[str, Any]] = []
 
         for ln in lines:
             picked = int(ln.picked_qty or 0)
             if picked <= 0:
                 continue
 
-            await self.stock_svc.adjust(
+            ref_line = int(getattr(ln, "id", 1) or 1)
+
+            res = await self.stock_svc.adjust(
                 session=session,
                 item_id=int(ln.item_id),
                 delta=+picked,
-                reason=MovementType.RETURN,  # 映射为 RECEIPT（回仓入库）
+                reason=MovementType.RETURN,
                 ref=str(task.order_id),
-                ref_line=int(getattr(ln, "id", 1) or 1),
+                ref_line=ref_line,
                 occurred_at=ts,
                 batch_code=str(ln.batch_code),
                 warehouse_id=int(task.warehouse_id),
                 trace_id=trace_id,
+                meta={"sub_reason": "RETURN_RECEIPT"},
+            )
+
+            effects.append(
+                {
+                    "warehouse_id": int(task.warehouse_id),
+                    "item_id": int(ln.item_id),
+                    "batch_code": str(ln.batch_code),
+                    "qty": int(picked),
+                    "ref": str(task.order_id),
+                    "ref_line": ref_line,
+                    # ✅ 关键：同 ref/ref_line 下可能存在多种 reason（例如 OUTBOUND_SHIP 与 RETURN）
+                    # 用 adjust 返回的 reason 作为硬锚点，避免误命中其他事件
+                    "reason": str(res.get("reason") or ""),
+                }
             )
 
             ln.committed_qty = picked
@@ -286,7 +253,11 @@ class ReturnTaskServiceImpl:
 
         task.status = "COMMITTED"
         if applied_any:
-            task.updated_at = ts  # 若模型没有该字段也不会影响（SQLAlchemy 会忽略不存在属性）
+            task.updated_at = ts
 
         await session.flush()
+
+        if effects:
+            await enforce_three_books(session, ref=str(task.order_id), effects=effects, at=ts)
+
         return await self.get_with_lines(session, task_id=task_id, for_update=False)

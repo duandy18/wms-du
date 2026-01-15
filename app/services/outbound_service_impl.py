@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock_service import StockService
+from app.services.three_books_enforcer import enforce_three_books
 
 UTC = timezone.utc
 
@@ -47,6 +48,10 @@ class OutboundService:
     ----------------------
     引入 sub_reason（业务细分）：
     - 订单发货出库：sub_reason = ORDER_SHIP
+
+    Phase 3（三库一致性工程化）：
+    ----------------------
+    commit 成功的必要条件：ledger + stocks + snapshot 可观测一致（对本次 touched keys）
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -128,6 +133,8 @@ class OutboundService:
         warehouse_code: Optional[str] = None,  # 保留旧签名，当前实现不使用
         trace_id: Optional[str] = None,  # 上层可携带 trace_id
     ) -> Dict[str, Any]:
+        _ = warehouse_code
+
         ts = occurred_at or datetime.now(UTC)
         if ts.tzinfo is None:
             ts = datetime.now(UTC)
@@ -143,8 +150,10 @@ class OutboundService:
         committed = 0
         total_qty = 0
         results: List[Dict[str, Any]] = []
-
         shipped_by_item: Dict[int, int] = defaultdict(int)
+
+        # Phase 3：收集本次出库的 effects（用于三库一致性验证）
+        effects: List[Dict[str, Any]] = []
 
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
             row = await session.execute(
@@ -184,11 +193,11 @@ class OutboundService:
                     delta=-need,
                     reason="OUTBOUND_SHIP",
                     ref=str(order_id),
-                    ref_line=1,  # 同一个 order_id 只占用一个 ref_line，幂等由 delta 汇总保证
+                    ref_line=1,
                     occurred_at=ts,
                     warehouse_id=wh_id,
                     batch_code=batch_code,
-                    trace_id=trace_id,  # Phase 3.7-A：trace_id 透传到底层 ledger 写入
+                    trace_id=trace_id,
                     meta={
                         "sub_reason": "ORDER_SHIP",
                     },
@@ -196,6 +205,18 @@ class OutboundService:
                 committed += 1
                 total_qty += need
                 shipped_by_item[item_id] += need
+
+                effects.append(
+                    {
+                        "warehouse_id": int(wh_id),
+                        "item_id": int(item_id),
+                        "batch_code": str(batch_code),
+                        "qty": -int(need),
+                        "ref": str(order_id),
+                        "ref_line": 1,
+                    }
+                )
+
                 results.append(
                     {
                         "item_id": item_id,
@@ -226,6 +247,9 @@ class OutboundService:
             )
         except Exception:
             pass
+
+        if effects:
+            await enforce_three_books(session, ref=str(order_id), effects=effects, at=ts)
 
         return {
             "status": "OK",
