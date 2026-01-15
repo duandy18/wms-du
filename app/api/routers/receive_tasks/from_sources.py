@@ -44,8 +44,10 @@ def register(router: APIRouter) -> None:
     ) -> ReceiveTaskOut:
         """
         选择式创建收货任务（本次到货批次）：
+
+        - qty_planned 为“最小单位（base units）”
         - 只创建本次到货选择的行
-        - 每行 expected_qty = qty_planned
+        - 每行 expected_qty = qty_planned（最小单位口径）
         """
         try:
             task = await svc.create_for_po_selected(

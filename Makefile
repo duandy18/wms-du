@@ -45,6 +45,7 @@ help:
 	@echo "  make dev-ensure-admin         - 在 5433 开发库添加 admin/admin123"
 	@echo "  make pilot-ensure-admin       - 在 55432 中试库添加 admin（自定义密码）"
 	@echo ""
+	@echo "  make audit-uom                - 审计：services 层禁止散落 qty_ordered * units_per_case（仅允许 qty_base.py）"
 	@echo "  make test                     - pytest（默认跑 wms_test；支持 TESTS=... 指定文件）"
 	@echo "  make test-rbac                - 只跑 RBAC 相关测试（test_user_api.py）"
 	@echo "  make test-internal-outbound   - 测内部出库 Golden Flow E2E"
@@ -172,6 +173,23 @@ mark-ac:
 	    tests/services/test_outbound_fefo_basic.py \
 	    tests/services/test_outbound_ledger_consistency.py \
 	    tests/services/test_stock_service_fefo.py;'
+
+# =================================
+# 口径审计：禁止散落乘法（Phase 2 硬规则）
+# =================================
+.PHONY: audit-uom
+audit-uom:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-uom] scanning app/services for scattered qty_ordered * units_per_case ..."; \
+	  hits="$$(rg -n "qty_ordered\\s*\\*\\s*units_per_case|units_per_case\\s*\\*\\s*qty_ordered" app/services -n || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-uom] OK (no hits)"; exit 0; \
+	  fi; \
+	  echo "$$hits"; \
+	  if echo "$$hits" | rg -qv "^app/services/qty_base\\.py"; then \
+	    echo "[audit-uom] FAIL: found scattered multiplication outside app/services/qty_base.py"; exit 1; \
+	  fi; \
+	  echo "[audit-uom] OK (only app/services/qty_base.py)";'
 
 # =================================
 # 核心测试

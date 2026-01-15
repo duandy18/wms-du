@@ -53,7 +53,19 @@ class PurchaseOrderLine(Base):
     qty_cases: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
     units_per_case: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
 
+    # 采购单位订购量（兼容/输入快照）
     qty_ordered: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+    # ✅ 最小单位订购量（事实字段，Phase 2 最终形态）
+    qty_ordered_base: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="订购数量（最小单位，事实字段）",
+    )
+
+    # ✅ 最小单位已收量（事实字段，现状已如此）
     qty_received: Mapped[int] = mapped_column(
         sa.Integer,
         nullable=False,
@@ -92,5 +104,6 @@ class PurchaseOrderLine(Base):
         return (
             f"<POLine id={self.id} po_id={self.po_id} "
             f"line_no={self.line_no} item_id={self.item_id} "
-            f"qty={self.qty_ordered}/{self.qty_received} status={self.status}>"
+            f"ordered={self.qty_ordered}/{self.qty_ordered_base} "
+            f"received={self.qty_received} status={self.status}>"
         )

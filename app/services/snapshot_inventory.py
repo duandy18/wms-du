@@ -14,7 +14,9 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
     """
     Snapshot /inventory 主列表（事实视图）：
 
-    - 库存事实：完全来自 stocks 聚合（不受主数据 join 影响）
+    ✅ Phase 2 硬规则：禁止“隐性汇总”
+    - 展示维度：至少 warehouse_id + item_id + batch_code（每个批次必须分行可审计）
+    - 库存事实：来自 stocks（不做二次按 item 聚合）
     - 主数据字段：来自 items（1:1 join，不放大）
     - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
     - 日期相关：后端统一 UTC 计算，前端不推导
@@ -65,18 +67,24 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
         .all()
     )
 
-    by_item: Dict[int, Dict[str, Any]] = {}
     today = datetime.now(UTC).date()
     near_delta = timedelta(days=30)
 
+    result: List[Dict[str, Any]] = []
     for r in rows:
-        item_id = int(r["item_id"])
         qty = int(r["qty"] or 0)
         expiry_date = r.get("expiry_date")
 
-        if item_id not in by_item:
-            by_item[item_id] = {
-                "item_id": item_id,
+        near_expiry = False
+        days_to_expiry = None
+        if isinstance(expiry_date, date):
+            days_to_expiry = int((expiry_date - today).days)
+            if expiry_date >= today and (expiry_date - today) <= near_delta:
+                near_expiry = True
+
+        result.append(
+            {
+                "item_id": int(r["item_id"]),
                 "item_name": r["item_name"],
                 "item_code": r["item_code"],
                 "uom": r["uom"],
@@ -84,64 +92,15 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 "brand": r["brand"],
                 "category": r["category"],
                 "main_barcode": r["main_barcode"],
-                "total_qty": 0,
-                "buckets": [],
-                "earliest_expiry": None,
-                "near_expiry": False,
-                "days_to_expiry": None,
-            }
-
-        rec = by_item[item_id]
-        rec["total_qty"] += qty
-        rec["buckets"].append(
-            {
                 "warehouse_id": int(r["warehouse_id"]),
                 "batch_code": r["batch_code"],
                 "qty": qty,
                 "expiry_date": expiry_date,
+                "near_expiry": near_expiry,
+                "days_to_expiry": days_to_expiry,
             }
         )
 
-        if isinstance(expiry_date, date):
-            if rec["earliest_expiry"] is None or expiry_date < rec["earliest_expiry"]:
-                rec["earliest_expiry"] = expiry_date
-            if expiry_date >= today and (expiry_date - today) <= near_delta:
-                rec["near_expiry"] = True
-
-    result: List[Dict[str, Any]] = []
-    for rec in by_item.values():
-        buckets = sorted(rec["buckets"], key=lambda b: b["qty"], reverse=True)
-        top2 = [
-            {
-                "warehouse_id": b["warehouse_id"],
-                "batch_code": b["batch_code"],
-                "qty": b["qty"],
-            }
-            for b in buckets[:2]
-        ]
-
-        if isinstance(rec["earliest_expiry"], date):
-            rec["days_to_expiry"] = int((rec["earliest_expiry"] - today).days)
-
-        result.append(
-            {
-                "item_id": rec["item_id"],
-                "item_name": rec["item_name"],
-                "item_code": rec["item_code"],
-                "uom": rec["uom"],
-                "spec": rec["spec"],
-                "brand": rec["brand"],
-                "category": rec["category"],
-                "main_barcode": rec["main_barcode"],
-                "total_qty": rec["total_qty"],
-                "top2_locations": top2,
-                "earliest_expiry": rec["earliest_expiry"],
-                "near_expiry": rec["near_expiry"],
-                "days_to_expiry": rec["days_to_expiry"],
-            }
-        )
-
-    result.sort(key=lambda r: r["item_id"])
     return result
 
 

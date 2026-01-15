@@ -21,31 +21,48 @@ from app.services.receive_task_query import get_with_lines
 NOEXP_BATCH_CODE = "NOEXP"
 
 
+def _safe_upc(v: Optional[int]) -> int:
+    try:
+        n = int(v or 1)
+    except Exception:
+        n = 1
+    return n if n > 0 else 1
+
+
+def _ordered_base(line: PurchaseOrderLine) -> int:
+    upc = _safe_upc(getattr(line, "units_per_case", None))
+    return int(line.qty_ordered or 0) * upc
+
+
+def _received_base(line: PurchaseOrderLine) -> int:
+    return int(line.qty_received or 0)
+
+
 def _recalc_po_line_status(line: PurchaseOrderLine) -> None:
     """
-    采购行状态推进（与 purchase_order_receive.py 保持同口径）
+    采购行状态推进（✅ base 口径）
     """
-    if int(line.qty_received or 0) <= 0:
+    o = _ordered_base(line)
+    r = _received_base(line)
+    if r <= 0:
         line.status = "CREATED"
-    elif int(line.qty_received or 0) < int(line.qty_ordered or 0):
+    elif r < o:
         line.status = "PARTIAL"
-    elif int(line.qty_received or 0) == int(line.qty_ordered or 0):
-        line.status = "RECEIVED"
     else:
-        line.status = "CLOSED"
+        line.status = "RECEIVED"
 
 
 def _recalc_po_header(po: PurchaseOrder, now: datetime) -> None:
     """
-    采购单头状态推进（与 purchase_order_receive.py 保持同口径）
+    采购单头状态推进（✅ base 口径）
     - all_zero  -> CREATED
     - all_full  -> RECEIVED (+ closed_at)
     - otherwise -> PARTIAL
     并更新 last_received_at / updated_at
     """
     lines = list(po.lines or [])
-    all_zero = all(int(line.qty_received or 0) == 0 for line in lines)
-    all_full = all(int(line.qty_received or 0) >= int(line.qty_ordered or 0) for line in lines)
+    all_zero = all(_received_base(line) == 0 for line in lines)
+    all_full = all(_received_base(line) >= _ordered_base(line) for line in lines)
 
     if all_zero:
         po.status = "CREATED"
@@ -133,19 +150,21 @@ async def commit(
             line.status = "COMMITTED"
             continue
 
-        qty_purchase = int(line.scanned_qty)
-        factor = int(line.units_per_case or 1)
-        if factor <= 0:
-            factor = 1
-        qty_units = qty_purchase * factor
+        # ✅ scanned_qty 是最小单位（base）
+        qty_base = int(line.scanned_qty)
+        if qty_base <= 0:
+            line.committed_qty = 0
+            line.status = "COMMITTED"
+            continue
 
-        line.committed_qty = qty_purchase
+        upc = _safe_upc(getattr(line, "units_per_case", None))
+        line.committed_qty = qty_base  # committed_qty 也使用 base
         ref_line_counter += 1
 
-        # 1) 写库存/台账（底座事实）
+        # 1) 写库存/台账（底座事实）：qty=base
         await inbound_svc.receive(
             session=session,
-            qty=qty_units,
+            qty=qty_base,
             ref=ref,
             ref_line=ref_line_counter,
             warehouse_id=task.warehouse_id,
@@ -160,11 +179,11 @@ async def commit(
 
         line.status = "COMMITTED"
 
-        # 2) 回写 PO 行
+        # 2) 回写 PO 行：qty_received += base
         po_line: Optional[PurchaseOrderLine] = None
         if line.po_line_id is not None and line.po_line_id in po_lines_map:
             po_line = po_lines_map[line.po_line_id]
-            po_line.qty_received += qty_purchase
+            po_line.qty_received = int(po_line.qty_received or 0) + qty_base
             _recalc_po_line_status(po_line)
             touched_po_qty = True
 
@@ -221,7 +240,7 @@ async def commit(
             if po_line.supply_price is not None:
                 unit_cost = Decimal(str(po_line.supply_price))
             if unit_cost is not None:
-                line_amount = (Decimal(int(qty_units)) * unit_cost).quantize(Decimal("0.01"))
+                line_amount = (Decimal(int(qty_base)) * unit_cost).quantize(Decimal("0.01"))
         else:
             # fallback：task 行快照
             item_name_snap = line.item_name
@@ -245,9 +264,10 @@ async def commit(
             batch_code=str(line.batch_code),
             production_date=line.production_date,
             expiry_date=line.expiry_date,
-            qty_received=int(qty_purchase),
-            units_per_case=int(factor),
-            qty_units=int(qty_units),
+            # ✅ qty_received / qty_units 都用 base，允许拆箱/拆件
+            qty_received=int(qty_base),
+            units_per_case=int(upc),
+            qty_units=int(qty_base),
             unit_cost=unit_cost,
             line_amount=line_amount,
             remark=str(line.remark or "") if getattr(line, "remark", None) else None,
@@ -255,7 +275,7 @@ async def commit(
         session.add(receipt_line)
 
         if task.source_type == "ORDER":
-            returned_by_item[int(line.item_id)] = returned_by_item.get(int(line.item_id), 0) + qty_purchase
+            returned_by_item[int(line.item_id)] = returned_by_item.get(int(line.item_id), 0) + qty_base
 
     if po is not None and touched_po_qty:
         _recalc_po_header(po, now)
