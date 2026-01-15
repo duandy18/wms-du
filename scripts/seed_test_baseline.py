@@ -53,6 +53,11 @@ async def seed_in_conn(conn) -> None:
     """
     在已有连接/事务里执行 seed（pytest/conftest 调用）
     调用方保证已 TRUNCATE 干净，并且 SET search_path TO public
+
+    ⚠️ 注意（与现有测试合同对齐）：
+    - baseline 可以写 stocks
+    - 但 baseline 不应写 stock_ledger（部分测试要求 baseline ledger_sum == 0）
+    - opening ledger 仅作为 Phase 3 的“体检解释层”，应放在 pytest 结束后再补（Makefile 已制度化）
     """
     root = _repo_root()
     base_sql_path = root / "tests" / "fixtures" / "base_seed.sql"

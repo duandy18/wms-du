@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
+from app.services.three_books_enforcer import enforce_three_books
 
 
 AdjustFn = Callable[..., Awaitable[Dict[str, Any]]]
@@ -32,6 +33,9 @@ async def ship_commit_direct_impl(
     Phase 3.10（本次）：
     - 引入 sub_reason（业务细分）：
       直接发货/出库链路统一标记为 ORDER_SHIP（若未来需要区分 INTERNAL_SHIP，可在调用方传 meta 覆盖）。
+
+    Phase 3（三库一致性工程化）：
+    - commit 成功的必要条件：ledger + stocks + snapshot 可观测一致（对本次 touched keys）
     """
     _ = platform
     _ = shop_id
@@ -49,6 +53,9 @@ async def ship_commit_direct_impl(
 
     idempotent = True
     total = 0
+
+    # Phase 3：收集本次出库的 effects，用于三库一致性验证
+    effects: list[Dict[str, Any]] = []
 
     for item_id, want in need_by_item.items():
         existing = await session.execute(
@@ -112,8 +119,24 @@ async def ship_commit_direct_impl(
                 },
             )
 
+            # 记录 effect（delta 为负数）
+            effects.append(
+                {
+                    "warehouse_id": int(warehouse_id),
+                    "item_id": int(item_id),
+                    "batch_code": str(batch_code),
+                    "qty": -int(take),
+                    "ref": str(ref),
+                    "ref_line": 1,
+                }
+            )
+
             remain -= take
             total += take
+
+    # Phase 3：强一致尾门（仅在本次实际扣减时执行）
+    if effects:
+        await enforce_three_books(session, ref=str(ref), effects=effects, at=ts)
 
     return {
         "idempotent": idempotent,
