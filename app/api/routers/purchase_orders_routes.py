@@ -144,13 +144,38 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             raise HTTPException(status_code=400, detail="warehouses 表为空，请先创建仓库。")
         warehouse_id = int(wh_row["id"])
 
+        # ✅ Phase 2 合同：必须绑定供应商（优先 active=true）
+        supplier_row = (
+            (await session.execute(text("SELECT id, name FROM suppliers WHERE active IS TRUE ORDER BY id LIMIT 1")))
+            .mappings()
+            .first()
+        )
+        if not supplier_row:
+            supplier_row = (
+                (await session.execute(text("SELECT id, name FROM suppliers ORDER BY id LIMIT 1")))
+                .mappings()
+                .first()
+            )
+        if not supplier_row:
+            raise HTTPException(status_code=400, detail="suppliers 表为空，请先创建供应商。")
+
+        supplier_id = int(supplier_row["id"])
+        supplier_name = str(supplier_row.get("name") or f"SUPPLIER-{supplier_id}")
+
+        # ✅ 关键修复：demo item 必须属于该 supplier_id，否则会触发“供应商->商品”硬闸
         item_rows = (
-            (await session.execute(text("SELECT id, name FROM items ORDER BY id LIMIT 5")))
+            (await session.execute(
+                text("SELECT id, name FROM items WHERE supplier_id = :sid ORDER BY id LIMIT 5"),
+                {"sid": supplier_id},
+            ))
             .mappings()
             .all()
         )
         if not item_rows:
-            raise HTTPException(status_code=400, detail="items 表为空，请先创建商品。")
+            raise HTTPException(
+                status_code=400,
+                detail=f"items 表中没有 supplier_id={supplier_id} 的商品，请先为该供应商创建商品。",
+            )
 
         lines: list[dict] = []
         base_qty = 10
@@ -180,18 +205,22 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             )
 
         now = datetime.utcnow()
-        po = await svc.create_po_v2(
-            session,
-            supplier="DEMO-SUPPLIER",
-            warehouse_id=warehouse_id,
-            supplier_id=None,
-            supplier_name="DEMO SUPPLIER",
-            purchaser="DEMO-PURCHASER",
-            purchase_time=now,
-            remark="Demo 采购单（DevConsole）",
-            lines=lines,
-        )
-        await session.commit()
+        try:
+            po = await svc.create_po_v2(
+                session,
+                supplier=supplier_name,
+                warehouse_id=warehouse_id,
+                supplier_id=supplier_id,
+                supplier_name=supplier_name,
+                purchaser="DEMO-PURCHASER",
+                purchase_time=now,
+                remark="Demo 采购单（DevConsole）",
+                lines=lines,
+            )
+            await session.commit()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         po_out = await svc.get_po_with_lines(session, po.id)
         if po_out is None:

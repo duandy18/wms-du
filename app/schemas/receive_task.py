@@ -98,7 +98,11 @@ class ReceiveTaskCreateFromPoSelectedLineIn(BaseModel):
     """
 
     po_line_id: int = Field(..., description="采购单行 ID（必须属于该采购单）")
-    qty_planned: int = Field(..., gt=0, description="本次计划收货量（>0，且不超过剩余应收）")
+    qty_planned: int = Field(
+        ...,
+        gt=0,
+        description="本次计划收货量（最小单位 base units，>0，且不超过 remaining_base）",
+    )
 
 
 class ReceiveTaskCreateFromPoSelected(BaseModel):

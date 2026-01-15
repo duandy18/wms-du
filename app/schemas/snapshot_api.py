@@ -18,14 +18,16 @@ class _Base(BaseModel):
     )
 
 
-# ========= SnapshotPage：inventory 列表 =========
-class InventoryTopLocation(_Base):
-    warehouse_id: Annotated[int, Field(ge=1, description="仓库 ID")]
-    batch_code: Annotated[str, Field(min_length=1, max_length=64, description="批次编码")]
-    qty: Annotated[int, Field(description="该切片数量（来自 stocks.qty）")]
-
-
+# ========= SnapshotPage：inventory 列表（事实切片行） =========
 class InventoryRow(_Base):
+    """
+    ✅ Phase 2：事实口径（不可被破坏）
+
+    每一行都是一个库存事实切片：
+    - warehouse_id + item_id + batch_code
+    - qty 为该切片在库数量（stocks.qty）
+    """
+
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     item_name: Annotated[str, Field(min_length=0, max_length=128, description="商品名称")]
 
@@ -41,15 +43,18 @@ class InventoryRow(_Base):
     brand: Optional[str] = Field(default=None, description="品牌（预留字段）")
     category: Optional[str] = Field(default=None, description="品类（预留字段）")
 
-    total_qty: Annotated[int, Field(description="总库存（按 item 聚合的 stocks.qty 之和）")]
-    top2_locations: list[InventoryTopLocation] = Field(default_factory=list)
+    # ✅ 事实维度（不可丢）
+    warehouse_id: Annotated[int, Field(ge=1, description="仓库 ID")]
+    batch_code: Optional[str] = Field(default=None, description="批次编码（可为空，前端展示 NO-BATCH）")
 
-    earliest_expiry: date | None = Field(default=None, description="最早到期日")
-    near_expiry: bool = Field(default=False, description="是否临期（未来 30 天内到期）")
+    # ✅ 库存事实：该仓+该批次数量（base unit）
+    qty: Annotated[int, Field(description="该切片数量（来自 stocks.qty）")]
 
-    # ✅ 后端统一计算，前端不推导
+    # ✅ 到期相关（切片级别）
+    expiry_date: date | None = Field(default=None, description="该批次到期日（来自 batches.expiry_date）")
+    near_expiry: bool = Field(default=False, description="该批次是否临期（未来 30 天内到期）")
     days_to_expiry: Optional[int] = Field(
-        default=None, description="最早到期剩余天数（earliest_expiry - today）"
+        default=None, description="到期剩余天数（expiry_date - today；后端算，前端不推导）"
     )
 
 
@@ -114,7 +119,7 @@ class ItemDetailSlice(_Base):
     near_expiry: bool = Field(default=False, description="该批次是否临期（未来 30 天内到期）")
     is_top: bool = Field(
         default=False,
-        description="是否属于首页快照视图中的 Top2 切片",
+        description="是否属于首页快照视图中的 Top2 切片（兼容历史字段，可保留）",
     )
 
     model_config = _Base.model_config | {
@@ -178,7 +183,6 @@ class ItemDetailResponse(_Base):
 
 
 __all__ = [
-    "InventoryTopLocation",
     "InventoryRow",
     "InventorySnapshotResponse",
     "ItemDetailTotals",

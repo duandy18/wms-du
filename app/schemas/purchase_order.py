@@ -67,6 +67,14 @@ class PurchaseOrderLineCreate(PurchaseOrderLineBase):
 class PurchaseOrderLineListOut(BaseModel):
     """
     列表态行输出：只保证行自身的最小字段，避免“详情态强合同字段”污染列表接口。
+
+    ✅ Phase B 收敛补充（关键）：
+    - 为了让列表/概览页能用“最小单位口径”展示数量，
+      列表态需要携带换算因子与单位快照：
+        * units_per_case
+        * base_uom
+        * purchase_uom
+    - 不做 Item 主数据补齐；仅使用 PO 行自身快照字段（与 purchase_order_lines 表一致）。
     """
     id: int
     po_id: int
@@ -74,8 +82,14 @@ class PurchaseOrderLineListOut(BaseModel):
     item_id: int
 
     qty_ordered: int
+    qty_ordered_base: int  # ✅ 最小单位订购量（事实字段）
     qty_received: int
     status: str
+
+    # ✅ 最小单位换算与单位快照（列表态也要有，便于统一口径展示）
+    units_per_case: Optional[int] = None
+    base_uom: Optional[str] = None
+    purchase_uom: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime
@@ -130,6 +144,7 @@ class PurchaseOrderLineOut(BaseModel):
     qty_cases: Optional[int]
     units_per_case: Optional[int]
     qty_ordered: int
+    qty_ordered_base: int  # ✅ 最小单位订购量（事实字段）
     qty_received: int
 
     # ✅ 强合同：剩余可收数量（事实字段，后端计算）

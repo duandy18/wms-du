@@ -33,6 +33,14 @@ def _require_supplier_for_po(supplier_id: Optional[int]) -> int:
     return sid
 
 
+def _safe_upc(v: Optional[int]) -> int:
+    try:
+        n = int(v or 1)
+    except Exception:
+        n = 1
+    return n if n > 0 else 1
+
+
 async def create_po_v2(
     session: AsyncSession,
     *,
@@ -47,6 +55,12 @@ async def create_po_v2(
 ) -> PurchaseOrder:
     """
     创建“头 + 多行”的采购单。
+
+    ✅ Phase 2（最终形态）数量合同：
+    - qty_ordered: 采购单位订购量（件/箱）——保留为输入快照/兼容
+    - units_per_case: 换算因子（每采购单位包含多少最小单位）
+    - qty_ordered_base: 最小单位订购量（事实字段）
+    - qty_received: 最小单位已收量（事实字段）
     """
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
@@ -121,15 +135,19 @@ async def create_po_v2(
         else:
             units_per_case_int = None
 
+        upc = _safe_upc(units_per_case_int)
+
+        # ✅ 最小单位订购量（事实字段）
+        qty_ordered_base = qty_ordered * upc
+
         line_no = raw.get("line_no") or idx
 
         line_amount_raw = raw.get("line_amount")
         if line_amount_raw is not None:
             line_amount = Decimal(str(line_amount_raw))
         elif supply_price is not None:
-            multiplier = units_per_case_int or 1
-            qty_units = qty_ordered * multiplier
-            line_amount = supply_price * qty_units
+            # 价格按最小单位计价（qty_ordered_base）
+            line_amount = supply_price * Decimal(int(qty_ordered_base))
         else:
             line_amount = None
 
@@ -152,8 +170,9 @@ async def create_po_v2(
                 "min_price": raw.get("min_price"),
                 "qty_cases": raw.get("qty_cases") or qty_ordered,
                 "units_per_case": units_per_case_int,
-                "qty_ordered": qty_ordered,
-                "qty_received": 0,
+                "qty_ordered": qty_ordered,                 # 采购单位快照
+                "qty_ordered_base": qty_ordered_base,       # ✅ 最小单位事实
+                "qty_received": 0,                          # ✅ 最小单位事实
                 "line_amount": line_amount,
                 "status": "CREATED",
                 "remark": raw.get("remark"),
@@ -192,6 +211,7 @@ async def create_po_v2(
             qty_cases=nl["qty_cases"],
             units_per_case=nl["units_per_case"],
             qty_ordered=nl["qty_ordered"],
+            qty_ordered_base=nl["qty_ordered_base"],  # ✅ 新字段
             qty_received=nl["qty_received"],
             line_amount=nl["line_amount"],
             status=nl["status"],
