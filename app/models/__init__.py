@@ -49,7 +49,6 @@ MODEL_SPECS = [
     # -------- 预占 / 软预占 --------
     ("app.models.reservation", "Reservation"),
     ("app.models.reservation_line", "ReservationLine"),
-    ("app.models.reservation_allocation", "ReservationAllocations"),
 
     # -------- 门店 & RBAC --------
     ("app.models.store", "Store"),
@@ -90,12 +89,8 @@ for _module, _name in MODEL_SPECS:
 
 # 额外导出的表（有些模型提供 table 对象）
 from app.models.batch import Batch as _Batch  # noqa: E402
-from app.models.reservation_allocation import (  # noqa: E402
-    ReservationAllocations as _ReservationAllocations,
-)
 
 Batches = getattr(_Batch, "__table__", None)
-ReservationAllocations = getattr(_ReservationAllocations, "__table__", None)
 
 __all__ = [
     # ---- Master Data ----
@@ -135,7 +130,6 @@ __all__ = [
     # ---- Reservations ----
     "Reservation",
     "ReservationLine",
-    "ReservationAllocations",
 
     # ---- Store & RBAC ----
     "Store",
@@ -171,5 +165,4 @@ __all__ = [
     "ShippingProviderSurcharge",
 
     "Batches",
-    "ReservationAllocations",
 ]

@@ -1,3 +1,4 @@
+# app/services/platform_adapter.py
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -8,68 +9,32 @@ RawEvent = Dict[str, Any]
 Task = Dict[str, Any]
 
 
-# ============================================================
-#                    基类与通用工具
-# ============================================================
-
-
 class PlatformAdapter(ABC):
     platform: str
 
     @abstractmethod
     async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        """
-        解析“平台原始事件”为标准事件：
-        {
-          platform,        # 平台标识（小写）
-          order_id,        # 平台侧订单号/唯一引用
-          status,          # 平台状态（如 PAID/SHIPPED/CANCELED ...）
-          lines,           # 原始行列表
-          shop_id,         # 店铺标识
-          raw              # 原始载荷透传
-        }
-        """
         ...
 
     @abstractmethod
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        """
-        将标准事件映射为“业务任务”：
-        {
-          platform, ref, state,
-          lines: [{item_id, qty}[, {location_id}...]],
-          shop_id, payload
-        }
-        """
         ...
 
 
 def _base_to_task(parsed: StandardEvent) -> Task:
-    """统一输出骨架：ref=order_id，透传 lines / raw / shop_id。"""
     return {
         "platform": parsed["platform"],
         "ref": parsed.get("order_id") or "",
         "state": parsed.get("status") or "",
-        "lines": parsed.get("lines"),
+        "lines": [],
         "shop_id": parsed.get("shop_id"),
         "payload": parsed.get("raw"),
     }
 
 
-def _shop_id_of(raw: RawEvent) -> str:
-    """从常见字段提取 shop_id。"""
-    return str(
-        raw.get("shop_id")
-        or raw.get("shop")
-        or raw.get("store_id")
-        or raw.get("seller_id")
-        or raw.get("author_id")
-        or raw.get("shopId")
-        or ""
-    )
-
-
-# --------------------- 行规范化：item/qty[/location] ---------------------
+# ============================================================
+# 行规范化工具
+# ============================================================
 
 _ItemIdKeys = ("item_id", "itemId", "sku_id", "skuId", "goods_id", "goodsId", "id")
 _QtyKeys = ("qty", "quantity", "num", "count", "amount")
@@ -95,13 +60,57 @@ def _first_present(d: Dict[str, Any], keys: Iterable[str]) -> Any:
     return None
 
 
+def _normalize_lines_v2(
+    lines: Any,
+) -> tuple[List[Dict[str, int]], List[Dict[str, int]]]:
+    """
+    v2 规范化（新世界观）：
+
+    返回：
+    - clean_lines : [{item_id, qty}]
+    - ship_lines  : [{item_id, qty, location_hint}]（仅当存在 location）
+    """
+    clean: List[Dict[str, int]] = []
+    ship: List[Dict[str, int]] = []
+
+    if not lines:
+        return clean, ship
+    if not isinstance(lines, list):
+        lines = [lines]
+
+    for raw in lines:
+        if not isinstance(raw, dict):
+            continue
+
+        item = _norm_int(_first_present(raw, _ItemIdKeys))
+        qty = _norm_int(_first_present(raw, _QtyKeys))
+        loc = _norm_int(_first_present(raw, _LocIdKeys))
+
+        if item is None or qty is None or qty <= 0:
+            continue
+
+        base = {"item_id": item, "qty": qty}
+        clean.append(base)
+
+        if loc is not None:
+            ship.append({**base, "location_hint": loc})
+
+    return clean, ship
+
+
+# ------------------------------------------------------------
+# LEGACY 工具函数（⚠️ 仍需保留合同）
+# ------------------------------------------------------------
+
 def _normalize_lines(lines: Any, *, need_location: bool = False) -> List[Dict[str, int]]:
     """
-    将多形态 lines 规整为 [{item_id, qty}[, location_id]]。
-    - 当 need_location=True 时，仅保留含 location_id 的行（用于 SHIP 尝试直达）；
-    - 当 need_location=False 时，忽略 location_id，仅保留 item/qty（用于 RESERVE/CANCEL）。
+    legacy 规范化工具（历史合同）：
+
+    - need_location=False → [{item_id, qty}]
+    - need_location=True  → [{item_id, qty, location_id}]
     """
     out: List[Dict[str, int]] = []
+
     if not lines:
         return out
     if not isinstance(lines, list):
@@ -110,20 +119,18 @@ def _normalize_lines(lines: Any, *, need_location: bool = False) -> List[Dict[st
     for raw in lines:
         if not isinstance(raw, dict):
             continue
+
         item = _norm_int(_first_present(raw, _ItemIdKeys))
         qty = _norm_int(_first_present(raw, _QtyKeys))
         loc = _norm_int(_first_present(raw, _LocIdKeys))
 
-        if item is None or qty is None:
-            continue
-        if qty <= 0:
+        if item is None or qty is None or qty <= 0:
             continue
 
         if need_location:
             if loc is None:
-                # 缺库位：本行无法用于发货，跳过（让上游严格校验）
                 continue
-            out.append({"item_id": item, "location_id": loc, "qty": qty})
+            out.append({"item_id": item, "qty": qty, "location_id": loc})
         else:
             out.append({"item_id": item, "qty": qty})
 
@@ -131,11 +138,9 @@ def _normalize_lines(lines: Any, *, need_location: bool = False) -> List[Dict[st
 
 
 # ============================================================
-#                        平台适配器
+# 各平台 Adapter（新世界观）
 # ============================================================
 
-
-# ---------- PDD ----------
 class PDDAdapter(PlatformAdapter):
     platform = "pdd"
 
@@ -145,119 +150,36 @@ class PDDAdapter(PlatformAdapter):
             "order_id": raw.get("order_sn") or raw.get("order_id") or "",
             "status": raw.get("status") or "",
             "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
+            "shop_id": raw.get("shop_id") or "",
             "raw": raw,
         }
 
     async def to_outbound_task(self, parsed: StandardEvent) -> Task:
         t = _base_to_task(parsed)
-        # PDD 常见：已付/取消无库位，发货可能带库位（若对接了 WMS）
-        # 这里仅规范化行；是否需要 location_id 由上游按状态决定
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
+
+        clean, ship = _normalize_lines_v2(parsed.get("lines"))
+
+        t["lines"] = clean
+        t["ship_lines"] = ship   # ✅ 新世界观（无 legacy）
+
         return t
 
 
-# ---------- Taobao ----------
-class TaobaoAdapter(PlatformAdapter):
+class TaobaoAdapter(PDDAdapter):
     platform = "taobao"
 
-    async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw.get("tid") or raw.get("order_id") or "",
-            "status": raw.get("trade_status") or raw.get("status") or "",
-            "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
-            "raw": raw,
-        }
 
-    async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        t = _base_to_task(parsed)
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
-        return t
-
-
-# ---------- Tmall ----------
-class TmallAdapter(PlatformAdapter):
+class TmallAdapter(PDDAdapter):
     platform = "tmall"
 
-    async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw.get("tid") or raw.get("order_id") or "",
-            "status": raw.get("trade_status") or raw.get("status") or "",
-            "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
-            "raw": raw,
-        }
 
-    async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        t = _base_to_task(parsed)
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
-        return t
-
-
-# ---------- JD ----------
-class JDAdapter(PlatformAdapter):
+class JDAdapter(PDDAdapter):
     platform = "jd"
 
-    async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw.get("orderId") or raw.get("order_id") or "",
-            "status": raw.get("orderStatus") or raw.get("status") or "",
-            "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
-            "raw": raw,
-        }
 
-    async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        t = _base_to_task(parsed)
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
-        return t
-
-
-# ---------- Douyin ----------
-class DouyinAdapter(PlatformAdapter):
+class DouyinAdapter(PDDAdapter):
     platform = "douyin"
 
-    async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw.get("order_id") or raw.get("orderId") or raw.get("tid") or "",
-            "status": raw.get("status") or raw.get("trade_status") or "",
-            "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
-            "raw": raw,
-        }
 
-    async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        t = _base_to_task(parsed)
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
-        return t
-
-
-# ---------- Xiaohongshu（小红书） ----------
-class XHSAdapter(PlatformAdapter):
+class XHSAdapter(PDDAdapter):
     platform = "xhs"
-
-    async def parse_event(self, raw: RawEvent) -> StandardEvent:
-        return {
-            "platform": self.platform,
-            "order_id": raw.get("order_id") or raw.get("orderId") or raw.get("tid") or "",
-            "status": raw.get("status") or raw.get("trade_status") or "",
-            "lines": raw.get("lines"),
-            "shop_id": _shop_id_of(raw),
-            "raw": raw,
-        }
-
-    async def to_outbound_task(self, parsed: StandardEvent) -> Task:
-        t = _base_to_task(parsed)
-        t["lines"] = _normalize_lines(parsed.get("lines"))
-        t["ship_lines"] = _normalize_lines(parsed.get("lines"), need_location=True)
-        return t

@@ -120,12 +120,10 @@ from app.api.routers.warehouses import router as warehouses_router
 from app.api.routers import (
     scan_routes_count_commit,
     scan_routes_entrypoint,
-    scan_routes_putaway_disabled,
 )
 
 scan_router = APIRouter(tags=["scan"])
 scan_routes_entrypoint.register(scan_router)
-scan_routes_putaway_disabled.register(scan_router)
 scan_routes_count_commit.register(scan_router)
 
 # ---------------------------------------------------------------------------
