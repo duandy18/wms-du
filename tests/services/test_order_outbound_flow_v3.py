@@ -87,7 +87,7 @@ async def test_outbound_from_baseline_10_to_7(session: AsyncSession):
 
     # 1) 建单（不改变库存）
     o = await _ingest_order(session, ORDER_NO)
-    assert o["status"] in ("OK", "IDEMPOTENT")
+    assert o["status"] in ("OK", "IDEMPOTENT"), f"ingest returned: {o}"
 
     # 2) 出库 3（仓+批+UTC，强签名）
     await _ship_once(session, 3)

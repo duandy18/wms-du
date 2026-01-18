@@ -8,7 +8,13 @@ test-core: venv audit-all
 
 .PHONY: test-flow
 test-flow: venv audit-all
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_flow -s
+	@echo "[pytest] Flow tests (explicit file set)"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	$(PYTEST) -q -s \
+	  tests/services/test_order_outbound_flow_v3.py \
+	  tests/services/test_outbound_ledger_consistency.py \
+	  tests/services/test_outbound_idempotency.py \
+	  tests/services/test_trace_full_chain_order_reserve_outbound.py
 
 .PHONY: test-snapshot
 test-snapshot: venv audit-all
