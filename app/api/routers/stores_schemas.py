@@ -14,10 +14,6 @@ class StoreCreateIn(BaseModel):
     platform: PlatformStr
     shop_id: constr(min_length=1, max_length=128)
     name: Optional[constr(min_length=1, max_length=256)] = None
-    # 创建时是否允许传 email/联系人/电话，看你需求，这里先不暴露：
-    # email: Optional[constr(max_length=255)] = None
-    # contact_name: Optional[constr(max_length=100)] = None
-    # contact_phone: Optional[constr(max_length=50)] = None
 
 
 class StoreCreateOut(BaseModel):
@@ -59,7 +55,6 @@ class StoreListItem(BaseModel):
     active: bool
     route_mode: str
 
-    # 新增主数据字段
     email: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
@@ -75,7 +70,6 @@ class StoreUpdateIn(BaseModel):
     active: Optional[bool] = None
     route_mode: Optional[constr(min_length=1, max_length=32)] = None
 
-    # 新增：可更新 email / 联系人 / 电话
     email: Optional[constr(max_length=255)] = None
     contact_name: Optional[constr(max_length=100)] = None
     contact_phone: Optional[constr(max_length=50)] = None
@@ -103,17 +97,81 @@ class BindingDeleteOut(BaseModel):
 
 
 class StorePlatformAuthOut(BaseModel):
-    """
-    店铺平台授权状态返回：
+    ok: bool = True
+    data: Dict[str, Any]
 
-    data:
-      - store_id
-      - platform
-      - shop_id
-      - auth_source: "NONE" / "MANUAL" / "OAUTH"
-      - expires_at: ISO 字符串或 null
-      - mall_id: 平台侧店铺 ID（如 PDD mall_id），可能为 null
-    """
 
+# ================================
+# 店铺 SKU（store_items）
+# ================================
+
+class StoreItemRow(BaseModel):
+    item_id: int = Field(..., ge=1)
+    item_name: Optional[str] = None
+    platform_sku: Optional[str] = None  # 预留：将来对接平台 SKU
+
+
+class StoreItemsListOut(BaseModel):
+    ok: bool = True
+    data: List[StoreItemRow]
+
+
+class StoreItemAddIn(BaseModel):
+    item_id: int = Field(..., ge=1)
+
+
+class StoreItemAddOut(BaseModel):
+    ok: bool = True
+    data: Dict[str, Any]
+
+
+class StoreItemDeleteOut(BaseModel):
+    ok: bool = True
+    data: Dict[str, Any]
+
+
+# ================================
+# 省级路由表（Province Routing）
+# ================================
+
+class ProvinceRouteItem(BaseModel):
+    id: int
+    store_id: int
+    province: str
+
+    warehouse_id: int
+    warehouse_name: Optional[str] = None
+    warehouse_code: Optional[str] = None
+    warehouse_active: bool = True
+
+    priority: int = 100
+    active: bool = True
+
+
+class ProvinceRouteListOut(BaseModel):
+    ok: bool = True
+    data: List[ProvinceRouteItem]
+
+
+class ProvinceRouteCreateIn(BaseModel):
+    province: constr(min_length=1, max_length=32)
+    warehouse_id: int = Field(..., ge=1)
+    priority: int = Field(100, ge=0, le=100_000)
+    active: bool = True
+
+
+class ProvinceRouteUpdateIn(BaseModel):
+    province: Optional[constr(min_length=1, max_length=32)] = None
+    warehouse_id: Optional[int] = Field(default=None, ge=1)
+    priority: Optional[int] = Field(default=None, ge=0, le=100_000)
+    active: Optional[bool] = None
+
+
+class ProvinceRouteWriteOut(BaseModel):
+    ok: bool = True
+    data: Dict[str, Any]
+
+
+class RoutingHealthOut(BaseModel):
     ok: bool = True
     data: Dict[str, Any]

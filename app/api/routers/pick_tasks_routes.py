@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_session
 from app.models.pick_task import PickTask
 from app.services.pick_task_service import PickTaskService
-
 from app.api.routers.pick_tasks_helpers import load_task_with_lines
 from app.api.routers.pick_tasks_schemas import (
     PickTaskCommitIn,
@@ -31,6 +30,10 @@ def register(router: APIRouter) -> None:
         payload: PickTaskCreateFromOrder,
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskOut:
+        # ✅ 新合同：创建拣货任务必须选仓库
+        if payload.warehouse_id is None:
+            raise HTTPException(status_code=422, detail="创建拣货任务必须选择仓库。")
+
         svc = PickTaskService(session)
         try:
             task = await svc.create_for_order(
@@ -42,6 +45,7 @@ def register(router: APIRouter) -> None:
             await session.commit()
         except ValueError as e:
             await session.rollback()
+            # 业务可理解错误仍走 400
             raise HTTPException(status_code=400, detail=str(e))
         except Exception:
             await session.rollback()

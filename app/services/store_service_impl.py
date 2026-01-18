@@ -10,18 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class StoreService:
     """
     店铺档案与仓库绑定服务 + 最小 CRUD（实现体）。
-
-    现阶段提供两类能力：
-
-    1）店铺 + 仓库路由相关（已在 Phase 3.x 使用）：
-        - ensure_store
-        - bind_warehouse
-        - resolve_default_warehouse
-        - resolve_default_warehouse_for_platform_shop
-
-    2）最小 CRUD（供 tests/services/test_store_service.py 使用）：
-        - create_store(session, name, code, platform="INTERNAL", shop_id=None)
-        - get_store(session, store_id)
     """
 
     # ------------------------------------------------------------------
@@ -35,16 +23,8 @@ class StoreService:
         shop_id: str,
         name: Optional[str] = None,
     ) -> int:
-        """
-        按 (platform, shop_id) UPSERT 店铺，返回 store_id。
-
-        约定：
-        - platform 一律大写存储；
-        - name 允许为空，若未指定，则使用 "{PLAT}-{shop_id}"。
-        """
         plat = platform.upper()
 
-        # 先查是否已存在
         rec = await session.execute(
             text(
                 """
@@ -61,7 +41,6 @@ class StoreService:
         if row is not None:
             return int(row[0])
 
-        # UPSERT（有 uq_stores_platform_shop 保护）
         ins = await session.execute(
             text(
                 """
@@ -92,19 +71,8 @@ class StoreService:
     ) -> None:
         """
         幂等绑定店铺与仓库。
-
-        表结构（参考模型）：
-        - 表：store_warehouse
-        - 字段：
-            id           BIGINT PK
-            store_id     INT  NOT NULL
-            warehouse_id INT  NOT NULL
-            is_top       BOOL NOT NULL DEFAULT FALSE
-            is_default   BOOL NOT NULL DEFAULT FALSE
-            priority     INT  NOT NULL DEFAULT 100
         """
         if is_top is None:
-            # 默认策略：跟随 is_default
             is_top = is_default
 
         # 若要设置主仓 / 默认仓，先清空同店其他记录的 is_top / is_default
@@ -123,7 +91,6 @@ class StoreService:
                 {"sid": store_id, "def": is_default},
             )
 
-        # 幂等 UPSERT 当前绑定
         await session.execute(
             text(
                 """
@@ -146,6 +113,65 @@ class StoreService:
         )
 
     # ------------------------------------------------------------------
+    # ✅ 新增：设置默认仓（只处理 is_default，不动 is_top/priority）
+    # ------------------------------------------------------------------
+    @staticmethod
+    async def set_default_warehouse(
+        session: AsyncSession,
+        *,
+        store_id: int,
+        warehouse_id: int,
+    ) -> None:
+        """
+        将某个已绑定仓设置为默认仓（唯一）。
+
+        约束：
+        - warehouse_id 必须已绑定到 store_warehouse，否则抛 ValueError
+        - 不修改 is_top / priority
+        """
+        chk = await session.execute(
+            text(
+                """
+                SELECT 1
+                  FROM store_warehouse
+                 WHERE store_id = :sid
+                   AND warehouse_id = :wid
+                 LIMIT 1
+                """
+            ),
+            {"sid": store_id, "wid": warehouse_id},
+        )
+        if not chk.first():
+            raise ValueError("该仓库未绑定到店铺，不能设为默认仓。")
+
+        # 1) 清空同店其它默认仓
+        await session.execute(
+            text(
+                """
+                UPDATE store_warehouse
+                   SET is_default = FALSE,
+                       updated_at = now()
+                 WHERE store_id = :sid
+                """
+            ),
+            {"sid": store_id},
+        )
+
+        # 2) 设置目标仓为默认仓
+        await session.execute(
+            text(
+                """
+                UPDATE store_warehouse
+                   SET is_default = TRUE,
+                       updated_at = now()
+                 WHERE store_id = :sid
+                   AND warehouse_id = :wid
+                """
+            ),
+            {"sid": store_id, "wid": warehouse_id},
+        )
+
+    # ------------------------------------------------------------------
     # 默认仓解析
     # ------------------------------------------------------------------
     @staticmethod
@@ -154,19 +180,6 @@ class StoreService:
         *,
         store_id: int,
     ) -> Optional[int]:
-        """
-        解析“默认仓”（可用于路由/默认选仓）。
-
-        排序规则：
-        1. 优先 is_top = TRUE 的记录（主仓）
-        2. 其次 is_default = TRUE 的记录
-        3. 再按 priority 升序
-        4. 再按 warehouse_id 升序
-
-        返回：
-        - 若存在记录：返回 warehouse_id
-        - 若不存在：返回 None
-        """
         rec = await session.execute(
             text(
                 """
@@ -192,17 +205,6 @@ class StoreService:
         platform: str,
         shop_id: str,
     ) -> Optional[int]:
-        """
-        按 (platform, shop_id) 解析默认仓。
-
-        行为：
-        - 若店铺不存在：
-            自动 ensure_store（不 commit，由调用方控制事务），然后无绑定则返回 None。
-        - 若有 store_warehouse 绑定：
-            走 resolve_default_warehouse 的排序逻辑。
-        - 若无绑定：
-            返回 None，由调用方决定是否兜底到某个仓。
-        """
         plat = platform.upper()
 
         store_id = await StoreService.ensure_store(
@@ -226,19 +228,6 @@ class StoreService:
         platform: str = "INTERNAL",
         shop_id: Optional[str] = None,
     ) -> int:
-        """
-        创建一个基础店铺记录，返回 store_id。
-
-        说明：
-        - Store 模型当前字段：
-            platform (NOT NULL)
-            shop_id  (NOT NULL)
-            name     (NOT NULL, 默认 'NO-STORE')
-            active   (NOT NULL, default TRUE)
-            email / contact_name / contact_phone / timestamps 等可空或有默认值
-        - 这里只写入 platform / shop_id / name，其他走默认值。
-        - code 目前只作为测试入参，不写入 DB。
-        """
         plat = platform.upper()
         shop = shop_id or code
 
@@ -261,11 +250,6 @@ class StoreService:
         *,
         store_id: int,
     ) -> Optional[Dict[str, Any]]:
-        """
-        按 ID 查询店铺。
-
-        当前测试只要求 “返回非 None”，但这里返回一个 dict，便于以后演进为 DTO。
-        """
         rec = await session.execute(
             text(
                 """
