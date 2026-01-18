@@ -85,8 +85,24 @@ audit-no-location-leak:
 	  echo "[audit-no-location-leak] FAIL: location_id leaked into active core code; keep it inside legacy/transition zones only"; \
 	  exit 1;'
 
+# =================================
+# Route C 封口：禁止主线回潮到 fallback/候选选仓
+# =================================
+.PHONY: audit-fulfillment-routec
+audit-fulfillment-routec:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-fulfillment-routec] forbid fallback routing semantics in fulfillment mainline ..."; \
+	  hits="$$(rg -n "store_province_routes|route_mode|STRICT_TOP|auto_routed_fallback|WarehouseRouter\\(" \
+	    app/services/order_ingest_service.py app/services/order_ingest_routing.py || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-fulfillment-routec] OK (no hits)"; exit 0; \
+	  fi; \
+	  echo "$$hits"; \
+	  echo "[audit-fulfillment-routec] FAIL: fallback routing leaked into Route C mainline"; \
+	  exit 1;'
+
 .PHONY: audit-all
-audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak
+audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak audit-fulfillment-routec
 	@echo "[audit-all] OK"
 
 # =================================

@@ -19,6 +19,10 @@ from sqlalchemy.pool import NullPool
 os.environ["FULL_ROUTES"] = "1"
 os.environ["WMS_FULL_ROUTES"] = "1"
 
+# 测试专用：当测试用例不传 province 时，使用默认省份
+# 仅在测试进程中生效，不影响生产
+os.environ.setdefault("WMS_TEST_DEFAULT_PROVINCE", "UT")
+
 from app.main import app  # noqa: E402
 from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
 
@@ -125,6 +129,66 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 os.environ.pop("WMS_DATABASE_URL", None)
             else:
                 os.environ["WMS_DATABASE_URL"] = old_dsn
+
+        # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）
+        # 3.1 取第一个仓库作为测试服务仓/默认绑定仓
+        row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
+        wh_id = int(row.scalar_one())
+
+        # 3.2 UT -> wh_id（幂等）
+        await conn.execute(
+            text(
+                """
+                INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+                VALUES (:wid, 'UT')
+                ON CONFLICT (province_code) DO UPDATE
+                  SET warehouse_id = EXCLUDED.warehouse_id
+                """
+            ),
+            {"wid": wh_id},
+        )
+
+        # 3.3 确保至少存在一个 store（stores.name NOT NULL）
+        row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))
+        any_store_id = row.scalar_one_or_none()
+        if any_store_id is None:
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO stores(platform, shop_id, name, active)
+                    VALUES('PDD', '1', 'UT-测试店铺', TRUE)
+                    """
+                )
+            )
+
+        # 3.4 将所有 stores 设为 active，并确保 name 非空（防御性）
+        await conn.execute(
+            text(
+                """
+                UPDATE stores
+                   SET active = TRUE,
+                       name = COALESCE(NULLIF(name, ''), platform || '-' || shop_id || '-测试店铺')
+                """
+            )
+        )
+
+        # 3.5 为所有 stores 绑定到 wh_id（幂等）
+        rows = await conn.execute(text("SELECT id FROM stores"))
+        store_ids = [int(x[0]) for x in rows.fetchall()]
+        for sid in store_ids:
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO store_warehouse(store_id, warehouse_id, is_top, is_default, priority)
+                    VALUES(:sid, :wid, TRUE, TRUE, 1)
+                    ON CONFLICT (store_id, warehouse_id) DO UPDATE
+                      SET is_top = EXCLUDED.is_top,
+                          is_default = EXCLUDED.is_default,
+                          priority = EXCLUDED.priority
+                    """
+                ),
+                {"sid": sid, "wid": wh_id},
+            )
 
 
 @pytest_asyncio.fixture(scope="function")

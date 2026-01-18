@@ -35,7 +35,11 @@ async def resolve_warehouse_for_order(
     row = await session.execute(
         text(
             """
-            SELECT warehouse_id
+            SELECT
+              warehouse_id,
+              fulfillment_status,
+              blocked_detail,
+              blocked_reasons
               FROM orders
              WHERE platform = :p
                AND shop_id  = :s
@@ -46,13 +50,33 @@ async def resolve_warehouse_for_order(
         {"p": plat, "s": shop_id, "o": ext_order_no},
     )
     rec = row.first()
-    if rec is None or not rec[0]:
+    if rec is None:
+        raise ValueError(
+            f"cannot resolve warehouse for order: order not found "
+            f"platform={plat}, shop={shop_id}, ext_order_no={ext_order_no}"
+        )
+
+    warehouse_id = rec[0]
+    fulfillment_status = rec[1]
+    blocked_detail = rec[2]
+    blocked_reasons = rec[3]
+
+    if warehouse_id is None or int(warehouse_id) == 0:
+        extra = []
+        if fulfillment_status:
+            extra.append(f"fulfillment_status={fulfillment_status}")
+        if blocked_detail:
+            extra.append(f"blocked_detail={blocked_detail}")
+        if blocked_reasons:
+            extra.append(f"blocked_reasons={blocked_reasons}")
+        suffix = ("; " + ", ".join(extra)) if extra else ""
         raise ValueError(
             f"cannot resolve warehouse for order: "
             f"platform={plat}, shop={shop_id}, ext_order_no={ext_order_no}, "
-            f"warehouse_id is NULL/0"
+            f"warehouse_id is NULL/0{suffix}"
         )
-    return int(rec[0])
+
+    return int(warehouse_id)
 
 
 async def reserve_flow(

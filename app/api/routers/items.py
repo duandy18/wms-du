@@ -77,10 +77,25 @@ def get_all_items(
         None,
         description="按启用状态过滤（enabled=true 只取启用商品）",
     ),
+    q: Optional[str] = Query(
+        None,
+        description="关键词搜索（命中 sku/name/barcode/id；大小写不敏感）",
+    ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=200,
+        description="限制返回条数（默认 50，最大 200）",
+    ),
     item_service: ItemService = Depends(get_item_service),
 ):
     # ✅ 向后兼容：不传参数时等价于旧行为（返回全量）
-    return item_service.get_items(supplier_id=supplier_id, enabled=enabled)
+    return item_service.get_items(
+        supplier_id=supplier_id,
+        enabled=enabled,
+        q=q,
+        limit=limit,
+    )
 
 
 @router.get("/{id}", response_model=ItemOut)

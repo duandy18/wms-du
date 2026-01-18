@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -155,13 +155,15 @@ class ItemService:
         self.db.refresh(obj)
         return _decorate_rules(obj)
 
-    # ✅ 新增：支持 supplier_id / enabled 过滤（采购创建/收货用）
+    # ✅ 支持 supplier_id / enabled / q / limit 过滤（主数据选择用）
     # - 不传参数：等价于旧行为（返回全量）
     def get_items(
         self,
         *,
         supplier_id: Optional[int] = None,
         enabled: Optional[bool] = None,
+        q: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> List[Item]:
         stmt = select(Item)
 
@@ -171,7 +173,52 @@ class ItemService:
         if enabled is not None:
             stmt = stmt.where(Item.enabled == enabled)
 
-        rows = self.db.execute(stmt.order_by(Item.id.asc())).scalars().all()
+        q_raw = (q or "").strip()
+        if q_raw:
+            q_like = f"%{q_raw.lower()}%"
+
+            conds = [
+                func.lower(Item.sku).like(q_like),
+                func.lower(Item.name).like(q_like),
+                cast(Item.id, String).like(q_like),
+            ]
+
+            # barcode：只从真实表列读取，避免拿到 Python @property
+            barcode_col = None
+            try:
+                barcode_col = Item.__table__.c.get("barcode")  # type: ignore[attr-defined]
+            except Exception:
+                barcode_col = None
+
+            if barcode_col is not None:
+                conds.append(func.lower(barcode_col).like(q_like))
+
+            # 纯数字时，额外加 id 等值匹配（更精准）
+            if q_raw.isdigit():
+                try:
+                    conds.append(Item.id == int(q_raw))
+                except Exception:
+                    pass
+
+            stmt = stmt.where(or_(*conds))
+
+        # limit：默认 50（当 q 存在时）；最大由路由层限制
+        lim: Optional[int] = None
+        if limit is not None:
+            try:
+                x = int(limit)
+                if x > 0:
+                    lim = x
+            except Exception:
+                lim = None
+        elif q_raw:
+            lim = 50
+
+        stmt = stmt.order_by(Item.id.asc())
+        if lim is not None:
+            stmt = stmt.limit(lim)
+
+        rows = self.db.execute(stmt).scalars().all()
         return [_decorate_rules(r) for r in rows]
 
     # 兼容旧接口：保留原方法名（供其它模块调用）
