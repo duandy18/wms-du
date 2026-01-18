@@ -7,8 +7,10 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.audit_writer import AuditEventWriter
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_platform_adapters import get_adapter
+from app.services.order_reserve_flow_reserve import reserve_flow
 from app.services.order_utils import to_dec_str
 
 from app.services.order_ingest_items_writer import insert_order_items
@@ -23,11 +25,11 @@ from app.services.order_ingest_schema_probe import (
 
 class OrderIngestService:
     """
-    订单接入 + 路由选仓（不负责预占 / 取消）。
+    订单接入（ingest）主线 —— 路线 C（执行期约束满足式履约）
 
-    提供：
-      - ingest_raw(session, platform, shop_id, payload, trace_id)
-      - ingest(...)
+    主线合同（两态）：
+      - OK + RESERVED：可履约事实（订单即库存事实闭环成立）
+      - FULFILLMENT_BLOCKED：不可履约事实（必须显式暴露，不进入 reserve）
     """
 
     @staticmethod
@@ -74,8 +76,10 @@ class OrderIngestService:
         extras: Optional[Mapping[str, Any]] = None,
         trace_id: Optional[str] = None,
     ) -> dict:
+        # 关键修复：平台一律大写，保证 ref 合同与 orders.platform 口径一致
+        plat = (platform or "").upper().strip()
         occurred_at = occurred_at or datetime.now(timezone.utc)
-        order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
+        order_ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
         # schema probe：保持原行为（每次 ingest 动态检查列是否存在）
         orders_has_extras = await _orders_has_extras(session)
@@ -85,7 +89,7 @@ class OrderIngestService:
         # 1) 写 orders（含幂等处理）
         ins_res = await insert_order_or_get_idempotent(
             session,
-            platform=platform,
+            platform=plat,
             shop_id=shop_id,
             ext_order_no=ext_order_no,
             occurred_at=occurred_at,
@@ -99,54 +103,118 @@ class OrderIngestService:
             orders_has_extras=orders_has_extras,
             order_ref=order_ref,
         )
-        if ins_res.get("status") == "IDEMPOTENT":
-            # 与原实现完全一致：幂等命中直接返回，不写 items/event/routing
-            return {
-                "status": "IDEMPOTENT",
-                "id": ins_res.get("id"),
-                "ref": order_ref,
-            }
 
-        order_id = int(ins_res["id"])
+        # 幂等命中：不重复写 items / ORDER_CREATED，但允许补齐 route/reserve（防止僵尸订单）。
+        idempotent_hit = ins_res.get("status") == "IDEMPOTENT"
 
-        # 2) 写 order_items
-        await insert_order_items(
-            session,
-            order_id=order_id,
-            items=items,
-            order_items_has_extras=order_items_has_extras,
-        )
+        order_id_raw = ins_res.get("id")
+        if order_id_raw is None:
+            raise RuntimeError("订单接入失败：insert_order_or_get_idempotent 未返回 id")
+        order_id = int(order_id_raw)
 
-        # 3) 写 ORDER_CREATED（订单事件总线）
-        try:
-            await OrderEventBus.order_created(
+        # 2) 写 order_items（仅在非幂等时执行）
+        if not idempotent_hit:
+            await insert_order_items(
                 session,
-                ref=order_ref,
-                platform=platform,
-                shop_id=shop_id,
                 order_id=order_id,
-                order_amount=to_dec_str(order_amount),
-                pay_amount=to_dec_str(pay_amount),
-                lines=len(items or ()),
-                trace_id=trace_id,
+                items=items,
+                order_items_has_extras=order_items_has_extras,
             )
-        except Exception:
-            pass
 
-        # 4) 路由选仓（orders.warehouse_id + 审计事件）
+            # 3) 写 ORDER_CREATED（订单事件总线）——也只在非幂等时执行
+            try:
+                await OrderEventBus.order_created(
+                    session,
+                    ref=order_ref,
+                    platform=plat,
+                    shop_id=shop_id,
+                    order_id=order_id,
+                    order_amount=to_dec_str(order_amount),
+                    pay_amount=to_dec_str(pay_amount),
+                    lines=len(items or ()),
+                    trace_id=trace_id,
+                )
+            except Exception:
+                pass
+
+        # 4) 履约校验（路线 C）：命中服务仓 + 校验整单履约
+        #    失败必须显式暴露，且不进入 reserve。
+        route_payload: Optional[dict] = None
+        route_status = "SKIPPED"
+
         if items and orders_has_whid:
-            await auto_route_warehouse_if_possible(
+            rr = await auto_route_warehouse_if_possible(
                 session,
-                platform=platform,
+                platform=plat,
                 shop_id=shop_id,
                 order_id=order_id,
                 order_ref=order_ref,
                 trace_id=trace_id,
                 items=items,
+                address=address,
             )
+            if isinstance(rr, dict):
+                route_payload = rr
+                route_status = str(rr.get("status") or "CHECKED")
+
+                if route_status == "FULFILLMENT_BLOCKED":
+                    return {
+                        "status": "FULFILLMENT_BLOCKED",
+                        "id": order_id,
+                        "ref": order_ref,
+                        "route": route_payload,
+                    }
+
+        # 5) 立即 reserve（仅当 route 未阻断）
+        #    必须按 reserve_flow 的真实签名传参：platform/shop/ref/lines/trace_id
+        if items and orders_has_whid:
+            lines = []
+            for it in items or ():
+                item_id = it.get("item_id")
+                qty = int(it.get("qty") or 0)
+                if item_id is None or qty <= 0:
+                    continue
+                lines.append({"item_id": int(item_id), "qty": int(qty)})
+
+            try:
+                await reserve_flow(
+                    session,
+                    platform=plat,
+                    shop_id=shop_id,
+                    ref=order_ref,
+                    lines=lines,
+                    trace_id=trace_id,
+                )
+            except Exception as e:
+                # 失败暴露 + 审计落地（可追责/可统计）
+                try:
+                    await AuditEventWriter.write(
+                        session,
+                        event="ORDER_RESERVE_FAILED",
+                        ref=order_ref,
+                        trace_id=trace_id,
+                        data={
+                            "order_id": order_id,
+                            "error": str(e),
+                            "route_status": route_status,
+                            "route": route_payload,
+                        },
+                    )
+                except Exception:
+                    pass
+
+                return {
+                    "status": "RESERVE_FAILED",
+                    "id": order_id,
+                    "ref": order_ref,
+                    "route": route_payload,
+                    "error": str(e),
+                }
 
         return {
             "status": "OK",
             "id": order_id,
             "ref": order_ref,
+            "route": route_payload,
+            "ingest_state": "RESERVED" if (items and orders_has_whid) else "CREATED",
         }
