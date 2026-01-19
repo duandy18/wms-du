@@ -133,7 +133,7 @@ def register(router: APIRouter) -> None:
                         """
                         SELECT city_code, warehouse_id
                           FROM warehouse_service_cities
-                         WHERE city_code = ANY(:cities)
+                         WHERE city_code = ANY(CAST(:cities AS text[]))
                            AND warehouse_id <> :wid
                          ORDER BY city_code
                         """
