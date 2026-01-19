@@ -203,6 +203,11 @@ class ReservationService:
             ]
           }
         """
+        # Route C 合同护栏：不允许默认仓/兜底推断。
+        # 兼容层 reserve 只接受“显式 warehouse_id”。
+        if warehouse_id is None:
+            raise ReservationError("warehouse_id is required for reserve")
+
         _ = StoreService  # 保持与原文件一致的依赖语义（仅用于 resolve_default_warehouse）
         return await reserve_plan_only(
             session,
