@@ -13,3 +13,17 @@ class WarehouseServiceProvincesOut(BaseModel):
 
 class WarehouseServiceProvincesPutIn(BaseModel):
     provinces: List[str] = Field(default_factory=list)
+
+
+# ---------------------------
+# Province Occupancy（只读）
+# ---------------------------
+
+
+class WarehouseServiceProvinceOccupancyRow(BaseModel):
+    province_code: str
+    warehouse_id: int
+
+
+class WarehouseServiceProvinceOccupancyOut(BaseModel):
+    rows: List[WarehouseServiceProvinceOccupancyRow] = Field(default_factory=list)

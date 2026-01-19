@@ -51,9 +51,7 @@ async def _get_order_id_and_current_wh(
     )
     rec = row.first()
     if rec is None:
-        raise ValueError(
-            f"order not found: platform={platform}, shop_id={shop_id}, ext_order_no={ext_order_no}"
-        )
+        raise ValueError(f"order not found: platform={platform}, shop_id={shop_id}, ext_order_no={ext_order_no}")
     oid = int(rec[0])
     wid = rec[1]
     return oid, (int(wid) if wid else None)
@@ -160,6 +158,40 @@ def register(router: APIRouter) -> None:
             shop_id=shop_id,
             ext_order_no=ext_order_no,
         )
+
+        # Route C 合同护栏：
+        # reserve 不负责“选仓/兜底”，只允许在订单已具备明确履约仓且处于可履约态时继续。
+        row = await session.execute(
+            text(
+                """
+                SELECT warehouse_id, fulfillment_status, blocked_reasons, blocked_detail
+                  FROM orders
+                 WHERE platform = :p
+                   AND shop_id  = :s
+                   AND ext_order_no = :o
+                 LIMIT 1
+                """
+            ),
+            {"p": plat, "s": shop_id, "o": ext_order_no},
+        )
+        rec = row.first()
+        if rec is None:
+            raise HTTPException(409, detail=f"reserve blocked: order not found: {order_ref}")
+
+        warehouse_id, fulfillment_status, blocked_reasons, blocked_detail = rec
+        whid = int(warehouse_id) if warehouse_id is not None else None
+        fstat = str(fulfillment_status or "")
+
+        if whid is None or fstat != "READY_TO_FULFILL":
+            if fstat == "FULFILLMENT_BLOCKED":
+                raise HTTPException(
+                    409,
+                    detail=f"reserve blocked: order is FULFILLMENT_BLOCKED; reasons={blocked_reasons}; detail={blocked_detail}",
+                )
+            raise HTTPException(
+                409,
+                detail=f"reserve blocked: order not READY_TO_FULFILL or warehouse_id missing; status={fstat}, warehouse_id={whid}",
+            )
 
         try:
             result = await OrderService.reserve(

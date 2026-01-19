@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
 
+import app.services.order_ingest_service as order_ingest_service
+
 
 @dataclass
 class SandboxOrderLine:
@@ -33,14 +35,13 @@ class SandboxOrder:
 
 async def seed_world(session: AsyncSession) -> None:
     """
-    第一版沙盘的初始化世界：
-    - 仓库：1,2,3
-    - 店铺：S1(FALLBACK), S2(STRICT_TOP), S3(FALLBACK)
-    - store_warehouse 绑定关系
-    - items：1001,1002,1003（带 SKU）
-    """
+    Route C 沙盘初始化世界：
 
-    # 确保 1/2/3 仓存在（只插必要字段）
+    - 仓库：1,2,3
+    - 店铺：S1, S2, S3（route_mode 字段仍写入，但 Route C 不依赖）
+    - warehouse_service_provinces：省码 → 服务仓（S1/S2 映射到仓2；S3 故意不映射制造失败）
+    - items：1001,1002,1003
+    """
     await session.execute(
         sa.text(
             """
@@ -54,7 +55,6 @@ async def seed_world(session: AsyncSession) -> None:
         )
     )
 
-    # 插店铺（route_mode 与我们路由策略保持一致）
     await session.execute(
         sa.text(
             """
@@ -64,29 +64,6 @@ async def seed_world(session: AsyncSession) -> None:
                 ('PDD','S2','S2','STRICT_TOP',now(),now()),
                 ('PDD','S3','S3','FALLBACK',now(),now())
             ON CONFLICT (platform, shop_id) DO NOTHING;
-            """
-        )
-    )
-
-    # store_warehouse 绑定：
-    #  S1: main=1, backup=2
-    #  S2: main=2 (STRICT_TOP)
-    #  S3: main=3 (无备仓)
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
-            SELECT s.id, w.warehouse_id, w.is_top, w.priority
-              FROM stores s,
-                   (VALUES
-                        ('S1',1,true,1),
-                        ('S1',2,false,2),
-                        ('S2',2,true,1),
-                        ('S3',3,true,1)
-                   ) AS w(shop, warehouse_id, is_top, priority)
-             WHERE s.shop_id = w.shop
-               AND s.platform = 'PDD'
-            ON CONFLICT DO NOTHING;
             """
         )
     )
@@ -101,6 +78,19 @@ async def seed_world(session: AsyncSession) -> None:
                 (1002,'SKU-1002','item1002'),
                 (1003,'SKU-1003','item1003')
             ON CONFLICT (id) DO NOTHING;
+            """
+        )
+    )
+
+    # Route C：省→服务仓。S1/S2 映射到仓2；S3 故意不映射（制造 failed）
+    await session.execute(sa.text("DELETE FROM warehouse_service_provinces WHERE province_code IN ('P-S1','P-S2','P-S3')"))
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES
+                (2, 'P-S1'),
+                (2, 'P-S2')
             """
         )
     )
@@ -162,30 +152,32 @@ async def test_routing_sandbox_ingest_only(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """
-    第一版沙盘：只跑 ingest，不碰 reserve/ship。
+    Route C 沙盘：只跑 ingest，不碰 reserve/ship。
 
     通过 fake ChannelInventoryService.get_available_for_item 模拟：
-    - S1(FALLBACK)：主仓1小库存、备仓2大库存 -> 会出现 fallback
-    - S2(STRICT_TOP)：仓2大库存 -> 全部落仓2，不失败
-    - S3(FALLBACK)：仅仓3，小库存 -> 会出现 failed（no_candidate）
+    - S1：省码命中仓2，但容量小 -> 会出现 routed + failed（INSUFFICIENT_QTY）
+    - S2：省码命中仓2，容量大 -> 全部 routed
+    - S3：省码不映射 -> 全部 failed（NO_SERVICE_WAREHOUSE）
     """
-
     session = db_session_like_pg
 
-    # 固定随机种子，确保结果可重复
-    random.seed(2025_11_19)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
+    # ingest-only：避免 reserve_flow 干扰
+    async def _noop_reserve_flow(*_, **__):
+        return None
+
+    monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
+
+    random.seed(2025_11_19)
     await seed_world(session)
 
     # ---- fake ChannelInventoryService.get_available_for_item ----
-
-    # key: (platform, shop_id, warehouse_id) -> capacity（每个订单可用量）
-    # 注意：这里不模拟扣减，只是决定“这一单能不能在该仓整单履约”。
     capacity_map = {
-        ("PDD", "S1", 1): 5,  # S1 主仓1，小容量
-        ("PDD", "S1", 2): 999,  # S1 备仓2，大容量
-        ("PDD", "S2", 2): 999,  # S2 主仓2，充足
-        ("PDD", "S3", 3): 3,  # S3 主仓3，小容量，制造失败
+        ("PDD", "S1", 2): 5,    # S1 命中仓2但容量小 -> 一部分订单会失败
+        ("PDD", "S2", 2): 999,  # S2 命中仓2容量足 -> 不失败
+        # S3 没有省映射，函数即便返回也不会被调用到
     }
 
     async def fake_get_available_for_item(
@@ -196,7 +188,6 @@ async def test_routing_sandbox_ingest_only(
         warehouse_id: int,
         item_id: int,
     ) -> int:
-        # 忽略 item_id，按 (平台,店铺,仓) 粗粒度模拟
         key = (platform.upper(), str(shop_id), int(warehouse_id))
         return capacity_map.get(key, 0)
 
@@ -207,51 +198,51 @@ async def test_routing_sandbox_ingest_only(
         raising=False,
     )
 
-    # ---- 批量 ingest ----
+    shop_province = {"S1": "P-S1", "S2": "P-S2", "S3": "P-S3"}
 
     orders = generate_orders(200)
-
     for order in orders:
+        province = shop_province[order.shop_id]
         await OrderService.ingest(
             session,
             platform=order.platform,
             shop_id=order.shop_id,
             ext_order_no=order.ext_order_id,
             items=[{"item_id": line.item_id, "qty": line.qty} for line in order.lines],
+            address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
         )
 
     await session.commit()
 
     summary = await collect_sql_summary(session)
 
-    print("\n=== Routing Sandbox Summary (Ingest Only) ===")
+    print("\n=== Routing Sandbox Summary (Ingest Only / Route C) ===")
     for row in summary:
         print(row)
 
     # ----------------------
-    # S2（STRICT_TOP）验证
+    # S2 验证：全部 routed 到仓2，failed_orders=0
     # ----------------------
     s2_rows = [r for r in summary if r.shop_id == "S2"]
-    # S2 只有仓2，route_mode=STRICT_TOP，容量很大，不应失败
+    assert s2_rows, "no S2 rows in summary"
     for r in s2_rows:
-        assert r.route_mode == "STRICT_TOP"
         assert r.warehouse_id == 2
         assert r.failed_orders == 0
 
     # ----------------------
-    # S1（FALLBACK）验证
+    # S1 验证：有 routed（仓2），且可能有 failed（warehouse_id 可能为 NULL 的分组）
     # ----------------------
     s1_rows = [r for r in summary if r.shop_id == "S1"]
+    assert s1_rows, "no S1 rows in summary"
     total_s1_orders = sum(r.routed_orders + r.failed_orders for r in s1_rows)
-    fallback_s1 = sum(r.routed_orders for r in s1_rows if r.warehouse_id == 2)
-    # 有订单，且出现过 fallback -> 仓2分担了部分订单
+    routed_s1_wh2 = sum(r.routed_orders for r in s1_rows if r.warehouse_id == 2)
     assert total_s1_orders > 0
-    assert fallback_s1 > 0
+    assert routed_s1_wh2 > 0
 
     # ----------------------
-    # S3（FALLBACK + 小库存）验证
+    # S3 验证：无省映射，应出现 failed
     # ----------------------
     s3_rows = [r for r in summary if r.shop_id == "S3"]
+    assert s3_rows, "no S3 rows in summary"
     failed_s3 = sum(r.failed_orders for r in s3_rows)
-    # 容量很小，随机订单中应出现无仓可履约的情况
     assert failed_s3 > 0

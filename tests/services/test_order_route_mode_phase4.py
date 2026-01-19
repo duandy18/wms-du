@@ -155,6 +155,7 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
 
 
 async def _bind_store_wh(session, store_id: int, top_wh: int, backup_wh: int):
+    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不会影响测试
     await session.execute(
         text("DELETE FROM store_warehouse WHERE store_id = :sid"),
         {"sid": store_id},
@@ -179,29 +180,58 @@ async def _bind_store_wh(session, store_id: int, top_wh: int, backup_wh: int):
     )
 
 
+async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+    # Route C：省→唯一服务仓
+    await session.execute(
+        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
+        {"p": province_code},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:wid, :p)
+            """
+        ),
+        {"wid": int(warehouse_id), "p": province_code},
+    )
+
+
 @pytest.mark.asyncio
 async def test_route_mode_fallback_uses_backup(db_session_like_pg, monkeypatch):
     """
-    FALLBACK 模式下：主仓库存不足时，应 fallback 到备仓。
+    旧 Phase4 语义：FALLBACK 模式下主仓不足应 fallback 到备仓。
+
+    Route C 新事实：
+    - 不兜底、不选仓；只命中“省→服务仓”
+    - 即便“备仓可用”，也不会 fallback
+    - 服务仓库存不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY），orders.warehouse_id 不写
     """
     session = db_session_like_pg
     platform = "PDD"
     shop_id = "S-FB"
 
+    # 禁止测试辅助 fallback（让省份来源必须来自 address）
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
     top_wh, backup_wh = await _ensure_two_warehouses(session)
     store_id = await _ensure_store(session, platform, shop_id, "FB-STORE")
-
     await _bind_store_wh(session, store_id, top_wh, backup_wh)
 
-    # 显式设为 FALLBACK（虽然默认就是）
+    # legacy：显式设为 FALLBACK（Route C 不使用）
     await session.execute(
         text("UPDATE stores SET route_mode='FALLBACK' WHERE id=:sid"),
         {"sid": store_id},
     )
 
+    # Route C：省命中服务仓 = top_wh
+    province = "P-FB"
+    await _ensure_service_province(session, province_code=province, warehouse_id=top_wh)
+
     stock_map = {
-        (top_wh, 1): 2,  # 主仓不够
-        (backup_wh, 1): 10,  # 备仓足够
+        (top_wh, 1): 2,      # 服务仓不够
+        (backup_wh, 1): 10,  # 备仓足够（Route C 也不会看）
     }
 
     async def fake_get_available(self, *_, **kwargs):
@@ -232,35 +262,46 @@ async def test_route_mode_fallback_uses_backup(db_session_like_pg, monkeypatch):
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "A", "receiver_phone": "111"},
+        address={"province": province, "receiver_name": "A", "receiver_phone": "111"},
         extras={},
         trace_id="TRACE-FB-1",
     )
 
-    assert res["status"] == "OK"
-    oid = res["id"]
+    assert res["status"] == "FULFILLMENT_BLOCKED"
+    assert isinstance(res.get("route"), dict)
+    assert res["route"].get("reason") == "INSUFFICIENT_QTY"
+    assert res["route"].get("service_warehouse_id") == int(top_wh)
 
+    oid = res["id"]
     row = await session.execute(
-        text("SELECT warehouse_id FROM orders WHERE id=:id"),
+        text("SELECT warehouse_id, service_warehouse_id, fulfillment_status FROM orders WHERE id=:id"),
         {"id": oid},
     )
-    wid = row.scalar()
-    # FALLBACK 模式下，应选择备仓
-    assert wid == backup_wh
+    whid, swid, fstat = row.first()
+    assert whid in (None, 0)
+    assert int(swid) == int(top_wh)
+    assert str(fstat) == "FULFILLMENT_BLOCKED"
 
 
 @pytest.mark.asyncio
 async def test_route_mode_strict_top_does_not_fallback(db_session_like_pg, monkeypatch):
     """
-    STRICT_TOP 模式下：主仓库存不足时，不使用备仓，订单不选仓（warehouse_id 为空/0）。
+    旧 Phase4 语义：STRICT_TOP 模式下主仓不足，不 fallback，warehouse_id 为空。
+
+    Route C 新事实：
+    - route_mode 不参与决策
+    - 省命中服务仓后，仅做“整单能否履约”校验
+    - 库存不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY），orders.warehouse_id 不写
     """
     session = db_session_like_pg
     platform = "PDD"
     shop_id = "S-STRICT"
 
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
     top_wh, backup_wh = await _ensure_two_warehouses(session)
     store_id = await _ensure_store(session, platform, shop_id, "STRICT-STORE")
-
     await _bind_store_wh(session, store_id, top_wh, backup_wh)
 
     await session.execute(
@@ -268,9 +309,12 @@ async def test_route_mode_strict_top_does_not_fallback(db_session_like_pg, monke
         {"sid": store_id},
     )
 
+    province = "P-STRICT"
+    await _ensure_service_province(session, province_code=province, warehouse_id=top_wh)
+
     stock_map = {
-        (top_wh, 1): 2,  # 主仓不够
-        (backup_wh, 1): 10,  # 备仓足够，但 STRICT_TOP 模式下应该“看不见”
+        (top_wh, 1): 2,
+        (backup_wh, 1): 10,
     }
 
     async def fake_get_available(self, *_, **kwargs):
@@ -301,18 +345,22 @@ async def test_route_mode_strict_top_does_not_fallback(db_session_like_pg, monke
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "B", "receiver_phone": "222"},
+        address={"province": province, "receiver_name": "B", "receiver_phone": "222"},
         extras={},
         trace_id="TRACE-ST-1",
     )
 
-    assert res["status"] == "OK"
-    oid = res["id"]
+    assert res["status"] == "FULFILLMENT_BLOCKED"
+    assert isinstance(res.get("route"), dict)
+    assert res["route"].get("reason") == "INSUFFICIENT_QTY"
+    assert res["route"].get("service_warehouse_id") == int(top_wh)
 
+    oid = res["id"]
     row = await session.execute(
-        text("SELECT warehouse_id FROM orders WHERE id=:id"),
+        text("SELECT warehouse_id, service_warehouse_id, fulfillment_status FROM orders WHERE id=:id"),
         {"id": oid},
     )
-    wid = row.scalar()
-    # STRICT_TOP：主仓不够 → 不 fallback → 不选仓
-    assert wid in (None, 0)
+    whid, swid, fstat = row.first()
+    assert whid in (None, 0)
+    assert int(swid) == int(top_wh)
+    assert str(fstat) == "FULFILLMENT_BLOCKED"

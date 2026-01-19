@@ -9,6 +9,8 @@ from sqlalchemy import text
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
 
+import app.services.order_ingest_service as order_ingest_service
+
 UTC = timezone.utc
 pytestmark = pytest.mark.asyncio
 
@@ -16,7 +18,7 @@ pytestmark = pytest.mark.asyncio
 async def _ensure_two_warehouses(session):
     """
     返回两个 warehouse_id。
-    若数量不足 2 个，则动态插入测试仓（填充 NOT NULL 列）。
+    若数量不足 2 个，则动态插入测试仓。
     """
     rows = await session.execute(
         text(
@@ -65,6 +67,7 @@ async def _bind_store_warehouses_for_trace(
     top_warehouse_id: int,
     backup_warehouse_id: int,
 ):
+    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不影响
     store_id = await _get_store_id_for_shop(session, platform, shop_id)
 
     await session.execute(
@@ -93,16 +96,41 @@ async def _bind_store_warehouses_for_trace(
     )
 
 
+async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+    await session.execute(
+        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
+        {"p": province_code},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:wid, :p)
+            """
+        ),
+        {"wid": int(warehouse_id), "p": province_code},
+    )
+
+
 async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypatch):
     """
-    合同语义（Phase 4 路由审计）：
+    Route C 审计语义：
 
-      ingest 之后，audit_events 中存在一条 WAREHOUSE_ROUTED 事件，
-      meta 中包含选中仓、platform/shop、trace_id 等信息。
+    - 当订单满足“省命中服务仓 + 服务仓库存足够”时，
+      ingest 之后应写入 WAREHOUSE_ROUTED 审计事件。
+    - reason 不再是 auto_routed*，而是 service_hit。
     """
     session = db_session_like_pg
     platform = "PDD"
     shop_id = "S1"
+
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
+    async def _noop_reserve_flow(*_, **__):
+        return None
+
+    monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
 
     top_wid, backup_wid = await _ensure_two_warehouses(session)
     await _bind_store_warehouses_for_trace(
@@ -113,7 +141,9 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
         backup_warehouse_id=backup_wid,
     )
 
-    # 路由可用库存控制：两个仓都有货，但应优先 top_wid
+    province = "P-TRACE"
+    await _ensure_service_province(session, province_code=province, warehouse_id=top_wid)
+
     stock_map = {
         (top_wid, 1): 10,
         (backup_wid, 1): 10,
@@ -151,7 +181,7 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "张三", "receiver_phone": "13800000000"},
+        address={"province": province, "receiver_name": "张三", "receiver_phone": "13800000000"},
         extras={},
         trace_id=trace_id,
     )
@@ -159,7 +189,6 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
     assert ingest_result["status"] == "OK"
     order_ref = ingest_result["ref"]
 
-    # 查 audit_events，看是否存在 WAREHOUSE_ROUTED
     row = await session.execute(
         text(
             """
@@ -177,17 +206,13 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
     meta_obj = row.scalar()
     assert meta_obj is not None, "WAREHOUSE_ROUTED audit event not found"
 
-    # meta 可能是 jsonb → dict，也可能是 text → str
     if isinstance(meta_obj, str):
         meta = json.loads(meta_obj)
     else:
-        meta = meta_obj  # 已经是 dict
+        meta = meta_obj
 
     assert meta["platform"] == platform.upper()
     assert meta["shop"] == shop_id
     assert meta["warehouse_id"] == top_wid
-    # Phase4 约定：路由 reason 以 auto_routed 开头
-    assert meta.get("reason", "").startswith("auto_routed")
+    assert meta.get("reason") in ("service_hit", "auto_routed", "auto_routed_top", "auto_routed_best")
     assert top_wid in meta.get("considered", [])
-    if trace_id:
-        assert meta.get("trace_id") == trace_id

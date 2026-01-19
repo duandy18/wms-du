@@ -8,6 +8,8 @@ from sqlalchemy import text
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
 
+import app.services.order_ingest_service as order_ingest_service
+
 UTC = timezone.utc
 pytestmark = pytest.mark.asyncio
 
@@ -92,7 +94,6 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
     if store_id is not None:
         return int(store_id)
 
-    # 动态填充 NOT NULL 且无默认值的列
     cols_rows = await session.execute(
         text(
             """
@@ -108,7 +109,6 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
     )
     col_info = [(str(r[0]), str(r[1])) for r in cols_rows.fetchall()]
 
-    # 如果没有特殊 NOT NULL 列，就只插 platform/shop_id/name
     if not col_info:
         ins = await session.execute(
             text(
@@ -134,8 +134,6 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
         )
         return int(row2.scalar_one())
 
-    # 有额外 NOT NULL 列：构造插入
-    # 强制包含 platform/shop_id/name，其他列按类型生成 dummy 值
     columns = ["platform", "shop_id", "name"]
     params: dict[str, object] = {
         "platform": platform,
@@ -182,9 +180,8 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
     return int(row2.scalar_one())
 
 
-async def _bind_store_to_wh(
-    session, store_id: int, wh_id: int, is_top: bool, priority: int
-) -> None:
+async def _bind_store_to_wh(session, store_id: int, wh_id: int, is_top: bool, priority: int) -> None:
+    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不影响
     await session.execute(
         text("DELETE FROM store_warehouse WHERE store_id = :sid"),
         {"sid": store_id},
@@ -200,17 +197,45 @@ async def _bind_store_to_wh(
     )
 
 
+async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+    await session.execute(
+        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
+        {"p": province_code},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:wid, :p)
+            """
+        ),
+        {"wid": int(warehouse_id), "p": province_code},
+    )
+
+
 @pytest.mark.asyncio
 async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch):
     """
-    同平台 PDD 下，S1 / S2 分别绑定不同主仓时：
-    - S1 订单应路由到 wh_a
-    - S2 订单应路由到 wh_b
+    旧 Phase4 语义：同平台下不同店铺绑定不同主仓 → 路由到各自主仓。
+
+    Route C 新事实：不看 store_warehouse；只看“省→服务仓”。
+
+    本测试迁移为：
+    - S1 使用省码 P-MULTI-A → 命中 wh_a
+    - S2 使用省码 P-MULTI-B → 命中 wh_b
     """
     session = db_session_like_pg
     platform = "PDD"
     shop1 = "S1"
     shop2 = "S2"
+
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
+    async def _noop_reserve_flow(*_, **__):
+        return None
+
+    monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
 
     wh_a, wh_b = await _ensure_two_warehouses(session)
     store1 = await _ensure_store(session, platform, shop1, "Shop 1")
@@ -219,7 +244,12 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
     await _bind_store_to_wh(session, store_id=store1, wh_id=wh_a, is_top=True, priority=10)
     await _bind_store_to_wh(session, store_id=store2, wh_id=wh_b, is_top=True, priority=10)
 
-    # 路由可用库存：两个仓对 item 1 均有足够可用量
+    # Route C：分别给两个省码映射不同服务仓
+    prov_a = "P-MULTI-A"
+    prov_b = "P-MULTI-B"
+    await _ensure_service_province(session, province_code=prov_a, warehouse_id=wh_a)
+    await _ensure_service_province(session, province_code=prov_b, warehouse_id=wh_b)
+
     stock_map = {
         (wh_a, 1): 10,
         (wh_b, 1): 10,
@@ -234,7 +264,6 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
 
     occurred_at = datetime.now(UTC)
 
-    # S1 订单
     r1 = await OrderService.ingest(
         session,
         platform=platform,
@@ -256,14 +285,13 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "A", "receiver_phone": "111"},
+        address={"province": prov_a, "receiver_name": "A", "receiver_phone": "111"},
         extras={},
         trace_id="TRACE-MULTI-S1",
     )
     assert r1["status"] == "OK"
     oid1 = r1["id"]
 
-    # S2 订单
     r2 = await OrderService.ingest(
         session,
         platform=platform,
@@ -285,19 +313,19 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "B", "receiver_phone": "222"},
+        address={"province": prov_b, "receiver_name": "B", "receiver_phone": "222"},
         extras={},
         trace_id="TRACE-MULTI-S2",
     )
     assert r2["status"] == "OK"
     oid2 = r2["id"]
 
-    # 检查 orders.warehouse_id
     row1 = await session.execute(
         text("SELECT warehouse_id FROM orders WHERE id = :id"),
         {"id": oid1},
     )
     wh1 = row1.scalar()
+
     row2 = await session.execute(
         text("SELECT warehouse_id FROM orders WHERE id = :id"),
         {"id": oid2},

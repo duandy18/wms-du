@@ -21,6 +21,7 @@ from app.services.order_ingest_schema_probe import (
     orders_has_extras as _orders_has_extras,
     orders_has_warehouse_id as _orders_has_warehouse_id,
 )
+from app.services.order_ingest_address_writer import upsert_order_address
 
 
 class OrderIngestService:
@@ -137,6 +138,15 @@ class OrderIngestService:
             except Exception:
                 pass
 
+        # ✅ 3.5) 写 order_address 快照（审计/解释用）
+        # - 不影响路由主线
+        # - 幂等命中时也允许补齐 address（防止历史订单缺地址）
+        try:
+            await upsert_order_address(session, order_id=order_id, address=address)
+        except Exception:
+            # 地址写入失败不应阻断主线（避免因历史字段差异导致 ingest 失败）
+            pass
+
         # 4) 履约校验（路线 C）：命中服务仓 + 校验整单履约
         #    失败必须显式暴露，且不进入 reserve。
         route_payload: Optional[dict] = None
@@ -166,7 +176,6 @@ class OrderIngestService:
                     }
 
         # 5) 立即 reserve（仅当 route 未阻断）
-        #    必须按 reserve_flow 的真实签名传参：platform/shop/ref/lines/trace_id
         if items and orders_has_whid:
             lines = []
             for it in items or ():
@@ -186,7 +195,6 @@ class OrderIngestService:
                     trace_id=trace_id,
                 )
             except Exception as e:
-                # 失败暴露 + 审计落地（可追责/可统计）
                 try:
                     await AuditEventWriter.write(
                         session,
@@ -212,7 +220,8 @@ class OrderIngestService:
                 }
 
         return {
-            "status": "OK",
+            # ✅ 幂等命中必须显式返回 IDEMPOTENT（测试/合同依赖）
+            "status": "IDEMPOTENT" if idempotent_hit else "OK",
             "id": order_id,
             "ref": order_ref,
             "route": route_payload,
