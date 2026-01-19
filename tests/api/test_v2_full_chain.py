@@ -195,12 +195,22 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
 
 @pytest.mark.asyncio
 async def test_v2_order_reserve_requires_warehouse(
-    client: AsyncClient, db_session_like_pg: AsyncSession
+    client: AsyncClient,
+    db_session_like_pg: AsyncSession,
+    monkeypatch,
 ):
     """
     没有 warehouse_id 的订单，调用订单驱动预占时应失败，
     防止“未定仓预占”。
+
+    Route C 约束：
+    - 不允许任何默认仓兜底
+    - address=None 时也不能因测试辅助 fallback 而“自动命中省市”
     """
+    # Route C 测试护栏：禁止测试辅助 fallback 让 address=None 仍能命中省/市
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
     plat = "PDD"
     shop_id = "1"
     ext = "ORD-NO-WH"
@@ -222,12 +232,17 @@ async def test_v2_order_reserve_requires_warehouse(
         trace_id="TEST-TRACE-NO-WH",
     )
     await db_session_like_pg.commit()
+    print("[TEST] ingest(no-wh) 返回:", r)
 
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/reserve",
         json={"lines": [{"item_id": 3002, "qty": 1}]},
     )
     print("[HTTP] reserve(no-wh) status:", resp.status_code, "body:", resp.text)
-    assert resp.status_code in (400, 409, 422, 500)
+    assert resp.status_code in (409, 422, 500)
+
     body = resp.json()
-    assert "warehouse_id" in json.dumps(body) or "insufficient" in json.dumps(body)
+    s = json.dumps(body, ensure_ascii=False)
+
+    # Route C：未定仓 / 非 READY 必须被阻断
+    assert ("blocked" in s) or ("FULFILLMENT_BLOCKED" in s) or ("warehouse_id" in s) or ("insufficient" in s), s

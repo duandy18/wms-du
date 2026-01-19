@@ -9,6 +9,8 @@ from sqlalchemy import text
 from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
 
+import app.services.order_ingest_service as order_ingest_service
+
 UTC = timezone.utc
 pytestmark = pytest.mark.asyncio
 
@@ -74,7 +76,6 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str, route_m
     )
     sid = row.scalar()
     if sid is None:
-        # 简化版插入：假设只有 name 是 NOT NULL
         await session.execute(
             text(
                 """
@@ -99,6 +100,7 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str, route_m
 
 
 async def _bind_store_wh(session, store_id: int, wh_top: int, wh_backup: int):
+    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不影响
     await session.execute(
         text("DELETE FROM store_warehouse WHERE store_id=:sid"),
         {"sid": store_id},
@@ -123,21 +125,45 @@ async def _bind_store_wh(session, store_id: int, wh_top: int, wh_backup: int):
     )
 
 
+async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+    await session.execute(
+        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
+        {"p": province_code},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:wid, :p)
+            """
+        ),
+        {"wid": int(warehouse_id), "p": province_code},
+    )
+
+
 @pytest.mark.asyncio
 async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     """
-    小型沙盘：2 仓 + 3 店 + 多订单，检查：
+    旧 Phase4 沙盘：fallback/strict_top/主备仓选择。
 
-    - FALLBACK 店在主仓不足时会 fallback 到备仓；
-    - STRICT_TOP 店在主仓不足时不会 fallback；
-    - 常规店（主仓足够）永远在主仓发。
+    Route C 新事实：
+    - 不兜底、不选仓；只命中“省→服务仓”
+    - 服务仓不足 → FULFILLMENT_BLOCKED（warehouse_id 不写）
+    - 服务仓足够 → READY_TO_FULFILL（warehouse_id 写为服务仓）
     """
     session = db_session_like_pg
     platform = "PDD"
 
+    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
+    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
+
+    async def _noop_reserve_flow(*_, **__):
+        return None
+
+    monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
+
     wh_a, wh_b = await _ensure_warehouses(session, 2)
 
-    # 三家店：S1 普通 FALLBACK；S2 严格 STRICT_TOP；S3 FALLBACK 但主仓永远足够
     s1 = await _ensure_store(session, platform, "S1-FB", "Shop FB", route_mode="FALLBACK")
     s2 = await _ensure_store(session, platform, "S2-ST", "Shop ST", route_mode="STRICT_TOP")
     s3 = await _ensure_store(session, platform, "S3-FBOK", "Shop FB-OK", route_mode="FALLBACK")
@@ -146,34 +172,31 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     await _bind_store_wh(session, s2, wh_a, wh_b)
     await _bind_store_wh(session, s3, wh_a, wh_b)
 
-    # 可用库存策略：
-    # - S1 对 wh_a 不足，对 wh_b 足够 → 应 fallback 到 wh_b
-    # - S2 同上 → STRICT_TOP 不应 fallback，wh_id 为空/0
-    # - S3 对 wh_a 足够 → 永远 wh_a
+    # Route C：三家店各用一个省码，均映射到服务仓 wh_a
+    prov_s1 = "P-OS-S1"
+    prov_s2 = "P-OS-S2"
+    prov_s3 = "P-OS-S3"
+    await _ensure_service_province(session, province_code=prov_s1, warehouse_id=wh_a)
+    await _ensure_service_province(session, province_code=prov_s2, warehouse_id=wh_a)
+    await _ensure_service_province(session, province_code=prov_s3, warehouse_id=wh_a)
+
     stock_map = {
-        (wh_a, 1, "S1-FB"): 2,
-        (wh_b, 1, "S1-FB"): 10,
-        (wh_a, 1, "S2-ST"): 2,
-        (wh_b, 1, "S2-ST"): 10,
-        (wh_a, 1, "S3-FBOK"): 10,
+        (wh_a, 1, "S1-FB"): 2,   # 不足
+        (wh_b, 1, "S1-FB"): 10,  # 有货（Route C 不看）
+        (wh_a, 1, "S2-ST"): 2,   # 不足
+        (wh_b, 1, "S2-ST"): 10,  # 有货（Route C 不看）
+        (wh_a, 1, "S3-FBOK"): 10,  # 足够
         (wh_b, 1, "S3-FBOK"): 0,
     }
 
-    async def fake_get_available(
-        self,
-        session,
-        platform,
-        shop_id,
-        warehouse_id,
-        item_id,
-    ) -> int:
+    async def fake_get_available(self, session, platform, shop_id, warehouse_id, item_id) -> int:
         key = (warehouse_id, item_id, shop_id)
         return int(stock_map.get(key, 0))
 
     monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
 
-    async def _place(platform: str, shop_id: str, ext: str) -> int:
-        res = await OrderService.ingest(
+    async def _place(platform: str, shop_id: str, ext: str, province: str) -> dict:
+        return await OrderService.ingest(
             session,
             platform=platform,
             shop_id=shop_id,
@@ -194,24 +217,22 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
                     "amount": 50,
                 }
             ],
-            address={"receiver_name": "X", "receiver_phone": "000"},
+            address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
             extras={},
             trace_id=f"TRACE-SANDBOX-{shop_id}",
         )
-        assert res["status"] == "OK"
-        return int(res["id"])
 
-    oid1 = await _place(platform, "S1-FB", "ORD-S1-001")
-    oid2 = await _place(platform, "S2-ST", "ORD-S2-001")
-    oid3 = await _place(platform, "S3-FBOK", "ORD-S3-001")
+    r1 = await _place(platform, "S1-FB", "ORD-S1-001", prov_s1)
+    r2 = await _place(platform, "S2-ST", "ORD-S2-001", prov_s2)
+    r3 = await _place(platform, "S3-FBOK", "ORD-S3-001", prov_s3)
 
-    def _get_wh(order_id: int) -> Optional[int]:
-        return session.run_sync(
-            lambda s: s.execute(
-                text("SELECT warehouse_id FROM orders WHERE id=:id"),
-                {"id": order_id},
-            ).scalar()
-        )
+    assert r1["status"] == "FULFILLMENT_BLOCKED"
+    assert r2["status"] == "FULFILLMENT_BLOCKED"
+    assert r3["status"] == "OK"
+
+    oid1 = int(r1["id"])
+    oid2 = int(r2["id"])
+    oid3 = int(r3["id"])
 
     row = await session.execute(text("SELECT warehouse_id FROM orders WHERE id=:id"), {"id": oid1})
     wh1 = row.scalar()
@@ -220,11 +241,11 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     row = await session.execute(text("SELECT warehouse_id FROM orders WHERE id=:id"), {"id": oid3})
     wh3 = row.scalar()
 
-    # S1：FALLBACK，主仓不足，备仓足够 → 应 fallback 到 wh_b
-    assert wh1 == wh_b
+    # S1：服务仓不足 → BLOCKED → warehouse_id 不写
+    assert wh1 in (None, 0)
 
-    # S2：STRICT_TOP，主仓不足，备仓也有货 → 不 fallback，保持空
+    # S2：服务仓不足 → BLOCKED → warehouse_id 不写
     assert wh2 in (None, 0)
 
-    # S3：FALLBACK，但主仓库存足够 → 应在 wh_a
+    # S3：服务仓足够 → READY → warehouse_id = wh_a
     assert wh3 == wh_a
