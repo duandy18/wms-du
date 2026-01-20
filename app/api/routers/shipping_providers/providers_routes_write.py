@@ -1,7 +1,7 @@
 # app/api/routers/shipping_providers/providers_routes_write.py
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import text
@@ -20,6 +20,21 @@ from .common import (
     _row_to_contact,
     _row_to_provider,
 )
+
+
+def _norm_code(raw: Optional[str]) -> Optional[str]:
+    """
+    Phase 1.5：code 口径护栏
+    - None -> None
+    - 空白/全空格 -> None
+    - 其它 -> strip + upper
+    """
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    return s.upper()
 
 
 def register(router: APIRouter) -> None:
@@ -52,13 +67,15 @@ def register(router: APIRouter) -> None:
             """
         )
 
+        code = _norm_code(payload.code)
+
         row = (
             (
                 await session.execute(
                     sql,
                     {
                         "name": payload.name.strip(),
-                        "code": payload.code.strip() if payload.code else None,
+                        "code": code,
                         "active": payload.active,
                         "priority": payload.priority if payload.priority is not None else 100,
                         "pricing_model": payload.pricing_model,
@@ -96,7 +113,8 @@ def register(router: APIRouter) -> None:
         if payload.name is not None:
             fields["name"] = payload.name.strip()
         if payload.code is not None:
-            fields["code"] = payload.code.strip()
+            # ✅ Phase 1.5：统一 upper；空白视为 None
+            fields["code"] = _norm_code(payload.code)
         if payload.active is not None:
             fields["active"] = payload.active
 

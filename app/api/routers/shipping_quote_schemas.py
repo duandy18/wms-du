@@ -39,6 +39,10 @@ class QuoteCalcOut(BaseModel):
 
 
 class QuoteRecommendIn(BaseModel):
+    # Phase 2：仓库候选集入口（可选）
+    # - 若 provider_ids 为空且提供 warehouse_id，则按仓库绑定的可用快递公司计算推荐
+    warehouse_id: Optional[int] = Field(default=None, ge=1)
+
     provider_ids: List[int] = Field(default_factory=list)
     dest: QuoteDestIn
 

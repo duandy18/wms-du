@@ -79,5 +79,13 @@ class Warehouse(Base):
         passive_deletes=True,
     )
 
+    # ✅ Phase 1：仓库 × 快递公司（能力集合 / 事实绑定）
+    warehouse_shipping_providers: Mapped[List["WarehouseShippingProvider"]] = relationship(
+        "WarehouseShippingProvider",
+        back_populates="warehouse",
+        lazy="selectin",
+        passive_deletes=True,
+    )
+
     def __repr__(self) -> str:
         return f"<Warehouse id={self.id} name={self.name!r}>"

@@ -70,5 +70,13 @@ class ShippingProvider(Base):
         order_by="(desc(ShippingProviderContact.is_primary), ShippingProviderContact.id)",
     )
 
+    # ✅ Phase 1：被哪些仓库启用（事实绑定，非策略）
+    warehouse_shipping_providers = relationship(
+        "WarehouseShippingProvider",
+        back_populates="shipping_provider",
+        lazy="selectin",
+        passive_deletes=True,
+    )
+
     def __repr__(self) -> str:
         return f"<ShippingProvider id={self.id} name={self.name!r} active={self.active}>"
