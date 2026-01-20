@@ -1,9 +1,9 @@
 # app/api/routers/channel_inventory_routes.py
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,9 +12,28 @@ from app.services.channel_inventory_service import ChannelInventoryService
 
 from app.api.routers.channel_inventory_mappers import map_multi, map_single
 from app.api.routers.channel_inventory_schemas import (
+    ChannelInventoryBatchIn,
+    ChannelInventoryBatchOut,
     ChannelInventoryModel,
     ChannelInventoryMultiModel,
 )
+
+
+def _dedupe_keep_order(xs: List[int]) -> List[int]:
+    seen = set()
+    out: List[int] = []
+    for x in xs:
+        try:
+            v = int(x)
+        except Exception:
+            continue
+        if v <= 0:
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
 
 
 def register(router: APIRouter) -> None:
@@ -107,3 +126,78 @@ def register(router: APIRouter) -> None:
             lst=cis,
             bindings_by_wh=None,
         )
+
+    @router.post(
+        "/{platform}/{shop_id}/items",
+        response_model=ChannelInventoryBatchOut,
+    )
+    async def post_channel_inventory_batch(
+        platform: str = Path(..., description="平台标识，如 PDD / TB / JD"),
+        shop_id: str = Path(..., description="平台侧店铺 ID"),
+        body: ChannelInventoryBatchIn = Body(...),
+        session: AsyncSession = Depends(get_session),
+    ) -> ChannelInventoryBatchOut:
+        item_ids = _dedupe_keep_order(body.item_ids)
+
+        if not item_ids:
+            raise HTTPException(status_code=400, detail="item_ids 不能为空")
+        if len(item_ids) > 200:
+            raise HTTPException(status_code=400, detail="item_ids 过多（最多 200）")
+
+        # bindings meta（用于 map_multi 输出 is_top/is_default/priority）
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                    sw.warehouse_id,
+                    sw.is_top,
+                    sw.is_default,
+                    sw.priority
+                  FROM store_warehouse AS sw
+                  JOIN stores AS s
+                    ON sw.store_id = s.id
+                 WHERE s.platform = :p
+                   AND s.shop_id  = :s
+                   AND s.active   = TRUE
+                 ORDER BY sw.is_top DESC,
+                          sw.priority ASC,
+                          sw.warehouse_id ASC
+                """
+            ),
+            {"p": platform.upper(), "s": shop_id},
+        )
+        bindings = rows.fetchall()
+
+        bindings_by_wh: Dict[int, Dict[str, object]] = {}
+        if bindings:
+            for wh_id, is_top, is_default, priority in bindings:
+                wid = int(wh_id)
+                bindings_by_wh[wid] = {
+                    "is_top": bool(is_top),
+                    "is_default": bool(is_default),
+                    "priority": int(priority or 100),
+                }
+
+        svc = ChannelInventoryService(session)
+
+        # 批量获取（store-aware：内部会优先按 store_warehouse，没绑定则回落）
+        multi_map = await svc.get_multi_items_for_store(
+            platform=platform,
+            shop_id=shop_id,
+            item_ids=item_ids,
+        )
+
+        data: List[ChannelInventoryMultiModel] = []
+        for item_id in item_ids:
+            cis = multi_map.get(item_id) or []
+            data.append(
+                map_multi(
+                    platform=platform,
+                    shop_id=shop_id,
+                    item_id=item_id,
+                    lst=cis,
+                    bindings_by_wh=bindings_by_wh if bindings_by_wh else None,
+                )
+            )
+
+        return ChannelInventoryBatchOut(ok=True, data=data)

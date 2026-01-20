@@ -15,7 +15,7 @@ from app.api.routers.channel_inventory_schemas import (
     WarehouseInventoryModel,
 )
 
-router = APIRouter(prefix="/channel-inventory", tags=["channel-inventory"])
+router = APIRouter(prefix="/global-available", tags=["global-available"])
 
 
 def _register_all_routes() -> None:
