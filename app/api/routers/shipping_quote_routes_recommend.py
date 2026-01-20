@@ -31,6 +31,7 @@ def register(router: APIRouter) -> None:
             result = recommend_quotes(
                 db=db,
                 provider_ids=payload.provider_ids or None,
+                warehouse_id=payload.warehouse_id,
                 dest=Dest(
                     province=payload.dest.province,
                     city=payload.dest.city,

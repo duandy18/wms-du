@@ -101,8 +101,23 @@ audit-fulfillment-routec:
 	  echo "[audit-fulfillment-routec] FAIL: fallback routing leaked into Route C mainline"; \
 	  exit 1;'
 
+# =================================
+# Phase 2 守门员：运价区间必须兜底覆盖（避免 no matching bracket 线上翻车）
+# - 对所有 active scheme 的所有 zone：
+#   1) 至少 1 条 active bracket
+#   2) 至少 1 条 active 的 max_kg IS NULL bracket（兜底段）
+# =================================
+.PHONY: audit-pricing-brackets
+audit-pricing-brackets: venv
+	@bash -c 'set -euo pipefail; \
+	  export PYTHONPATH=. ; \
+	  export WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
+	  export WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
+	  echo "[audit-pricing-brackets] scanning pricing zones/brackets on TEST DB ($(DEV_TEST_DB_DSN)) ..."; \
+	  "$(PY)" scripts/audit_pricing_brackets.py;'
+
 .PHONY: audit-all
-audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak audit-fulfillment-routec
+audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak audit-fulfillment-routec audit-pricing-brackets
 	@echo "[audit-all] OK"
 
 # =================================

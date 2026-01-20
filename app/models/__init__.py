@@ -82,6 +82,9 @@ MODEL_SPECS = [
     ("app.models.shipping_provider_zone_member", "ShippingProviderZoneMember"),
     ("app.models.shipping_provider_zone_bracket", "ShippingProviderZoneBracket"),
     ("app.models.shipping_provider_surcharge", "ShippingProviderSurcharge"),
+
+    # ✅ Phase 1：仓库 × 快递公司（能力集合 / 事实绑定）
+    ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
 ]
 
 for _module, _name in MODEL_SPECS:
@@ -163,6 +166,9 @@ __all__ = [
     "ShippingProviderZoneMember",
     "ShippingProviderZoneBracket",
     "ShippingProviderSurcharge",
+
+    # ✅ Warehouse × ShippingProvider
+    "WarehouseShippingProvider",
 
     "Batches",
 ]

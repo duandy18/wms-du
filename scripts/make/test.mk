@@ -2,12 +2,27 @@
 # test.mk - pytest 入口集合
 # =================================
 
+# ---------------------------------
+# 统一护栏：测试库先升级到 head（避免新增表导致 UndefinedTable）
+# ---------------------------------
+.PHONY: upgrade-dev-test-db
+upgrade-dev-test-db: venv
+	@bash -c 'set -euo pipefail; \
+	  dsn="$(DEV_TEST_DB_DSN)"; \
+	  echo ">>> Alembic upgrade head on DEV_TEST_DB_DSN ($${dsn})"; \
+	  if echo "$${dsn}" | grep -q "wms_test"; then \
+	    echo "  MODE = TEST (wms_test) ✅"; \
+	  else \
+	    echo "  MODE = DEV / OTHER ⚠️  (CHECK!)"; \
+	  fi; \
+	  WMS_DATABASE_URL="$${dsn}" WMS_TEST_DATABASE_URL="$${dsn}" $(ALEMB) upgrade head'
+
 .PHONY: test-core
-test-core: venv audit-all
+test-core: venv audit-all upgrade-dev-test-db
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_core -s
 
 .PHONY: test-flow
-test-flow: venv audit-all
+test-flow: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Flow tests (explicit file set)"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
@@ -17,7 +32,7 @@ test-flow: venv audit-all
 	  tests/services/test_trace_full_chain_order_reserve_outbound.py
 
 .PHONY: test-snapshot
-test-snapshot: venv audit-all
+test-snapshot: venv audit-all upgrade-dev-test-db
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_snapshot -s
 
 # ---------------------------------
@@ -27,7 +42,7 @@ test-snapshot: venv audit-all
 # - pytest 结束后：自动补 opening ledger，然后跑三账体检
 # ---------------------------------
 .PHONY: test
-test: venv audit-all
+test: venv audit-all upgrade-dev-test-db
 	@bash -c 'set -euo pipefail; \
 	  export PYTHONPATH=. ; \
 	  export WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
@@ -57,7 +72,7 @@ test: venv audit-all
 # RBAC 专用测试入口
 # ---------------------------------
 .PHONY: test-rbac
-test-rbac: venv audit-all
+test-rbac: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] RBAC tests – tests/api/test_user_api.py"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/api/test_user_api.py
@@ -66,7 +81,7 @@ test-rbac: venv audit-all
 # Internal Outbound 单元测试入口
 # ---------------------------------
 .PHONY: test-internal-outbound
-test-internal-outbound: venv audit-all
+test-internal-outbound: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Internal Outbound Golden Flow E2E"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/services/test_internal_outbound_service.py
@@ -75,7 +90,7 @@ test-internal-outbound: venv audit-all
 # Phase 4：Routing 测试线
 # =================================
 .PHONY: test-phase4-routing
-test-phase4-routing: venv audit-all
+test-phase4-routing: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Phase 4 routing tests"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q \
@@ -88,7 +103,7 @@ test-phase4-routing: venv audit-all
 # （保持你原行为：这里不强制三账后置体检；如需也可在这里加两行 make）
 # =================================
 .PHONY: test-all
-test-all: venv audit-all
+test-all: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Running full test suite on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q
 
@@ -96,7 +111,7 @@ test-all: venv audit-all
 # 核心服务 CRUD/UoW
 # =================================
 .PHONY: test-svc-core
-test-svc-core: venv audit-all
+test-svc-core: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Core Service CRUD/UoW"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q \
 		tests/services/test_store_service.py \
