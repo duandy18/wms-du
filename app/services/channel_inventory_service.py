@@ -29,9 +29,9 @@ class ChannelInventoryService:
 
     3. 可售内核入口：
        - get_available_for_item(session, platform, shop_id, warehouse_id, item_id)
-         → 使用 v1 CTE 公式：
+         → 方案 2（全局剩余可售）口径：
              available_raw = Σ stocks.qty
-                             - Σ (open reservations 的未消费数量)
+                             - Σ (全局 open reservations 的未消费数量)
          返回值允许为负数（用于 anti-oversell 检查与测试验证）。
     """
 
@@ -124,7 +124,32 @@ class ChannelInventoryService:
             platform=platform, shop_id=shop_id, item_id=item_id
         )
 
-    # ---- 对外统一入口：给路由 / reserve / 测试用的“单仓可售（raw 值）” ----
+    async def get_multi_items_for_store(
+        self,
+        platform: str,
+        shop_id: str,
+        item_ids: List[int],
+    ) -> Dict[int, List[ChannelInventory]]:
+        """
+        批量：按店铺维度批量获取多 item 的“多仓可售”（store-aware）。
+
+        注意：方案 2 下 available/reserved_open 已是全局口径；
+        这里的 store-aware 仅影响“候选仓集合与顺序”。
+        """
+        if self.session is None:
+            raise RuntimeError("ChannelInventoryService(session=...) required for v2 methods")
+
+        v2 = ChannelInventoryV2(self.session)
+        out: Dict[int, List[ChannelInventory]] = {}
+
+        for item_id in item_ids:
+            out[item_id] = await v2.get_multi_item_for_store(
+                platform=platform, shop_id=shop_id, item_id=item_id
+            )
+
+        return out
+
+    # ---- 对外统一入口：给 reserve / 校验用的“单仓可售（raw 值）” ----
 
     async def get_available_for_item(
         self,
@@ -136,16 +161,18 @@ class ChannelInventoryService:
         item_id: int,
     ) -> int:
         """
-        对外可售入口（唯一口径，单仓）：
+        对外可售入口（唯一口径，单仓）——方案 2（全局剩余可售）：
 
             available_raw = Σ stocks.qty
-                            - Σ (open reservations 的未消费数量)
+                            - Σ (全局 open reservations 的未消费数量)
 
         特性：
         - 返回值允许为负数，用于：
             * anti-oversell 检查
             * test_channel_inventory_available 等测试验证
         - 展示层（API / UI）需要时再自行 max(available_raw, 0)。
+
+        注意：platform/shop_id 仍保留为入参（保持调用点稳定），但不参与 SQL 过滤。
         """
         sql = text(
             """
@@ -160,9 +187,7 @@ class ChannelInventoryService:
                 FROM reservations AS r
                 JOIN reservation_lines AS rl
                   ON rl.reservation_id = r.id
-                WHERE r.platform     = :platform
-                  AND r.shop_id      = :shop_id
-                  AND r.warehouse_id = :warehouse_id
+                WHERE r.warehouse_id = :warehouse_id
                   AND r.status       = 'open'
                   AND rl.item_id     = :item_id
             )
@@ -175,8 +200,8 @@ class ChannelInventoryService:
         )
 
         params = {
-            "platform": platform,
-            "shop_id": shop_id,
+            "platform": platform,   # 保持参数形态稳定（不使用）
+            "shop_id": shop_id,     # 保持参数形态稳定（不使用）
             "warehouse_id": warehouse_id,
             "item_id": item_id,
         }

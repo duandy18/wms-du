@@ -15,6 +15,9 @@ class ChannelInventoryV2:
 
     该类只负责“实时库存口径”：
       - on_hand / reserved_open / available / batches
+
+    ⚠️ 方案 2（全局剩余可售）口径：
+      reserved_open 为全局 open reservations（不按 platform/shop 拆分）。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -31,8 +34,11 @@ class ChannelInventoryV2:
         单仓视图（给 API / UI 用）：
 
         - on_hand       = Σ stocks.qty
-        - reserved_open = Σ (rl.qty - rl.consumed_qty)，仅 status='open'
+        - reserved_open = Σ (rl.qty - rl.consumed_qty)，仅 status='open'（全局口径）
         - available     = max(on_hand - reserved_open, 0)
+
+        注意：platform/shop_id 仍作为入参保留（保持 API 形态稳定），
+        但 reserved_open 已改为全局口径，不再按店铺拆分。
         """
         on_hand = await self._get_on_hand(warehouse_id, item_id)
         reserved_open = await self._get_reserved_open(
@@ -69,7 +75,7 @@ class ChannelInventoryV2:
 
         仓的来源（去重后的 union）：
           - stocks 中有该 item 的仓；
-          - reservations(open) 中有该 item 的仓。
+          - reservations(open) 中有该 item 的仓（全局口径）。
         """
         warehouse_ids = await self._get_relevant_warehouses(
             platform=platform,
@@ -104,6 +110,8 @@ class ChannelInventoryV2:
         2. 若未配置任何绑定，则回落到 get_multi_item 的旧逻辑。
 
         返回仍然是 ChannelInventory 列表，仓顺序与 store_warehouse 绑定顺序一致。
+
+        ⚠️ 方案 2：reserved_open/available 是全局口径。
         """
         rows = await self.session.execute(
             text(
@@ -153,6 +161,7 @@ class ChannelInventoryV2:
         shop_id: str,
         item_id: int,
     ) -> List[int]:
+        # 方案 2：预占是全局口径，因此 relevant warehouses 也要包含全局 reservations 的仓
         rows = await self.session.execute(
             text(
                 """
@@ -166,14 +175,13 @@ class ChannelInventoryV2:
                   FROM reservations r
                   JOIN reservation_lines rl
                     ON rl.reservation_id = r.id
-                 WHERE r.platform = :platform
-                   AND r.shop_id  = :shop_id
-                   AND rl.item_id = :i
+                 WHERE r.status       = 'open'
+                   AND rl.item_id     = :i
                 """
             ),
             {
-                "platform": platform,
-                "shop_id": shop_id,
+                "platform": platform,  # 保持参数形态稳定（不使用）
+                "shop_id": shop_id,    # 保持参数形态稳定（不使用）
                 "i": item_id,
             },
         )
@@ -203,6 +211,7 @@ class ChannelInventoryV2:
         warehouse_id: int,
         item_id: int,
     ) -> int:
+        # 方案 2：全局预占（不按 platform/shop 拆分）
         row = await self.session.execute(
             text(
                 """
@@ -214,16 +223,14 @@ class ChannelInventoryV2:
                 FROM reservation_lines AS rl
                 JOIN reservations AS r
                   ON r.id = rl.reservation_id
-                WHERE r.platform     = :platform
-                  AND r.shop_id      = :shop_id
-                  AND r.warehouse_id = :w
+                WHERE r.warehouse_id = :w
                   AND r.status       = 'open'
                   AND rl.item_id     = :i
                 """
             ),
             {
-                "platform": platform,
-                "shop_id": shop_id,
+                "platform": platform,  # 保持参数形态稳定（不使用）
+                "shop_id": shop_id,    # 保持参数形态稳定（不使用）
                 "w": warehouse_id,
                 "i": item_id,
             },

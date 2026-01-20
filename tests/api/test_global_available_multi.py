@@ -46,7 +46,7 @@ async def test_channel_inventory_multi_basic(client, session: AsyncSession):
     await session.commit()
 
     # 调用多仓可售 API
-    resp = await client.get(f"/channel-inventory/{platform}/{shop_id}/item/{item_id}")
+    resp = await client.get(f"/global-available/{platform}/{shop_id}/item/{item_id}")
     assert resp.status_code == 200, resp.text
 
     data = resp.json()
