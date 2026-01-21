@@ -134,7 +134,6 @@ test-diagnostics-core: venv
 	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
 	PYTHONPATH=. $(PYTEST) -q \
 		tests/api/test_debug_trace_api.py \
-		tests/api/test_debug_trace_api.py \
 		tests/api/test_devconsole_orders_api.py
 
 # =================================
@@ -147,12 +146,14 @@ test-backend-smoke: dev-reset-test-db audit-all
 	$(PYTEST) -q tests/services/test_store_service.py
 
 # =================================
-# Pricing smoke tests（quote + unique + copy）
+# Pricing smoke tests（quote + scheme binding + constraints）
 # =================================
 .PHONY: test-pricing-smoke
 test-pricing-smoke: dev-reset-test-db audit-all
-	@echo "[pytest] Pricing smoke (quote + unique + copy)"
+	@echo "[pytest] Pricing smoke (quote + recommend + scheme binding + constraints)"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
-	  tests/api/test_shipping_quote_pricing_api.py \
+	  tests/api/test_shipping_quote_calc_api.py \
+	  tests/api/test_shipping_quote_recommend_contract.py \
+	  tests/api/test_shipping_quote_scheme_warehouses_api.py \
 	  tests/api/test_zone_brackets_constraints_and_copy.py

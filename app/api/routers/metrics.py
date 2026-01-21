@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
+from app.schemas.metrics_alerts import AlertsResponse
 from app.schemas.metrics_outbound_v2 import (
     FefoRiskMetricsResponse,
     OutboundFailuresMetricsResponse,
@@ -17,13 +18,36 @@ from app.schemas.metrics_outbound_v2 import (
     OutboundShopMetricsResponse,
     OutboundWarehouseMetricsResponse,
 )
+from app.schemas.metrics_shipping_quote import ShippingQuoteFailuresMetricsResponse
+from app.services.metrics_alerts import load_alerts
 from app.services.outbound_metrics_v2 import OutboundMetricsV2Service
+from app.services.shipping_quote_metrics_failures import load_shipping_quote_failures
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 
 def _today_utc_date() -> date:
     return datetime.utcnow().date()
+
+
+# ---------------------------------------------------------
+# 0) Alerts /alerts/today
+# ---------------------------------------------------------
+
+
+@router.get("/alerts/today", response_model=AlertsResponse)
+async def get_alerts_today(
+    platform: Optional[str] = Query(None, description="平台标识，如 PDD / TB / JD；不传则只返回报价域告警"),
+    day: Optional[date] = Query(None, description="UTC 日期 (YYYY-MM-DD)，默认今天"),
+    test_mode: bool = Query(False, description="测试模式：降低阈值，便于验收告警结构"),
+    session: AsyncSession = Depends(get_session),
+) -> AlertsResponse:
+    """
+    可报警面板（Phase 4.3）：
+    - OUTBOUND：基于 SHIP_CONFIRM_REJECT 的 error_code（需要 platform）
+    - SHIPPING_QUOTE：基于 QUOTE_*_REJECT 的 error_code
+    """
+    return await load_alerts(session=session, platform=platform, day=day, test_mode=test_mode)
 
 
 # ---------------------------------------------------------
@@ -120,6 +144,26 @@ async def get_outbound_failures(
     """
     svc = OutboundMetricsV2Service()
     return await svc.load_failures(session=session, day=day, platform=platform)
+
+
+# ---------------------------------------------------------
+# 4.1) Shipping Quote 失败诊断 /shipping-quote/failures
+# ---------------------------------------------------------
+
+
+@router.get(
+    "/shipping-quote/failures",
+    response_model=ShippingQuoteFailuresMetricsResponse,
+)
+async def get_shipping_quote_failures(
+    day: date = Query(..., description="日期 (YYYY-MM-DD, UTC)"),
+    limit: int = Query(200, ge=1, le=2000, description="返回明细条数上限（默认 200）"),
+    session: AsyncSession = Depends(get_session),
+) -> ShippingQuoteFailuresMetricsResponse:
+    """
+    Shipping Quote 失败统计：calc/recommend 的 reject 按 error_code 聚合 + 明细。
+    """
+    return await load_shipping_quote_failures(session=session, day=day, limit=limit)
 
 
 # ---------------------------------------------------------

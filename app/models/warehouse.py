@@ -8,6 +8,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+# ✅ Phase 3：起运适用仓库（origin binding）关系表模型加载
+from app.models.shipping_provider_pricing_scheme_warehouse import (  # noqa: F401
+    ShippingProviderPricingSchemeWarehouse,
+)
+
 
 class WarehouseCode:
     MAIN = "MAIN"
@@ -84,6 +89,15 @@ class Warehouse(Base):
         "WarehouseShippingProvider",
         back_populates="warehouse",
         lazy="selectin",
+        passive_deletes=True,
+    )
+
+    # ✅ Phase 3：仓库作为起运地适用哪些运价方案（事实绑定）
+    pricing_scheme_warehouses: Mapped[List["ShippingProviderPricingSchemeWarehouse"]] = relationship(
+        "ShippingProviderPricingSchemeWarehouse",
+        back_populates="warehouse",
+        lazy="selectin",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 

@@ -1,15 +1,22 @@
 # app/api/routers/shipping_quote_routes_recommend.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.error_detail import raise_422, raise_500
 from app.db.deps import get_db
+from app.services.audit_writer_sync import SyncAuditEventWriter
 from app.services.shipping_quote_service import Dest, recommend_quotes
 
 from app.api.routers.shipping_quote_helpers import check_perm, dims_from_payload
 from app.api.routers.shipping_quote_schemas import QuoteRecommendIn, QuoteRecommendOut
+
+
+class QuoteRecommendErrorCode:
+    INVALID = "QUOTE_RECOMMEND_INVALID"
+    FAILED = "QUOTE_RECOMMEND_FAILED"
 
 
 def register(router: APIRouter) -> None:
@@ -27,6 +34,14 @@ def register(router: APIRouter) -> None:
 
         dims = dims_from_payload(payload.length_cm, payload.width_cm, payload.height_cm)
 
+        wid = payload.warehouse_id
+        if wid is not None:
+            audit_ref = f"WH:{int(wid)}"
+        elif payload.provider_ids:
+            audit_ref = "PROVIDERS:" + ",".join(str(int(x)) for x in payload.provider_ids)
+        else:
+            audit_ref = "GLOBAL"
+
         try:
             result = recommend_quotes(
                 db=db,
@@ -43,9 +58,52 @@ def register(router: APIRouter) -> None:
                 max_results=int(payload.max_results),
             )
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+            msg = str(e)
+
+            SyncAuditEventWriter.write(
+                db,
+                flow="SHIPPING_QUOTE",
+                event="QUOTE_RECOMMEND_REJECT",
+                ref=audit_ref,
+                trace_id=None,
+                meta={
+                    "endpoint": "/shipping-quote/recommend",
+                    "error_code": QuoteRecommendErrorCode.INVALID,
+                    "message": msg,
+                    "warehouse_id": int(payload.warehouse_id) if payload.warehouse_id is not None else None,
+                    "provider_ids": [int(x) for x in (payload.provider_ids or [])],
+                    "dest": payload.dest.model_dump(),
+                    "real_weight_kg": float(payload.real_weight_kg),
+                    "max_results": int(payload.max_results),
+                },
+                auto_commit=True,
+            )
+
+            raise_422(QuoteRecommendErrorCode.INVALID, msg)
+
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"recommend failed: {e}")
+            msg = f"recommend failed: {e}"
+
+            SyncAuditEventWriter.write(
+                db,
+                flow="SHIPPING_QUOTE",
+                event="QUOTE_RECOMMEND_REJECT",
+                ref=audit_ref,
+                trace_id=None,
+                meta={
+                    "endpoint": "/shipping-quote/recommend",
+                    "error_code": QuoteRecommendErrorCode.FAILED,
+                    "message": msg,
+                    "warehouse_id": int(payload.warehouse_id) if payload.warehouse_id is not None else None,
+                    "provider_ids": [int(x) for x in (payload.provider_ids or [])],
+                    "dest": payload.dest.model_dump(),
+                    "real_weight_kg": float(payload.real_weight_kg),
+                    "max_results": int(payload.max_results),
+                },
+                auto_commit=True,
+            )
+
+            raise_500(QuoteRecommendErrorCode.FAILED, msg)
 
         return QuoteRecommendOut(
             ok=True,

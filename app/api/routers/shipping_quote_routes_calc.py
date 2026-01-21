@@ -1,16 +1,17 @@
 # app/api/routers/shipping_quote_routes_calc.py
 from __future__ import annotations
 
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.db.deps import get_db
-from app.services.shipping_quote_service import Dest, calc_quote
-
+from app.api.error_detail import raise_422, raise_500
+from app.api.routers.shipping_quote_error_codes import QuoteCalcErrorCode, map_calc_value_error_to_code
 from app.api.routers.shipping_quote_helpers import check_perm, dims_from_payload
 from app.api.routers.shipping_quote_schemas import QuoteCalcIn, QuoteCalcOut
+from app.db.deps import get_db
+from app.services.audit_writer_sync import SyncAuditEventWriter
+from app.services.shipping_quote_service import Dest, calc_quote
 
 
 def register(router: APIRouter) -> None:
@@ -28,6 +29,8 @@ def register(router: APIRouter) -> None:
 
         dims = dims_from_payload(payload.length_cm, payload.width_cm, payload.height_cm)
 
+        audit_ref = f"SCHEME:{int(payload.scheme_id)}"
+
         try:
             result = calc_quote(
                 db=db,
@@ -42,9 +45,50 @@ def register(router: APIRouter) -> None:
                 flags=payload.flags,
             )
         except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+            msg = str(e)
+            code = map_calc_value_error_to_code(msg)
+
+            # ✅ Phase 4：失败也要落库（否则异常返回会触发 rollback，审计会丢）
+            SyncAuditEventWriter.write(
+                db,
+                flow="SHIPPING_QUOTE",
+                event="QUOTE_CALC_REJECT",
+                ref=audit_ref,
+                trace_id=None,
+                meta={
+                    "endpoint": "/shipping-quote/calc",
+                    "error_code": code,
+                    "message": msg,
+                    "scheme_id": int(payload.scheme_id),
+                    "dest": payload.dest.model_dump(),
+                    "real_weight_kg": float(payload.real_weight_kg),
+                },
+                auto_commit=True,
+            )
+
+            raise_422(code, msg)
+
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"calc failed: {e}")
+            msg = f"calc failed: {e}"
+
+            SyncAuditEventWriter.write(
+                db,
+                flow="SHIPPING_QUOTE",
+                event="QUOTE_CALC_REJECT",
+                ref=audit_ref,
+                trace_id=None,
+                meta={
+                    "endpoint": "/shipping-quote/calc",
+                    "error_code": QuoteCalcErrorCode.FAILED,
+                    "message": msg,
+                    "scheme_id": int(payload.scheme_id),
+                    "dest": payload.dest.model_dump(),
+                    "real_weight_kg": float(payload.real_weight_kg),
+                },
+                auto_commit=True,
+            )
+
+            raise_500(QuoteCalcErrorCode.FAILED, msg)
 
         return QuoteCalcOut(
             ok=bool(result.get("ok", True)),

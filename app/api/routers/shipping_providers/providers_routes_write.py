@@ -24,7 +24,7 @@ from .common import (
 
 def _norm_code(raw: Optional[str]) -> Optional[str]:
     """
-    Phase 1.5：code 口径护栏
+    code 口径护栏
     - None -> None
     - 空白/全空格 -> None
     - 其它 -> strip + upper
@@ -35,6 +35,27 @@ def _norm_code(raw: Optional[str]) -> Optional[str]:
     if not s:
         return None
     return s.upper()
+
+
+async def _assert_code_unique_or_409(
+    session: AsyncSession,
+    code: str,
+    *,
+    exclude_provider_id: Optional[int] = None,
+) -> None:
+    """
+    刚性合同：shipping_providers.code 全局唯一（strip + upper 后比较）。
+    - exclude_provider_id：更新时排除自身
+    """
+    if exclude_provider_id is None:
+        sql = text("SELECT 1 FROM shipping_providers WHERE code = :code LIMIT 1")
+        exists = (await session.execute(sql, {"code": code})).first()
+    else:
+        sql = text("SELECT 1 FROM shipping_providers WHERE code = :code AND id <> :sid LIMIT 1")
+        exists = (await session.execute(sql, {"code": code, "sid": int(exclude_provider_id)})).first()
+
+    if exists:
+        raise HTTPException(status_code=409, detail=f"shipping_provider code already exists: {code}")
 
 
 def register(router: APIRouter) -> None:
@@ -53,8 +74,18 @@ def register(router: APIRouter) -> None:
         新建物流/快递公司（主体事实 only）。
 
         权限：config.store.write
+
+        刚性合同：
+        - code 必填（不允许 None / 空白）
+        - code 全局唯一（strip + upper 后比较）
         """
         _check_perm(db, current_user, ["config.store.write"])
+
+        code = _norm_code(payload.code)
+        if code is None:
+            raise HTTPException(status_code=422, detail="code is required")
+
+        await _assert_code_unique_or_409(session, code)
 
         sql = text(
             """
@@ -66,8 +97,6 @@ def register(router: APIRouter) -> None:
               id, name, code, active, priority, pricing_model, region_rules
             """
         )
-
-        code = _norm_code(payload.code)
 
         row = (
             (
@@ -105,6 +134,10 @@ def register(router: APIRouter) -> None:
         更新物流/快递公司（主体事实 only）。
 
         权限：config.store.write
+
+        刚性合同：
+        - 如果更新 code：不允许置空；必须非空
+        - code 全局唯一（strip + upper 后比较）
         """
         _check_perm(db, current_user, ["config.store.write"])
 
@@ -112,9 +145,14 @@ def register(router: APIRouter) -> None:
 
         if payload.name is not None:
             fields["name"] = payload.name.strip()
+
         if payload.code is not None:
-            # ✅ Phase 1.5：统一 upper；空白视为 None
-            fields["code"] = _norm_code(payload.code)
+            code = _norm_code(payload.code)
+            if code is None:
+                raise HTTPException(status_code=422, detail="code cannot be empty")
+            await _assert_code_unique_or_409(session, code, exclude_provider_id=provider_id)
+            fields["code"] = code
+
         if payload.active is not None:
             fields["active"] = payload.active
 
@@ -126,7 +164,6 @@ def register(router: APIRouter) -> None:
             fields["region_rules"] = payload.region_rules
 
         if not fields:
-            # 返回当前记录 + contacts（不更新）
             sql_select = text(
                 """
                 SELECT
