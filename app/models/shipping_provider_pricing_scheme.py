@@ -23,6 +23,11 @@ from app.models.shipping_provider_pricing_scheme_segment_template_item import ( 
     ShippingProviderPricingSchemeSegmentTemplateItem,
 )
 
+# ✅ Phase 3：起运适用仓库（origin binding）关系表模型加载
+from app.models.shipping_provider_pricing_scheme_warehouse import (  # noqa: F401
+    ShippingProviderPricingSchemeWarehouse,
+)
+
 
 class ShippingProviderPricingScheme(Base):
     __tablename__ = "shipping_provider_pricing_schemes"
@@ -70,6 +75,15 @@ class ShippingProviderPricingScheme(Base):
 
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
+
+    # ✅ Phase 3：显式关系（方案适用哪些仓作为起运地）
+    scheme_warehouses: Mapped[list["ShippingProviderPricingSchemeWarehouse"]] = relationship(
+        "ShippingProviderPricingSchemeWarehouse",
+        back_populates="scheme",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     # ✅ 现有：段表 relationship（前端当前仍在使用）
     segments = relationship(

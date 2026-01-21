@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -92,10 +92,22 @@ class OutboundFailureDetail(BaseModel):
 class OutboundFailuresMetricsResponse(BaseModel):
     day: date
     platform: str
+
+    # 失败总数（保持原口径，兼容现有前端）
     routing_failed: int
     pick_failed: int
     ship_failed: int
     inventory_insufficient: int
+
+    # ✅ 新增：按 error_code 拆分（Phase 4：可统计、可追责）
+    # 说明：
+    # - 对于 SHIP_CONFIRM_REJECT：error_code 一定存在（如 SHIP_CONFIRM_TRACKING_DUP）
+    # - 对于旧口径 OUTBOUND_FAIL/ROUTING：若缺 error_code，则不会计入 breakdown（或归入 UNKNOWN）
+    routing_failures_by_code: Dict[str, int] = {}
+    pick_failures_by_code: Dict[str, int] = {}
+    ship_failures_by_code: Dict[str, int] = {}
+    inventory_failures_by_code: Dict[str, int] = {}
+
     details: List[OutboundFailureDetail] = []
 
 
