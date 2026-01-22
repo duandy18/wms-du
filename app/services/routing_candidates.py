@@ -16,10 +16,12 @@ class CandidateResolveResult:
     platform: str
     shop_id: str
     province: Optional[str]
-    route_mode: str  # STRICT_TOP / FALLBACK / ...
+
+    # ✅ 你当前世界观：不做自动 fallback 扩候选集
+    route_mode: str  # 固定 STRICT_TOP
     candidate_warehouse_ids: List[int]  # ordered & de-duplicated
-    candidate_reason: str  # PROVINCE_ROUTE_MATCH / FALLBACK_TO_BINDINGS / NO_PROVINCE_ROUTE_MATCH / NO_WAREHOUSE_BOUND
-    fallback_used: bool
+    candidate_reason: str  # PROVINCE_ROUTE_MATCH / NO_PROVINCE_ROUTE_MATCH
+    fallback_used: bool  # 永远 False（人工干预不属于事实层）
 
 
 def _dedupe_keep_order(xs: Sequence[int]) -> List[int]:
@@ -39,14 +41,15 @@ def _dedupe_keep_order(xs: Sequence[int]) -> List[int]:
     return out
 
 
-async def _get_store_id_and_mode(
+async def _get_or_create_store_id(
     session: AsyncSession,
     *,
     platform: str,
     shop_id: str,
-) -> tuple[int, str]:
+) -> int:
     """
-    store 是路由世界观的事实入口：不存在则自动建档（幂等）。
+    store 是路由世界观的入口：不存在则 ensure_store（幂等）。
+    注意：不再消费 stores.route_mode（避免 FALLBACK 扩候选集引入复杂性）。
     """
     plat = str(platform or "").upper().strip()
     sid = str(shop_id or "").strip()
@@ -55,7 +58,7 @@ async def _get_store_id_and_mode(
         await session.execute(
             text(
                 """
-                SELECT id, COALESCE(route_mode, 'FALLBACK') AS route_mode
+                SELECT id
                   FROM stores
                  WHERE platform = :p
                    AND shop_id  = :s
@@ -67,18 +70,16 @@ async def _get_store_id_and_mode(
     ).first()
 
     if row:
-        return int(row[0]), str(row[1] or "FALLBACK").upper()
+        return int(row[0])
 
-    # ✅ 不存在则建档（与 ship_prepare 对齐）
+    # ✅ 不存在则建档（与既有行为兼容）
     store_id = await StoreService.ensure_store(
         session,
         platform=plat,
         shop_id=sid,
         name=f"{plat}-{sid}",
     )
-
-    # 新建店默认 route_mode 视为 FALLBACK（保持历史行为）
-    return int(store_id), "FALLBACK"
+    return int(store_id)
 
 
 async def resolve_candidate_warehouses_for_store(
@@ -89,47 +90,42 @@ async def resolve_candidate_warehouses_for_store(
     province: Optional[str],
 ) -> CandidateResolveResult:
     """
-    ✅ 统一候选集解析器（Phase 4.x 选仓世界观）
+    ✅ 极简候选集解析器（收敛版）
 
-    候选集 = store_province_routes 命中集合（裁剪器）
-    无命中时：
-      - route_mode=FALLBACK → 候选集扩大到 store_warehouse 绑定集合（排序偏好）
-      - route_mode=STRICT_TOP → 候选集为空
+    你的业务模型：
+    - 自动归属仓（唯一）：province → store_province_routes 命中
+    - 不做自动 fallback（库存不足交给人工改派/退单）
 
-    注意：
-      - store 不存在会自动 ensure_store（幂等建档），避免“隐式默认仓”又不让建档的矛盾
+    因此：
+    - 候选集只来自 store_province_routes（且要求 active）
+    - 未命中 → candidate_warehouse_ids=[]
     """
     plat = str(platform or "").upper().strip()
     sid = str(shop_id or "").strip()
     prov = (province or "").strip() or None
 
-    store_id, route_mode = await _get_store_id_and_mode(session, platform=plat, shop_id=sid)
+    store_id = await _get_or_create_store_id(session, platform=plat, shop_id=sid)
 
-    # 1) 省级路由命中候选集（裁剪器）
     prov_ids: List[int] = []
     if prov:
         rows = (
             await session.execute(
                 text(
                     """
-                    SELECT
-                      r.warehouse_id
-                    FROM store_province_routes r
-                    JOIN store_warehouse sw
-                      ON sw.store_id = r.store_id
-                     AND sw.warehouse_id = r.warehouse_id
-                    LEFT JOIN warehouses w
-                      ON w.id = r.warehouse_id
-                    WHERE r.store_id = :sid
-                      AND r.province = :prov
-                      AND COALESCE(r.active, TRUE) = TRUE
-                      AND COALESCE(w.active, TRUE) = TRUE
-                    ORDER BY r.priority ASC, r.id ASC
+                    SELECT r.warehouse_id
+                      FROM store_province_routes r
+                      LEFT JOIN warehouses w ON w.id = r.warehouse_id
+                     WHERE r.store_id = :sid
+                       AND r.province = :prov
+                       AND COALESCE(r.active, TRUE) = TRUE
+                       AND COALESCE(w.active, TRUE) = TRUE
+                     ORDER BY r.priority ASC, r.id ASC
                     """
                 ),
                 {"sid": store_id, "prov": prov},
             )
         ).fetchall()
+
         prov_ids = _dedupe_keep_order([int(x[0]) for x in rows])
 
     if prov_ids:
@@ -138,57 +134,10 @@ async def resolve_candidate_warehouses_for_store(
             platform=plat,
             shop_id=sid,
             province=prov,
-            route_mode=route_mode,
+            route_mode="STRICT_TOP",
             candidate_warehouse_ids=prov_ids,
             candidate_reason="PROVINCE_ROUTE_MATCH",
             fallback_used=False,
-        )
-
-    # 2) 无省路由命中（或 province 缺失）→ route_mode 决定是否允许扩大候选集
-    if route_mode != "FALLBACK":
-        return CandidateResolveResult(
-            store_id=store_id,
-            platform=plat,
-            shop_id=sid,
-            province=prov,
-            route_mode=route_mode,
-            candidate_warehouse_ids=[],
-            candidate_reason="NO_PROVINCE_ROUTE_MATCH",
-            fallback_used=False,
-        )
-
-    # FALLBACK：扩大到 store_warehouse 绑定集合（排序偏好）
-    rows2 = (
-        await session.execute(
-            text(
-                """
-                SELECT sw.warehouse_id
-                  FROM store_warehouse sw
-                  LEFT JOIN warehouses w ON w.id = sw.warehouse_id
-                 WHERE sw.store_id = :sid
-                   AND COALESCE(w.active, TRUE) = TRUE
-                 ORDER BY
-                   COALESCE(sw.is_top, FALSE) DESC,
-                   COALESCE(sw.is_default, FALSE) DESC,
-                   COALESCE(sw.priority, 100) ASC,
-                   sw.warehouse_id ASC
-                """
-            ),
-            {"sid": store_id},
-        )
-    ).fetchall()
-
-    bind_ids = _dedupe_keep_order([int(x[0]) for x in rows2])
-    if not bind_ids:
-        return CandidateResolveResult(
-            store_id=store_id,
-            platform=plat,
-            shop_id=sid,
-            province=prov,
-            route_mode=route_mode,
-            candidate_warehouse_ids=[],
-            candidate_reason="NO_WAREHOUSE_BOUND",
-            fallback_used=True,
         )
 
     return CandidateResolveResult(
@@ -196,10 +145,10 @@ async def resolve_candidate_warehouses_for_store(
         platform=plat,
         shop_id=sid,
         province=prov,
-        route_mode=route_mode,
-        candidate_warehouse_ids=bind_ids,
-        candidate_reason="FALLBACK_TO_BINDINGS",
-        fallback_used=True,
+        route_mode="STRICT_TOP",
+        candidate_warehouse_ids=[],
+        candidate_reason="NO_PROVINCE_ROUTE_MATCH",
+        fallback_used=False,
     )
 
 
