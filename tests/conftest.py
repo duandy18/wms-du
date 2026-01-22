@@ -19,9 +19,10 @@ from sqlalchemy.pool import NullPool
 os.environ["FULL_ROUTES"] = "1"
 os.environ["WMS_FULL_ROUTES"] = "1"
 
-# 测试专用：当测试用例不传 province 时，使用默认省份
-# 仅在测试进程中生效，不影响生产
-os.environ.setdefault("WMS_TEST_DEFAULT_PROVINCE", "UT")
+# Phase 5 Blueprint：禁止隐式省份兜底（必须显式提供 address.province）
+# - 旧版本曾在测试进程中 setdefault("WMS_TEST_DEFAULT_PROVINCE", "UT")，会导致“忘传 province”也能跑
+# - 现在改为：显式清理该 env，任何依赖默认省份的测试必须在用例内 monkeypatch.setenv(...)
+os.environ.pop("WMS_TEST_DEFAULT_PROVINCE", None)
 
 from app.main import app  # noqa: E402
 from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
@@ -135,18 +136,26 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
         wh_id = int(row.scalar_one())
 
-        # 3.2 UT -> wh_id（幂等）
-        await conn.execute(
-            text(
-                """
-                INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
-                VALUES (:wid, 'UT')
-                ON CONFLICT (province_code) DO UPDATE
-                  SET warehouse_id = EXCLUDED.warehouse_id
-                """
-            ),
-            {"wid": wh_id},
-        )
+        # 3.2 Route C：常用 UT 省码 -> wh_id（幂等）
+        #
+        # Phase 5 合同要求：
+        # - address.province 必须显式提供
+        # - 且必须能命中 service warehouse，否则 ingest 正确返回 FULFILLMENT_BLOCKED
+        #
+        # 但在多数非路由测试里，province 的具体字符串只是“占位符”。
+        # 为避免无意义的 BLOCKED 干扰其它链路测试，这里把常见 UT-* 省码统一映射到同一个 service warehouse。
+        for prov in ("UT", "UT-P3", "UT-PROV"):
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+                    VALUES (:wid, :prov)
+                    ON CONFLICT (province_code) DO UPDATE
+                      SET warehouse_id = EXCLUDED.warehouse_id
+                    """
+                ),
+                {"wid": wh_id, "prov": prov},
+            )
 
         # 3.3 确保至少存在一个 store（stores.name NOT NULL）
         row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))

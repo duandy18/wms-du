@@ -2,16 +2,13 @@
 
 import random
 from dataclasses import dataclass
-from typing import List
+from typing import List, Tuple
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
-
-import app.services.order_ingest_service as order_ingest_service
 
 
 @dataclass
@@ -33,193 +30,148 @@ class SandboxOrder:
 # ---------------------------------------------------------
 
 
-async def seed_world(session: AsyncSession) -> None:
+async def _ensure_n_warehouses(session: AsyncSession, n: int) -> List[int]:
     """
-    Route C 沙盘初始化世界（统一选仓世界观版）：
+    返回至少 n 个 warehouse_id。
+    若现有不足则动态插入测试仓，兼容 warehouses 表可能存在 NOT NULL 且无默认值的列。
+    """
+    rows = await session.execute(sa.text("SELECT id FROM warehouses ORDER BY id"))
+    ids = [int(r[0]) for r in rows.fetchall()]
 
-    - 仓库：1,2,3
-    - 店铺：S1, S2, S3（route_mode 用于决定“无省命中是否允许扩大到 bindings”）
-    - store_warehouse：店铺绑定仓（候选能力声明）
-      * S1 / S2 绑定仓2（以及一些备选仓）
-      * S3 故意不绑定任何仓（制造 failed：NO_WAREHOUSE_BOUND）
-    - store_province_routes：省码 → 候选仓（裁剪器）
-      * S1 / S2 省码命中仓2
-      * S3 故意不配置（制造 failed：NO_PROVINCE_ROUTE_MATCH 或 NO_WAREHOUSE_BOUND）
-    - items：1001,1002,1003
-    """
-    await session.execute(
+    needed = int(n) - len(ids)
+    if needed <= 0:
+        return ids[:n]
+
+    cols_rows = await session.execute(
         sa.text(
             """
-            INSERT INTO warehouses (id, name)
-            VALUES
-                (1, 'WH1'),
-                (2, 'WH2'),
-                (3, 'WH3')
-            ON CONFLICT (id) DO NOTHING;
+            SELECT column_name, data_type
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name   = 'warehouses'
+               AND is_nullable  = 'NO'
+               AND column_default IS NULL
+               AND column_name <> 'id'
             """
         )
     )
+    col_info = [(str(r[0]), str(r[1])) for r in cols_rows.fetchall()]
 
-    # 让 S3 也写一个 route_mode（但我们不绑定仓，确保它失败）
+    if not col_info:
+        for _ in range(needed):
+            row = await session.execute(sa.text("INSERT INTO warehouses DEFAULT VALUES RETURNING id"))
+            ids.append(int(row.scalar()))
+        return ids[:n]
+
+    columns = ", ".join(c for c, _ in col_info)
+    placeholders = ", ".join(f":{c}" for c, _ in col_info)
+    sql = f"INSERT INTO warehouses ({columns}) VALUES ({placeholders}) RETURNING id"
+
+    import uuid
+    from datetime import datetime, timezone
+
+    for _ in range(needed):
+        params = {}
+        for col, dtype in col_info:
+            dt = dtype.lower()
+            if "char" in dt or "text" in dt:
+                params[col] = f"WH-{col}-{uuid.uuid4().hex[:8]}"
+            elif "int" in dt:
+                params[col] = 0
+            elif "bool" in dt:
+                params[col] = False
+            elif "timestamp" in dt or "time" in dt:
+                params[col] = datetime.now(timezone.utc)
+            elif dt == "date":
+                params[col] = datetime.now(timezone.utc).date()
+            else:
+                params[col] = f"WH-{col}-{uuid.uuid4().hex[:4]}"
+        row = await session.execute(sa.text(sql), params)
+        ids.append(int(row.scalar()))
+
+    return ids[:n]
+
+
+async def _pick_existing_item_ids(session: AsyncSession, n: int = 3) -> List[int]:
+    """
+    从测试基线（seed_test_baseline）已存在的 items 中挑选若干个 item_id，
+    避免在沙盘测试里硬插 items 导致 NOT NULL/约束漂移。
+    """
+    rows = await session.execute(sa.text("SELECT id FROM items ORDER BY id ASC LIMIT :n"), {"n": int(n)})
+    ids = [int(r[0]) for r in rows.fetchall()]
+    if len(ids) < n:
+        raise RuntimeError(f"sandbox requires at least {n} seeded items, got {ids}")
+    return ids
+
+
+async def seed_world_phase5(session: AsyncSession) -> Tuple[int, int, int]:
+    """
+    Phase 5 服务归属沙盘初始化：
+
+    - 仓库：至少 3 个（返回 wh1/wh2/wh3）
+    - 店铺：S1, S2, S3
+    - 服务省份映射（warehouse_service_provinces）：
+        P-S1 -> wh2
+        P-S2 -> wh3
+        P-S3 -> （故意不配置，制造 BLOCKED）
+    """
+    wh_ids = await _ensure_n_warehouses(session, 3)
+    wh1, wh2, wh3 = int(wh_ids[0]), int(wh_ids[1]), int(wh_ids[2])
+
+    # 确保 stores 存在（name NOT NULL）
     await session.execute(
         sa.text(
             """
-            INSERT INTO stores (platform, shop_id, name, route_mode, created_at, updated_at)
+            INSERT INTO stores (platform, shop_id, name, active)
             VALUES
-                ('PDD','S1','S1','FALLBACK',now(),now()),
-                ('PDD','S2','S2','STRICT_TOP',now(),now()),
-                ('PDD','S3','S3','STRICT_TOP',now(),now())
+              ('PDD','S1','S1',TRUE),
+              ('PDD','S2','S2',TRUE),
+              ('PDD','S3','S3',TRUE)
             ON CONFLICT (platform, shop_id) DO NOTHING;
             """
         )
     )
 
-    # items（必须包含 sku，避免 NOT NULL 失败）
+    # 服务省份：P-S1 -> wh2, P-S2 -> wh3
     await session.execute(
         sa.text(
             """
-            INSERT INTO items (id, sku, name)
-            VALUES
-                (1001,'SKU-1001','item1001'),
-                (1002,'SKU-1002','item1002'),
-                (1003,'SKU-1003','item1003')
-            ON CONFLICT (id) DO NOTHING;
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:w2, 'P-S1')
+            ON CONFLICT (province_code) DO UPDATE SET warehouse_id = EXCLUDED.warehouse_id;
             """
-        )
-    )
-
-    # -----------------------------
-    # 统一世界观：store_warehouse（能力声明）
-    # -----------------------------
-    # 清理三家店的旧绑定
-    await session.execute(
-        sa.text(
-            """
-            DELETE FROM store_warehouse
-             WHERE store_id IN (
-               SELECT id FROM stores WHERE platform='PDD' AND shop_id IN ('S1','S2','S3')
-             );
-            """
-        )
-    )
-
-    # S1 绑定：主仓=2，备仓=1/3（只是偏好，不代表可履约）
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 2, TRUE, TRUE, 10 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
-            """
-        )
+        ),
+        {"w2": wh2},
     )
     await session.execute(
         sa.text(
             """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 1, FALSE, FALSE, 20 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
+            VALUES (:w3, 'P-S2')
+            ON CONFLICT (province_code) DO UPDATE SET warehouse_id = EXCLUDED.warehouse_id;
             """
-        )
+        ),
+        {"w3": wh3},
     )
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 3, FALSE, FALSE, 30 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
-            """
-        )
-    )
-
-    # S2 绑定：主仓=2（STRICT_TOP 店也必须绑定，否则省级路由 join 会过滤掉）
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 2, TRUE, TRUE, 10 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
-            """
-        )
-    )
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 1, FALSE, FALSE, 20 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
-            """
-        )
-    )
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
-            SELECT s.id, 3, FALSE, FALSE, 30 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
-            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
-            """
-        )
-    )
-
-    # S3：不绑定任何仓（制造 failed）
-
-    # -----------------------------
-    # 统一世界观：store_province_routes（候选集裁剪器）
-    # -----------------------------
-    await session.execute(
-        sa.text(
-            """
-            DELETE FROM store_province_routes
-             WHERE store_id IN (
-               SELECT id FROM stores WHERE platform='PDD' AND shop_id IN ('S1','S2','S3')
-             )
-               AND province IN ('P-S1','P-S2','P-S3');
-            """
-        )
-    )
-
-    # S1：P-S1 → 仓2（priority=10）
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
-            SELECT s.id, 'P-S1', 2, 10, TRUE
-              FROM stores s
-             WHERE s.platform='PDD' AND s.shop_id='S1';
-            """
-        )
-    )
-
-    # S2：P-S2 → 仓2（priority=10）
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
-            SELECT s.id, 'P-S2', 2, 10, TRUE
-              FROM stores s
-             WHERE s.platform='PDD' AND s.shop_id='S2';
-            """
-        )
-    )
-
-    # S3：故意不插 P-S3（制造 failed）
 
     await session.commit()
+    return wh1, wh2, wh3
 
 
-def generate_orders(n: int) -> List[SandboxOrder]:
+def generate_orders(n: int, *, item_ids: List[int]) -> List[SandboxOrder]:
     """
     随机生成订单（只跑 ingest）。
     为了可复现，外部调用前应设定 random.seed。
     """
     shops = ["S1", "S2", "S3"]
-    items = [1001, 1002, 1003]
+    if not item_ids:
+        raise ValueError("item_ids must not be empty")
 
     orders: List[SandboxOrder] = []
     for i in range(n):
         shop = random.choice(shops)
         lines = [
-            SandboxOrderLine(item_id=random.choice(items), qty=random.randint(1, 8))
+            SandboxOrderLine(item_id=int(random.choice(item_ids)), qty=random.randint(1, 8))
             for _ in range(random.randint(1, 3))
         ]
         orders.append(
@@ -233,17 +185,22 @@ def generate_orders(n: int) -> List[SandboxOrder]:
     return orders
 
 
-async def collect_sql_summary(session: AsyncSession):
+async def collect_order_summary_phase5(session: AsyncSession):
     """
-    从 vw_routing_metrics_daily 提取路由结果（ingest-only）
+    Phase 5：直接从 orders 聚合“服务归属事实 / 阻断事实”，不依赖 Phase4 的 routing metrics view。
     """
     res = await session.execute(
         sa.text(
             """
-            SELECT platform, shop_id, route_mode, warehouse_id,
-                   routed_orders, failed_orders
-              FROM vw_routing_metrics_daily
-             ORDER BY platform, shop_id, warehouse_id;
+            SELECT
+              platform,
+              shop_id,
+              fulfillment_status,
+              COALESCE(service_warehouse_id, 0) AS service_warehouse_id,
+              COUNT(*) AS n
+            FROM orders
+            GROUP BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0)
+            ORDER BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0);
             """
         )
     )
@@ -261,54 +218,27 @@ async def test_routing_sandbox_ingest_only(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """
-    Route C 沙盘：只跑 ingest，不碰 reserve/ship。
+    Phase 5 沙盘：只跑 ingest，不碰 reserve/ship。
 
-    通过 fake StockAvailabilityService.get_available_for_item 模拟：
-    - S1：省码命中仓2，但容量小 -> 会出现 routed + failed（INSUFFICIENT_QTY）
-    - S2：省码命中仓2，容量大 -> 全部 routed
-    - S3：无 store_province_routes 且无 store_warehouse 绑定 -> 全部 failed
+    验证：
+    - S1：province=P-S1 命中服务仓 wh2 => SERVICE_ASSIGNED（service_warehouse_id=wh2）
+    - S2：province=P-S2 命中服务仓 wh3 => SERVICE_ASSIGNED（service_warehouse_id=wh3）
+    - S3：province=P-S3 未配置服务仓 => FULFILLMENT_BLOCKED（reason=NO_SERVICE_PROVINCE）
     """
     session = db_session_like_pg
 
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    # ingest-only：避免 reserve_flow 干扰
-    async def _noop_reserve_flow(*_, **__):
-        return None
-
-    monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
-
     random.seed(2025_11_19)
-    await seed_world(session)
+    wh1, wh2, wh3 = await seed_world_phase5(session)
 
-    # ---- fake StockAvailabilityService.get_available_for_item ----
-    capacity_map = {
-        ("PDD", "S1", 2): 5,    # S1 命中仓2但容量小 -> 一部分订单会失败
-        ("PDD", "S2", 2): 999,  # S2 命中仓2容量足 -> 不失败
-        # S3 没有候选仓集合（不会进入可用量调用）
-    }
-
-    async def fake_get_available_for_item(
-        session: AsyncSession,  # type: ignore[override]
-        platform: str,
-        shop_id: str,
-        warehouse_id: int,
-        item_id: int,
-    ) -> int:
-        key = (platform.upper(), str(shop_id), int(warehouse_id))
-        return capacity_map.get(key, 0)
-
-    monkeypatch.setattr(
-        StockAvailabilityService,
-        "get_available_for_item",
-        fake_get_available_for_item,
-        raising=False,
-    )
+    # 使用测试基线里真实存在的 item_id，避免 FK 漂移
+    item_ids = await _pick_existing_item_ids(session, n=3)
 
     shop_province = {"S1": "P-S1", "S2": "P-S2", "S3": "P-S3"}
 
-    orders = generate_orders(200)
+    orders = generate_orders(200, item_ids=item_ids)
     for order in orders:
         province = shop_province[order.shop_id]
         await OrderService.ingest(
@@ -322,35 +252,35 @@ async def test_routing_sandbox_ingest_only(
 
     await session.commit()
 
-    summary = await collect_sql_summary(session)
+    summary = await collect_order_summary_phase5(session)
 
-    print("\n=== Routing Sandbox Summary (Ingest Only / Route C) ===")
+    print("\n=== Phase 5 Service Assignment Summary (Ingest Only) ===")
     for row in summary:
         print(row)
 
     # ----------------------
-    # S2 验证：全部 routed 到仓2，failed_orders=0
+    # S1：应全部 SERVICE_ASSIGNED 到 wh2
     # ----------------------
-    s2_rows = [r for r in summary if r.shop_id == "S2"]
-    assert s2_rows, "no S2 rows in summary"
-    for r in s2_rows:
-        assert r.warehouse_id == 2
-        assert r.failed_orders == 0
+    s1 = [r for r in summary if r.shop_id == "S1"]
+    assert s1, "no S1 rows in summary"
+    assert all(str(r.fulfillment_status) == "SERVICE_ASSIGNED" for r in s1)
+    assert sum(int(r.n) for r in s1 if int(r.service_warehouse_id) == int(wh2)) > 0
+    assert sum(int(r.n) for r in s1 if int(r.service_warehouse_id) not in (0, int(wh2))) == 0
 
     # ----------------------
-    # S1 验证：有 routed（仓2），且可能有 failed（warehouse_id 可能为 NULL 的分组）
+    # S2：应全部 SERVICE_ASSIGNED 到 wh3
     # ----------------------
-    s1_rows = [r for r in summary if r.shop_id == "S1"]
-    assert s1_rows, "no S1 rows in summary"
-    total_s1_orders = sum(r.routed_orders + r.failed_orders for r in s1_rows)
-    routed_s1_wh2 = sum(r.routed_orders for r in s1_rows if r.warehouse_id == 2)
-    assert total_s1_orders > 0
-    assert routed_s1_wh2 > 0
+    s2 = [r for r in summary if r.shop_id == "S2"]
+    assert s2, "no S2 rows in summary"
+    assert all(str(r.fulfillment_status) == "SERVICE_ASSIGNED" for r in s2)
+    assert sum(int(r.n) for r in s2 if int(r.service_warehouse_id) == int(wh3)) > 0
+    assert sum(int(r.n) for r in s2 if int(r.service_warehouse_id) not in (0, int(wh3))) == 0
 
     # ----------------------
-    # S3 验证：无候选集，应出现 failed
+    # S3：应出现 FULFILLMENT_BLOCKED，且 service_warehouse_id=0
     # ----------------------
-    s3_rows = [r for r in summary if r.shop_id == "S3"]
-    assert s3_rows, "no S3 rows in summary"
-    failed_s3 = sum(r.failed_orders for r in s3_rows)
-    assert failed_s3 > 0
+    s3 = [r for r in summary if r.shop_id == "S3"]
+    assert s3, "no S3 rows in summary"
+    blocked_s3 = sum(int(r.n) for r in s3 if str(r.fulfillment_status) == "FULFILLMENT_BLOCKED")
+    assert blocked_s3 > 0
+    assert sum(int(r.n) for r in s3 if int(r.service_warehouse_id) != 0) == 0
