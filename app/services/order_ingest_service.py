@@ -7,13 +7,12 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.audit_writer import AuditEventWriter
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_platform_adapters import get_adapter
-from app.services.order_reserve_flow_reserve import reserve_flow
 from app.services.order_utils import to_dec_str
 
 from app.services.order_ingest_items_writer import insert_order_items
+from app.services.order_ingest_lines_writer import insert_order_lines
 from app.services.order_ingest_orders_writer import insert_order_or_get_idempotent
 from app.services.order_ingest_routing import auto_route_warehouse_if_possible
 from app.services.order_ingest_schema_probe import (
@@ -26,11 +25,15 @@ from app.services.order_ingest_address_writer import upsert_order_address
 
 class OrderIngestService:
     """
-    订单接入（ingest）主线 —— 路线 C（执行期约束满足式履约）
+    订单接入（ingest）主线 —— Route C（收敛版）
 
-    主线合同（两态）：
-      - OK + RESERVED：可履约事实（订单即库存事实闭环成立）
-      - FULFILLMENT_BLOCKED：不可履约事实（必须显式暴露，不进入 reserve）
+    ✅ 新主线合同（两态）：
+      - OK / IDEMPOTENT：订单落库 + 行事实 + 地址快照 + 服务归属（service_warehouse_id）
+      - FULFILLMENT_BLOCKED：省份缺失 / 服务仓未配置（显式暴露，等待人工/配置修复）
+
+    ❌ 明确不做：
+      - ingest 阶段库存判断
+      - ingest 阶段自动 reserve（库存不足由人工改派/退单处理）
     """
 
     @staticmethod
@@ -77,17 +80,15 @@ class OrderIngestService:
         extras: Optional[Mapping[str, Any]] = None,
         trace_id: Optional[str] = None,
     ) -> dict:
-        # 关键修复：平台一律大写，保证 ref 合同与 orders.platform 口径一致
         plat = (platform or "").upper().strip()
         occurred_at = occurred_at or datetime.now(timezone.utc)
         order_ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
-        # schema probe：保持原行为（每次 ingest 动态检查列是否存在）
         orders_has_extras = await _orders_has_extras(session)
         order_items_has_extras = await _order_items_has_extras(session)
         orders_has_whid = await _orders_has_warehouse_id(session)
 
-        # 1) 写 orders（含幂等处理）
+        # 1) orders（幂等）
         ins_res = await insert_order_or_get_idempotent(
             session,
             platform=plat,
@@ -105,7 +106,6 @@ class OrderIngestService:
             order_ref=order_ref,
         )
 
-        # 幂等命中：不重复写 items / ORDER_CREATED，但允许补齐 route/reserve（防止僵尸订单）。
         idempotent_hit = ins_res.get("status") == "IDEMPOTENT"
 
         order_id_raw = ins_res.get("id")
@@ -113,7 +113,7 @@ class OrderIngestService:
             raise RuntimeError("订单接入失败：insert_order_or_get_idempotent 未返回 id")
         order_id = int(order_id_raw)
 
-        # 2) 写 order_items（仅在非幂等时执行）
+        # 2) order_items（非幂等才写）
         if not idempotent_hit:
             await insert_order_items(
                 session,
@@ -122,7 +122,7 @@ class OrderIngestService:
                 order_items_has_extras=order_items_has_extras,
             )
 
-            # 3) 写 ORDER_CREATED（订单事件总线）——也只在非幂等时执行
+            # 3) ORDER_CREATED（非幂等才写）
             try:
                 await OrderEventBus.order_created(
                     session,
@@ -138,17 +138,20 @@ class OrderIngestService:
             except Exception:
                 pass
 
-        # ✅ 3.5) 写 order_address 快照（审计/解释用）
-        # - 不影响路由主线
-        # - 幂等命中时也允许补齐 address（防止历史订单缺地址）
+        # 3.25) order_lines（标准化行事实：解释/作业共用）
+        try:
+            if items:
+                await insert_order_lines(session, order_id=order_id, items=items)
+        except Exception:
+            pass
+
+        # 3.5) order_address（审计/解释）
         try:
             await upsert_order_address(session, order_id=order_id, address=address)
         except Exception:
-            # 地址写入失败不应阻断主线（避免因历史字段差异导致 ingest 失败）
             pass
 
-        # 4) 履约校验（路线 C）：命中服务仓 + 校验整单履约
-        #    失败必须显式暴露，且不进入 reserve。
+        # 4) Route C：只写服务归属（service_warehouse_id）或 BLOCKED
         route_payload: Optional[dict] = None
         route_status = "SKIPPED"
 
@@ -167,63 +170,26 @@ class OrderIngestService:
                 route_payload = rr
                 route_status = str(rr.get("status") or "CHECKED")
 
+                # ✅ Phase 5：BLOCKED 仍然是可接受结果
+                # 但“幂等”描述的是写入行为，因此：
+                # - 首次创建命中 BLOCKED => status=FULFILLMENT_BLOCKED
+                # - 幂等命中再次 ingest => status=IDEMPOTENT，同时 route 仍然 BLOCKED
                 if route_status == "FULFILLMENT_BLOCKED":
                     return {
-                        "status": "FULFILLMENT_BLOCKED",
+                        "status": "IDEMPOTENT" if idempotent_hit else "FULFILLMENT_BLOCKED",
                         "id": order_id,
                         "ref": order_ref,
                         "route": route_payload,
+                        "ingest_state": "CREATED",
+                        "route_status": route_status,
                     }
 
-        # 5) 立即 reserve（仅当 route 未阻断）
-        if items and orders_has_whid:
-            lines = []
-            for it in items or ():
-                item_id = it.get("item_id")
-                qty = int(it.get("qty") or 0)
-                if item_id is None or qty <= 0:
-                    continue
-                lines.append({"item_id": int(item_id), "qty": int(qty)})
-
-            try:
-                await reserve_flow(
-                    session,
-                    platform=plat,
-                    shop_id=shop_id,
-                    ref=order_ref,
-                    lines=lines,
-                    trace_id=trace_id,
-                )
-            except Exception as e:
-                try:
-                    await AuditEventWriter.write(
-                        session,
-                        event="ORDER_RESERVE_FAILED",
-                        ref=order_ref,
-                        trace_id=trace_id,
-                        data={
-                            "order_id": order_id,
-                            "error": str(e),
-                            "route_status": route_status,
-                            "route": route_payload,
-                        },
-                    )
-                except Exception:
-                    pass
-
-                return {
-                    "status": "RESERVE_FAILED",
-                    "id": order_id,
-                    "ref": order_ref,
-                    "route": route_payload,
-                    "error": str(e),
-                }
-
+        # ✅ 新主线：不在 ingest 阶段 reserve
         return {
-            # ✅ 幂等命中必须显式返回 IDEMPOTENT（测试/合同依赖）
             "status": "IDEMPOTENT" if idempotent_hit else "OK",
             "id": order_id,
             "ref": order_ref,
             "route": route_payload,
-            "ingest_state": "RESERVED" if (items and orders_has_whid) else "CREATED",
+            "ingest_state": "CREATED",
+            "route_status": route_status,
         }

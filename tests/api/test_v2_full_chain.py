@@ -14,6 +14,10 @@ from app.services.stock_service import StockService
 
 
 async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_id: str, province: str) -> None:
+    """
+    该 helper 保留用于历史/可读性：配置 store_warehouse + store_province_routes。
+    Phase 5 的服务归属命中依赖 warehouse_service_provinces(/cities)，与 store_province_routes 无关。
+    """
     await session.execute(
         text(
             """
@@ -61,8 +65,12 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
-    订单驱动 v2 履约链测试（核心验收）：
-    ORDER_CREATED → RESERVE_APPLIED → PICK(ledger) → SHIP_COMMIT → trace 聚合
+    Phase 5 世界观下的“订单驱动履约链”核心验收：
+
+    1) ingest：只写服务归属（SERVICE_ASSIGNED，写 service_warehouse_id，不写 warehouse_id）
+    2) 人工履约决策：显式指定执行仓（warehouse_id / fulfillment_warehouse_id）
+    3) reserve：现在应当允许（>= READY_TO_FULFILL 且 warehouse_id 存在）
+    4) pick(ledger) → ship_commit → trace 聚合
     """
     plat = "PDD"
     shop_id = "1"
@@ -96,7 +104,31 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     print(f"[TEST] ingest 返回: {r}")
     assert r["ref"] == order_ref
 
-    # 2) reserve（现在应为 READY_TO_FULFILL 才会 200）
+    # Phase 5：ingest 只到 SERVICE_ASSIGNED，不自动写 warehouse_id
+    # 人工决策层（最小可用）：显式指定执行仓
+    #
+    # 说明：当前项目里 reserve API 仍要求订单满足：
+    # - fulfillment_status=READY_TO_FULFILL
+    # - warehouse_id 非空
+    #
+    # 因此测试里用 DB 直写模拟“人工指定执行仓 + 标记可进入履约”。
+    await db_session_like_pg.execute(
+        text(
+            """
+            UPDATE orders
+               SET warehouse_id = 1,
+                   fulfillment_warehouse_id = 1,
+                   fulfillment_status = 'READY_TO_FULFILL',
+                   blocked_reasons = NULL,
+                   blocked_detail = NULL
+             WHERE id = :oid
+            """
+        ),
+        {"oid": int(r["id"])},
+    )
+    await db_session_like_pg.commit()
+
+    # 2) reserve（现在应为 READY_TO_FULFILL 且 warehouse_id 存在才会 200）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/reserve",
         json={"lines": [{"item_id": 3001, "qty": 1}]},

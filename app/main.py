@@ -113,6 +113,9 @@ from app.api.routers.supplier_contacts import router as supplier_contacts_router
 from app.api.routers.user import router as user_router
 from app.api.routers.warehouses import router as warehouses_router
 
+# ✅ 明确挂载：fulfillment-debug（v4-min）
+from app.api.routers.orders_fulfillment_debug_routes import router as orders_fulfillment_debug_router
+
 # ---------------------------------------------------------------------------
 # scan 路由（已拆分：scan_routes_*）
 # ---------------------------------------------------------------------------
@@ -147,8 +150,13 @@ orders_fulfillment_v2_routes_4_ship_with_waybill.register(orders_fulfillment_v2_
 app.include_router(scan_router)
 app.include_router(count_router)
 app.include_router(pick_router)
+
+# orders 主路由
 app.include_router(orders_router)
 app.include_router(orders_fulfillment_v2_router)
+
+# ✅ v4-min explain：显式挂载，避免旧实现漂移
+app.include_router(orders_fulfillment_debug_router)
 
 app.include_router(outbound_router)
 app.include_router(outbound_ship_router)
