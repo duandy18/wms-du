@@ -35,9 +35,11 @@ def recommend_quotes(
          - spsw.warehouse_id = warehouse_id AND spsw.active=true
          - scheme.active=true 且 effective
          - 不允许 fallback 到“该 provider 的全局方案”
+      3) 对每个候选 scheme 的 calc 必须携带 warehouse_id（合同强前置）
     - 若未提供 warehouse_id：
       - 兼容入口：provider_ids（若给）或全局 active providers
       - scheme 候选集为 provider 下所有 active+effective schemes
+      - calc 走兼容路径（若 calc_quote 也要求 warehouse_id，则需要上层禁止该入口或给 calc_quote 提供 Optional 支持）
     """
     now = _utcnow()
 
@@ -154,9 +156,11 @@ def recommend_quotes(
         best: Optional[Dict[str, Any]] = None
         for sch in schemes:
             try:
+                # ✅ 关键修复：calc 必须携带 warehouse_id（合同强前置）
                 r = calc_quote(
                     db=db,
                     scheme_id=sch.id,
+                    warehouse_id=int(warehouse_id) if warehouse_id is not None else None,
                     dest=dest,
                     real_weight_kg=real_weight_kg,
                     dims_cm=dims_cm,

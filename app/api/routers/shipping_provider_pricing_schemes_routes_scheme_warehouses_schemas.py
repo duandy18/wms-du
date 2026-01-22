@@ -1,14 +1,25 @@
 # app/api/routers/shipping_provider_pricing_schemes_routes_scheme_warehouses_schemas.py
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
 
+class WarehouseLiteOut(BaseModel):
+    id: int
+    name: str
+    code: Optional[str] = None
+    active: bool
+
+
 class SchemeWarehouseOut(BaseModel):
+    scheme_id: int
     warehouse_id: int
     active: bool
+
+    # ✅ 事实展示：带上仓库主数据（只读）
+    warehouse: WarehouseLiteOut
 
 
 class SchemeWarehousesGetOut(BaseModel):
@@ -16,18 +27,35 @@ class SchemeWarehousesGetOut(BaseModel):
     data: List[SchemeWarehouseOut]
 
 
-class SchemeWarehousesPutIn(BaseModel):
+class SchemeWarehouseBindIn(BaseModel):
     """
-    全量替换：给定 scheme_id，写入其“起运适用仓库集合”。
+    绑定单个起运仓（事实写入）。
 
-    约定：
-    - warehouses 允许空列表（表示该方案当前不适用于任何仓；会导致 Phase 3 推荐/算价候选集为空）
-    - 不引入策略：仅表达事实绑定
+    语义：
+    - 绑定存在 = 具备“起运适用资格”
+    - active=true = 该资格当前启用
     """
-    warehouse_ids: List[int] = Field(default_factory=list)
-    active: bool = True
+    warehouse_id: int = Field(..., ge=1)
+
+    # ✅ 建议默认 false（避免“绑定即启用”的暗示）
+    # 这里作为契约默认值；数据库层默认 true 不重要，因为我们插入会显式写 active。
+    active: bool = False
 
 
-class SchemeWarehousesPutOut(BaseModel):
+class SchemeWarehouseBindOut(BaseModel):
     ok: bool
-    data: List[SchemeWarehouseOut]
+    data: SchemeWarehouseOut
+
+
+class SchemeWarehousePatchIn(BaseModel):
+    active: Optional[bool] = None
+
+
+class SchemeWarehousePatchOut(BaseModel):
+    ok: bool
+    data: SchemeWarehouseOut
+
+
+class SchemeWarehouseDeleteOut(BaseModel):
+    ok: bool
+    data: dict
