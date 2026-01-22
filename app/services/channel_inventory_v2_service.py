@@ -16,6 +16,10 @@ from app.models.store import Store, StoreWarehouse
 class WarehouseAvailabilityV2:
     """
     单仓维度可售信息 (platform, shop_id, warehouse_id, item_id).
+
+    说明：
+    - 这是“展示视图”数据结构，用于 UI 展示、诊断、解释；
+    - 不是“履约裁决”入口。
     """
 
     warehouse_id: int
@@ -30,7 +34,12 @@ class WarehouseAvailabilityV2:
 @dataclass
 class ChannelAvailabilityV2:
     """
-    多仓汇总可售信息（不带 route_mode，路由策略由其他服务决定）.
+    多仓汇总可售信息（展示视图，不带路由策略）.
+
+    说明：
+    - 仓集合只取 store_warehouse 中绑定的仓；
+    - reserved 这里是“按 platform/shop_id 过滤后的 open reservation 锁量”（展示用途）；
+    - 不用于 Phase 4.x 的“事实裁决”（事实裁决请走 StockAvailabilityService + WarehouseRouter）。
     """
 
     platform: str
@@ -50,19 +59,20 @@ class StoreNotFoundError(RuntimeError):
 
 class ChannelInventoryV2Service:
     """
-    ChannelInventory v2：真实多仓可售计算服务。
+    ⚠️ 展示视图服务（不是履约事实裁决器）
 
-    口径：
+    口径（展示用）：
         维度：platform, shop_id, warehouse_id, item_id
-        on_hand = SUM(stocks.qty)
-        reserved = SUM(reservation_line.qty - reservation_line.consumed_qty)
-                   在满足 TTL / 状态的前提下
+        on_hand   = SUM(stocks.qty)
+        reserved  = SUM(reservation_line.qty - reservation_line.consumed_qty)
+                   在满足 TTL / 状态的前提下（并按 platform/shop_id 过滤）
         available = max(on_hand - reserved, 0)
 
     说明：
         - 仓的集合只取 store_warehouse 中绑定的仓；
-        - 不依赖 channel_inventory 表（那张表可以继续作为可见上限 / 配置使用）；
-        - 不处理 route_mode，后续由路由服务根据 per_warehouse 再决策。
+        - 不依赖 channel_inventory 表（那张表只是 legacy 可见层/配置层）；
+        - 不处理 route_mode，路由策略由路由服务决定；
+        - Phase 4.x 的“是否可履约”判断不得从这里发起。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -70,7 +80,7 @@ class ChannelInventoryV2Service:
 
     # ---------- Public API ----------
 
-    async def get_available_for_item(
+    async def get_store_item_availability(
         self,
         *,
         platform: str,
@@ -78,7 +88,7 @@ class ChannelInventoryV2Service:
         item_id: int,
     ) -> ChannelAvailabilityV2:
         """
-        计算某店铺下某 item 在各仓的真实可售情况。
+        计算某店铺下某 item 在各仓的展示型可售情况（store_warehouse 绑定仓范围）。
 
         返回：
             ChannelAvailabilityV2：
@@ -217,7 +227,7 @@ class ChannelInventoryV2Service:
         item_id: int,
     ) -> Dict[int, int]:
         """
-        按仓汇总 Soft Reserve 锁量：
+        按仓汇总 Soft Reserve 锁量（展示口径，按 platform/shop 过滤）：
 
             reserved = SUM(line.qty - line.consumed_qty)
 

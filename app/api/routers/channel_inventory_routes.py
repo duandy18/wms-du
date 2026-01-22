@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.inventory_view_service import InventoryViewService
 
 from app.api.routers.channel_inventory_mappers import map_multi, map_single
 from app.api.routers.channel_inventory_schemas import (
@@ -48,7 +48,7 @@ def register(router: APIRouter) -> None:
         item_id: int = Path(..., description="内部 item_id"),
         session: AsyncSession = Depends(get_session),
     ) -> ChannelInventoryModel:
-        svc = ChannelInventoryService(session)
+        svc = InventoryViewService(session)
         ci = await svc.get_single_item(
             platform=platform,
             shop_id=shop_id,
@@ -67,7 +67,7 @@ def register(router: APIRouter) -> None:
         item_id: int = Path(..., description="内部 item_id"),
         session: AsyncSession = Depends(get_session),
     ) -> ChannelInventoryMultiModel:
-        svc = ChannelInventoryService(session)
+        svc = InventoryViewService(session)
 
         rows = await session.execute(
             text(
@@ -144,7 +144,6 @@ def register(router: APIRouter) -> None:
         if len(item_ids) > 200:
             raise HTTPException(status_code=400, detail="item_ids 过多（最多 200）")
 
-        # bindings meta（用于 map_multi 输出 is_top/is_default/priority）
         rows = await session.execute(
             text(
                 """
@@ -178,9 +177,8 @@ def register(router: APIRouter) -> None:
                     "priority": int(priority or 100),
                 }
 
-        svc = ChannelInventoryService(session)
+        svc = InventoryViewService(session)
 
-        # 批量获取（store-aware：内部会优先按 store_warehouse，没绑定则回落）
         multi_map = await svc.get_multi_items_for_store(
             platform=platform,
             shop_id=shop_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from app.services.channel_inventory_service import ChannelInventory
+from app.services.channel_inventory_types import ChannelInventory
 
 from app.api.routers.channel_inventory_schemas import (
     BatchQtyModel,
