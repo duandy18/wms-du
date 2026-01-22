@@ -31,7 +31,8 @@ help:
 	@echo "  make test-snapshot            - 只跑 grp_snapshot"
 	@echo "  make test-rbac                - RBAC 测试"
 	@echo "  make test-internal-outbound   - 内部出库 Golden Flow E2E"
-	@echo "  make test-phase4-routing      - Phase4 routing tests"
+	@echo "  make test-phase5-service-assignment - Phase5: service assignment tests (CI gate)"
+
 	@echo "  make test-all                 - 全量回归（不含三账体检后置步骤）"
 	@echo ""
 	@echo "  make lint-backend             - pre-commit/ruff"

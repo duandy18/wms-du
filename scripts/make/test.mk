@@ -37,9 +37,6 @@ test-snapshot: venv audit-all upgrade-dev-test-db
 
 # ---------------------------------
 # 通用 pytest 入口（支持 TESTS=...）
-# Phase 3 正解：
-# - pytest 内部会 TRUNCATE + seed baseline
-# - pytest 结束后：自动补 opening ledger，然后跑三账体检
 # ---------------------------------
 .PHONY: test
 test: venv audit-all upgrade-dev-test-db
@@ -87,17 +84,19 @@ test-internal-outbound: venv audit-all upgrade-dev-test-db
 	$(PYTEST) -q -s tests/services/test_internal_outbound_service.py
 
 # =================================
-# Phase 4：Routing 测试线
+# Phase 5 CI Gate：Service Assignment（Route C 简化世界观）
+# - 只写 service_warehouse_id
+# - 不自动写 warehouse_id
+# - ingest 阶段不 reserve
 # =================================
-.PHONY: test-phase4-routing
-test-phase4-routing: venv audit-all upgrade-dev-test-db
-	@echo "[pytest] Phase 4 routing tests"
+.PHONY: test-phase5-service-assignment
+test-phase5-service-assignment: venv audit-all upgrade-dev-test-db
+	@echo "[pytest] Phase 5 service-assignment tests (Route C simplified worldview)"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
-	$(PYTEST) -q tests/phase4_routing
+	$(PYTEST) -q tests/phase5_service_assignment
 
 # =================================
 # 全量回归
-# （保持你原行为：这里不强制三账后置体检；如需也可在这里加两行 make）
 # =================================
 .PHONY: test-all
 test-all: venv audit-all upgrade-dev-test-db
