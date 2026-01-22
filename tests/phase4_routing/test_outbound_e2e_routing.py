@@ -1,4 +1,20 @@
 # tests/services/test_outbound_e2e_phase4_routing.py
+
+"""
+Phase 4.x routing worldview tests
+
+Candidate set:
+  - store_province_routes (candidate-set cutter)
+  - store_warehouse (capability declaration + ordering preference)
+
+Fact check:
+  - StockAvailabilityService / WarehouseRouter whole-order checks
+
+Contract:
+  - address.province is required
+  - missing province => FULFILLMENT_BLOCKED (no implicit fallback selection)
+"""
+
 import uuid
 from datetime import datetime, timezone
 
@@ -6,7 +22,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 from app.services.outbound_service import OutboundService, ShipLine
 
@@ -16,6 +32,7 @@ async def _get_store_id_for_shop(session: AsyncSession, platform: str, shop_id: 
     获取或创建给定 platform/shop_id 的 store 记录，返回 store.id。
     测试环境是干净库，不再依赖预先 seed 的 store。
     """
+    plat = platform.upper()
     row = await session.execute(
         text(
             """
@@ -26,7 +43,7 @@ async def _get_store_id_for_shop(session: AsyncSession, platform: str, shop_id: 
              LIMIT 1
             """
         ),
-        {"p": platform, "s": shop_id},
+        {"p": plat, "s": shop_id},
     )
     store_id = row.scalar()
     if store_id is None:
@@ -38,7 +55,7 @@ async def _get_store_id_for_shop(session: AsyncSession, platform: str, shop_id: 
                 RETURNING id
                 """
             ),
-            {"p": platform, "s": shop_id, "name": f"UT-STORE-{platform}-{shop_id}"},
+            {"p": plat, "s": shop_id, "name": f"UT-STORE-{plat}-{shop_id}"},
         )
         store_id = row.scalar_one()
     return int(store_id)
@@ -118,9 +135,10 @@ async def _bind_store_warehouses(
     shop_id: str,
     top_warehouse_id: int,
     backup_warehouse_id: int,
-):
+) -> int:
     """
     清空该店铺旧的 store_warehouse 记录，并绑定主 / 备仓。
+    返回 store_id。
     """
     store_id = await _get_store_id_for_shop(session, platform, shop_id)
 
@@ -149,49 +167,76 @@ async def _bind_store_warehouses(
         {"sid": store_id, "wid": backup_warehouse_id, "top": False, "pr": 1},
     )
 
+    return int(store_id)
+
+
+async def _ensure_store_province_route(
+    session: AsyncSession,
+    *,
+    store_id: int,
+    province: str,
+    warehouse_id: int,
+) -> None:
+    """
+    ✅ 统一世界观：store_province_routes = 省 → 候选仓裁剪器
+    """
+    await session.execute(
+        text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
+        {"sid": int(store_id), "prov": str(province)},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            VALUES (:sid, :prov, :wid, 10, TRUE)
+            """
+        ),
+        {"sid": int(store_id), "prov": str(province), "wid": int(warehouse_id)},
+    )
+
 
 @pytest.mark.asyncio
 async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
     """
     Phase 4：ingest → reserve → ship 全链路 E2E（单平台单店）
+
+    新世界观要求：
+    - ingest 必须显式提供 address.province（否则 FULFILLMENT_BLOCKED）
+    - 必须配置 store_province_routes（省 → 候选仓）且仓需已绑定 store_warehouse
     """
     session = db_session_like_pg
     platform = "PDD"
     shop_id = "S1"
 
+    province = "UT-PROV"
+
     # 准备主仓 / 备仓，并绑定到店铺
     top_wid, backup_wid = await _ensure_two_warehouses(session)
-    await _bind_store_warehouses(
+    store_id = await _bind_store_warehouses(
         session,
         platform=platform,
         shop_id=shop_id,
         top_warehouse_id=top_wid,
         backup_warehouse_id=backup_wid,
     )
+    await _ensure_store_province_route(session, store_id=store_id, province=province, warehouse_id=top_wid)
 
-    # 为路由控制可用库存：主仓足够、备仓也足够，但应优先主仓
+    # 为路由控制可用库存：主仓足够、备仓也足够，但应优先主仓（由候选集顺序 + is_top）
     stock_map = {
         (top_wid, 1): 10,
         (backup_wid, 1): 10,
     }
 
-    async def fake_get_available(
-        self,
-        session,
-        platform,
-        shop_id,
-        warehouse_id,
-        item_id,
-    ):
-        return int(stock_map.get((warehouse_id, item_id), 0))
+    async def fake_get_available(session, platform, shop_id, warehouse_id, item_id):
+        return int(stock_map.get((int(warehouse_id), int(item_id)), 0))
 
     monkeypatch.setattr(
-        ChannelInventoryService,
+        StockAvailabilityService,
         "get_available_for_item",
         fake_get_available,
     )
 
-    # 1) ingest：创建订单
+    # 1) ingest：创建订单（必须带 province）
     ext_order_no = "E-E2E-1"
     trace_id = "TRACE-E2E-PH4-001"
     occurred_at = datetime.now(timezone.utc)
@@ -217,7 +262,7 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "张三", "receiver_phone": "13800000000"},
+        address={"province": province, "receiver_name": "张三", "receiver_phone": "13800000000"},
         extras={},
         trace_id=trace_id,
     )
@@ -264,7 +309,7 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
     res_wh = row.scalar()
     assert res_wh == order_wh == top_wid
 
-    # 3) ship
+    # 3) ship：这里不造真实库存，因此 OutboundService.commit 会返回 “insufficient stock”
     ship_lines = [
         ShipLine(
             item_id=1,
@@ -287,6 +332,7 @@ async def test_ingest_reserve_ship_e2e_phase4(db_session_like_pg, monkeypatch):
     assert ship_result.get("order_id") == str(order_id)
     assert ship_result.get("status") == "OK"
 
+    # 这里的 sandbox 语义：没有真实库存，committed_lines=0，并返回不足信息
     assert ship_result.get("committed_lines") == 0
     results = ship_result.get("results") or []
     assert isinstance(results, list)

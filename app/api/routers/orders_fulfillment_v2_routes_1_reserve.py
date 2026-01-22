@@ -12,8 +12,8 @@ from app.api.deps import get_current_user, get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import ReserveRequest, ReserveResponse
 from app.services.audit_writer import AuditEventWriter
-from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
+from app.services.warehouse_router import OrderContext, OrderLine, StockAvailabilityProvider, WarehouseRouter
 
 
 class FulfillmentOverrideRequest(BaseModel):
@@ -96,34 +96,19 @@ async def _check_can_fulfill_whole_order(
 ) -> None:
     """
     路线 C：只做约束校验，不自动找其他仓。
+    ✅ 统一口径：必须走 WarehouseRouter.check_whole_order()
     校验失败直接抛 ValueError（由路由转 409）。
     """
     if not lines:
         raise ValueError("cannot override fulfillment: order has no lines")
 
-    svc = ChannelInventoryService()
-    insufficient: List[Dict[str, Any]] = []
+    ctx = OrderContext(platform=str(platform), shop_id=str(shop_id), order_id="fulfillment_override")
+    router = WarehouseRouter(availability_provider=StockAvailabilityProvider(session))
+    order_lines = [OrderLine(item_id=int(x["item_id"]), qty=int(x["qty"])) for x in lines if int(x["qty"]) > 0]
+    r = await router.check_whole_order(ctx=ctx, warehouse_id=int(warehouse_id), lines=order_lines)
 
-    for line in lines:
-        item_id = int(line["item_id"])
-        need = int(line["qty"])
-        available_raw = await svc.get_available_for_item(
-            session=session,
-            platform=platform,
-            shop_id=shop_id,
-            warehouse_id=int(warehouse_id),
-            item_id=item_id,
-        )
-        if need > int(available_raw):
-            insufficient.append(
-                {
-                    "item_id": item_id,
-                    "need": need,
-                    "available": int(available_raw),
-                }
-            )
-
-    if insufficient:
+    if r.status != "OK":
+        insufficient = [x.to_dict() for x in r.insufficient]
         raise ValueError(
             "override blocked: target warehouse cannot fulfill whole order; "
             f"platform={platform}, shop={shop_id}, wh={warehouse_id}, insufficient={insufficient}"
@@ -160,7 +145,6 @@ def register(router: APIRouter) -> None:
         )
 
         # Route C 合同护栏：
-        # reserve 不负责“选仓/兜底”，只允许在订单已具备明确履约仓且处于可履约态时继续。
         row = await session.execute(
             text(
                 """
@@ -248,7 +232,6 @@ def register(router: APIRouter) -> None:
 
             lines = await _load_order_lines_sum(session, order_id=order_id)
 
-            # 关键：只校验 body.warehouse_id 这一个目标仓
             await _check_can_fulfill_whole_order(
                 session,
                 platform=plat,
@@ -259,7 +242,6 @@ def register(router: APIRouter) -> None:
 
             overridden_by = getattr(user, "id", None)
 
-            # 显性兜底：写入订单履约字段 + 清空 blocked
             await session.execute(
                 text(
                     """
@@ -283,7 +265,6 @@ def register(router: APIRouter) -> None:
                 },
             )
 
-            # 审计事件（尽量写，失败不影响业务）
             try:
                 await AuditEventWriter.write(
                     session,
@@ -291,7 +272,7 @@ def register(router: APIRouter) -> None:
                     event="FULFILLMENT_OVERRIDDEN",
                     ref=order_ref,
                     trace_id=trace_id,
-                    meta={
+                    data={
                         "platform": plat,
                         "shop": shop_id,
                         "from_warehouse_id": from_wh,

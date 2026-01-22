@@ -5,10 +5,23 @@ from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .normalize import normalize_province_from_address
-from .route_c_qty import build_target_qty, check_service_warehouse_sufficient
-from .route_c_service_hit import resolve_service_hit
+from app.services.routing_candidates import resolve_candidate_warehouses_for_store
+from app.services.warehouse_router import OrderContext, OrderLine, StockAvailabilityProvider, WarehouseRouter
+
+from .route_c_qty import build_target_qty
 from .route_c_state import mark_fulfillment_blocked, mark_ready_to_fulfill
+
+
+def _province_from_address_soft(address: Optional[Mapping[str, str]]) -> Optional[str]:
+    """
+    Route C 使用“软省码”：
+    - 测试与路由表里常用 P-XXX 这类省码
+    - 不强制要求中文后缀（省/市/自治区）
+    """
+    if not address:
+        return None
+    p = str(address.get("province") or "").strip()
+    return p or None
 
 
 async def auto_route_warehouse_if_possible(
@@ -23,15 +36,11 @@ async def auto_route_warehouse_if_possible(
     address: Optional[Mapping[str, str]] = None,
 ) -> Optional[dict]:
     """
-    路线 C（执行期约束满足式履约）：
+    ✅ Route C（统一选仓世界观版）
 
-    ✅ 默认：按省命中唯一服务仓（warehouse_service_provinces）
-    ✅ 例外：若该省启用“按城市配置”（warehouse_service_city_split_provinces），则按市命中（warehouse_service_cities）
-
-    - 系统不“选仓”，只做约束校验
-    - 校验服务仓能否整单履约（数量不足则 BLOCKED）
-    - 满足：标记 READY_TO_FULFILL，并写入 orders.warehouse_id / service_warehouse_id / fulfillment_warehouse_id
-    - 不满足：标记 FULFILLMENT_BLOCKED + blocked_reasons/detail；不写 orders.warehouse_id（让下游 reserve 正确停下）
+    契约（很硬）：
+    - address.province 缺失/空 → 直接 FULFILLMENT_BLOCKED（不写 orders.warehouse_id）
+    - 省份存在 → 候选集（store_province_routes / route_mode）→ WarehouseRouter 扫描 → READY/BLOCKED
     """
     if not items:
         return None
@@ -41,9 +50,10 @@ async def auto_route_warehouse_if_possible(
         return None
 
     plat_norm = platform.upper()
+    prov = _province_from_address_soft(address)
 
-    province = normalize_province_from_address(address)
-    if not province:
+    # ✅ 关键护栏：省份缺失 → 不允许通过 FALLBACK“自动挑仓”
+    if not prov:
         return await mark_fulfillment_blocked(
             session,
             order_id=int(order_id),
@@ -51,83 +61,71 @@ async def auto_route_warehouse_if_possible(
             trace_id=trace_id,
             platform_norm=plat_norm,
             shop_id=shop_id,
-            reasons_json='["NO_SERVICE_WAREHOUSE"]',
-            detail="无法命中服务仓：订单收件省缺失",
+            reasons_json='["PROVINCE_MISSING_OR_INVALID"]',
+            detail="省份缺失：Route C 不允许未定省份自动选仓（必须显式提供 address.province）",
             province=None,
             city=None,
             service_warehouse_id=None,
-            meta_extra={"reason": "NO_SERVICE_WAREHOUSE", "considered": []},
+            meta_extra={
+                "reason": "PROVINCE_MISSING_OR_INVALID",
+                "considered": [],
+            },
             auto_commit=False,
         )
 
-    # 只做命中，不写订单、不写审计
-    hit = await resolve_service_hit(session, province=province, address=address)
-    service_wid = hit.service_warehouse_id
-    hit_mode = hit.mode  # "province" | "city"
-    city = hit.city
-
-    # split 省：要求 city；若缺失 city → BLOCKED
-    if hit_mode == "city" and city is None:
-        return await mark_fulfillment_blocked(
-            session,
-            order_id=int(order_id),
-            order_ref=order_ref,
-            trace_id=trace_id,
-            platform_norm=plat_norm,
-            shop_id=shop_id,
-            reasons_json='["NO_SERVICE_WAREHOUSE"]',
-            detail=f"无法命中服务仓：省份 {province} 已启用按城市配置，但订单收件市缺失",
-            province=province,
-            city=None,
-            service_warehouse_id=None,
-            meta_extra={"reason": "NO_SERVICE_WAREHOUSE", "mode": "city", "considered": []},
-            auto_commit=False,
-        )
-
-    # province 未配置 / city 未配置 / 城市表不存在（视为未命中） → BLOCKED
-    if service_wid is None:
-        if hit_mode == "city":
-            return await mark_fulfillment_blocked(
-                session,
-                order_id=int(order_id),
-                order_ref=order_ref,
-                trace_id=trace_id,
-                platform_norm=plat_norm,
-                shop_id=shop_id,
-                reasons_json='["NO_SERVICE_WAREHOUSE"]',
-                detail=f"无法命中服务仓：城市 {city} 未配置服务仓（省份 {province} 已启用按城市配置）",
-                province=province,
-                city=city,
-                service_warehouse_id=None,
-                meta_extra={"reason": "NO_SERVICE_WAREHOUSE", "mode": "city", "considered": []},
-                auto_commit=False,
-            )
-
-        return await mark_fulfillment_blocked(
-            session,
-            order_id=int(order_id),
-            order_ref=order_ref,
-            trace_id=trace_id,
-            platform_norm=plat_norm,
-            shop_id=shop_id,
-            reasons_json='["NO_SERVICE_WAREHOUSE"]',
-            detail=f"无法命中服务仓：省份 {province} 未配置服务仓",
-            province=province,
-            city=None,
-            service_warehouse_id=None,
-            meta_extra={"reason": "NO_SERVICE_WAREHOUSE", "mode": "province", "considered": []},
-            auto_commit=False,
-        )
-
-    # 数量校验：服务仓能否整单履约
-    insufficient = await check_service_warehouse_sufficient(
+    cand = await resolve_candidate_warehouses_for_store(
         session,
-        platform_norm=plat_norm,
+        platform=plat_norm,
         shop_id=shop_id,
-        warehouse_id=int(service_wid),
-        target_qty=target_qty,
+        province=prov,
     )
-    if insufficient:
+
+    if not cand.candidate_warehouse_ids:
+        reasons = (
+            ["NO_PROVINCE_ROUTE_MATCH"]
+            if cand.candidate_reason == "NO_PROVINCE_ROUTE_MATCH"
+            else ["NO_WAREHOUSE_BOUND"]
+        )
+        return await mark_fulfillment_blocked(
+            session,
+            order_id=int(order_id),
+            order_ref=order_ref,
+            trace_id=trace_id,
+            platform_norm=plat_norm,
+            shop_id=shop_id,
+            reasons_json=str(reasons).replace("'", '"'),
+            detail=f"候选仓为空：{cand.candidate_reason}（route_mode={cand.route_mode}）",
+            province=prov,
+            city=None,
+            service_warehouse_id=None,
+            meta_extra={
+                "reason": cand.candidate_reason,
+                "route_mode": cand.route_mode,
+                "fallback_used": cand.fallback_used,
+                "considered": [],
+            },
+            auto_commit=False,
+        )
+
+    lines = [
+        OrderLine(item_id=int(item_id), qty=int(qty))
+        for item_id, qty in target_qty.items()
+        if int(item_id) > 0 and int(qty) > 0
+    ]
+    if not lines:
+        return None
+
+    ctx = OrderContext(platform=plat_norm, shop_id=str(shop_id), order_id=int(order_id))
+    router = WarehouseRouter(availability_provider=StockAvailabilityProvider(session))
+    scan = await router.scan_warehouses(
+        ctx=ctx,
+        candidate_warehouse_ids=cand.candidate_warehouse_ids,
+        lines=lines,
+    )
+
+    ok_ids = [int(r.warehouse_id) for r in scan if str(r.status) == "OK"]
+    if not ok_ids:
+        scan_dump = [r.to_dict() for r in scan]
         return await mark_fulfillment_blocked(
             session,
             order_id=int(order_id),
@@ -136,24 +134,29 @@ async def auto_route_warehouse_if_possible(
             platform_norm=plat_norm,
             shop_id=shop_id,
             reasons_json='["INSUFFICIENT_QTY"]',
-            detail=(
-                f"服务仓库存不足：仓库 {service_wid} 无法整单履约（"
-                f"{hit_mode}={province if hit_mode=='province' else city}"
-                f")"
-            ),
-            province=province,
-            city=city if hit_mode == "city" else None,
-            service_warehouse_id=int(service_wid),
+            detail=f"候选仓全部不足：candidates={cand.candidate_warehouse_ids}",
+            province=prov,
+            city=None,
+            service_warehouse_id=None,
             meta_extra={
                 "reason": "INSUFFICIENT_QTY",
-                "insufficient": insufficient,
-                "considered": [int(service_wid)],
-                "mode": hit_mode,
+                "route_mode": cand.route_mode,
+                "fallback_used": cand.fallback_used,
+                "considered": cand.candidate_warehouse_ids,
+                "scan": scan_dump,
             },
             auto_commit=False,
         )
 
-    # READY：写入履约字段，并设置 orders.warehouse_id（让 reserve 主线继续）
+    chosen = None
+    ok_set = set(ok_ids)
+    for wid in cand.candidate_warehouse_ids:
+        if int(wid) in ok_set:
+            chosen = int(wid)
+            break
+    if chosen is None:
+        chosen = ok_ids[0]
+
     return await mark_ready_to_fulfill(
         session,
         order_id=int(order_id),
@@ -161,9 +164,9 @@ async def auto_route_warehouse_if_possible(
         trace_id=trace_id,
         platform_norm=plat_norm,
         shop_id=shop_id,
-        warehouse_id=int(service_wid),
-        province=province,
-        city=city if hit_mode == "city" else None,
-        mode=hit_mode,
+        warehouse_id=int(chosen),
+        province=prov,
+        city=None,
+        mode="province_routes" if cand.candidate_reason == "PROVINCE_ROUTE_MATCH" else "fallback_bindings",
         auto_commit=False,
     )

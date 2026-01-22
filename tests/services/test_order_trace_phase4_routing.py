@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 
 import app.services.order_ingest_service as order_ingest_service
@@ -154,7 +154,7 @@ async def test_warehouse_routed_audit_event_present(db_session_like_pg, monkeypa
         item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     ext_order_no = "TRACE-EVT-1"
     trace_id = "TRACE-ROUTED-001"

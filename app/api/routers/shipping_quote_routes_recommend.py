@@ -34,19 +34,14 @@ def register(router: APIRouter) -> None:
 
         dims = dims_from_payload(payload.length_cm, payload.width_cm, payload.height_cm)
 
-        wid = payload.warehouse_id
-        if wid is not None:
-            audit_ref = f"WH:{int(wid)}"
-        elif payload.provider_ids:
-            audit_ref = "PROVIDERS:" + ",".join(str(int(x)) for x in payload.provider_ids)
-        else:
-            audit_ref = "GLOBAL"
+        # ✅ 合同：推荐入口必然有 warehouse_id
+        audit_ref = f"WH:{int(payload.warehouse_id)}"
 
         try:
             result = recommend_quotes(
                 db=db,
-                provider_ids=payload.provider_ids or None,
-                warehouse_id=payload.warehouse_id,
+                provider_ids=payload.provider_ids or None,  # 仅过滤交集，不是入口
+                warehouse_id=int(payload.warehouse_id),
                 dest=Dest(
                     province=payload.dest.province,
                     city=payload.dest.city,
@@ -70,7 +65,7 @@ def register(router: APIRouter) -> None:
                     "endpoint": "/shipping-quote/recommend",
                     "error_code": QuoteRecommendErrorCode.INVALID,
                     "message": msg,
-                    "warehouse_id": int(payload.warehouse_id) if payload.warehouse_id is not None else None,
+                    "warehouse_id": int(payload.warehouse_id),
                     "provider_ids": [int(x) for x in (payload.provider_ids or [])],
                     "dest": payload.dest.model_dump(),
                     "real_weight_kg": float(payload.real_weight_kg),
@@ -94,7 +89,7 @@ def register(router: APIRouter) -> None:
                     "endpoint": "/shipping-quote/recommend",
                     "error_code": QuoteRecommendErrorCode.FAILED,
                     "message": msg,
-                    "warehouse_id": int(payload.warehouse_id) if payload.warehouse_id is not None else None,
+                    "warehouse_id": int(payload.warehouse_id),
                     "provider_ids": [int(x) for x in (payload.provider_ids or [])],
                     "dest": payload.dest.model_dump(),
                     "real_weight_kg": float(payload.real_weight_kg),

@@ -11,30 +11,24 @@ from pydantic import BaseModel, Field
 
 
 class ShipQuoteOut(BaseModel):
-    # ✅ 事实主键与稳定识别码
     provider_id: int
     carrier_code: Optional[str] = None
     carrier_name: str
 
-    # ✅ 方案事实
     scheme_id: int
     scheme_name: str
 
-    # ✅ 报价结果（与 shipping-quote 对齐）
     quote_status: str
     currency: Optional[str] = None
     est_cost: Optional[float] = None
 
-    # ✅ 可解释性（对审计/排障非常关键）
     reasons: List[str] = Field(default_factory=list)
     breakdown: Optional[Dict[str, Any]] = None
 
-    # 预留：时效等
     eta: Optional[str] = None
 
 
 class ShipCalcRequest(BaseModel):
-    # Phase 3：强前置事实（出库侧必须知道从哪个仓发）
     warehouse_id: int = Field(..., ge=1, description="发货仓库 ID（Phase 3 强前置事实）")
 
     weight_kg: float = Field(..., gt=0, description="包裹总重量（kg）")
@@ -49,7 +43,7 @@ class ShipRecommendedOut(BaseModel):
     carrier_code: Optional[str] = None
     scheme_id: int
     est_cost: Optional[float] = None
-    currency: Optional[str] = None
+    currency: Optional[float] = None
 
 
 class ShipCalcResponse(BaseModel):
@@ -74,6 +68,34 @@ class ShipPrepareRequest(BaseModel):
     ext_order_no: str = Field(..., description="平台订单号")
 
 
+class CandidateWarehouseOut(BaseModel):
+    """
+    候选仓（来自省级路由命中后的集合）
+    """
+    warehouse_id: int
+    warehouse_name: Optional[str] = None
+    warehouse_code: Optional[str] = None
+    warehouse_active: bool = True
+    priority: int = 100
+
+
+class FulfillmentMissingLineOut(BaseModel):
+    item_id: int
+    need: int
+    available: int
+
+
+class FulfillmentScanWarehouseOut(BaseModel):
+    """
+    每个候选仓的整单同仓可履约扫描结果：
+    - OK / INSUFFICIENT
+    - missing：缺口明细（可解释证据）
+    """
+    warehouse_id: int
+    status: str
+    missing: List[FulfillmentMissingLineOut] = Field(default_factory=list)
+
+
 class ShipPrepareResponse(BaseModel):
     ok: bool = True
     order_id: int
@@ -95,6 +117,21 @@ class ShipPrepareResponse(BaseModel):
     weight_kg: Optional[float] = None
     trace_id: Optional[str] = None
 
+    # ✅ 不预设、不兜底：不直接给 warehouse_id
+    warehouse_id: Optional[int] = None
+    warehouse_reason: Optional[str] = None
+
+    # ✅ 主线：省级路由命中的候选仓集合（可能 0/1/N）
+    candidate_warehouses: List[CandidateWarehouseOut] = Field(default_factory=list)
+
+    # ✅ 扫描报告：每个候选仓的 OK/缺口
+    fulfillment_scan: List[FulfillmentScanWarehouseOut] = Field(default_factory=list)
+
+    # ✅ 不可履约事实（用于“智能退货/取消”）
+    fulfillment_status: Optional[str] = None  # OK / FULFILLMENT_BLOCKED
+    blocked_reasons: List[str] = Field(default_factory=list)
+    blocked_detail: Optional[Dict[str, Any]] = None
+
 
 # -------------------- /ship/confirm --------------------
 
@@ -105,13 +142,12 @@ class ShipConfirmRequest(BaseModel):
     shop_id: str = Field(..., description="店铺 ID，如 '1'")
     trace_id: Optional[str] = None
 
-    warehouse_id: Optional[int] = Field(None, description="发货仓库 ID（Phase 3 建议必填）")
+    warehouse_id: Optional[int] = Field(None, description="发货仓库 ID（建议必填）")
 
     carrier: Optional[str] = Field(None, description="选用的物流公司编码，例如 ZTO / JT / SF")
     carrier_name: Optional[str] = Field(None, description="物流公司名称（冗余字段）")
 
-    # ✅ Phase 3：方案事实（用于可追责的出库确认）
-    scheme_id: Optional[int] = Field(None, description="选用的运价方案 ID（Phase 3 建议必填）")
+    scheme_id: Optional[int] = Field(None, description="选用的运价方案 ID（建议必填）")
 
     tracking_no: Optional[str] = Field(None, description="快递运单号 / 电子面单号")
 

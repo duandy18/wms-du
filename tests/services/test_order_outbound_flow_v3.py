@@ -10,10 +10,9 @@ from app.services.outbound_service import OutboundService
 
 pytestmark = pytest.mark.asyncio
 
-# —— 固定口径：严格贴合既有基线（由 conftest 或迁移预置）——
-WAREHOUSE_ID = 1  # 预置 warehouses(id=1,'WH-1')
-ITEM_ID = 3003  # 预置 items(3003,...)
-BATCH_CODE = "NEAR"  # 预置 stocks(...,'NEAR') = 10
+WAREHOUSE_ID = 1
+ITEM_ID = 3003
+BATCH_CODE = "NEAR"
 ORDER_NO = "P3-ORDER-001"
 
 
@@ -48,15 +47,60 @@ async def _sum_ledger(session: AsyncSession) -> int:
     return int(val.scalar() or 0)
 
 
+async def _ensure_store_route_to_wh1(session: AsyncSession, *, platform: str, shop_id: str, province: str) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO stores (platform, shop_id, name)
+            VALUES (:p,:s,:n)
+            ON CONFLICT (platform, shop_id) DO NOTHING
+            """
+        ),
+        {"p": platform.upper(), "s": shop_id, "n": f"UT-{platform.upper()}-{shop_id}"},
+    )
+    row = await session.execute(
+        text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"),
+        {"p": platform.upper(), "s": shop_id},
+    )
+    store_id = int(row.scalar_one())
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
+            VALUES (:sid, :wid, TRUE, 10)
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING
+            """
+        ),
+        {"sid": store_id, "wid": WAREHOUSE_ID},
+    )
+    await session.execute(
+        text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
+        {"sid": store_id, "prov": province},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            VALUES (:sid, :prov, :wid, 10, TRUE)
+            """
+        ),
+        {"sid": store_id, "prov": province, "wid": WAREHOUSE_ID},
+    )
+
+
 async def _ingest_order(session: AsyncSession, ext_order_no: str):
+    province = "UT-P3"
+    await _ensure_store_route_to_wh1(session, platform="PDD", shop_id="S-01", province=province)
     # 订单仅用于生成 ref，不改变库存
     return await OrderService.ingest(
         session,
-        platform="pdd",
+        platform="PDD",
         shop_id="S-01",
         ext_order_no=ext_order_no,
         occurred_at=datetime.now(timezone.utc),
         items=[{"item_id": ITEM_ID, "qty": 3, "sku_id": "SKU-3003", "title": "ITEM-3003"}],
+        address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
     )
 
 
@@ -74,28 +118,22 @@ async def _ship_once(session: AsyncSession, qty: int):
             }
         ],
         occurred_at=datetime.now(timezone.utc),
-        warehouse_code="WH-1",  # 行内已指定 warehouse_id，这里只是形参占位
+        warehouse_code="WH-1",
     )
 
 
 async def test_outbound_from_baseline_10_to_7(session: AsyncSession):
-    # 0) 基线应为 10，且 ledger 无任何记录
     qty0 = await _read_stocks(session)
     assert qty0 == 10, f"baseline stocks must be 10, got {qty0}"
     led0 = await _sum_ledger(session)
     assert led0 == 0, f"baseline ledger must be 0, got {led0}"
 
-    # 1) 建单（不改变库存）
     o = await _ingest_order(session, ORDER_NO)
     assert o["status"] in ("OK", "IDEMPOTENT"), f"ingest returned: {o}"
 
-    # 2) 出库 3（仓+批+UTC，强签名）
+    await _ship_once(session, 3)
     await _ship_once(session, 3)
 
-    # 3) 幂等重放：不得重复扣减
-    await _ship_once(session, 3)
-
-    # 4) 校验：stocks 从 10 → 7；ledger 总和为 -3；且两者满足 qty0 + ledger = qty_now
     qty_now = await _read_stocks(session)
     led_now = await _sum_ledger(session)
     assert qty_now == 7, f"stocks should be 7 after ship, got {qty_now}"

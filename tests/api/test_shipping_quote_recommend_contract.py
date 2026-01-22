@@ -53,6 +53,7 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
         "/shipping-quote/calc",
         headers=h,
         json={
+            "warehouse_id": wid,
             "scheme_id": ids_a["scheme_id"],
             "dest": {"province": "河北省", "city": "廊坊市", "district": "固安县"},
             "real_weight_kg": 1.0,

@@ -10,11 +10,13 @@ client = TestClient(app)
 
 def test_orders_create_minimal_contract() -> None:
     """
-    验证 /orders 接口的最小契约：
+    验证 /orders 接口的最小契约（只保证“建单成功并返回 ref/id/status”，不强制可履约）：
 
     - 支持以 platform / shop_id / ext_order_no + lines 创建订单；
     - 返回 JSON 中包含 status / id / ref 字段；
-    - status 为 "OK" 或 "IDEMPOTENT"（幂等插入场景）；
+    - status 允许：
+        * "OK" / "IDEMPOTENT"：可履约或已幂等
+        * "FULFILLMENT_BLOCKED"：建单成功但不可履约事实（省份缺失/无候选集/库存不足等）
     - ref 采用 "ORD:{platform}:{shop_id}:{ext_order_no}" 格式。
     """
     payload = {
@@ -25,9 +27,9 @@ def test_orders_create_minimal_contract() -> None:
         "buyer_phone": "13800000000",
         "order_amount": 26.0,
         "pay_amount": 26.0,
+        "address": {"province": "UT-PROV", "receiver_name": "X", "receiver_phone": "000"},
         "lines": [
             {
-                # 假设测试库中存在 item_id=1，如果不存在，你现有其他测试也会挂
                 "item_id": 1,
                 "title": "测试商品 A",
                 "qty": 2,
@@ -48,12 +50,11 @@ def test_orders_create_minimal_contract() -> None:
     assert resp.status_code == 200, resp.text
     data = resp.json()
 
-    # 基础字段契约
     assert "status" in data
     assert "id" in data
     assert "ref" in data
 
-    assert data["status"] in ("OK", "IDEMPOTENT")
+    assert data["status"] in ("OK", "IDEMPOTENT", "FULFILLMENT_BLOCKED")
     assert isinstance(data["id"], int) or data["id"] is None
 
     expected_ref = f"ORD:{payload['platform']}:{payload['shop_id']}:{payload['ext_order_no']}"
@@ -75,7 +76,6 @@ def test_orders_create_with_no_lines_rejected() -> None:
     }
 
     resp = client.post("/orders", json=payload)
-    # 当前实现并未强制校验 lines 非空，因此只验证不会 5xx 即可
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert "status" in data

@@ -29,12 +29,13 @@ def register(router: APIRouter) -> None:
 
         dims = dims_from_payload(payload.length_cm, payload.width_cm, payload.height_cm)
 
-        audit_ref = f"SCHEME:{int(payload.scheme_id)}"
+        audit_ref = f"WH:{int(payload.warehouse_id)}|SCHEME:{int(payload.scheme_id)}"
 
         try:
             result = calc_quote(
                 db=db,
                 scheme_id=payload.scheme_id,
+                warehouse_id=payload.warehouse_id,
                 dest=Dest(
                     province=payload.dest.province,
                     city=payload.dest.city,
@@ -60,6 +61,7 @@ def register(router: APIRouter) -> None:
                     "error_code": code,
                     "message": msg,
                     "scheme_id": int(payload.scheme_id),
+                    "warehouse_id": int(payload.warehouse_id),
                     "dest": payload.dest.model_dump(),
                     "real_weight_kg": float(payload.real_weight_kg),
                 },
@@ -82,6 +84,7 @@ def register(router: APIRouter) -> None:
                     "error_code": QuoteCalcErrorCode.FAILED,
                     "message": msg,
                     "scheme_id": int(payload.scheme_id),
+                    "warehouse_id": int(payload.warehouse_id),
                     "dest": payload.dest.model_dump(),
                     "real_weight_kg": float(payload.real_weight_kg),
                 },

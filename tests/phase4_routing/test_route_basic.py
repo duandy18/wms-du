@@ -1,131 +1,43 @@
 # tests/services/test_order_service_phase4_routing.py
-import uuid
+
+"""
+Phase 4.x routing worldview tests
+
+Candidate set:
+  - store_province_routes (candidate-set cutter)
+  - store_warehouse (capability declaration + ordering preference)
+
+Fact check:
+  - StockAvailabilityService / WarehouseRouter whole-order checks
+
+Contract:
+  - address.province is required
+  - missing province => FULFILLMENT_BLOCKED (no implicit fallback selection)
+"""
+
 from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
 
-from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
+from app.services.stock_availability_service import StockAvailabilityService
 
 import app.services.order_ingest_service as order_ingest_service
+from tests.helpers.phase4_routing_helpers import (
+    UTC,
+    bind_store_warehouses,
+    ensure_store_province_route,
+    ensure_two_warehouses,
+)
 
-
-UTC = timezone.utc
 pytestmark = pytest.mark.asyncio
-
-
-async def _get_store_id_for_shop(session, platform: str, shop_id: str) -> int:
-    """
-    从 stores 表按 (platform, shop_id) 找到 store_id。
-    """
-    row = await session.execute(
-        text(
-            """
-            SELECT id
-              FROM stores
-             WHERE platform = :p
-               AND shop_id  = :s
-             LIMIT 1
-            """
-        ),
-        {"p": platform, "s": shop_id},
-    )
-    store_id = row.scalar()
-    assert store_id is not None, f"test precondition failed: no store for {platform}/{shop_id}"
-    return int(store_id)
-
-
-async def _pick_two_warehouses(session):
-    """
-    返回两个 warehouse_id，作为主仓 / 备仓。
-    """
-    rows = await session.execute(
-        text(
-            """
-            SELECT id
-              FROM warehouses
-             ORDER BY id
-            """
-        )
-    )
-    ids = [int(r[0]) for r in rows.fetchall()]
-
-    while len(ids) < 2:
-        name = f"AUTO-WH-{uuid.uuid4().hex[:8]}"
-        row = await session.execute(
-            text("INSERT INTO warehouses (name) VALUES (:name) RETURNING id"),
-            {"name": name},
-        )
-        ids.append(int(row.scalar()))
-
-    return ids[0], ids[1]
-
-
-async def _bind_store_warehouses(
-    session,
-    *,
-    platform: str,
-    shop_id: str,
-    top_warehouse_id: int,
-    backup_warehouse_id: int,
-):
-    """
-    legacy 配置保留：Route C 不使用 store_warehouse，但保留不会影响测试。
-    """
-    store_id = await _get_store_id_for_shop(session, platform, shop_id)
-
-    await session.execute(
-        text(
-            """
-            DELETE FROM store_warehouse
-             WHERE store_id = :sid
-            """
-        ),
-        {"sid": store_id},
-    )
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
-            VALUES (:sid, :wid, :top, :pr)
-            """
-        ),
-        {"sid": store_id, "wid": top_warehouse_id, "top": True, "pr": 10},
-    )
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
-            VALUES (:sid, :wid, :top, :pr)
-            """
-        ),
-        {"sid": store_id, "wid": backup_warehouse_id, "top": False, "pr": 1},
-    )
-
-
-async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
-    await session.execute(
-        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
-        {"p": province_code},
-    )
-    await session.execute(
-        text(
-            """
-            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
-            VALUES (:wid, :p)
-            """
-        ),
-        {"wid": int(warehouse_id), "p": province_code},
-    )
 
 
 @pytest.mark.asyncio
 async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, monkeypatch):
     """
-    Route C 语义 1：服务仓库存足够时，应命中服务仓并写入 orders.warehouse_id（READY_TO_FULFILL）。
+    Route C：省码命中候选仓（store_province_routes）且库存足够时，应写入 orders.warehouse_id（READY_TO_FULFILL）。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -134,14 +46,13 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    # 避免测试把“路由”与“预占”耦在一起：reserve_flow no-op
     async def _noop_reserve_flow(*_, **__):
         return None
 
     monkeypatch.setattr(order_ingest_service, "reserve_flow", _noop_reserve_flow)
 
-    top_wid, backup_wid = await _pick_two_warehouses(session)
-    await _bind_store_warehouses(
+    top_wid, backup_wid = await ensure_two_warehouses(session)
+    store_id = await bind_store_warehouses(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -150,7 +61,7 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
     )
 
     province = "P-SVC-TOP"
-    await _ensure_service_province(session, province_code=province, warehouse_id=top_wid)
+    await ensure_store_province_route(session, store_id=store_id, province=province, warehouse_id=top_wid)
 
     stock_map = {
         (top_wid, 1): 10,
@@ -162,7 +73,7 @@ async def test_ingest_routes_to_top_warehouse_when_in_stock(db_session_like_pg, 
         item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     ext_order_no = "E-top-1"
     occurred_at = datetime.now(UTC)
@@ -210,7 +121,7 @@ async def test_ingest_routes_to_backup_when_top_insufficient(db_session_like_pg,
     """
     旧 Phase4 语义：主仓不足应 fallback 到备仓。
 
-    Route C 新事实：不兜底，不选仓；服务仓不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY）。
+    Route C 新事实：不兜底、不选仓；候选仓（省级路由命中）不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY）。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -219,8 +130,8 @@ async def test_ingest_routes_to_backup_when_top_insufficient(db_session_like_pg,
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    top_wid, backup_wid = await _pick_two_warehouses(session)
-    await _bind_store_warehouses(
+    top_wid, backup_wid = await ensure_two_warehouses(session)
+    store_id = await bind_store_warehouses(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -229,11 +140,11 @@ async def test_ingest_routes_to_backup_when_top_insufficient(db_session_like_pg,
     )
 
     province = "P-SVC-INS1"
-    await _ensure_service_province(session, province_code=province, warehouse_id=top_wid)
+    await ensure_store_province_route(session, store_id=store_id, province=province, warehouse_id=top_wid)
 
     stock_map = {
-        (top_wid, 1): 2,      # 服务仓不够
-        (backup_wid, 1): 10,  # 备仓足够（Route C 不看）
+        (top_wid, 1): 2,  # 候选仓不够
+        (backup_wid, 1): 10,  # 备仓有货（不会被选，因为候选集裁剪只剩 top_wid）
     }
 
     async def fake_get_available(self, *_, **kwargs):
@@ -241,7 +152,7 @@ async def test_ingest_routes_to_backup_when_top_insufficient(db_session_like_pg,
         item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     ext_order_no = "E-backup-1"
     occurred_at = datetime.now(UTC)
@@ -278,19 +189,18 @@ async def test_ingest_routes_to_backup_when_top_insufficient(db_session_like_pg,
 
     order_id = result["id"]
     row = await session.execute(
-        text("SELECT warehouse_id, service_warehouse_id, fulfillment_status FROM orders WHERE id = :id"),
+        text("SELECT warehouse_id, fulfillment_status FROM orders WHERE id = :id"),
         {"id": order_id},
     )
-    whid, swid, fstat = row.first()
+    whid, fstat = row.first()
     assert whid in (None, 0)
-    assert int(swid) == int(top_wid)
     assert str(fstat) == "FULFILLMENT_BLOCKED"
 
 
 @pytest.mark.asyncio
 async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like_pg, monkeypatch):
     """
-    Route C 语义：服务仓库存不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY），不崩溃，且不写 orders.warehouse_id。
+    Route C：候选仓库存不足 → FULFILLMENT_BLOCKED（INSUFFICIENT_QTY），不崩溃，且不写 orders.warehouse_id。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -299,8 +209,8 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    top_wid, backup_wid = await _pick_two_warehouses(session)
-    await _bind_store_warehouses(
+    top_wid, backup_wid = await ensure_two_warehouses(session)
+    store_id = await bind_store_warehouses(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -309,7 +219,7 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
     )
 
     province = "P-SVC-INS2"
-    await _ensure_service_province(session, province_code=province, warehouse_id=top_wid)
+    await ensure_store_province_route(session, store_id=store_id, province=province, warehouse_id=top_wid)
 
     stock_map = {
         (top_wid, 1): 1,
@@ -321,7 +231,7 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
         item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     ext_order_no = "E-insufficient-1"
     occurred_at = datetime.now(UTC)
@@ -369,9 +279,7 @@ async def test_ingest_all_warehouses_insufficient_does_not_crash(db_session_like
 @pytest.mark.asyncio
 async def test_ingest_without_store_warehouse_config_does_not_crash(db_session_like_pg, monkeypatch):
     """
-    Route C 语义：无服务仓配置（省未映射）→ FULFILLMENT_BLOCKED（NO_SERVICE_WAREHOUSE），不崩溃，且不写 orders.warehouse_id。
-
-    注意：store_warehouse 配置在 Route C 不参与决策。
+    新世界观语义：店铺无绑定仓 → FULFILLMENT_BLOCKED（NO_WAREHOUSE_BOUND）。
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -380,27 +288,20 @@ async def test_ingest_without_store_warehouse_config_does_not_crash(db_session_l
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    # 代表“库存足够”，但 Route C 会先卡在“无服务仓映射”
     async def fake_get_available(self, *_, **kwargs):
         return 100
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
-    # 使用一个“测试专用省码”，确保未配置服务仓
+    # 不绑定 store_warehouse，也不写 store_province_routes
     province = "P-NO-MAP-1"
-    await session.execute(
-        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
-        {"p": province},
-    )
-
-    ext_order_no = "E-noconfig-1"
     occurred_at = datetime.now(UTC)
 
     result = await OrderService.ingest(
         session,
         platform=platform,
         shop_id=shop_id,
-        ext_order_no=ext_order_no,
+        ext_order_no="E-noconfig-1",
         occurred_at=occurred_at,
         buyer_name="赵六",
         buyer_phone="13600000000",
@@ -424,7 +325,7 @@ async def test_ingest_without_store_warehouse_config_does_not_crash(db_session_l
 
     assert result["status"] == "FULFILLMENT_BLOCKED"
     assert isinstance(result.get("route"), dict)
-    assert result["route"].get("reason") == "NO_SERVICE_WAREHOUSE"
+    assert result["route"].get("reason") == "NO_WAREHOUSE_BOUND"
 
     order_id = result["id"]
     row = await session.execute(

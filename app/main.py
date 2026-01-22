@@ -54,7 +54,6 @@ async def _http_exc(_req: Request, exc: HTTPException):
 
 
 from app.api.routers.autoheal_execute import router as autoheal_execute_router
-from app.api.routers.global_available import router as global_available_router
 from app.api.routers.count import router as count_router
 from app.api.routers.debug_trace import router as debug_trace_router
 from app.api.routers.dev_seed_ledger import router as dev_seed_ledger_router
@@ -183,7 +182,6 @@ app.include_router(shipping_reports_router)
 app.include_router(shipping_records_router)
 
 app.include_router(debug_trace_router)
-app.include_router(global_available_router)
 app.include_router(metrics_router)
 app.include_router(snapshot_router)
 

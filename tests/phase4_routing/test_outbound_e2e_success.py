@@ -1,19 +1,86 @@
 # tests/services/test_outbound_e2e_phase4_success.py
-from datetime import date, datetime, timedelta, timezone
+
+"""
+Phase 4.x routing worldview tests
+
+Candidate set:
+  - store_province_routes (candidate-set cutter)
+  - store_warehouse (capability declaration + ordering preference)
+
+Fact check:
+  - StockAvailabilityService / WarehouseRouter whole-order checks
+
+Contract:
+  - address.province is required
+  - missing province => FULFILLMENT_BLOCKED (no implicit fallback selection)
+"""
+
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
 
 from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code, seed_batch_slot
 
-from app.models.enums import MovementType
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 from app.services.outbound_service import OutboundService, ShipLine
-from app.services.stock_service import StockService
 
 UTC = timezone.utc
 pytestmark = pytest.mark.asyncio
+
+
+async def _ensure_store_route_to_wh(
+    session,
+    *,
+    platform: str,
+    shop_id: str,
+    province: str,
+    warehouse_id: int,
+) -> None:
+    plat = platform.upper()
+    await session.execute(
+        text(
+            """
+            INSERT INTO stores (platform, shop_id, name)
+            VALUES (:p, :s, :n)
+            ON CONFLICT (platform, shop_id) DO NOTHING
+            """
+        ),
+        {"p": plat, "s": shop_id, "n": f"UT-{plat}-{shop_id}"},
+    )
+    row = await session.execute(
+        text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"),
+        {"p": plat, "s": shop_id},
+    )
+    store_id = int(row.scalar_one())
+
+    # 绑定仓
+    await session.execute(text("DELETE FROM store_warehouse WHERE store_id = :sid"), {"sid": store_id})
+    await session.execute(
+        text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
+            VALUES (:sid, :wid, TRUE, 10)
+            """
+        ),
+        {"sid": store_id, "wid": int(warehouse_id)},
+    )
+
+    # 省路由 → 仓
+    await session.execute(
+        text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
+        {"sid": store_id, "prov": province},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            VALUES (:sid, :prov, :wid, 10, TRUE)
+            """
+        ),
+        {"sid": store_id, "prov": province, "wid": int(warehouse_id)},
+    )
 
 
 @pytest.mark.asyncio
@@ -28,6 +95,7 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
     session = db_session_like_pg
     platform = "PDD"
     shop_id = "S1"
+    province = "UT-PROV"
 
     # 选定 wh/loc/item/batch
     wh = 1
@@ -46,57 +114,29 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
         loc=loc,
         code=batch_code,
         qty=5,
-        days=30,  # 近效期
+        days=30,
     )
     await session.commit()
 
-    # 3) 把 S1 绑定到 wh=1（主仓）
-    row = await session.execute(
-        text(
-            """
-            SELECT id
-              FROM stores
-             WHERE platform = :p
-               AND shop_id  = :s
-             LIMIT 1
-            """
-        ),
-        {"p": platform, "s": shop_id},
-    )
-    store_id = row.scalar()
-    assert store_id is not None, "store PDD/S1 should exist in seed data"
-
-    await session.execute(
-        text("DELETE FROM store_warehouse WHERE store_id = :sid"),
-        {"sid": store_id},
-    )
-    await session.execute(
-        text(
-            """
-            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority)
-            VALUES (:sid, :wid, TRUE, 10)
-            """
-        ),
-        {"sid": store_id, "wid": wh},
-    )
+    # 3) 配置 store_warehouse + store_province_routes（新世界观必需）
+    await _ensure_store_route_to_wh(session, platform=platform, shop_id=shop_id, province=province, warehouse_id=wh)
     await session.commit()
 
-    # 4) 路由/预占使用的 ChannelInventoryService：简单 monkeypatch，保证可用量足够
+    # 4) 路由/预占使用的 StockAvailabilityService：monkeypatch 保证可用量足够
     async def fake_get_available(self, *_, **kwargs):
         warehouse_id = kwargs.get("warehouse_id")
         item_id_ = kwargs.get("item_id")
-        # 在 wh/item_id 上返回足够可用量，其他组合返回 0
-        if warehouse_id == wh and item_id_ == item_id:
+        if int(warehouse_id) == wh and int(item_id_) == item_id:
             return 100
         return 0
 
     monkeypatch.setattr(
-        ChannelInventoryService,
+        StockAvailabilityService,
         "get_available_for_item",
         fake_get_available,
     )
 
-    # 5) ingest：创建订单
+    # 5) ingest：创建订单（必须带 province）
     ext_order_no = "FEFO-SUCC-1"
     trace_id = "TRACE-FEFO-SUCCESS-001"
     occurred_at = datetime.now(UTC)
@@ -122,7 +162,7 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
                 "amount": 50,
             }
         ],
-        address={"receiver_name": "张三", "receiver_phone": "13800000000"},
+        address={"province": province, "receiver_name": "张三", "receiver_phone": "13800000000"},
         extras={},
         trace_id=trace_id,
     )
@@ -186,7 +226,6 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
         trace_id=trace_id,
     )
 
-    # ship 正常返回，并且 1 行成功出库
     assert isinstance(ship_result, dict)
     assert ship_result.get("order_id") == str(order_id)
     assert ship_result.get("status") == "OK"
@@ -197,10 +236,8 @@ async def test_ingest_reserve_ship_e2e_phase4_success(db_session_like_pg, monkey
     line_res = results[0]
     assert line_res.get("item_id") == item_id
     assert line_res.get("batch_code") == batch_code
-    # 不应该有 error，或者 error 为空
     assert not line_res.get("error")
 
-    # 8) 校验 FEFO 库存被正确扣减：该批次库存为 0
     await session.commit()
     remaining = await qty_by_code(session, item=item_id, loc=loc, code=batch_code)
     assert remaining == 0

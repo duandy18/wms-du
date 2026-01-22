@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_warehouse import ShippingProviderPricingSchemeWarehouse
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
@@ -29,9 +30,28 @@ def _scheme_is_effective(sch: ShippingProviderPricingScheme, now: datetime) -> b
     return True
 
 
+def _check_scheme_warehouse_allowed(db: Session, scheme_id: int, warehouse_id: int) -> None:
+    """
+    Phase 4.x 合同：scheme 必须显式绑定起运仓，且绑定 active=true 才允许算价。
+    """
+    row = (
+        db.query(ShippingProviderPricingSchemeWarehouse)
+        .filter(
+            ShippingProviderPricingSchemeWarehouse.scheme_id == int(scheme_id),
+            ShippingProviderPricingSchemeWarehouse.warehouse_id == int(warehouse_id),
+        )
+        .first()
+    )
+    if not row:
+        raise ValueError("scheme not allowed for warehouse (missing scheme-warehouse binding)")
+    if not bool(row.active):
+        raise ValueError("scheme warehouse binding inactive")
+
+
 def calc_quote(
     db: Session,
     scheme_id: int,
+    warehouse_id: int,
     dest: Dest,
     real_weight_kg: float,
     dims_cm: Optional[Tuple[float, float, float]],
@@ -45,22 +65,17 @@ def calc_quote(
     if not _scheme_is_effective(sch, now):
         raise ValueError("scheme not effective (inactive or out of date range)")
 
+    # ✅ 合同硬化：先验起运仓边界（不允许隐式全仓可用）
+    _check_scheme_warehouse_allowed(db, scheme_id=int(scheme_id), warehouse_id=int(warehouse_id))
+
     zones = db.query(ShippingProviderZone).filter(ShippingProviderZone.scheme_id == scheme_id).all()
     zone_ids = [z.id for z in zones]
 
     members: List[ShippingProviderZoneMember] = []
     brackets: List[ShippingProviderZoneBracket] = []
     if zone_ids:
-        members = (
-            db.query(ShippingProviderZoneMember)
-            .filter(ShippingProviderZoneMember.zone_id.in_(zone_ids))
-            .all()
-        )
-        brackets = (
-            db.query(ShippingProviderZoneBracket)
-            .filter(ShippingProviderZoneBracket.zone_id.in_(zone_ids))
-            .all()
-        )
+        members = db.query(ShippingProviderZoneMember).filter(ShippingProviderZoneMember.zone_id.in_(zone_ids)).all()
+        brackets = db.query(ShippingProviderZoneBracket).filter(ShippingProviderZoneBracket.zone_id.in_(zone_ids)).all()
 
     surcharges = (
         db.query(ShippingProviderSurcharge)
@@ -120,9 +135,7 @@ def calc_quote(
             "zone": {
                 "id": zone.id,
                 "name": zone.name,
-                "hit_member": None
-                if hit_member is None
-                else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
+                "hit_member": None if hit_member is None else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
             },
             "bracket": {
                 "id": bracket.id,
@@ -177,9 +190,7 @@ def calc_quote(
         "zone": {
             "id": zone.id,
             "name": zone.name,
-            "hit_member": None
-            if hit_member is None
-            else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
+            "hit_member": None if hit_member is None else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
         },
         "bracket": {
             "id": bracket.id,

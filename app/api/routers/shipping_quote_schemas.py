@@ -13,6 +13,9 @@ class QuoteDestIn(BaseModel):
 
 
 class QuoteCalcIn(BaseModel):
+    # ✅ Phase 4.x：强前置起运仓（无 warehouse_id 直接拒绝）
+    warehouse_id: int = Field(..., ge=1)
+
     scheme_id: int = Field(..., ge=1)
     dest: QuoteDestIn
 
@@ -39,9 +42,12 @@ class QuoteCalcOut(BaseModel):
 
 
 class QuoteRecommendIn(BaseModel):
-    # Phase 2：仓库候选集入口（可选）
-    # - 若 provider_ids 为空且提供 warehouse_id，则按仓库绑定的可用快递公司计算推荐
-    warehouse_id: Optional[int] = Field(default=None, ge=1)
+    """
+    Phase 3/4 严格合同（无兼容）：
+    - warehouse_id 必填：推荐必须发生在“起运仓边界”内
+    - provider_ids 仅作为“过滤交集”，不允许绕过仓库边界（即不允许 warehouse_id 缺失）
+    """
+    warehouse_id: int = Field(..., ge=1)
 
     provider_ids: List[int] = Field(default_factory=list)
     dest: QuoteDestIn
