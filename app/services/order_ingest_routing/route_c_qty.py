@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.warehouse_router import OrderContext, OrderLine, StockAvailabilityProvider, WarehouseRouter
 
 
 def build_target_qty(items: Sequence[Mapping[str, Any]]) -> Dict[int, int]:
@@ -49,22 +49,27 @@ async def check_service_warehouse_sufficient(
     """
     校验服务仓是否能整单履约。
 
+    ✅ 统一口径：必须委托 WarehouseRouter.check_whole_order()（事实层裁决器）
     返回值保持与原实现一致：List[dict]，每个 dict 形如：
       {"item_id": ..., "need": ..., "available": ...}
     若全部满足则返回空数组。
     """
-    channel_svc = ChannelInventoryService()
-    insufficient: List[dict] = []
-    for item_id, qty in target_qty.items():
-        available_raw = await channel_svc.get_available_for_item(
-            session=session,
-            platform=platform_norm,
-            shop_id=shop_id,
-            warehouse_id=int(warehouse_id),
-            item_id=int(item_id),
-        )
-        if int(qty) > int(available_raw):
-            insufficient.append(
-                InsufficientLine(item_id=int(item_id), need=int(qty), available=int(available_raw)).to_dict()
-            )
-    return insufficient
+    lines = [
+        OrderLine(item_id=int(item_id), qty=int(qty))
+        for item_id, qty in (target_qty or {}).items()
+        if int(item_id) > 0 and int(qty) > 0
+    ]
+    if not lines:
+        return []
+
+    ctx = OrderContext(platform=str(platform_norm), shop_id=str(shop_id), order_id="route_c")
+    router = WarehouseRouter(availability_provider=StockAvailabilityProvider(session))
+    r = await router.check_whole_order(ctx=ctx, warehouse_id=int(warehouse_id), lines=lines)
+
+    if r.status == "OK":
+        return []
+
+    out: List[dict] = []
+    for x in r.insufficient:
+        out.append(InsufficientLine(item_id=int(x.item_id), need=int(x.need), available=int(x.available)).to_dict())
+    return out

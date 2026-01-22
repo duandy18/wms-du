@@ -7,12 +7,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.audit_writer import AuditEventWriter
-from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_trace_helper import set_order_status_by_ref
 from app.services.order_utils import to_int_pos
 from app.services.reservation_service import ReservationService
 from app.services.soft_reserve_service import SoftReserveService
+from app.services.stock_availability_service import StockAvailabilityService
 
 from app.services.order_reserve_flow_types import extract_ext_order_no
 
@@ -106,7 +106,6 @@ async def reserve_flow(
         item_id = int(item_id)
         target_qty[item_id] = target_qty.get(item_id, 0) + qty
 
-    channel_svc = ChannelInventoryService()
     soft_reserve_svc = SoftReserveService()
     reservation_svc = ReservationService()
 
@@ -133,19 +132,22 @@ async def reserve_flow(
         for item_id, qty in old_lines:
             old_qty[int(item_id)] = int(qty)
 
+    # ✅ anti-oversell：用事实层 raw available（允许负数）
     for item_id, new_qty in target_qty.items():
         prev_qty = old_qty.get(item_id, 0)
         incr = new_qty - prev_qty
         if incr <= 0:
             continue
-        available_raw = await channel_svc.get_available_for_item(
-            session=session,
+
+        available_raw = await StockAvailabilityService.get_available_for_item(
+            session,
             platform=platform_db,
             shop_id=shop_id,
             warehouse_id=warehouse_id,
             item_id=item_id,
         )
-        if incr > available_raw:
+
+        if incr > int(available_raw):
             raise ValueError(
                 f"insufficient available for item={item_id}: "
                 f"need +{incr}, available={available_raw}, "

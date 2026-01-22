@@ -1,12 +1,11 @@
 # tests/services/test_outbound_sandbox_phase4_routing.py
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
 import pytest
 from sqlalchemy import text
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 
 import app.services.order_ingest_service as order_ingest_service
@@ -100,7 +99,11 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str, route_m
 
 
 async def _bind_store_wh(session, store_id: int, wh_top: int, wh_backup: int):
-    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不影响
+    """
+    ✅ 统一世界观：store_warehouse 是“候选能力声明 + 排序偏好”
+    - 省级路由（store_province_routes）要求 route 引用仓必须仍在 store_warehouse 绑定集合里
+    - route_c 也会用它做 fallback_bindings 与排序
+    """
     await session.execute(
         text("DELETE FROM store_warehouse WHERE store_id=:sid"),
         {"sid": store_id},
@@ -125,31 +128,47 @@ async def _bind_store_wh(session, store_id: int, wh_top: int, wh_backup: int):
     )
 
 
-async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+async def _ensure_store_province_route(session, *, store_id: int, province: str, warehouse_id: int) -> None:
+    """
+    ✅ 统一世界观：省码 → 候选仓裁剪器（store_province_routes）
+
+    约束：
+    - route 引用仓必须属于 store_warehouse（我们在 _bind_store_wh 已保证）
+    """
     await session.execute(
-        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
-        {"p": province_code},
+        text(
+            """
+            DELETE FROM store_province_routes
+             WHERE store_id = :sid
+               AND province = :prov
+            """
+        ),
+        {"sid": int(store_id), "prov": str(province)},
     )
     await session.execute(
         text(
             """
-            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
-            VALUES (:wid, :p)
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            VALUES (:sid, :prov, :wid, 10, TRUE)
             """
         ),
-        {"wid": int(warehouse_id), "p": province_code},
+        {"sid": int(store_id), "prov": str(province), "wid": int(warehouse_id)},
     )
 
 
 @pytest.mark.asyncio
 async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     """
-    旧 Phase4 沙盘：fallback/strict_top/主备仓选择。
+    Phase 4.x 沙盘（统一选仓世界观）：
 
-    Route C 新事实：
-    - 不兜底、不选仓；只命中“省→服务仓”
-    - 服务仓不足 → FULFILLMENT_BLOCKED（warehouse_id 不写）
-    - 服务仓足够 → READY_TO_FULFILL（warehouse_id 写为服务仓）
+    - 候选集：store_province_routes（省 → 候选仓）
+    - 偏好：store_warehouse（主/备/priority，仅排序偏好，不承诺可履约）
+    - 事实裁决：WarehouseRouter（整单同仓可履约）
+
+    预期：
+    - S1：省码命中 wh_a，但库存不足 → FULFILLMENT_BLOCKED（warehouse_id 不写）
+    - S2：省码命中 wh_a，但库存不足 → FULFILLMENT_BLOCKED（warehouse_id 不写）
+    - S3：省码命中 wh_a，库存足够 → OK（warehouse_id=wh_a）
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -172,28 +191,28 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     await _bind_store_wh(session, s2, wh_a, wh_b)
     await _bind_store_wh(session, s3, wh_a, wh_b)
 
-    # Route C：三家店各用一个省码，均映射到服务仓 wh_a
+    # ✅ 统一世界观：三家店各用一个省码，省级路由都命中候选仓 wh_a
     prov_s1 = "P-OS-S1"
     prov_s2 = "P-OS-S2"
     prov_s3 = "P-OS-S3"
-    await _ensure_service_province(session, province_code=prov_s1, warehouse_id=wh_a)
-    await _ensure_service_province(session, province_code=prov_s2, warehouse_id=wh_a)
-    await _ensure_service_province(session, province_code=prov_s3, warehouse_id=wh_a)
+    await _ensure_store_province_route(session, store_id=s1, province=prov_s1, warehouse_id=wh_a)
+    await _ensure_store_province_route(session, store_id=s2, province=prov_s2, warehouse_id=wh_a)
+    await _ensure_store_province_route(session, store_id=s3, province=prov_s3, warehouse_id=wh_a)
 
     stock_map = {
-        (wh_a, 1, "S1-FB"): 2,   # 不足
-        (wh_b, 1, "S1-FB"): 10,  # 有货（Route C 不看）
-        (wh_a, 1, "S2-ST"): 2,   # 不足
-        (wh_b, 1, "S2-ST"): 10,  # 有货（Route C 不看）
+        (wh_a, 1, "S1-FB"): 2,  # 不足
+        (wh_b, 1, "S1-FB"): 10,  # 有货（不影响，候选集只有 wh_a）
+        (wh_a, 1, "S2-ST"): 2,  # 不足
+        (wh_b, 1, "S2-ST"): 10,  # 有货（不影响）
         (wh_a, 1, "S3-FBOK"): 10,  # 足够
         (wh_b, 1, "S3-FBOK"): 0,
     }
 
-    async def fake_get_available(self, session, platform, shop_id, warehouse_id, item_id) -> int:
-        key = (warehouse_id, item_id, shop_id)
+    async def fake_get_available(session, platform, shop_id, warehouse_id, item_id) -> int:
+        key = (int(warehouse_id), int(item_id), str(shop_id))
         return int(stock_map.get(key, 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     async def _place(platform: str, shop_id: str, ext: str, province: str) -> dict:
         return await OrderService.ingest(
@@ -241,11 +260,11 @@ async def test_outbound_sandbox_phase4_routing(db_session_like_pg, monkeypatch):
     row = await session.execute(text("SELECT warehouse_id FROM orders WHERE id=:id"), {"id": oid3})
     wh3 = row.scalar()
 
-    # S1：服务仓不足 → BLOCKED → warehouse_id 不写
+    # S1：候选仓不足 → BLOCKED → warehouse_id 不写
     assert wh1 in (None, 0)
 
-    # S2：服务仓不足 → BLOCKED → warehouse_id 不写
+    # S2：候选仓不足 → BLOCKED → warehouse_id 不写
     assert wh2 in (None, 0)
 
-    # S3：服务仓足够 → READY → warehouse_id = wh_a
+    # S3：候选仓足够 → READY → warehouse_id = wh_a
     assert wh3 == wh_a

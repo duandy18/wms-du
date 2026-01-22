@@ -191,7 +191,7 @@ async def sum_reserved_active(session: AsyncSession, *, item: int, loc: int) -> 
 
     为避免在新 schema 上乱查：
       - 若检测到 reservations 表存在且包含 (item_id, location_id, qty, status)，按旧逻辑统计；
-      - 否则直接返回 0（由新的 ChannelInventoryService/OrderService 负责可用量计算）。
+      - 否则直接返回 0（由StockAvailabilityService/OrderService 负责可用量计算）。
     """
     cols = await _columns_of(session, "reservations")
     if {"item_id", "location_id", "qty", "status"}.issubset(set(cols)):

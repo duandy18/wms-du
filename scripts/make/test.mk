@@ -93,10 +93,7 @@ test-internal-outbound: venv audit-all upgrade-dev-test-db
 test-phase4-routing: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Phase 4 routing tests"
 	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
-	$(PYTEST) -q \
-		tests/services/test_order_service_phase4_routing.py \
-		tests/services/test_order_route_mode_phase4.py \
-		tests/services/test_order_trace_phase4_routing.py
+	$(PYTEST) -q tests/phase4_routing
 
 # =================================
 # 全量回归

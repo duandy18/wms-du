@@ -10,10 +10,9 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_reserved_adjust_idempotent(session):
-    from app.services.channel_inventory_service import ChannelInventoryService
+    from app.services.inventory_view_service import InventoryViewService
     from app.services.stock_service import StockService
 
-    svc = ChannelInventoryService()
     item, warehouse_id = 3401, 1
 
     # 1) 确保店铺存在（内部测试店铺）
@@ -42,14 +41,14 @@ async def test_reserved_adjust_idempotent(session):
 
     # 4) 幂等调整 reserved：第一次实际扣 9，第二次视为幂等
     ref = uniq_ref("RSV")
-    r1 = await svc.adjust_reserved(
+    r1 = await InventoryViewService.adjust_reserved(
         session=session,
         store_id=store,
         item_id=item,
         delta=-9,
         ref=ref,
     )
-    r2 = await svc.adjust_reserved(
+    r2 = await InventoryViewService.adjust_reserved(
         session=session,
         store_id=store,
         item_id=item,

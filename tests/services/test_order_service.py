@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
 
-from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
+from app.services.stock_availability_service import StockAvailabilityService
 
 UTC = timezone.utc
 pytestmark = pytest.mark.contract
@@ -77,6 +77,7 @@ async def test_fefo_reserve_then_cancel(session: AsyncSession):
     注意：
       - reserve/cancel 统一走 Golden Flow：OrderReserveFlow + SoftReserveService；
       - 仓库依赖 orders.warehouse_id，而非拍脑袋传 warehouse_id。
+      - 可售查询使用事实层：StockAvailabilityService（stocks - open reservations）
     """
 
     wh, loc, item, code = 1, 1, 7301, "RES-7301"
@@ -102,8 +103,7 @@ async def test_fefo_reserve_then_cancel(session: AsyncSession):
     )
 
     # 3) 读 baseline 可售库存（按平台/店铺/仓库）
-    chan = ChannelInventoryService()
-    available0 = await chan.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -126,7 +126,7 @@ async def test_fefo_reserve_then_cancel(session: AsyncSession):
     assert r1.get("reservation_id") is not None
     await session.commit()
 
-    available1 = await chan.get_available_for_item(
+    available1 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -146,7 +146,7 @@ async def test_fefo_reserve_then_cancel(session: AsyncSession):
     assert r2["status"] in ("CANCELED", "NOOP")  # 在高并发/重放场景下允许 NOOP
     await session.commit()
 
-    available2 = await chan.get_available_for_item(
+    available2 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,

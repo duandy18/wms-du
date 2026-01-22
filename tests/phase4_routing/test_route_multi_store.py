@@ -1,11 +1,27 @@
 # tests/services/test_order_multi_store_phase4_routing.py
+
+"""
+Phase 4.x routing worldview tests
+
+Candidate set:
+  - store_province_routes (candidate-set cutter)
+  - store_warehouse (capability declaration + ordering preference)
+
+Fact check:
+  - StockAvailabilityService / WarehouseRouter whole-order checks
+
+Contract:
+  - address.province is required
+  - missing province => FULFILLMENT_BLOCKED (no implicit fallback selection)
+"""
+
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 
 import app.services.order_ingest_service as order_ingest_service
@@ -15,6 +31,10 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _ensure_two_warehouses(session):
+    """
+    返回两个 warehouse_id。
+    如果现有仓库数量不足 2 个，则动态插入测试仓（兼容 NOT NULL 无默认值列）。
+    """
     rows = await session.execute(
         text(
             """
@@ -78,6 +98,9 @@ async def _ensure_two_warehouses(session):
 
 
 async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
+    """
+    确保 stores(platform, shop_id) 存在，返回 store_id。
+    """
     row = await session.execute(
         text(
             """
@@ -88,100 +111,42 @@ async def _ensure_store(session, platform: str, shop_id: str, name: str) -> int:
              LIMIT 1
             """
         ),
-        {"p": platform, "s": shop_id},
+        {"p": platform.upper(), "s": shop_id},
     )
     store_id = row.scalar()
     if store_id is not None:
         return int(store_id)
 
-    cols_rows = await session.execute(
+    await session.execute(
         text(
             """
-            SELECT column_name, data_type
-              FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name   = 'stores'
-               AND is_nullable  = 'NO'
-               AND column_default IS NULL
-               AND column_name <> 'id'
+            INSERT INTO stores (platform, shop_id, name)
+            VALUES (:p, :s, :n)
+            ON CONFLICT (platform, shop_id) DO NOTHING
             """
-        )
+        ),
+        {"p": platform.upper(), "s": shop_id, "n": name},
     )
-    col_info = [(str(r[0]), str(r[1])) for r in cols_rows.fetchall()]
-
-    if not col_info:
-        ins = await session.execute(
-            text(
-                """
-                INSERT INTO stores (platform, shop_id, name)
-                VALUES (:p, :s, :n)
-                ON CONFLICT (platform, shop_id) DO NOTHING
-                RETURNING id
-                """
-            ),
-            {"p": platform, "s": shop_id, "n": name},
-        )
-        sid = ins.scalar_one_or_none()
-        if sid is not None:
-            return int(sid)
-        row2 = await session.execute(
-            text(
-                """
-                SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1
-                """
-            ),
-            {"p": platform, "s": shop_id},
-        )
-        return int(row2.scalar_one())
-
-    columns = ["platform", "shop_id", "name"]
-    params: dict[str, object] = {
-        "platform": platform,
-        "shop_id": shop_id,
-        "name": name,
-    }
-
-    for col, dtype in col_info:
-        if col in ("platform", "shop_id", "name"):
-            continue
-        dt = dtype.lower()
-        columns.append(col)
-        if "char" in dt or "text" in dt:
-            params[col] = f"{col}-{uuid.uuid4().hex[:6]}"
-        elif "int" in dt:
-            params[col] = 0
-        elif "bool" in dt:
-            params[col] = False
-        elif "timestamp" in dt or "time" in dt:
-            params[col] = datetime.now(UTC)
-        elif dt == "date":
-            params[col] = datetime.now(UTC).date()
-        else:
-            params[col] = f"{col}-{uuid.uuid4().hex[:4]}"
-
-    col_sql = ", ".join(columns)
-    val_sql = ", ".join(f":{c}" for c in columns)
-    sql = f"""
-        INSERT INTO stores ({col_sql})
-        VALUES ({val_sql})
-        ON CONFLICT (platform, shop_id) DO NOTHING
-        RETURNING id
-    """
-
-    ins = await session.execute(text(sql), params)
-    sid = ins.scalar_one_or_none()
-    if sid is not None:
-        return int(sid)
-
     row2 = await session.execute(
-        text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"),
-        {"p": platform, "s": shop_id},
+        text(
+            """
+            SELECT id
+              FROM stores
+             WHERE platform = :p
+               AND shop_id  = :s
+             LIMIT 1
+            """
+        ),
+        {"p": platform.upper(), "s": shop_id},
     )
     return int(row2.scalar_one())
 
 
 async def _bind_store_to_wh(session, store_id: int, wh_id: int, is_top: bool, priority: int) -> None:
-    # legacy 配置保留：Route C 不使用 store_warehouse，但保留不影响
+    """
+    ✅ 统一世界观：store_warehouse 是候选能力声明 + 排序偏好
+    """
+    # 为了测试可控：每家店只绑定一个仓（避免 fallback_bindings 扩大候选集干扰断言）
     await session.execute(
         text("DELETE FROM store_warehouse WHERE store_id = :sid"),
         {"sid": store_id},
@@ -193,36 +158,38 @@ async def _bind_store_to_wh(session, store_id: int, wh_id: int, is_top: bool, pr
             VALUES (:sid, :wid, :top, :pr)
             """
         ),
-        {"sid": store_id, "wid": wh_id, "top": is_top, "pr": priority},
+        {"sid": store_id, "wid": int(wh_id), "top": bool(is_top), "pr": int(priority)},
     )
 
 
-async def _ensure_service_province(session, *, province_code: str, warehouse_id: int) -> None:
+async def _ensure_store_province_route(session, *, store_id: int, province: str, warehouse_id: int) -> None:
+    """
+    ✅ 统一世界观：store_province_routes = 省 → 候选仓裁剪器
+    """
     await session.execute(
-        text("DELETE FROM warehouse_service_provinces WHERE province_code = :p"),
-        {"p": province_code},
+        text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
+        {"sid": int(store_id), "prov": str(province)},
     )
     await session.execute(
         text(
             """
-            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
-            VALUES (:wid, :p)
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            VALUES (:sid, :prov, :wid, 10, TRUE)
             """
         ),
-        {"wid": int(warehouse_id), "p": province_code},
+        {"sid": int(store_id), "prov": str(province), "wid": int(warehouse_id)},
     )
 
 
 @pytest.mark.asyncio
 async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch):
     """
-    旧 Phase4 语义：同平台下不同店铺绑定不同主仓 → 路由到各自主仓。
+    同平台下不同店铺、不同省码 → 命中各自候选仓：
 
-    Route C 新事实：不看 store_warehouse；只看“省→服务仓”。
-
-    本测试迁移为：
-    - S1 使用省码 P-MULTI-A → 命中 wh_a
-    - S2 使用省码 P-MULTI-B → 命中 wh_b
+    新世界观：
+    - 候选集来自 store_province_routes（省 → 候选仓）
+    - 候选能力来自 store_warehouse（必须已绑定）
+    - 可履约由 StockAvailabilityService 事实裁决
     """
     session = db_session_like_pg
     platform = "PDD"
@@ -241,14 +208,15 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
     store1 = await _ensure_store(session, platform, shop1, "Shop 1")
     store2 = await _ensure_store(session, platform, shop2, "Shop 2")
 
+    # 每家店只绑定一个仓，保证候选集不漂移
     await _bind_store_to_wh(session, store_id=store1, wh_id=wh_a, is_top=True, priority=10)
     await _bind_store_to_wh(session, store_id=store2, wh_id=wh_b, is_top=True, priority=10)
 
-    # Route C：分别给两个省码映射不同服务仓
+    # 省码 → 候选仓（裁剪器）
     prov_a = "P-MULTI-A"
     prov_b = "P-MULTI-B"
-    await _ensure_service_province(session, province_code=prov_a, warehouse_id=wh_a)
-    await _ensure_service_province(session, province_code=prov_b, warehouse_id=wh_b)
+    await _ensure_store_province_route(session, store_id=store1, province=prov_a, warehouse_id=wh_a)
+    await _ensure_store_province_route(session, store_id=store2, province=prov_b, warehouse_id=wh_b)
 
     stock_map = {
         (wh_a, 1): 10,
@@ -260,7 +228,7 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
         item_id = kwargs.get("item_id")
         return int(stock_map.get((warehouse_id, item_id), 0))
 
-    monkeypatch.setattr(ChannelInventoryService, "get_available_for_item", fake_get_available)
+    monkeypatch.setattr(StockAvailabilityService, "get_available_for_item", fake_get_available)
 
     occurred_at = datetime.now(UTC)
 
@@ -320,16 +288,10 @@ async def test_multi_store_routing_same_platform(db_session_like_pg, monkeypatch
     assert r2["status"] == "OK"
     oid2 = r2["id"]
 
-    row1 = await session.execute(
-        text("SELECT warehouse_id FROM orders WHERE id = :id"),
-        {"id": oid1},
-    )
+    row1 = await session.execute(text("SELECT warehouse_id FROM orders WHERE id = :id"), {"id": oid1})
     wh1 = row1.scalar()
 
-    row2 = await session.execute(
-        text("SELECT warehouse_id FROM orders WHERE id = :id"),
-        {"id": oid2},
-    )
+    row2 = await session.execute(text("SELECT warehouse_id FROM orders WHERE id = :id"), {"id": oid2})
     wh2 = row2.scalar()
 
     assert wh1 == wh_a

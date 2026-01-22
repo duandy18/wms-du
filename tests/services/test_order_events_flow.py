@@ -24,6 +24,31 @@ async def test_order_created_and_reserved_events(session: AsyncSession) -> None:
     """
     platform = "PDD"
     shop_id = "EVT_TEST_SHOP"
+
+    # === Phase 4.x 选仓世界观：补齐 store_warehouse + store_province_routes ===
+    # 省份缺失会导致 ingest 进入 FULFILLMENT_BLOCKED，所以测试必须显式提供 address.province
+    province = "UT-PROV"
+    await session.execute(
+        text("INSERT INTO stores (platform, shop_id, name) VALUES (:p,:s,:n) ON CONFLICT (platform, shop_id) DO NOTHING"),
+        {"p": platform.upper(), "s": shop_id, "n": f"UT-{platform.upper()}-{shop_id}"},
+    )
+    row = await session.execute(text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"), {"p": platform.upper(), "s": shop_id})
+    store_id = int(row.scalar_one())
+
+    # 绑定一个仓（默认用 warehouse_id=1；如果你测试里已有 top_wid，就用你自己的变量替换）
+    await session.execute(
+        text("INSERT INTO store_warehouse (store_id, warehouse_id, is_top, priority) VALUES (:sid, 1, TRUE, 10) ON CONFLICT (store_id, warehouse_id) DO NOTHING"),
+        {"sid": store_id},
+    )
+    await session.execute(
+        text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
+        {"sid": store_id, "prov": province},
+    )
+    await session.execute(
+        text("INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active) VALUES (:sid, :prov, 1, 10, TRUE)"),
+        {"sid": store_id, "prov": province},
+    )
+
     ext_order_no = "EVT-TEST-ORDER-001"
     trace_id = "TRACE-EVT-ORDER-001"
 
@@ -52,7 +77,7 @@ async def test_order_created_and_reserved_events(session: AsyncSession) -> None:
         order_amount=10,
         pay_amount=10,
         items=[{"item_id": 1, "qty": 1}],
-        address=None,
+        address={"province": "UT-PROV", "receiver_name": "X", "receiver_phone": "000"},
         extras=None,
         trace_id=trace_id,
     )

@@ -8,7 +8,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 from app.services.order_service import OrderService
 
 import app.services.order_ingest_service as order_ingest_service
@@ -35,11 +35,16 @@ class SandboxOrder:
 
 async def seed_world(session: AsyncSession) -> None:
     """
-    Route C 沙盘初始化世界：
+    Route C 沙盘初始化世界（统一选仓世界观版）：
 
     - 仓库：1,2,3
-    - 店铺：S1, S2, S3（route_mode 字段仍写入，但 Route C 不依赖）
-    - warehouse_service_provinces：省码 → 服务仓（S1/S2 映射到仓2；S3 故意不映射制造失败）
+    - 店铺：S1, S2, S3（route_mode 用于决定“无省命中是否允许扩大到 bindings”）
+    - store_warehouse：店铺绑定仓（候选能力声明）
+      * S1 / S2 绑定仓2（以及一些备选仓）
+      * S3 故意不绑定任何仓（制造 failed：NO_WAREHOUSE_BOUND）
+    - store_province_routes：省码 → 候选仓（裁剪器）
+      * S1 / S2 省码命中仓2
+      * S3 故意不配置（制造 failed：NO_PROVINCE_ROUTE_MATCH 或 NO_WAREHOUSE_BOUND）
     - items：1001,1002,1003
     """
     await session.execute(
@@ -55,6 +60,7 @@ async def seed_world(session: AsyncSession) -> None:
         )
     )
 
+    # 让 S3 也写一个 route_mode（但我们不绑定仓，确保它失败）
     await session.execute(
         sa.text(
             """
@@ -62,7 +68,7 @@ async def seed_world(session: AsyncSession) -> None:
             VALUES
                 ('PDD','S1','S1','FALLBACK',now(),now()),
                 ('PDD','S2','S2','STRICT_TOP',now(),now()),
-                ('PDD','S3','S3','FALLBACK',now(),now())
+                ('PDD','S3','S3','STRICT_TOP',now(),now())
             ON CONFLICT (platform, shop_id) DO NOTHING;
             """
         )
@@ -82,18 +88,121 @@ async def seed_world(session: AsyncSession) -> None:
         )
     )
 
-    # Route C：省→服务仓。S1/S2 映射到仓2；S3 故意不映射（制造 failed）
-    await session.execute(sa.text("DELETE FROM warehouse_service_provinces WHERE province_code IN ('P-S1','P-S2','P-S3')"))
+    # -----------------------------
+    # 统一世界观：store_warehouse（能力声明）
+    # -----------------------------
+    # 清理三家店的旧绑定
     await session.execute(
         sa.text(
             """
-            INSERT INTO warehouse_service_provinces (warehouse_id, province_code)
-            VALUES
-                (2, 'P-S1'),
-                (2, 'P-S2')
+            DELETE FROM store_warehouse
+             WHERE store_id IN (
+               SELECT id FROM stores WHERE platform='PDD' AND shop_id IN ('S1','S2','S3')
+             );
             """
         )
     )
+
+    # S1 绑定：主仓=2，备仓=1/3（只是偏好，不代表可履约）
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 2, TRUE, TRUE, 10 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 1, FALSE, FALSE, 20 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 3, FALSE, FALSE, 30 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S1'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+
+    # S2 绑定：主仓=2（STRICT_TOP 店也必须绑定，否则省级路由 join 会过滤掉）
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 2, TRUE, TRUE, 10 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 1, FALSE, FALSE, 20 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_warehouse (store_id, warehouse_id, is_top, is_default, priority)
+            SELECT s.id, 3, FALSE, FALSE, 30 FROM stores s WHERE s.platform='PDD' AND s.shop_id='S2'
+            ON CONFLICT (store_id, warehouse_id) DO NOTHING;
+            """
+        )
+    )
+
+    # S3：不绑定任何仓（制造 failed）
+
+    # -----------------------------
+    # 统一世界观：store_province_routes（候选集裁剪器）
+    # -----------------------------
+    await session.execute(
+        sa.text(
+            """
+            DELETE FROM store_province_routes
+             WHERE store_id IN (
+               SELECT id FROM stores WHERE platform='PDD' AND shop_id IN ('S1','S2','S3')
+             )
+               AND province IN ('P-S1','P-S2','P-S3');
+            """
+        )
+    )
+
+    # S1：P-S1 → 仓2（priority=10）
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            SELECT s.id, 'P-S1', 2, 10, TRUE
+              FROM stores s
+             WHERE s.platform='PDD' AND s.shop_id='S1';
+            """
+        )
+    )
+
+    # S2：P-S2 → 仓2（priority=10）
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO store_province_routes (store_id, province, warehouse_id, priority, active)
+            SELECT s.id, 'P-S2', 2, 10, TRUE
+              FROM stores s
+             WHERE s.platform='PDD' AND s.shop_id='S2';
+            """
+        )
+    )
+
+    # S3：故意不插 P-S3（制造 failed）
 
     await session.commit()
 
@@ -154,10 +263,10 @@ async def test_routing_sandbox_ingest_only(
     """
     Route C 沙盘：只跑 ingest，不碰 reserve/ship。
 
-    通过 fake ChannelInventoryService.get_available_for_item 模拟：
+    通过 fake StockAvailabilityService.get_available_for_item 模拟：
     - S1：省码命中仓2，但容量小 -> 会出现 routed + failed（INSUFFICIENT_QTY）
     - S2：省码命中仓2，容量大 -> 全部 routed
-    - S3：省码不映射 -> 全部 failed（NO_SERVICE_WAREHOUSE）
+    - S3：无 store_province_routes 且无 store_warehouse 绑定 -> 全部 failed
     """
     session = db_session_like_pg
 
@@ -173,15 +282,14 @@ async def test_routing_sandbox_ingest_only(
     random.seed(2025_11_19)
     await seed_world(session)
 
-    # ---- fake ChannelInventoryService.get_available_for_item ----
+    # ---- fake StockAvailabilityService.get_available_for_item ----
     capacity_map = {
         ("PDD", "S1", 2): 5,    # S1 命中仓2但容量小 -> 一部分订单会失败
         ("PDD", "S2", 2): 999,  # S2 命中仓2容量足 -> 不失败
-        # S3 没有省映射，函数即便返回也不会被调用到
+        # S3 没有候选仓集合（不会进入可用量调用）
     }
 
     async def fake_get_available_for_item(
-        self,
         session: AsyncSession,  # type: ignore[override]
         platform: str,
         shop_id: str,
@@ -192,7 +300,7 @@ async def test_routing_sandbox_ingest_only(
         return capacity_map.get(key, 0)
 
     monkeypatch.setattr(
-        ChannelInventoryService,
+        StockAvailabilityService,
         "get_available_for_item",
         fake_get_available_for_item,
         raising=False,
@@ -240,7 +348,7 @@ async def test_routing_sandbox_ingest_only(
     assert routed_s1_wh2 > 0
 
     # ----------------------
-    # S3 验证：无省映射，应出现 failed
+    # S3 验证：无候选集，应出现 failed
     # ----------------------
     s3_rows = [r for r in summary if r.shop_id == "S3"]
     assert s3_rows, "no S3 rows in summary"

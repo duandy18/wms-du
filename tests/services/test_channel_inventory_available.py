@@ -4,21 +4,19 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.channel_inventory_service import ChannelInventoryService
+from app.services.stock_availability_service import StockAvailabilityService
 
 
 @pytest.mark.asyncio
 async def test_available_decreases_when_open_reservation_exists(session: AsyncSession):
     """
-    平台可售库存与 soft reserve 联动（扣减场景）：
+    真实库存可售与 soft reserve 联动（扣减场景）：
 
-    - 记录 baseline = available0
+    - baseline = available0
     - 插入一张 status='open' 的 reservation，qty=3
     - 再次查询 available1
     - 期望：available1 = available0 - 3
     """
-    svc = ChannelInventoryService()
-
     platform = "PDD"
     shop_id = "SHOP1"
     warehouse_id = 1
@@ -26,7 +24,7 @@ async def test_available_decreases_when_open_reservation_exists(session: AsyncSe
     now = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
 
     # 1) baseline
-    available0 = await svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -84,7 +82,7 @@ async def test_available_decreases_when_open_reservation_exists(session: AsyncSe
     await session.commit()
 
     # 3) 有 open reserve 后的 available
-    available1 = await svc.get_available_for_item(
+    available1 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -98,7 +96,7 @@ async def test_available_decreases_when_open_reservation_exists(session: AsyncSe
 @pytest.mark.asyncio
 async def test_available_recovers_after_reservation_expired(session: AsyncSession):
     """
-    平台可售库存与 soft reserve 联动（释放场景）：
+    真实库存可售与 soft reserve 联动（释放场景）：
 
     - baseline = available0
     - 插入一张 open reservation，qty=5
@@ -106,15 +104,13 @@ async def test_available_recovers_after_reservation_expired(session: AsyncSessio
     - 将该单 status 改为 'expired'（模拟 TTL 回收）
     - available2 应恢复为 available0
     """
-    svc = ChannelInventoryService()
-
     platform = "PDD"
     shop_id = "SHOP1"
     warehouse_id = 1
     item_id = 3001
 
     # 1) baseline
-    available0 = await svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -170,7 +166,7 @@ async def test_available_recovers_after_reservation_expired(session: AsyncSessio
     await session.commit()
 
     # 3) 有 open reserve 时的 available
-    available1 = await svc.get_available_for_item(
+    available1 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -194,7 +190,7 @@ async def test_available_recovers_after_reservation_expired(session: AsyncSessio
     await session.commit()
 
     # 5) 再查 available，应恢复 baseline
-    available2 = await svc.get_available_for_item(
+    available2 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -207,20 +203,18 @@ async def test_available_recovers_after_reservation_expired(session: AsyncSessio
 @pytest.mark.asyncio
 async def test_available_ignores_consumed_reservations(session: AsyncSession):
     """
-    消费完成的 reservation 不再占用平台可售库存：
+    消费完成的 reservation 不再占用真实库存可售：
 
     - baseline = available0
     - 插入一张 status='consumed' 的 reservation，qty=4，且 consumed_qty=4
     - 可售库存不应变化：available1 == available0
     """
-    svc = ChannelInventoryService()
-
     platform = "PDD"
     shop_id = "SHOP1"
     warehouse_id = 1
     item_id = 3001
 
-    available0 = await svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -275,7 +269,7 @@ async def test_available_ignores_consumed_reservations(session: AsyncSession):
     )
     await session.commit()
 
-    available1 = await svc.get_available_for_item(
+    available1 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,

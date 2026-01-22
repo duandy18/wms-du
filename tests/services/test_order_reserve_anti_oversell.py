@@ -5,15 +5,15 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.channel_inventory_service import ChannelInventoryService
 from app.services.order_service import OrderService
+from app.services.stock_availability_service import StockAvailabilityService
 
 UTC = timezone.utc
 
 
 async def _pick_one_stock_item(session: AsyncSession):
     """
-    尝试从当前基线中挑一个 (item_id, warehouse_id, available) 出来。
+    尝试从当前基线中挑一个 (item_id, warehouse_id, qty) 出来。
     若没有可用库存，直接 skip 测试，避免猜表结构乱插数据。
     """
     row = await session.execute(
@@ -93,7 +93,7 @@ async def test_reserve_succeeds_when_available_enough(session: AsyncSession):
     升级版语义：
       - 先插入一条订单（带 warehouse_id）；
       - 使用标准 ref=ORD:PLAT:shop:ext_order_no 调用 OrderService.reserve；
-      - anti-oversell 由 OrderReserveFlow + SoftReserveService 负责。
+      - anti-oversell 校验使用事实层：StockAvailabilityService（stocks - open reservations）
     """
     item_id, warehouse_id, _ = await _pick_one_stock_item(session)
 
@@ -108,10 +108,8 @@ async def test_reserve_succeeds_when_available_enough(session: AsyncSession):
         warehouse_id=warehouse_id,
     )
 
-    channel_svc = ChannelInventoryService()
-
     # 基线 available
-    available0 = await channel_svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -135,7 +133,7 @@ async def test_reserve_succeeds_when_available_enough(session: AsyncSession):
     assert r.get("reservation_id") is not None
 
     # 再查 available，应减少 reserve_qty
-    available1 = await channel_svc.get_available_for_item(
+    available1 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -153,7 +151,7 @@ async def test_reserve_rejects_when_insufficient_available(session: AsyncSession
     仍然基于订单驱动的 Golden Flow：
       - 为每个 ref 插入对应订单头（带 warehouse_id）；
       - 使用 ORD:... ref 调用 OrderService.reserve；
-      - anti-oversell 由 OrderReserveFlow 内部的 ChannelInventoryService 校验。
+      - anti-oversell 校验使用事实层：StockAvailabilityService（stocks - open reservations）
     """
     item_id, warehouse_id, _ = await _pick_one_stock_item(session)
 
@@ -177,10 +175,8 @@ async def test_reserve_rejects_when_insufficient_available(session: AsyncSession
         warehouse_id=warehouse_id,
     )
 
-    channel_svc = ChannelInventoryService()
-
     # baseline available
-    available0 = await channel_svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -201,7 +197,7 @@ async def test_reserve_rejects_when_insufficient_available(session: AsyncSession
     )
     assert r1["status"] == "OK"
 
-    available_after_first = await channel_svc.get_available_for_item(
+    available_after_first = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,
@@ -249,9 +245,7 @@ async def test_reserve_idempotent_same_qty(session: AsyncSession):
         warehouse_id=warehouse_id,
     )
 
-    channel_svc = ChannelInventoryService()
-
-    available0 = await channel_svc.get_available_for_item(
+    available0 = await StockAvailabilityService.get_available_for_item(
         session,
         platform=platform,
         shop_id=shop_id,

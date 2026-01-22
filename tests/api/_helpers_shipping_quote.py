@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi.testclient import TestClient
 
@@ -67,13 +67,26 @@ def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int
 
 
 def bind_scheme_to_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
+    """
+    Phase 3/4 合同（测试用）：
+    - 单条绑定：POST /pricing-schemes/{scheme_id}/warehouses/bind
+    """
     h = auth_headers(token)
-    r = client.put(
-        f"/pricing-schemes/{int(scheme_id)}/warehouses",
+    r = client.post(
+        f"/pricing-schemes/{int(scheme_id)}/warehouses/bind",
         headers=h,
-        json={"warehouse_ids": [int(warehouse_id)], "active": True},
+        json={"warehouse_id": int(warehouse_id), "active": True},
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
+
+
+def unbind_scheme_from_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
+    h = auth_headers(token)
+    r = client.delete(
+        f"/pricing-schemes/{int(scheme_id)}/warehouses/{int(warehouse_id)}",
+        headers=h,
+    )
+    assert r.status_code in (200, 204, 404), r.text
 
 
 def assert_scheme_bound_to_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
