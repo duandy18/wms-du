@@ -216,4 +216,3 @@ async def ensure_store_province_route(
 def make_address(province: str = "UT-PROV") -> dict:
     """Standard test address payload for Phase 4 routing worldview."""
     return {"province": province, "receiver_name": "X", "receiver_phone": "000"}
-
