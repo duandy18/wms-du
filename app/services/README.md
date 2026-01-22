@@ -151,69 +151,16 @@
 - `warehouse_router.py`
   - 决定多仓模式下订单应该落到哪个仓（现在多仓逻辑还比较轻，但骨架已在）。
 
-- `order_adapters/base.py` + `order_adapters/pdd.py`
-  - CanonicalOrder + PDD 订单适配器（已移入 `_staged/platform/order`，等待未来平台订单入口重构）。
-
----
-
-### 2.7 仓内搬运（InventoryOps）
-
-- `inventory_ops.py`（InventoryOpsService）
-
-  - 用于“同仓库内 A 库位 → B 库位搬运”：
-    - 调用两次 `StockService.adjust`：
-      - from_location：delta = -qty（reason=PUTAWAY）
-      - to_location  ：delta = +qty（reason=PUTAWAY）
-  - 被 `stock_transfer` / `inventory` 路由使用。
-
-> 这部分仍然基于 `location_id`，属于 **现役但未来会改造** 的服务（配合你取消 location 业务后的 v3）。
-
----
-
-### 2.8 诊断与审计
-
-- `trace_service.py`
-  - 聚合 `event_store + audit_events + stock_ledger + reservations + outbound`
-  - 对应前端 Trace 链路页面 / DevConsole 的 Scan panel。
-
-- `audit_writer.py / audit_logger.py`
-  - 统一写入 `event_log` / `event_store`，并自动带上 trace_id、source 等。
-
 ---
 
 ### 2.9 主数据 & 权限
 
 - `store_service.py`
   - 店铺 (platform, shop_id) 定义与仓库绑定
-  - 多仓路由与 ChannelInventory 依赖它。
+  - **多仓路由不再依赖 ChannelInventory；候选集解析由 `routing_candidates` 统一负责，履约事实由 `StockAvailabilityService` 判定。**
 
 - `item_service.py`
   - 商品主数据。
 
 - `user_service.py / role_service.py / permission_service.py`
   - 用户 & 权限体系。
-
----
-
-## 3. 阶段性服务（B 类，_staged）
-
-这些服务当前不直接参与主干调用，但有结构价值，未来某个 Phase 可能会重构整合进去。
-
-建议组织结构：
-
-```text
-app/services/_staged/
-  reservation/
-    reservation_persist.py
-    reservation_plan.py
-    reservation_alloc.py
-  outbound/
-    _deprecated outbound v2 module
-  inventory/
-    inventory_adjust.py (旧大引擎)
-    inventory_ops_v1.py (若有)
-  platform/
-    order_adapters/
-      base.py
-      pdd.py
-    # 未来：其它平台订单适配器
