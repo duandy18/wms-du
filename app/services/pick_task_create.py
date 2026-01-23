@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pick_task import PickTask
@@ -26,12 +25,13 @@ async def create_for_order(
     """
     从订单创建拣货任务（订单视角作业入口）：
 
-    ✅ 新合同（作业台）：
-    - 由于订单可能尚未分仓，创建拣货任务时必须显式选择仓库（warehouse_id 必填）。
-    - 创建成功后会尝试回填 orders.warehouse_id（仅当原来为空时），让后续链路稳定。
+    ✅ Phase 5.1 合同（严格）：
+    - 创建拣货任务时必须显式选择仓库（warehouse_id 必填）。
+    - 且该仓库必须与订单已明确的执行仓一致（orders.warehouse_id 必须已存在）。
+    - ❌ 禁止任何“隐性回填 orders.warehouse_id”的路径（本函数不写 orders.warehouse_id）。
 
     其它行为保持不变：
-    - 同步构造/更新软预占：OrderService.reserve
+    - 同步构造/更新软预占：OrderService.reserve（要求订单已具备 warehouse_id 且状态允许）
     - 再创建 pick_tasks + pick_task_lines
     """
     order = await load_order_head(session, order_id)
@@ -43,24 +43,37 @@ async def create_for_order(
     ext_no = str(order["ext_order_no"])
     trace_id = order.get("trace_id")
 
-    # ✅ 硬合同：创建拣货任务必须选仓库（因为订单层可能永远不绑定仓库）
+    # ✅ 硬合同：创建拣货任务必须选仓库
     if warehouse_id is None:
         raise ValueError("创建拣货任务失败：请先选择仓库。")
 
     wh_id = int(warehouse_id)
 
-    # ✅ 尝试回填订单 warehouse_id（仅当为空时）
-    await session.execute(
-        SA(
-            """
-            UPDATE orders
-               SET warehouse_id = :wid
-             WHERE id = :oid
-               AND warehouse_id IS NULL
-            """
-        ),
-        {"wid": wh_id, "oid": int(order_id)},
-    )
+    # ✅ Phase 5.1：禁止隐性回填 orders.warehouse_id
+    # 这里必须要求订单已经通过“人工指定执行仓”写入了 warehouse_id，
+    # 并且与本次创建 pick task 的 warehouse_id 一致。
+    cur_wh_raw = order.get("warehouse_id")
+    cur_wh = int(cur_wh_raw) if cur_wh_raw not in (None, 0, "0") else None
+    fstat = str(order.get("fulfillment_status") or "")
+
+    if cur_wh is None:
+        raise ValueError(
+            "创建拣货任务失败：订单尚未指定执行仓（warehouse_id 为空）。"
+            "请先在订单履约中执行“人工指定执行仓（manual-assign）”。"
+        )
+
+    if int(cur_wh) != int(wh_id):
+        raise ValueError(
+            "创建拣货任务失败：所选仓库与订单执行仓不一致。"
+            f" order.warehouse_id={int(cur_wh)} vs selected={int(wh_id)}"
+        )
+
+    # （可选但推荐）状态护栏：SERVICE_ASSIGNED 不能直接进入拣货
+    if fstat in ("SERVICE_ASSIGNED", "FULFILLMENT_BLOCKED"):
+        raise ValueError(
+            f"创建拣货任务失败：订单状态不允许拣货：fulfillment_status={fstat}。"
+            "请先人工指定执行仓并进入可履约状态。"
+        )
 
     order_ref = f"ORD:{platform}:{shop_id}:{ext_no}"
 
@@ -68,6 +81,7 @@ async def create_for_order(
     if not items:
         raise ValueError("创建拣货任务失败：该订单没有商品行。")
 
+    # ✅ reserve：OrderService.reserve 内部会读取 orders.warehouse_id 作为事实
     await OrderService.reserve(
         session=session,
         platform=platform,
