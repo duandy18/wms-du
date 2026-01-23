@@ -103,7 +103,7 @@ audit-fulfillment-routec:
 
 # =================================
 # Phase 5.1 封口：禁止任何隐性写 orders.warehouse_id
-# - 允许白名单：人工指定执行仓入口 / devconsole 运维修复入口
+# - 白名单仅允许：manual-assign service / devconsole 运维修复入口
 # =================================
 .PHONY: audit-no-implicit-warehouse-id
 audit-no-implicit-warehouse-id:
@@ -113,11 +113,11 @@ audit-no-implicit-warehouse-id:
 	  if [ -z "$$hits" ]; then \
 	    echo "[audit-no-implicit-warehouse-id] OK (no hits)"; exit 0; \
 	  fi; \
-	  allow_re="app/api/routers/orders_fulfillment_v2_routes_1_reserve\\.py|app/api/routers/devconsole_orders_routes_reconcile\\.py|app/api/routers/devconsole_orders_routes_demo\\.py"; \
+	  allow_re="app/services/order_fulfillment_manual_assign\\.py|app/api/routers/devconsole_orders_routes_reconcile\\.py|app/api/routers/devconsole_orders_routes_demo\\.py"; \
 	  bad="$$(printf "%s\n" "$$hits" | rg -v "$$allow_re" || true)"; \
 	  if [ -n "$$bad" ]; then \
 	    echo "$$bad"; \
-	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign / devconsole whitelist may write orders.warehouse_id"; \
+	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign service / devconsole whitelist may write orders.warehouse_id"; \
 	    exit 1; \
 	  fi; \
 	  echo "[audit-no-implicit-warehouse-id] OK (hits only in whitelist)"; \
@@ -125,9 +125,6 @@ audit-no-implicit-warehouse-id:
 
 # =================================
 # Phase 2 守门员：运价区间必须兜底覆盖（避免 no matching bracket 线上翻车）
-# - 对所有 active scheme 的所有 zone：
-#   1) 至少 1 条 active bracket
-#   2) 至少 1 条 active 的 max_kg IS NULL bracket（兜底段）
 # =================================
 .PHONY: audit-pricing-brackets
 audit-pricing-brackets: venv
@@ -156,7 +153,6 @@ seed-opening-ledger-test: venv
 
 # =================================
 # 三账一致性自检（Phase 3 MVP）
-# - 支持定位参数：REF / TRACE_ID / IGNORE_OPENING / LIMIT
 # =================================
 .PHONY: audit-three-books
 audit-three-books: venv
