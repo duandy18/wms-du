@@ -103,7 +103,7 @@ audit-fulfillment-routec:
 
 # =================================
 # Phase 5.1 封口：禁止任何隐性写 orders.warehouse_id
-# - 白名单仅允许：manual-assign service / devconsole 运维修复入口
+# - 白名单仅允许：manual-assign service（devconsole 写入已被禁止）
 # =================================
 .PHONY: audit-no-implicit-warehouse-id
 audit-no-implicit-warehouse-id:
@@ -113,11 +113,11 @@ audit-no-implicit-warehouse-id:
 	  if [ -z "$$hits" ]; then \
 	    echo "[audit-no-implicit-warehouse-id] OK (no hits)"; exit 0; \
 	  fi; \
-	  allow_re="app/services/order_fulfillment_manual_assign\\.py|app/api/routers/devconsole_orders_routes_reconcile\\.py|app/api/routers/devconsole_orders_routes_demo\\.py"; \
+	  allow_re="app/services/order_fulfillment_manual_assign\\.py"; \
 	  bad="$$(printf "%s\n" "$$hits" | rg -v "$$allow_re" || true)"; \
 	  if [ -n "$$bad" ]; then \
 	    echo "$$bad"; \
-	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign service / devconsole whitelist may write orders.warehouse_id"; \
+	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign service may write orders.warehouse_id"; \
 	    exit 1; \
 	  fi; \
 	  echo "[audit-no-implicit-warehouse-id] OK (hits only in whitelist)"; \
