@@ -27,7 +27,10 @@ async def mark_fulfillment_blocked(
 ) -> dict:
     """
     Route C：统一的 BLOCKED 写入 + 审计事件写入 + 返回 payload。
-    语义不变：BLOCKED 时不写 orders.warehouse_id；service_warehouse_id 可写可不写（按调用传入）。
+
+    Phase 5 合同：
+    - BLOCKED 时不写 orders.warehouse_id
+    - 只允许写 service_warehouse_id（事实）
     """
     await session.execute(
         text(
@@ -101,10 +104,11 @@ async def mark_service_assigned(
     auto_commit: bool = False,
 ) -> dict:
     """
-    ✅ 新世界观：只写“服务归属事实”
+    Phase 5 世界观（唯一合法的自动写入）：
+
     - 写 orders.service_warehouse_id
-    - 不写 orders.warehouse_id（实际出库仓由人工决定）
-    - fulfillment_status 使用 SERVICE_ASSIGNED（避免误导为“库存已校验可履约”）
+    - 不写 orders.warehouse_id
+    - fulfillment_status = SERVICE_ASSIGNED
     """
     await session.execute(
         text(
@@ -145,73 +149,5 @@ async def mark_service_assigned(
         "service_warehouse_id": int(service_warehouse_id),
         "province": province,
         "city": city,
-        "mode": mode,
-    }
-
-
-async def mark_ready_to_fulfill(
-    session: AsyncSession,
-    *,
-    order_id: int,
-    order_ref: str,
-    trace_id: Optional[str],
-    platform_norm: str,
-    shop_id: str,
-    warehouse_id: int,
-    province: str,
-    city: Optional[str],
-    mode: str,
-    auto_commit: bool = False,
-) -> dict:
-    """
-    （历史兼容）Route C：READY 写入 + 审计事件写入 + 返回 payload。
-    语义：READY 时写 orders.warehouse_id / service_warehouse_id / fulfillment_warehouse_id。
-    """
-    await session.execute(
-        text(
-            """
-            UPDATE orders
-               SET warehouse_id = :wid,
-                   service_warehouse_id = :wid,
-                   fulfillment_warehouse_id = :wid,
-                   fulfillment_status = 'READY_TO_FULFILL',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
-            """
-        ),
-        {"wid": int(warehouse_id), "oid": int(order_id)},
-    )
-
-    try:
-        await AuditEventWriter.write(
-            session,
-            flow="OUTBOUND",
-            event="WAREHOUSE_ROUTED",
-            ref=order_ref,
-            trace_id=trace_id,
-            meta={
-                "platform": platform_norm,
-                "shop": shop_id,
-                "warehouse_id": int(warehouse_id),
-                "province": province,
-                "city": city,
-                "reason": "service_hit",
-                "considered": [int(warehouse_id)],
-                "mode": mode,
-            },
-            auto_commit=auto_commit,
-        )
-    except Exception:
-        pass
-
-    return {
-        "status": "READY_TO_FULFILL",
-        "warehouse_id": int(warehouse_id),
-        "service_warehouse_id": int(warehouse_id),
-        "province": province,
-        "city": city,
-        "reason": "service_hit",
-        "considered": [int(warehouse_id)],
         "mode": mode,
     }
