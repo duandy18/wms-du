@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.api.routers import orders_summary_routes
+from app.api.routers import orders_availability_routes, orders_summary_routes
 from app.core.audit import new_trace
 from app.services.order_service import OrderService
 from app.services.store_service import StoreService
@@ -218,3 +218,6 @@ async def create_order_raw(
 # ✅ Phase 5.2：订单管理列表（正统出口）
 # 注入 /orders/summary，确保 orders 域只有一个 router 作为权威出口
 orders_summary_routes.register(router)
+
+# ✅ Phase 5.3：订单 × 仓库库存对齐（Explain 层，只读）
+orders_availability_routes.register(router)
