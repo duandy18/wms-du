@@ -12,6 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 
 
+class WarehouseOptionOut(BaseModel):
+    id: int
+    code: Optional[str] = None
+    name: Optional[str] = None
+    active: Optional[bool] = None
+
+
 class OrderSummaryOut(BaseModel):
     id: int
     platform: str
@@ -21,10 +28,14 @@ class OrderSummaryOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
+    # 执行仓（实际出库）
     warehouse_id: Optional[int] = None
+    # 服务仓（系统裁决、服务归属）
     service_warehouse_id: Optional[int] = None
+    # 履约状态（系统事实）
     fulfillment_status: Optional[str] = None
 
+    # 派生字段（审计/统计；前端可不展示）
     warehouse_assign_mode: Optional[str] = None
 
     # ✅ 后端对齐的可操作事实（前端不得推导）
@@ -38,6 +49,8 @@ class OrderSummaryOut(BaseModel):
 class OrdersSummaryResponse(BaseModel):
     ok: bool = True
     data: List[OrderSummaryOut]
+    # ✅ 候选执行仓（后端给出，前端不得自行拉 /warehouses）
+    warehouses: List[WarehouseOptionOut]
 
 
 def _derive_assign_mode(
@@ -124,6 +137,38 @@ async def _list_orders_summary_rows(
     return rows
 
 
+async def _list_candidate_warehouses(session: AsyncSession) -> List[WarehouseOptionOut]:
+    # 这里故意做得保守：给出 active != false 的仓作为候选集合
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, code, name, active
+                      FROM warehouses
+                     WHERE active IS DISTINCT FROM false
+                     ORDER BY id ASC
+                    """
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    out: List[WarehouseOptionOut] = []
+    for r in rows:
+        out.append(
+            WarehouseOptionOut(
+                id=int(r["id"]),
+                code=str(r["code"]) if r.get("code") is not None else None,
+                name=str(r["name"]) if r.get("name") is not None else None,
+                active=bool(r["active"]) if r.get("active") is not None else None,
+            )
+        )
+    return out
+
+
 def register(router) -> None:
     @router.get("/orders/summary", response_model=OrdersSummaryResponse)
     async def orders_summary(
@@ -144,6 +189,8 @@ def register(router) -> None:
             time_to=time_to,
             limit=limit,
         )
+
+        warehouses = await _list_candidate_warehouses(session)
 
         data: List[OrderSummaryOut] = []
         for r in rows:
@@ -177,4 +224,4 @@ def register(router) -> None:
                 )
             )
 
-        return OrdersSummaryResponse(ok=True, data=data)
+        return OrdersSummaryResponse(ok=True, data=data, warehouses=warehouses)
