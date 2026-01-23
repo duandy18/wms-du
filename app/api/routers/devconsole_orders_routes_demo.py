@@ -27,32 +27,23 @@ def register(router: APIRouter) -> None:
         session: AsyncSession = Depends(get_session),
     ) -> DevDemoOrderOut:
         """
-        生成 demo 订单（修复 trace/ref 误判 lifecycle 的最终版本）
-        """
+        生成 demo 订单（Phase 5.1 版本）：
 
-        # 1) 随机物品
-        rows = (
-            await session.execute(
-                text(
-                    """
-                    SELECT id FROM items ORDER BY id LIMIT 10
-                    """
-                )
-            )
-        ).fetchall()
+        - 订单 ingest：给出 province=UT，让其进入 SERVICE_ASSIGNED（只写 service_warehouse_id）
+        - ❌ 不再写 orders.warehouse_id（devconsole 禁止后门写入）
+        - 库存 seed：仍然可以往某个仓库里落库存（这不是“订单执行仓”）
+        """
+        # 1) 随机物品（从已存在 items 里抽）
+        rows = (await session.execute(text("SELECT id FROM items ORDER BY id LIMIT 10"))).fetchall()
         item_ids = [int(r[0]) for r in rows]
         if not item_ids:
             raise HTTPException(400, "items 表为空，请先添加商品。")
 
-        # 仓库
-        wh_row = (
-            (await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1")))
-            .mappings()
-            .first()
-        )
+        # 选一个仓库用于 seed 库存（仅库存事实，不代表订单执行仓）
+        wh_row = ((await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1"))).mappings().first())
         if not wh_row:
             raise HTTPException(400, "warehouses 表为空，请创建至少一个仓库。")
-        warehouse_id = int(wh_row["id"])
+        seed_warehouse_id = int(wh_row["id"])
 
         now = datetime.now(timezone.utc)
         plat = platform.upper()
@@ -80,7 +71,7 @@ def register(router: APIRouter) -> None:
             items.append({"item_id": item_id, "qty": qty, "price": float(price)})
             order_lines.append((item_id, qty))
 
-        # 2) 落订单
+        # 2) 落订单（Phase 5：显式给 province，进入 SERVICE_ASSIGNED）
         result = await OrderService.ingest(
             session=session,
             platform=plat,
@@ -90,17 +81,13 @@ def register(router: APIRouter) -> None:
             order_amount=total,
             pay_amount=total,
             items=items,
-            address=None,
+            address={"province": "UT", "receiver_name": "DEMO", "receiver_phone": "000"},
             extras=None,
             trace_id=trace_id,
         )
         order_id = int(result["id"])
 
-        # 3) 绑定仓库
-        await session.execute(
-            text("UPDATE orders SET warehouse_id=:wid WHERE id=:oid"),
-            {"wid": warehouse_id, "oid": order_id},
-        )
+        # 3) ❌ 不再绑定订单 warehouse_id（devconsole 禁止写入）
 
         # 4) seed 库存（完全隔离 trace/ref）
         stock_service = StockService()
@@ -118,7 +105,7 @@ def register(router: APIRouter) -> None:
             await stock_service.adjust(
                 session=session,
                 item_id=item_id,
-                warehouse_id=warehouse_id,
+                warehouse_id=seed_warehouse_id,
                 delta=seed_qty,
                 reason=MovementType.RECEIPT,
                 ref=seed_ref,  # ❗ 不再使用 demo:order:* 避免 lifecycle fallback

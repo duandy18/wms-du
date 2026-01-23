@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
@@ -15,7 +14,6 @@ from app.api.routers.devconsole_orders_schemas import (
     DevReconcileRangeResult,
 )
 from app.services.order_reconcile_service import OrderReconcileService
-from app.services.store_service import StoreService
 
 
 def register(router: APIRouter) -> None:
@@ -77,109 +75,31 @@ def register(router: APIRouter) -> None:
             order_ids=[r.order_id for r in results],
         )
 
-    # ------------------------- ensure warehouse ------------------------- #
+    # ------------------------- ensure warehouse（已禁用） ------------------------- #
 
     @router.post(
         "/{platform}/{shop_id}/{ext_order_no}/ensure-warehouse",
         response_model=DevEnsureWarehouseOut,
     )
-    async def ensure_order_warehouse(
+    async def ensure_order_warehouse_disabled(
         platform: str,
         shop_id: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
     ) -> DevEnsureWarehouseOut:
-        plat = platform.upper()
+        """
+        Phase 5.1：devconsole 不允许写 orders.warehouse_id（禁止隐性回填/后门写入）。
 
-        # 查订单
-        row = (
-            (
-                await session.execute(
-                    text(
-                        """
-                    SELECT id, warehouse_id
-                      FROM orders
-                     WHERE platform=:p
-                       AND shop_id=:s
-                       AND ext_order_no=:o
-                     LIMIT 1
-                    """
-                    ),
-                    {"p": plat, "s": shop_id, "o": ext_order_no},
-                )
-            )
-            .mappings()
-            .first()
-        )
-
-        if row is None:
-            raise HTTPException(404, "order not found")
-
-        order_id = int(row["id"])
-        cur_wid = row.get("warehouse_id")
-
-        if cur_wid is not None:
-            return DevEnsureWarehouseOut(
-                ok=True,
-                order_id=order_id,
-                platform=plat,
-                shop_id=shop_id,
-                ext_order_no=ext_order_no,
-                warehouse_id=cur_wid,
-                source="order",
-                message="order already has warehouse_id",
-            )
-
-        # 解析店铺
-        store_row = (
-            (
-                await session.execute(
-                    text(
-                        """
-                    SELECT id FROM stores
-                     WHERE platform=:p
-                       AND shop_id=:s
-                     LIMIT 1
-                    """
-                    ),
-                    {"p": plat, "s": shop_id},
-                )
-            )
-            .mappings()
-            .first()
-        )
-
-        if store_row is None:
-            raise HTTPException(404, "请先在【店铺管理】建立该店铺并绑定仓库")
-
-        store_id = int(store_row["id"])
-
-        # 解析仓库
-        wid = await StoreService.resolve_default_warehouse(session, store_id=store_id)
-        if wid is None:
-            raise HTTPException(409, "无法解析仓库，请在店铺详情中绑定默认仓库")
-
-        await session.execute(
-            text(
-                """
-                UPDATE orders
-                   SET warehouse_id=:wid,
-                       updated_at=NOW()
-                 WHERE id=:oid
-                """
+        ✅ 正确做法：
+        - 走订单履约 API：/orders/{platform}/{shop_id}/{ext}/fulfillment/manual-assign
+        - 或使用离线脚本（仅本地/运维）：scripts/dev_set_order_warehouse.py
+        """
+        _ = (platform, shop_id, ext_order_no, session)
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "devconsole ensure-warehouse is disabled in Phase 5.1. "
+                "Use /orders/{platform}/{shop_id}/{ext}/fulfillment/manual-assign "
+                "or run scripts/dev_set_order_warehouse.py."
             ),
-            {"wid": wid, "oid": order_id},
-        )
-        await session.commit()
-
-        return DevEnsureWarehouseOut(
-            ok=True,
-            order_id=order_id,
-            platform=plat,
-            shop_id=shop_id,
-            ext_order_no=ext_order_no,
-            store_id=store_id,
-            warehouse_id=wid,
-            source="store_binding",
-            message="warehouse resolved via store binding",
         )
