@@ -102,6 +102,28 @@ audit-fulfillment-routec:
 	  exit 1;'
 
 # =================================
+# Phase 5.1 封口：禁止任何隐性写 orders.warehouse_id
+# - 允许白名单：人工指定执行仓入口 / devconsole 运维修复入口
+# =================================
+.PHONY: audit-no-implicit-warehouse-id
+audit-no-implicit-warehouse-id:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-no-implicit-warehouse-id] forbid implicit writes to orders.warehouse_id ..."; \
+	  hits="$$(rg -n "UPDATE orders\\s+SET\\s+warehouse_id|SET\\s+warehouse_id\\s*=" app -S || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-no-implicit-warehouse-id] OK (no hits)"; exit 0; \
+	  fi; \
+	  allow_re="app/api/routers/orders_fulfillment_v2_routes_1_reserve\\.py|app/api/routers/devconsole_orders_routes_reconcile\\.py|app/api/routers/devconsole_orders_routes_demo\\.py"; \
+	  bad="$$(printf "%s\n" "$$hits" | rg -v "$$allow_re" || true)"; \
+	  if [ -n "$$bad" ]; then \
+	    echo "$$bad"; \
+	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign / devconsole whitelist may write orders.warehouse_id"; \
+	    exit 1; \
+	  fi; \
+	  echo "[audit-no-implicit-warehouse-id] OK (hits only in whitelist)"; \
+	'
+
+# =================================
 # Phase 2 守门员：运价区间必须兜底覆盖（避免 no matching bracket 线上翻车）
 # - 对所有 active scheme 的所有 zone：
 #   1) 至少 1 条 active bracket
@@ -117,7 +139,7 @@ audit-pricing-brackets: venv
 	  "$(PY)" scripts/audit_pricing_brackets.py;'
 
 .PHONY: audit-all
-audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak audit-fulfillment-routec audit-pricing-brackets
+audit-all: audit-uom audit-consistency audit-no-deprecated-import audit-no-location-leak audit-fulfillment-routec audit-no-implicit-warehouse-id audit-pricing-brackets
 	@echo "[audit-all] OK"
 
 # =================================
