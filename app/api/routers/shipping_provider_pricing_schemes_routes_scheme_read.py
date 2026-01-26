@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
@@ -41,8 +41,13 @@ def register(router: APIRouter) -> None:
         if not provider:
             raise HTTPException(status_code=404, detail="ShippingProvider not found")
 
-        q = db.query(ShippingProviderPricingScheme).filter(
-            ShippingProviderPricingScheme.shipping_provider_id == provider_id
+        # ✅ Phase 6：刚性契约
+        # SchemeOut.shipping_provider_name 需要从 ORM 关系拿到 ShippingProvider.name
+        # 因此 list_schemes 必须确定性 eager-load shipping_provider
+        q = (
+            db.query(ShippingProviderPricingScheme)
+            .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
+            .filter(ShippingProviderPricingScheme.shipping_provider_id == provider_id)
         )
 
         # ✅ 默认隐藏归档；include_archived=true 时包含归档记录
@@ -130,6 +135,7 @@ def register(router: APIRouter) -> None:
         sch = _SchemeOut(
             id=scheme_id,
             shipping_provider_id=1,
+            shipping_provider_name="DEBUG_PROVIDER",
             name="DEBUG_SCHEME",
             active=True,
             currency="CNY",

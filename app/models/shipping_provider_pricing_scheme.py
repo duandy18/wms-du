@@ -76,6 +76,11 @@ class ShippingProviderPricingScheme(Base):
         onupdate=func.now(),
     )
 
+    # ✅ Phase 6：刚性关系（用于 SchemeOut.shipping_provider_name）
+    # - 不改 DB schema，只补 ORM relationship
+    # - lazy=selectin 与本模块其余关系一致（避免 N+1，且不靠隐式 lazy）
+    shipping_provider = relationship("ShippingProvider", lazy="selectin")
+
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
 

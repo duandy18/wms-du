@@ -27,6 +27,12 @@ class SchemeOut(BaseModel):
 
     id: int
     shipping_provider_id: int
+
+    # ✅ Phase 6：刚性契约（前端 Workbench Header 需要）
+    # - 由后端真实关联 ShippingProvider.name 提供
+    # - 不允许前端推导/猜测
+    shipping_provider_name: str
+
     name: str
     active: bool
 

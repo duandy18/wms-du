@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_surcharge_out, to_zone_out
 from app.api.routers.shipping_provider_pricing_schemes_schemas import SurchargeOut, ZoneOut
@@ -26,10 +26,27 @@ def load_scheme_entities(
     读取 Scheme + Zones(+Members,+Brackets) + Surcharges，并组装为输出对象。
     - 只做查询与组装，不做权限校验
     - scheme 不存在则抛 404
+    - ✅ Phase 6：刚性契约
+      - SchemeOut.shipping_provider_name 必须由后端提供
+      - 因此这里必须确定性加载 ShippingProvider 关系，避免隐式 lazy-load
     """
-    sch = db.get(ShippingProviderPricingScheme, scheme_id)
+    sch = (
+        db.query(ShippingProviderPricingScheme)
+        .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
+        .filter(ShippingProviderPricingScheme.id == scheme_id)
+        .one_or_none()
+    )
     if not sch:
         raise HTTPException(status_code=404, detail="Scheme not found")
+
+    # ✅ 刚性护栏：scheme 必须绑定 provider，且 provider.name 不能为空
+    sp = getattr(sch, "shipping_provider", None)
+    sp_name = getattr(sp, "name", None) if sp is not None else None
+    if not isinstance(sp_name, str) or not sp_name.strip():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Scheme shipping provider missing/invalid (scheme_id={scheme_id}, shipping_provider_id={sch.shipping_provider_id})",
+        )
 
     zones_raw = (
         db.query(ShippingProviderZone)

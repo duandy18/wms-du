@@ -78,6 +78,22 @@ def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSe
     )
 
 
+def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
+    """
+    ✅ Phase 6：刚性契约
+    - SchemeOut.shipping_provider_name 必须由后端提供
+    - 不允许前端推导/猜测
+    - 若 ORM 关系未加载或数据异常，直接抛错（让契约早爆）
+    """
+    sp = getattr(sch, "shipping_provider", None)
+    name = getattr(sp, "name", None) if sp is not None else None
+    if not isinstance(name, str) or not name.strip():
+        raise RuntimeError(
+            f"ShippingProvider name is required for scheme_id={sch.id} shipping_provider_id={sch.shipping_provider_id}"
+        )
+    return name.strip()
+
+
 def to_scheme_out(
     sch: ShippingProviderPricingScheme,
     zones: List[ZoneOut],
@@ -91,6 +107,7 @@ def to_scheme_out(
     return SchemeOut(
         id=sch.id,
         shipping_provider_id=sch.shipping_provider_id,
+        shipping_provider_name=_must_get_shipping_provider_name(sch),
         name=sch.name,
         active=bool(sch.active),
         currency=sch.currency,

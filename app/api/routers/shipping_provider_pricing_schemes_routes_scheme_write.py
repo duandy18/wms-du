@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -61,6 +62,26 @@ def _replace_segments_table(db: Session, scheme_id: int, segs_norm: Optional[lis
         )
 
 
+def _deactivate_other_active_schemes(db: Session, *, provider_id: int, keep_scheme_id: Optional[int]) -> None:
+    """
+    ✅ Phase 6：单活约束（强事实）
+    同一个 shipping_provider_id 下，任何时候只允许一个 “active=true 且未归档” 的收费标准。
+
+    当我们要启用某个 scheme 时：
+    - 自动把同 provider 下其它 active=true 且 archived_at IS NULL 的 scheme 全部置为 active=false
+    """
+    stmt = (
+        update(ShippingProviderPricingScheme)
+        .where(ShippingProviderPricingScheme.shipping_provider_id == provider_id)
+        .where(ShippingProviderPricingScheme.archived_at.is_(None))
+        .where(ShippingProviderPricingScheme.active.is_(True))
+    )
+    if keep_scheme_id is not None:
+        stmt = stmt.where(ShippingProviderPricingScheme.id != keep_scheme_id)
+
+    db.execute(stmt.values(active=False))
+
+
 def register(router: APIRouter) -> None:
     @router.post(
         "/shipping-providers/{provider_id}/pricing-schemes",
@@ -92,6 +113,10 @@ def register(router: APIRouter) -> None:
         if payload.segments_json is not None:
             segs_norm = normalize_segments_json([seg_item_to_dict(x) for x in payload.segments_json])
             segs_updated_at = datetime.now(tz=timezone.utc)
+
+        # ✅ 单活约束：若新建方案希望 active=true，则先停用同网点其他启用方案
+        if bool(payload.active):
+            _deactivate_other_active_schemes(db, provider_id=provider_id, keep_scheme_id=None)
 
         sch = ShippingProviderPricingScheme(
             shipping_provider_id=provider_id,
@@ -135,14 +160,10 @@ def register(router: APIRouter) -> None:
 
         # ✅ Pydantic v2：用 fields_set 判断“客户端是否传了某字段”
         fields_set = payload.model_fields_set
-
         data = payload.model_dump(exclude_unset=True)
 
         if "name" in data:
             sch.name = norm_nonempty(data.get("name"), "name")
-
-        if "active" in data:
-            sch.active = bool(data["active"])
 
         # ✅ 归档（关键修复）：不要依赖 model_dump 是否包含 archived_at
         # - 客户端传 archived_at（即使是 null）=> 进入这里
@@ -150,6 +171,27 @@ def register(router: APIRouter) -> None:
             sch.archived_at = payload.archived_at
             # 归档时强制停用（坚持你定的原则：归档必须是停运态）
             if sch.archived_at is not None:
+                sch.active = False
+
+        # ✅ active（单活约束）
+        if "active" in data:
+            next_active = bool(data["active"])
+
+            if next_active:
+                # ✅ 刚性：归档方案不允许启用
+                if sch.archived_at is not None:
+                    raise HTTPException(status_code=400, detail="Archived scheme cannot be activated")
+
+                # ✅ 单活：启用当前方案前，先停用同网点其它启用方案（未归档）
+                _deactivate_other_active_schemes(
+                    db,
+                    provider_id=sch.shipping_provider_id,
+                    keep_scheme_id=sch.id,
+                )
+
+                sch.active = True
+            else:
+                # 停用当前方案不影响其他方案
                 sch.active = False
 
         if "currency" in data:
