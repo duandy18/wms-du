@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .common import WeightSegmentIn
-from .zone import ZoneOut
 from .surcharge import SurchargeOut
+from .zone import ZoneOut
 
 
 class SchemeSegmentOut(BaseModel):
@@ -29,6 +29,10 @@ class SchemeOut(BaseModel):
     shipping_provider_id: int
     name: str
     active: bool
+
+    # ✅ 归档：archived_at != null => 已归档（默认列表应隐藏）
+    archived_at: Optional[datetime] = None
+
     currency: str
     effective_from: Optional[datetime] = None
     effective_to: Optional[datetime] = None
@@ -86,6 +90,11 @@ class SchemeUpdateIn(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     active: Optional[bool] = None
+
+    # ✅ 归档：设置为某个时间 => 归档；显式设为 null => 取消归档
+    # - 归档时后端会强制 active=false（写路由负责）
+    archived_at: Optional[datetime] = None
+
     currency: Optional[str] = Field(None, min_length=1, max_length=8)
 
     # ✅ 方案默认口径

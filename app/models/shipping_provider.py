@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,12 +13,12 @@ from app.db.base import Base
 
 class ShippingProvider(Base):
     """
-    物流 / 快递公司主数据（Phase 3 定型）
+    仓库可用快递网点（Phase 6 语义升级）
 
     裁决：
-    - 主表只承载主体事实（name/code/active/priority/pricing_model/region_rules）
+    - 本表一行 = 服务某仓库区域、参与运费比价的最小单元（快递网点）
+    - 必须绑定 warehouse_id（单仓归属）
     - 联系人事实在 shipping_provider_contacts 子表
-    - ORM 必须保留 contacts relationship（供读聚合 & 其他模块引用）
     """
 
     __tablename__ = "shipping_providers"
@@ -33,11 +33,21 @@ class ShippingProvider(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
+    # ✅ 网点地址（可选）：用于揽收/交接/诊断
+    address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=True,
         server_default="true",
+    )
+
+    # ✅ 单仓归属（刚性）
+    warehouse_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
     )
 
     # 运价 / 发货相关
@@ -62,7 +72,6 @@ class ShippingProvider(Base):
         onupdate=func.now(),
     )
 
-    # ✅ 必须存在：与 ShippingProviderContact.back_populates="shipping_provider" 对应
     contacts = relationship(
         "ShippingProviderContact",
         back_populates="shipping_provider",
@@ -70,7 +79,6 @@ class ShippingProvider(Base):
         order_by="(desc(ShippingProviderContact.is_primary), ShippingProviderContact.id)",
     )
 
-    # ✅ Phase 1：被哪些仓库启用（事实绑定，非策略）
     warehouse_shipping_providers = relationship(
         "WarehouseShippingProvider",
         back_populates="shipping_provider",
@@ -78,5 +86,8 @@ class ShippingProvider(Base):
         passive_deletes=True,
     )
 
+    # 可选：便于读/诊断（不影响 API）
+    warehouse = relationship("Warehouse", lazy="selectin")
+
     def __repr__(self) -> str:
-        return f"<ShippingProvider id={self.id} name={self.name!r} active={self.active}>"
+        return f"<ShippingProvider id={self.id} name={self.name!r} active={self.active} warehouse_id={self.warehouse_id}>"

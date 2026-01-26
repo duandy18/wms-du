@@ -34,7 +34,7 @@ async def _pick_one_stock_slot(session: AsyncSession):
 async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSession):
     """
     场景：
-      - 已存在一张 open reservation（platform=PDD, shop=SHOP1, wh=1, ref=REF）
+      - 已存在一张 open reservation（platform=PDD, shop=SHOP1, wh=warehouse_id, ref=REF）
       - 平台发送 SHIP 事件（带 item_id/warehouse_id/batch_code/qty）
 
     新世界观下的预期（和当前实现对齐）：
@@ -58,6 +58,7 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     qty = 3
 
     # 1) 先插入一张 reservation（open）
+    #    ✅ 关键：warehouse_id 必须与 event 中一致，否则消费逻辑无法命中
     res = await session.execute(
         text(
             """
@@ -66,13 +67,13 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
                 status, created_at, updated_at, expire_at
             )
             VALUES (
-                'PDD', :shop_id, 1, :ref,
+                'PDD', :shop_id, :warehouse_id, :ref,
                 'open', now(), now(), now() + interval '30 minutes'
             )
             RETURNING id
             """
         ),
-        {"shop_id": shop_id, "ref": ref},
+        {"shop_id": shop_id, "ref": ref, "warehouse_id": warehouse_id},
     )
     rid = res.scalar_one()
 

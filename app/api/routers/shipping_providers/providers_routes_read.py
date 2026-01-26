@@ -26,15 +26,13 @@ def register(router: APIRouter) -> None:
     @router.get("/shipping-providers", response_model=ShippingProviderListOut)
     async def list_shipping_providers(
         active: Optional[bool] = Query(None, description="按启用状态筛选；active=true 用于下拉。"),
-        q: Optional[str] = Query(
-            None, description="按名称 / 联系人模糊搜索（基于 contacts 子表）。"
-        ),
+        q: Optional[str] = Query(None, description="按名称 / 联系人模糊搜索（基于 contacts 子表）。"),
         session: AsyncSession = Depends(get_session),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ) -> ShippingProviderListOut:
         """
-        物流/快递公司列表（读聚合 contacts）。
+        物流/快递网点列表（读聚合 contacts）。
 
         权限：config.store.read
         """
@@ -69,8 +67,10 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.address,
               s.active,
               s.priority,
+              s.warehouse_id,
               s.pricing_model,
               s.region_rules
             FROM shipping_providers AS s
@@ -126,7 +126,7 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ) -> ShippingProviderDetailOut:
         """
-        物流/快递公司详情（读聚合 contacts）。
+        物流/快递网点详情（读聚合 contacts）。
 
         权限：config.store.read
         """
@@ -138,8 +138,10 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.address,
               s.active,
               s.priority,
+              s.warehouse_id,
               s.pricing_model,
               s.region_rules
             FROM shipping_providers AS s

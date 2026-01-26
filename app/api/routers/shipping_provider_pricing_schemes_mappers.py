@@ -98,6 +98,8 @@ def to_scheme_out(
         effective_to=sch.effective_to,
         default_pricing_mode=dpm,
         billable_weight_rule=sch.billable_weight_rule,
+        # ✅ 归档字段：DB 非空但输出 null 的根因就在这里（之前漏映射）
+        archived_at=getattr(sch, "archived_at", None),
         segments_json=getattr(sch, "segments_json", None),
         segments_updated_at=getattr(sch, "segments_updated_at", None),
         segments=[to_scheme_segment_out(x) for x in segs],

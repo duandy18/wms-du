@@ -98,12 +98,18 @@ def assert_scheme_bound_to_warehouse(client: TestClient, token: str, scheme_id: 
 
 
 def ensure_second_provider(client: TestClient, token: str) -> int:
+    """
+    Phase 6 刚性契约：
+    - POST /shipping-providers 创建必须带 warehouse_id
+    """
     h = auth_headers(token)
     pr = client.get("/shipping-providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"] or []
     if len(pdata) >= 2:
         return int(pdata[1]["id"])
+
+    wid = pick_warehouse_id(client, token)
 
     cr = client.post(
         "/shipping-providers",
@@ -113,6 +119,7 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
             "code": "TP2",
             "active": True,
             "priority": 100,
+            "warehouse_id": int(wid),
             "pricing_model": None,
             "region_rules": None,
         },
