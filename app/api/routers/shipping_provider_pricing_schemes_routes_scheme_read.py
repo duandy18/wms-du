@@ -30,6 +30,8 @@ def register(router: APIRouter) -> None:
     def list_schemes(
         provider_id: int = Path(..., ge=1),
         active: Optional[bool] = Query(None),
+        include_archived: bool = Query(False),
+        include_inactive: bool = Query(False),
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
@@ -42,8 +44,18 @@ def register(router: APIRouter) -> None:
         q = db.query(ShippingProviderPricingScheme).filter(
             ShippingProviderPricingScheme.shipping_provider_id == provider_id
         )
+
+        # ✅ 默认隐藏归档；include_archived=true 时包含归档记录
+        if not include_archived:
+            q = q.filter(ShippingProviderPricingScheme.archived_at.is_(None))
+
+        # ✅ 默认只显示 active=true（当前生效）；include_inactive=true 时包含 inactive
+        # 若显式传 active=...，则以 active 参数为准（覆盖 include_inactive 的默认策略）
         if active is not None:
             q = q.filter(ShippingProviderPricingScheme.active.is_(active))
+        else:
+            if not include_inactive:
+                q = q.filter(ShippingProviderPricingScheme.active.is_(True))
 
         schemes = q.order_by(
             ShippingProviderPricingScheme.active.desc(),
@@ -121,6 +133,8 @@ def register(router: APIRouter) -> None:
             name="DEBUG_SCHEME",
             active=True,
             currency="CNY",
+            # ✅ 关键：debug echo 必须显式给 archived_at，否则默认 None 会误导诊断
+            archived_at=datetime.now(tz=timezone.utc),
             default_pricing_mode="linear_total",
             billable_weight_rule=None,
             segments_json=[

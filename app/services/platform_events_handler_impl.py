@@ -222,14 +222,31 @@ async def handle_event_batch(
                     shop_id=task["shop_id"],
                 )
 
+                # ✅ 关键改造：消费候选仓 = [默认仓（若有）] + [事件 lines 中显式 warehouse_id（location_hint）]
+                wh_candidates: List[int] = []
+                if wh_for_reserve is not None:
+                    try:
+                        wh_candidates.append(int(wh_for_reserve))
+                    except Exception:
+                        pass
+
+                # 从 lines 中提取 distinct warehouse_id（location_hint）
+                for x in lines:
+                    try:
+                        wid = int(x["warehouse_id"])
+                    except Exception:
+                        continue
+                    if wid not in wh_candidates:
+                        wh_candidates.append(wid)
+
                 reserve_used = False
-                if wh_for_reserve is None:
-                    # ✅ 禁止隐性 fallback：找不到默认仓就不 consume reserve
+                if not wh_candidates:
+                    # ✅ 仍然禁止隐性 fallback：既无默认仓，也无显式 location_hint，则不 consume reserve
                     await audit.write_json(
                         session,
                         level="INFO",
                         message={
-                            "evt": "reserve_consume_skipped_no_default_wh",
+                            "evt": "reserve_consume_skipped_no_wh_candidate",
                             "trace_id": trace.trace_id,
                             "platform": platform,
                             "ref": task["ref"],
@@ -237,42 +254,47 @@ async def handle_event_batch(
                     )
                     reserve_used = False
                 else:
-                    try:
-                        rsv_result = await soft_svc.pick_consume(
-                            session,
-                            platform=platform_db,
-                            shop_id=task["shop_id"],
-                            warehouse_id=int(wh_for_reserve),
-                            ref=task["ref"],
-                            occurred_at=occurred_at,
-                            trace_id=trace.trace_id,
-                        )
-                        if rsv_result.get("status") == "CONSUMED":
-                            reserve_used = True
+                    for wid in wh_candidates:
+                        try:
+                            rsv_result = await soft_svc.pick_consume(
+                                session,
+                                platform=platform_db,
+                                shop_id=task["shop_id"],
+                                warehouse_id=int(wid),
+                                ref=task["ref"],
+                                occurred_at=occurred_at,
+                                trace_id=trace.trace_id,
+                            )
+                            if rsv_result.get("status") == "CONSUMED":
+                                reserve_used = True
+                                await audit.write_json(
+                                    session,
+                                    level="INFO",
+                                    message={
+                                        "evt": "event_shipped_via_reserve",
+                                        "trace_id": trace.trace_id,
+                                        "platform": platform,
+                                        "ref": task["ref"],
+                                        "reservation_id": rsv_result.get("reservation_id"),
+                                        "warehouse_id": int(wid),
+                                        "warehouse_id_candidates": wh_candidates,
+                                    },
+                                )
+                                break
+                        except Exception as e:
                             await audit.write_json(
                                 session,
-                                level="INFO",
+                                level="WARN",
                                 message={
-                                    "evt": "event_shipped_via_reserve",
+                                    "evt": "reserve_consume_failed",
                                     "trace_id": trace.trace_id,
                                     "platform": platform,
                                     "ref": task["ref"],
-                                    "reservation_id": rsv_result.get("reservation_id"),
+                                    "warehouse_id": int(wid),
+                                    "error": str(e),
                                 },
                             )
-                    except Exception as e:
-                        await audit.write_json(
-                            session,
-                            level="WARN",
-                            message={
-                                "evt": "reserve_consume_failed",
-                                "trace_id": trace.trace_id,
-                                "platform": platform,
-                                "ref": task["ref"],
-                                "error": str(e),
-                            },
-                        )
-                        reserve_used = False
+                            continue
 
                 # Step 2: reserve 未发挥作用 → 硬出库
                 if not reserve_used:

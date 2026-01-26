@@ -133,14 +133,28 @@ def register(router: APIRouter) -> None:
         if not sch:
             raise HTTPException(status_code=404, detail="Scheme not found")
 
+        # ✅ Pydantic v2：用 fields_set 判断“客户端是否传了某字段”
+        fields_set = payload.model_fields_set
+
         data = payload.model_dump(exclude_unset=True)
 
         if "name" in data:
             sch.name = norm_nonempty(data.get("name"), "name")
+
         if "active" in data:
             sch.active = bool(data["active"])
+
+        # ✅ 归档（关键修复）：不要依赖 model_dump 是否包含 archived_at
+        # - 客户端传 archived_at（即使是 null）=> 进入这里
+        if "archived_at" in fields_set:
+            sch.archived_at = payload.archived_at
+            # 归档时强制停用（坚持你定的原则：归档必须是停运态）
+            if sch.archived_at is not None:
+                sch.active = False
+
         if "currency" in data:
             sch.currency = (data["currency"] or "CNY").strip() or "CNY"
+
         if "effective_from" in data:
             sch.effective_from = data["effective_from"]
         if "effective_to" in data:

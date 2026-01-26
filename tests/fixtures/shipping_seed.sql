@@ -3,12 +3,22 @@
 -- 策略：
 -- - 幂等：尽量用固定 name，并在存在时复用；避免每次测试产生脏数据
 -- - 最小：1 provider / 1 scheme / 1 zone / 2 brackets
+--
+-- Phase 6 刚性契约补丁：
+-- - shipping_providers.warehouse_id NOT NULL
+-- - 因此 seed 时必须补 warehouse_id（取 warehouses 最小 id 作为测试锚点）
 
 -- 1) provider
-WITH sp AS (
-  INSERT INTO shipping_providers (name, code, active, priority)
-  VALUES ('UT-SP-1', 'UT-SP-1', TRUE, 100)
-  ON CONFLICT (name) DO UPDATE SET active = TRUE
+WITH wh AS (
+  SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
+),
+sp AS (
+  INSERT INTO shipping_providers (name, code, active, priority, warehouse_id)
+  SELECT 'UT-SP-1', 'UT-SP-1', TRUE, 100, wh.id
+  FROM wh
+  ON CONFLICT (name) DO UPDATE
+    SET active = TRUE,
+        warehouse_id = EXCLUDED.warehouse_id
   RETURNING id
 ),
 sp2 AS (

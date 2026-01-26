@@ -44,6 +44,9 @@ class ShippingProviderPricingScheme(Base):
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
+    # ✅ 归档：archived_at != null => 已归档（不删除，保留历史解释器）
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="CNY", server_default="CNY")
 
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
