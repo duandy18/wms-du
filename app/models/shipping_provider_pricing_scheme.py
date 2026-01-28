@@ -52,7 +52,7 @@ class ShippingProviderPricingScheme(Base):
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ✅ 方案默认口径（方案级：一套表一个口径）
+    # ✅ 方案默认口径（仅作为默认建议，不再用于刚性锁定 bracket 的 pricing_mode）
     default_pricing_mode: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -62,11 +62,17 @@ class ShippingProviderPricingScheme(Base):
 
     billable_weight_rule: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
-    # ✅ Phase 4.3：列结构（重量分段模板）方案级真相（后端落库）
-    # ⚠️ 继续保留该字段用于兼容/镜像（由“启用模板”同步写回）
+    # ✅ 兼容字段：scheme 级 segments_json（仅允许通过显式写入口修改；模板动作不再隐式写回）
     segments_json: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     segments_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ✅ 显式默认回退模板：zone 未绑定 segment_template_id 时使用
+    default_segment_template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_scheme_segment_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -77,8 +83,6 @@ class ShippingProviderPricingScheme(Base):
     )
 
     # ✅ Phase 6：刚性关系（用于 SchemeOut.shipping_provider_name）
-    # - 不改 DB schema，只补 ORM relationship
-    # - lazy=selectin 与本模块其余关系一致（避免 N+1，且不靠隐式 lazy）
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
 
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
@@ -103,13 +107,26 @@ class ShippingProviderPricingScheme(Base):
     )
 
     # ✅ 新增：模板列表（路线 1 的真相）
+    # 关键：显式指定 foreign_keys，避免与 default_segment_template_id 的反向 FK 产生歧义
     segment_templates = relationship(
         "ShippingProviderPricingSchemeSegmentTemplate",
         back_populates="scheme",
         lazy="selectin",
         order_by="ShippingProviderPricingSchemeSegmentTemplate.id.asc()",
         cascade="all, delete-orphan",
+        foreign_keys="ShippingProviderPricingSchemeSegmentTemplate.scheme_id",
+    )
+
+    # ✅ 显式默认模板（回退真相）
+    default_segment_template = relationship(
+        "ShippingProviderPricingSchemeSegmentTemplate",
+        lazy="selectin",
+        foreign_keys=[default_segment_template_id],
+        post_update=True,
     )
 
     def __repr__(self) -> str:
-        return f"<ShippingProviderPricingScheme id={self.id} provider_id={self.shipping_provider_id} name={self.name!r}>"
+        return (
+            f"<ShippingProviderPricingScheme id={self.id} provider_id={self.shipping_provider_id} "
+            f"name={self.name!r}>"
+        )

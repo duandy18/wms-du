@@ -36,6 +36,10 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SegmentTemplateCreateIn,
     SegmentTemplateItemsPutIn,
     SegmentTemplateItemActivePatchIn,
+    # zone brackets matrix (NEW)
+    ZoneBracketsMatrixOut,
+    ZoneBracketsMatrixGroupOut,
+    SegmentRangeOut,
 )
 
 from app.api.routers.shipping_provider_pricing_schemes.validators import (
@@ -77,6 +81,10 @@ __all__ = [
     "SegmentTemplateCreateIn",
     "SegmentTemplateItemsPutIn",
     "SegmentTemplateItemActivePatchIn",
+    # zone brackets matrix (NEW)
+    "ZoneBracketsMatrixOut",
+    "ZoneBracketsMatrixGroupOut",
+    "SegmentRangeOut",
     # validators
     "validate_default_pricing_mode",
 ]

@@ -7,6 +7,9 @@
 -- Phase 6 刚性契约补丁：
 -- - shipping_providers.warehouse_id NOT NULL
 -- - 因此 seed 时必须补 warehouse_id（取 warehouses 最小 id 作为测试锚点）
+--
+-- 2026-01：RS0 ruleset 已移除（DB / API / 校验均不再存在）
+-- - 因此 seed 不得再写入 ruleset_key
 
 -- 1) provider
 WITH wh AS (
@@ -29,8 +32,17 @@ sp2 AS (
 
 -- 2) scheme（挂在 provider 下）
 sch AS (
-  INSERT INTO shipping_provider_pricing_schemes (shipping_provider_id, name, active)
-  SELECT id, 'UT-SCHEME-1', TRUE FROM sp2 LIMIT 1
+  INSERT INTO shipping_provider_pricing_schemes (
+    shipping_provider_id,
+    name,
+    active
+  )
+  SELECT
+    id,
+    'UT-SCHEME-1',
+    TRUE
+  FROM sp2
+  LIMIT 1
   ON CONFLICT DO NOTHING
   RETURNING id
 ),
@@ -60,7 +72,14 @@ zn2 AS (
 )
 
 -- 4) brackets（挂在 zone 下，至少 2 条）
-INSERT INTO shipping_provider_zone_brackets (zone_id, min_kg, max_kg, pricing_mode, flat_amount, active)
+INSERT INTO shipping_provider_zone_brackets (
+  zone_id,
+  min_kg,
+  max_kg,
+  pricing_mode,
+  flat_amount,
+  active
+)
 SELECT
   zn2.id,
   x.min_kg,

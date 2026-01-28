@@ -29,6 +29,11 @@ from .segment_template import (
     SegmentTemplateItemsPutIn,
     SegmentTemplateItemActivePatchIn,
 )
+from .zone_brackets_matrix import (
+    ZoneBracketsMatrixOut,
+    ZoneBracketsMatrixGroupOut,
+    SegmentRangeOut,
+)
 
 __all__ = [
     # common
@@ -65,4 +70,8 @@ __all__ = [
     "SegmentTemplateCreateIn",
     "SegmentTemplateItemsPutIn",
     "SegmentTemplateItemActivePatchIn",
+    # zone brackets matrix
+    "ZoneBracketsMatrixOut",
+    "ZoneBracketsMatrixGroupOut",
+    "SegmentRangeOut",
 ]

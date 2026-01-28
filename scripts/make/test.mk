@@ -152,4 +152,6 @@ test-pricing-smoke: dev-reset-test-db audit-all
 	  tests/api/test_shipping_quote_calc_api.py \
 	  tests/api/test_shipping_quote_recommend_contract.py \
 	  tests/api/test_shipping_quote_scheme_warehouses_api.py \
-	  tests/api/test_zone_brackets_constraints_and_copy.py
+	  tests/api/test_zone_brackets_constraints_and_copy.py \
+	  tests/api/test_zone_brackets_matrix_unbound_contract.py \
+		  tests/api/test_zone_brackets_matrix_grouped_contract.py

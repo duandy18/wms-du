@@ -25,6 +25,15 @@ class ShippingProviderZone(Base):
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
+    # ✅ Phase X：Zone 绑定“重量段结构模板”（用于目的地分流后的段结构差异）
+    # - NULL：沿用 scheme 的默认/生效段结构（兼容旧世界）
+    # - 非 NULL：该 zone 使用指定模板的段结构（例如青海/广西）
+    segment_template_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_scheme_segment_templates.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

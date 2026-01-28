@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session, selectinload
@@ -16,10 +16,19 @@ from app.api.routers.shipping_provider_pricing_schemes_schemas import (
     SchemeListOut,
     SchemeOut,
 )
+from app.api.routers.shipping_provider_pricing_schemes.schemas.zone_brackets_matrix import (
+    ZoneBracketsMatrixOut,
+    ZoneBracketsMatrixGroupOut,
+    SegmentRangeOut,
+)
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_segment_template import ShippingProviderPricingSchemeSegmentTemplate
+from app.models.shipping_provider_pricing_scheme_segment_template_item import (
+    ShippingProviderPricingSchemeSegmentTemplateItem,
+)
 
 
 def register(router: APIRouter) -> None:
@@ -41,21 +50,15 @@ def register(router: APIRouter) -> None:
         if not provider:
             raise HTTPException(status_code=404, detail="ShippingProvider not found")
 
-        # ✅ Phase 6：刚性契约
-        # SchemeOut.shipping_provider_name 需要从 ORM 关系拿到 ShippingProvider.name
-        # 因此 list_schemes 必须确定性 eager-load shipping_provider
         q = (
             db.query(ShippingProviderPricingScheme)
             .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
             .filter(ShippingProviderPricingScheme.shipping_provider_id == provider_id)
         )
 
-        # ✅ 默认隐藏归档；include_archived=true 时包含归档记录
         if not include_archived:
             q = q.filter(ShippingProviderPricingScheme.archived_at.is_(None))
 
-        # ✅ 默认只显示 active=true（当前生效）；include_inactive=true 时包含 inactive
-        # 若显式传 active=...，则以 active 参数为准（覆盖 include_inactive 的默认策略）
         if active is not None:
             q = q.filter(ShippingProviderPricingScheme.active.is_(active))
         else:
@@ -82,6 +85,106 @@ def register(router: APIRouter) -> None:
         check_perm(db, user, "config.store.read")
         sch, zones, surcharges = load_scheme_entities(db, scheme_id)
         return SchemeDetailOut(ok=True, data=to_scheme_out(sch, zones=zones, surcharges=surcharges))
+
+    # ✅ 方案 B：按模板分组的 Zone×Brackets 矩阵（供前端拆成多张表）
+    @router.get(
+        "/pricing-schemes/{scheme_id}/zone-brackets-matrix",
+        response_model=ZoneBracketsMatrixOut,
+    )
+    def get_zone_brackets_matrix(
+        scheme_id: int = Path(..., ge=1),
+        db: Session = Depends(get_db),
+        user=Depends(get_current_user),
+    ):
+        check_perm(db, user, "config.store.read")
+
+        # 复用现有 loader：拿到 zones（含 segment_template_id）与 brackets（含 price_json）
+        sch, zones, _surcharges = load_scheme_entities(db, scheme_id)
+
+        # 1) 分组：template_id -> zones
+        grouped: Dict[int, list] = {}
+        unbound: list = []
+
+        for z in zones:
+            tid = getattr(z, "segment_template_id", None)
+            if tid is None:
+                unbound.append(z)
+                continue
+            grouped.setdefault(int(tid), []).append(z)
+
+        template_ids = sorted(grouped.keys())
+
+        # 2) 批量查 templates（避免 N+1）
+        templates: Dict[int, ShippingProviderPricingSchemeSegmentTemplate] = {}
+        if template_ids:
+            rows = (
+                db.query(ShippingProviderPricingSchemeSegmentTemplate)
+                .filter(ShippingProviderPricingSchemeSegmentTemplate.id.in_(template_ids))
+                .order_by(ShippingProviderPricingSchemeSegmentTemplate.id.asc())
+                .all()
+            )
+            templates = {int(t.id): t for t in rows}
+
+        # 3) 批量查 items（避免 N+1）
+        items_by_tpl: Dict[int, List[ShippingProviderPricingSchemeSegmentTemplateItem]] = {}
+        if template_ids:
+            items = (
+                db.query(ShippingProviderPricingSchemeSegmentTemplateItem)
+                .filter(ShippingProviderPricingSchemeSegmentTemplateItem.template_id.in_(template_ids))
+                .order_by(
+                    ShippingProviderPricingSchemeSegmentTemplateItem.template_id.asc(),
+                    ShippingProviderPricingSchemeSegmentTemplateItem.ord.asc(),
+                    ShippingProviderPricingSchemeSegmentTemplateItem.id.asc(),
+                )
+                .all()
+            )
+            for it in items:
+                items_by_tpl.setdefault(int(it.template_id), []).append(it)
+
+        groups: List[ZoneBracketsMatrixGroupOut] = []
+
+        for tid in template_ids:
+            tpl = templates.get(tid)
+            if tpl is None:
+                # 防御性：zone 上绑了一个不存在的模板 id，这本身就是数据损坏
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Zone references missing segment_template_id={tid} (scheme_id={scheme_id})",
+                )
+
+            # ✅ 确保模板属于该 scheme（事实约束）
+            if int(getattr(tpl, "scheme_id", 0)) != int(scheme_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Segment template does not belong to this scheme (template_id={tid}, scheme_id={scheme_id})",
+                )
+
+            # 只输出 active items（用于矩阵列/段结构真相）
+            segs: List[SegmentRangeOut] = []
+            for it in items_by_tpl.get(tid, []):
+                if getattr(it, "active", True) is False:
+                    continue
+                segs.append(
+                    SegmentRangeOut(
+                        ord=int(getattr(it, "ord", 0)),
+                        min_kg=Decimal(str(getattr(it, "min_kg"))),
+                        max_kg=(Decimal(str(getattr(it, "max_kg"))) if getattr(it, "max_kg", None) is not None else None),
+                        active=bool(getattr(it, "active", True)),
+                    )
+                )
+
+            groups.append(
+                ZoneBracketsMatrixGroupOut(
+                    segment_template_id=tid,
+                    template_name=str(getattr(tpl, "name", "") or "").strip() or f"template#{tid}",
+                    template_status=str(getattr(tpl, "status", "") or "").strip() or "unknown",
+                    template_is_active=bool(getattr(tpl, "is_active", False)),
+                    segments=segs,
+                    zones=grouped.get(tid, []),
+                )
+            )
+
+        return ZoneBracketsMatrixOut(ok=True, scheme_id=int(getattr(sch, "id", scheme_id)), groups=groups, unbound_zones=unbound)
 
     # ======================================================================
     # DEBUG: echo a fully-populated response (no DB access)
@@ -139,7 +242,6 @@ def register(router: APIRouter) -> None:
             name="DEBUG_SCHEME",
             active=True,
             currency="CNY",
-            # ✅ 关键：debug echo 必须显式给 archived_at，否则默认 None 会误导诊断
             archived_at=datetime.now(tz=timezone.utc),
             default_pricing_mode="linear_total",
             billable_weight_rule=None,
