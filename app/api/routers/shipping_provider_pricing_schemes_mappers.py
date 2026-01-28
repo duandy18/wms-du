@@ -51,6 +51,8 @@ def to_zone_out(
         scheme_id=z.scheme_id,
         name=z.name,
         active=bool(z.active),
+        # ✅ Zone 绑定段结构模板（可选）
+        segment_template_id=getattr(z, "segment_template_id", None),
         members=[to_member_out(x) for x in members],
         brackets=[to_bracket_out(x) for x in brackets],
     )
@@ -89,7 +91,8 @@ def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
     name = getattr(sp, "name", None) if sp is not None else None
     if not isinstance(name, str) or not name.strip():
         raise RuntimeError(
-            f"ShippingProvider name is required for scheme_id={sch.id} shipping_provider_id={sch.shipping_provider_id}"
+            f"ShippingProvider name is required for scheme_id={sch.id} "
+            f"shipping_provider_id={sch.shipping_provider_id}"
         )
     return name.strip()
 
@@ -115,8 +118,9 @@ def to_scheme_out(
         effective_to=sch.effective_to,
         default_pricing_mode=dpm,
         billable_weight_rule=sch.billable_weight_rule,
-        # ✅ 归档字段：DB 非空但输出 null 的根因就在这里（之前漏映射）
         archived_at=getattr(sch, "archived_at", None),
+        # ✅ 显式默认回退模板（核心新增）
+        default_segment_template_id=getattr(sch, "default_segment_template_id", None),
         segments_json=getattr(sch, "segments_json", None),
         segments_updated_at=getattr(sch, "segments_updated_at", None),
         segments=[to_scheme_segment_out(x) for x in segs],

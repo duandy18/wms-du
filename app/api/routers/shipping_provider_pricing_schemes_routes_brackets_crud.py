@@ -20,6 +20,7 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_brackets_shared im
     validate_bracket_range,
 )
 from app.db.deps import get_db
+from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
 
@@ -41,6 +42,10 @@ def register_brackets_crud_routes(router: APIRouter) -> None:
         z = db.get(ShippingProviderZone, zone_id)
         if not z:
             raise HTTPException(status_code=404, detail="Zone not found")
+
+        sch = db.get(ShippingProviderPricingScheme, z.scheme_id)
+        if not sch:
+            raise HTTPException(status_code=404, detail="Scheme not found")
 
         validate_bracket_range(payload.min_kg, payload.max_kg)
 
@@ -86,6 +91,14 @@ def register_brackets_crud_routes(router: APIRouter) -> None:
         b = db.get(ShippingProviderZoneBracket, bracket_id)
         if not b:
             raise HTTPException(status_code=404, detail="Bracket not found")
+
+        z = db.get(ShippingProviderZone, b.zone_id)
+        if not z:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        sch = db.get(ShippingProviderPricingScheme, z.scheme_id)
+        if not sch:
+            raise HTTPException(status_code=404, detail="Scheme not found")
 
         data = payload.dict(exclude_unset=True)
 

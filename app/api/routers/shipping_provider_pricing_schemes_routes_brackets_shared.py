@@ -46,21 +46,15 @@ def validate_payload_for_mode(mode: str, flat_amount, base_amount, rate_per_kg, 
         return
     if mode == "linear_total":
         if rate_per_kg is None:
-            raise HTTPException(
-                status_code=422, detail="linear_total pricing_mode requires rate_per_kg"
-            )
+            raise HTTPException(status_code=422, detail="linear_total pricing_mode requires rate_per_kg")
         return
     if mode == "step_over":
         if base_kg is None:
             raise HTTPException(status_code=422, detail="step_over pricing_mode requires base_kg")
         if base_amount is None:
-            raise HTTPException(
-                status_code=422, detail="step_over pricing_mode requires base_amount"
-            )
+            raise HTTPException(status_code=422, detail="step_over pricing_mode requires base_amount")
         if rate_per_kg is None:
-            raise HTTPException(
-                status_code=422, detail="step_over pricing_mode requires rate_per_kg"
-            )
+            raise HTTPException(status_code=422, detail="step_over pricing_mode requires rate_per_kg")
         return
     if mode == "manual_quote":
         return
@@ -101,9 +95,7 @@ def handle_integrity_error(e: IntegrityError) -> None:
     if "ck_spzb_flat_needs_flat_amount" in msg:
         raise HTTPException(status_code=422, detail="flat pricing_mode requires flat_amount")
     if "ck_spzb_linear_needs_rate" in msg:
-        raise HTTPException(
-            status_code=422, detail="linear_total pricing_mode requires rate_per_kg"
-        )
+        raise HTTPException(status_code=422, detail="linear_total pricing_mode requires rate_per_kg")
     if "ck_spzb_range_valid" in msg or "spzb_range_valid" in msg:
         raise HTTPException(
             status_code=422,

@@ -43,16 +43,21 @@ class SchemeOut(BaseModel):
     effective_from: Optional[datetime] = None
     effective_to: Optional[datetime] = None
 
-    # ✅ 方案默认口径（方案级：一套表一个口径）
+    # ✅ 方案默认口径（仅作为默认建议，不再用于刚性锁定 bracket 的 pricing_mode）
     default_pricing_mode: str
 
     billable_weight_rule: Optional[Dict[str, Any]] = None
+
+    # ✅ 显式默认回退模板（zone 未绑定 segment_template_id 时使用）
+    # - 不依赖 is_active
+    # - 不依赖 segments_json
+    default_segment_template_id: Optional[int] = None
 
     # ✅ Phase 4.3：列结构（重量分段模板）后端真相（兼容/镜像）
     segments_json: Optional[List[WeightSegmentIn]] = None
     segments_updated_at: Optional[datetime] = None
 
-    # ✅ 新增：结构化段表输出（含 active/id）
+    # ✅ 结构化段表输出（含 active/id）
     segments: List[SchemeSegmentOut] = Field(default_factory=list)
 
     zones: List[ZoneOut] = Field(default_factory=list)
@@ -98,12 +103,11 @@ class SchemeUpdateIn(BaseModel):
     active: Optional[bool] = None
 
     # ✅ 归档：设置为某个时间 => 归档；显式设为 null => 取消归档
-    # - 归档时后端会强制 active=false（写路由负责）
     archived_at: Optional[datetime] = None
 
     currency: Optional[str] = Field(None, min_length=1, max_length=8)
 
-    # ✅ 方案默认口径
+    # ✅ 方案默认口径（仅默认建议）
     default_pricing_mode: Optional[str] = Field(None, min_length=1, max_length=32)
 
     effective_from: Optional[datetime] = None
