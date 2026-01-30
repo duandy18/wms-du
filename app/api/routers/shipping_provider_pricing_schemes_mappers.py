@@ -51,7 +51,7 @@ def to_zone_out(
         scheme_id=z.scheme_id,
         name=z.name,
         active=bool(z.active),
-        # ✅ Zone 绑定段结构模板（可选）
+        # ✅ 新合同：允许为空（zones 页面不再负责绑定模板）
         segment_template_id=getattr(z, "segment_template_id", None),
         members=[to_member_out(x) for x in members],
         brackets=[to_bracket_out(x) for x in brackets],

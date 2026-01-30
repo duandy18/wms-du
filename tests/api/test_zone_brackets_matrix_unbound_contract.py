@@ -9,27 +9,38 @@ from tests.api._helpers_pricing_matrix import (
     ensure_provider_id,
     ensure_scheme_id,
     create_zones,
+    create_segment_template,
 )
 
 
 @pytest.mark.asyncio
-async def test_zone_brackets_matrix_exposes_unbound_zones_no_fallback(client: httpx.AsyncClient) -> None:
+async def test_zone_brackets_matrix_unbound_zones_contract_is_deprecated_under_zone_template_required(client: httpx.AsyncClient) -> None:
     """
-    目标：当 zones 未绑定 segment_template_id 时
-    - groups 必须为空
-    - unbound_zones 必须显式返回全部 zones（不兜底，不猜结构）
+    新合同（硬约束版）：
+    - Zone 必须绑定 segment_template_id
+    - 因此 “unbound_zones（未绑定模板的 zones）” 这条合同已退役
+    - matrix 仍可保留 unbound_zones 字段，但应恒为空
     """
     headers = await login_admin_headers(client)
     provider_id = await ensure_provider_id(client, headers)
-    scheme_id = await ensure_scheme_id(client, headers, provider_id, name="UT-MATRIX-UNBOUND")
+    scheme_id = await ensure_scheme_id(client, headers, provider_id, name="UT-MATRIX-UNBOUND-DEPRECATED")
+
+    # 创建一个模板并附带最小 items（segments）用于 matrix 输出
+    tpl_id = await create_segment_template(
+        client,
+        headers,
+        scheme_id,
+        name="UT-TPL-ONE",
+        segments=[("0.000", "1.000"), ("1.000", None)],
+    )
 
     zone_ids = await create_zones(
         client,
         headers,
         scheme_id,
         zones=[
-            {"name": "UT-ZONE-A", "active": True, "provinces": ["海南省"]},
-            {"name": "UT-ZONE-B", "active": True, "provinces": ["青海省"]},
+            {"name": "UT-ZONE-A", "active": True, "provinces": ["海南省"], "segment_template_id": tpl_id},
+            {"name": "UT-ZONE-B", "active": True, "provinces": ["青海省"], "segment_template_id": tpl_id},
         ],
     )
     assert len(zone_ids) == 2
@@ -40,11 +51,13 @@ async def test_zone_brackets_matrix_exposes_unbound_zones_no_fallback(client: ht
 
     assert data["ok"] is True
     assert data["scheme_id"] == scheme_id
-    assert data["groups"] == []
 
+    # 由于两个 zone 都绑定同一模板，应该只有一个 group
+    assert isinstance(data["groups"], list)
+    assert len(data["groups"]) == 1
+    assert data["groups"][0]["segment_template_id"] == tpl_id
+
+    # 新合同下 unbound_zones 恒为空
     unbound = data["unbound_zones"]
     assert isinstance(unbound, list)
-    assert len(unbound) == 2
-    for z in unbound:
-        assert z["scheme_id"] == scheme_id
-        assert z.get("segment_template_id") is None
+    assert len(unbound) == 0

@@ -5,8 +5,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .common import ZoneMemberOut
 from .bracket import ZoneBracketOut
+from .common import ZoneMemberOut
 
 
 class ZoneOut(BaseModel):
@@ -17,9 +17,10 @@ class ZoneOut(BaseModel):
     name: str
     active: bool
 
-    # ✅ Phase X：Zone 绑定段结构模板（用于目的地分流后的段结构差异）
-    # - None：沿用 scheme 的默认/生效段结构（兼容旧世界）
-    # - 非 None：该 zone 使用指定模板的段结构（例如青海/广西）
+    # ✅ 新合同（按你本次裁决）：
+    # - zones 页面只负责“编辑区域（省份/启停/名称）”
+    # - 重量段模板绑定统一在二维工作台完成
+    # - 因此：Zone.segment_template_id 在读模型中允许为空
     segment_template_id: Optional[int] = None
 
     members: List[ZoneMemberOut] = Field(default_factory=list)
@@ -32,7 +33,7 @@ class ZoneCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     active: bool = True
 
-    # ✅ 可选：创建时直接绑定模板
+    # ✅ 创建允许不绑定（绑定由二维工作台负责）
     segment_template_id: Optional[int] = None
 
 
@@ -42,7 +43,10 @@ class ZoneUpdateIn(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     active: Optional[bool] = None
 
-    # ✅ 可选：patch 绑定/解绑模板（None 表示解绑）
+    # ✅ PATCH 允许：
+    # - 不提供：不更新模板绑定
+    # - 提供 null：清空绑定（由二维工作台重新绑定）
+    # - 提供 int：更新绑定
     segment_template_id: Optional[int] = None
 
 
@@ -53,7 +57,7 @@ class ZoneCreateAtomicIn(BaseModel):
     active: bool = True
     provinces: List[str] = Field(default_factory=list, description="省份集合（必填，至少 1 个）")
 
-    # ✅ 可选：原子创建时直接绑定模板
+    # ✅ 原子创建同样允许不绑定（绑定由二维工作台负责）
     segment_template_id: Optional[int] = None
 
 
@@ -64,7 +68,7 @@ class ZoneMemberCreateIn(BaseModel):
     value: str = Field(..., min_length=1, max_length=64)
 
 
-# ✅ 新增：原子替换某个 Zone 的 province members
+# ✅ 原子替换某个 Zone 的 province members
 class ZoneProvinceMembersReplaceIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

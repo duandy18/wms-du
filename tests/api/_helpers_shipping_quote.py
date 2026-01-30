@@ -128,10 +128,51 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
+def _pick_template_id(data: dict) -> int:
+    # 兼容常见响应形态
+    for k in ("id", "template_id", "segment_template_id"):
+        if k in data and data[k] is not None:
+            return int(data[k])
+    if "data" in data and isinstance(data["data"], dict):
+        return _pick_template_id(data["data"])
+    raise AssertionError(f"cannot resolve template_id from response: {data}")
+
+
+def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
+    """
+    Zone 新合同：必须绑定 segment_template_id。
+    这里创建一个最小模板（带最小 items），不依赖 publish/activate 生命周期。
+    """
+    h = auth_headers(token)
+
+    # 优先 items
+    r = client.post(
+        f"/pricing-schemes/{scheme_id}/segment-templates",
+        headers=h,
+        json={
+            "name": name,
+            "items": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
+        },
+    )
+    if r.status_code not in (200, 201):
+        # fallback segments
+        r = client.post(
+            f"/pricing-schemes/{scheme_id}/segment-templates",
+            headers=h,
+            json={
+                "name": name,
+                "segments": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
+            },
+        )
+
+    assert r.status_code in (200, 201), r.text
+    return _pick_template_id(r.json())
+
+
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     """
     创建一套最小可算的 scheme：
-    provider -> scheme -> zone_atomic -> brackets + surcharge
+    provider -> scheme -> segment_template -> zone_atomic -> brackets + surcharge
     """
     h = auth_headers(token)
 
@@ -155,6 +196,9 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    # ✅ 新合同：Zone 必绑模板 —— 先创建一个最小模板
+    tpl_id = _create_min_template(client, token, scheme_id, name="TEST-TPL-BASE")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -163,6 +207,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
             "priority": 100,
             "active": True,
             "provinces": ["北京市", "天津市", "河北省"],
+            "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
@@ -191,7 +236,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id}
+    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
 
 
 def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_id: int, *, name_suffix: str) -> Dict[str, int]:
@@ -214,6 +259,9 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    # ✅ 新合同：Zone 必绑模板
+    tpl_id = _create_min_template(client, token, scheme_id, name=f"TEST-TPL-{name_suffix}")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -222,6 +270,7 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
             "priority": 100,
             "active": True,
             "provinces": ["河北省"],
+            "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
@@ -241,4 +290,4 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     )
     assert br.status_code == 201, br.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id}
+    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}

@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from .types import Dest, _s
-from .weight import _round_weight
 
 
 def _cond_match(condition: Dict[str, Any], dest: Dest, flags: List[str]) -> bool:
@@ -40,10 +39,20 @@ def _calc_surcharge_amount(
     billable_weight_kg: float,
     scheme_rounding: Optional[Dict[str, Any]],
 ) -> Tuple[float, Dict[str, Any]]:
+    """
+    ✅ 重要合同（本轮落地）：
+    - billable_weight_kg 已由 _compute_billable_weight_kg 计算并完成 rounding（进位/取整）。
+    - 附加费计算不得对 weight 再做第二次 rounding，避免 double-rounding。
+    - amount_json.rounding / scheme_rounding 参数保留以兼容旧配置与未来解释，但不再参与计费重计算。
+    """
     aj = amount_json or {}
     kind = str(aj.get("kind") or "flat").lower()
-    rounding = aj.get("rounding") or scheme_rounding
-    w = _round_weight(float(billable_weight_kg), rounding)
+
+    # ✅ 最终计费重：不再二次取整
+    w = float(billable_weight_kg)
+
+    # rounding 已不再用于计算，但保留变量（便于未来解释/审计，不影响本轮合同）
+    _ = aj.get("rounding") or scheme_rounding
 
     if kind == "flat":
         amt = float(aj.get("amount") or 0.0)

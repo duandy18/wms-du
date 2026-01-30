@@ -44,7 +44,27 @@ async def _unhandled_exc(_req: Request, exc: Exception):
 
 @app.exception_handler(RequestValidationError)
 async def _validation_exc(_req: Request, exc: RequestValidationError):
-    safe = exc.errors()
+    """
+    ✅ 重要：RequestValidationError.errors() 可能包含 ctx.error（例如 ValueError 对象），
+    直接塞进 JSONResponse 会导致 “not JSON serializable” -> 500。
+
+    合同：
+    - 对外只返回可 JSON 化字段：type/loc/msg/input
+    - 丢弃 ctx，避免泄露内部对象与不稳定结构
+    """
+    raw = exc.errors()
+    safe = []
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        safe.append(
+            {
+                "type": e.get("type"),
+                "loc": e.get("loc"),
+                "msg": e.get("msg"),
+                "input": e.get("input"),
+            }
+        )
     return JSONResponse(status_code=422, content={"detail": safe})
 
 
@@ -80,6 +100,7 @@ from app.api.routers.permissions import router as permissions_router
 from app.api.routers.pick import router as pick_router
 from app.api.routers.pick_tasks import router as pick_tasks_router
 from app.api.routers.platform_shops import router as platform_shops_router
+from app.api.routers.pricing_integrity_ops import router as pricing_integrity_ops_router
 from app.api.routers.purchase_orders import router as purchase_orders_router
 from app.api.routers.purchase_reports import router as purchase_reports_router
 from app.api.routers.receive_tasks import router as receive_tasks_router
@@ -185,6 +206,7 @@ app.include_router(supplier_contacts_router)
 app.include_router(shipping_providers_router)
 app.include_router(shipping_provider_contacts_router)
 app.include_router(shipping_provider_pricing_schemes_router)
+app.include_router(pricing_integrity_ops_router)
 app.include_router(shipping_quote_router)  # ✅ 新增：/shipping-quote/calc
 app.include_router(shipping_reports_router)
 app.include_router(shipping_records_router)
