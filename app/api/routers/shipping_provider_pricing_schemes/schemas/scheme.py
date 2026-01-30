@@ -46,6 +46,19 @@ class SchemeOut(BaseModel):
     # ✅ 方案默认口径（仅作为默认建议，不再用于刚性锁定 bracket 的 pricing_mode）
     default_pricing_mode: str
 
+    # ✅ 计费重规则（billable weight rule）
+    #
+    # 合同说明（非常重要）：
+    # - 计费重（billable_weight_kg）= max(real_weight_kg, vol_weight_kg) 后按 rounding 取整
+    # - rounding 只允许在 _compute_billable_weight_kg 中执行一次（避免 double-rounding）
+    # - 后续 base/surcharge 计算必须直接使用 billable_weight_kg，不再进行二次 rounding
+    #
+    # 示例：
+    #   {"divisor_cm":8000,"rounding":{"mode":"ceil","step_kg":1.0}}
+    #
+    # 废弃说明：
+    # - amount_json.rounding（附加费内的 rounding）已废弃/不再生效；
+    #   取整唯一来源为 scheme.billable_weight_rule.rounding。
     billable_weight_rule: Optional[Dict[str, Any]] = None
 
     # ✅ 显式默认回退模板（zone 未绑定 segment_template_id 时使用）

@@ -17,6 +17,25 @@ from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingS
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
+def _reject_deprecated_amount_rounding(amount_json) -> None:
+    """
+    ✅ 护栏：amount_json.rounding 已废弃且不再生效。
+
+    取整唯一来源：
+      scheme.billable_weight_rule.rounding
+    且只在 _compute_billable_weight_kg 中执行一次（避免 double-rounding）。
+
+    为避免继续产生“新债”，写入口一律拒绝 amount_json.rounding。
+    """
+    if not isinstance(amount_json, dict):
+        return
+    if "rounding" in amount_json and amount_json.get("rounding") is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="amount_json.rounding is deprecated and ignored; use scheme.billable_weight_rule.rounding",
+        )
+
+
 def register_surcharges_routes(router: APIRouter) -> None:
     @router.post(
         "/pricing-schemes/{scheme_id}/surcharges",
@@ -34,6 +53,9 @@ def register_surcharges_routes(router: APIRouter) -> None:
         sch = db.get(ShippingProviderPricingScheme, scheme_id)
         if not sch:
             raise HTTPException(status_code=404, detail="Scheme not found")
+
+        # ✅ 拒绝废弃字段：amount_json.rounding
+        _reject_deprecated_amount_rounding(payload.amount_json)
 
         s = ShippingProviderSurcharge(
             scheme_id=scheme_id,
@@ -72,6 +94,8 @@ def register_surcharges_routes(router: APIRouter) -> None:
         if "condition_json" in data and data["condition_json"] is not None:
             s.condition_json = data["condition_json"]
         if "amount_json" in data and data["amount_json"] is not None:
+            # ✅ 拒绝废弃字段：amount_json.rounding
+            _reject_deprecated_amount_rounding(data["amount_json"])
             s.amount_json = data["amount_json"]
 
         db.commit()

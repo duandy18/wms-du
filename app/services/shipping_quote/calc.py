@@ -87,13 +87,24 @@ def calc_quote(
         .all()
     )
 
+    # ✅ 计费重（唯一取整点）
     weight_info = _compute_billable_weight_kg(real_weight_kg, dims_cm, sch.billable_weight_rule)
     bw = float(weight_info["billable_weight_kg"])
+
+    # ✅ rounding 的唯一来源（解释字段，不再参与后续 base/surcharge 的二次取整）
     scheme_rounding = sch.billable_weight_rule.get("rounding") if sch.billable_weight_rule else None
+    weight_info["rounding"] = scheme_rounding
+    weight_info["rounding_source"] = "scheme.billable_weight_rule.rounding"
 
     zone, hit_member = _match_zone(zones, members, dest)
     if not zone:
         raise ValueError("no matching zone")
+
+    # ✅ 新合同护栏：命中 Zone 但未绑定模板 → 直接 422（通过 ValueError 映射）
+    # 说明：模板绑定在二维工作台完成；算价入口不做任何隐式回退/兜底。
+    if getattr(zone, "segment_template_id", None) is None:
+        # 用稳定短语，便于在 map_calc_value_error_to_code 中映射
+        raise ValueError("zone template required")
 
     zone_brackets = [b for b in brackets if b.zone_id == zone.id and b.active]
     bracket = _match_bracket(zone_brackets, bw)
@@ -111,6 +122,7 @@ def calc_quote(
     # ✅ 口径统一：左开右闭 (mn, mx]
     reasons.append(f"bracket_match: ({mn}kg, {('inf' if mx is None else mx)}kg] (billable={bw}kg)")
 
+    # ✅ base/surcharge 已不再二次 rounding；这里仍透传 scheme_rounding 仅用于兼容旧签名
     base_amt, base_detail = _calc_base_amount(bracket, bw, scheme_rounding)
 
     # manual quote 分支
@@ -135,7 +147,9 @@ def calc_quote(
             "zone": {
                 "id": zone.id,
                 "name": zone.name,
-                "hit_member": None if hit_member is None else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
+                "hit_member": None
+                if hit_member is None
+                else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
             },
             "bracket": {
                 "id": bracket.id,
@@ -190,7 +204,9 @@ def calc_quote(
         "zone": {
             "id": zone.id,
             "name": zone.name,
-            "hit_member": None if hit_member is None else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
+            "hit_member": None
+            if hit_member is None
+            else {"id": hit_member.id, "level": hit_member.level, "value": hit_member.value},
         },
         "bracket": {
             "id": bracket.id,

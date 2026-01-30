@@ -273,15 +273,29 @@ async def create_zone(
     active: bool = True,
     segment_template_id: Optional[int] = None,
 ) -> int:
+    """
+    ✅ 新合同：Zone 必须绑定 segment_template_id
+    为了让测试造数简单：当 segment_template_id 缺省时，这里自动创建一个最小模板并绑定。
+    同时：由于此 helper 需要 provinces，因此统一走 zones-atomic 入口。
+    """
+    if segment_template_id is None:
+        # 最小行结构即可：不要求生命周期，不要求 items 长度 > 1
+        segment_template_id = await create_segment_template(
+            client,
+            headers,
+            scheme_id,
+            name=f"{name}-TPL",
+            segments=[("0.000", "1.000")],
+        )
+
     payload: Dict[str, Any] = {
         "name": name,
         "active": active,
         "provinces": provinces,
+        "segment_template_id": int(segment_template_id),
     }
-    if segment_template_id is not None:
-        payload["segment_template_id"] = segment_template_id
 
-    r = await client.post(f"/pricing-schemes/{scheme_id}/zones", headers=headers, json=payload)
+    r = await client.post(f"/pricing-schemes/{scheme_id}/zones-atomic", headers=headers, json=payload)
     assert r.status_code in (200, 201), r.text
 
     data = r.json()

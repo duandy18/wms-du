@@ -7,7 +7,9 @@ from .endpoints.detail import register_detail_routes
 from .endpoints.items import register_items_routes
 from .endpoints.lifecycle_activate import register_activate_routes
 from .endpoints.lifecycle_archive import register_archive_routes
+from .endpoints.lifecycle_deactivate import register_deactivate_routes
 from .endpoints.lifecycle_publish import register_publish_routes
+from .endpoints.lifecycle_rename import register_rename_routes
 from .endpoints.list_create import register_list_create_routes
 
 
@@ -22,4 +24,6 @@ def register_segment_templates_routes(router: APIRouter) -> None:
     register_items_routes(router)
     register_publish_routes(router)
     register_activate_routes(router)
+    register_deactivate_routes(router)
+    register_rename_routes(router)
     register_archive_routes(router)

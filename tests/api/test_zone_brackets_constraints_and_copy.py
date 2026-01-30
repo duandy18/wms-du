@@ -33,6 +33,44 @@ def _auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _pick_template_id(data: dict) -> int:
+    for k in ("id", "template_id", "segment_template_id"):
+        if k in data and data[k] is not None:
+            return int(data[k])
+    if "data" in data and isinstance(data["data"], dict):
+        return _pick_template_id(data["data"])
+    raise AssertionError(f"cannot resolve template_id from response: {data}")
+
+
+def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
+    """
+    Zone 新合同：必须绑定 segment_template_id。
+    这里创建一个最小模板（带最小 items），不依赖 publish/activate 生命周期。
+    """
+    h = _auth_headers(token)
+    r = client.post(
+        f"/pricing-schemes/{scheme_id}/segment-templates",
+        headers=h,
+        json={
+            "name": name,
+            # 尽量兼容：后端可能接受 items 或 segments
+            "items": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
+        },
+    )
+    if r.status_code not in (200, 201):
+        # fallback 再试一次 segments 形态
+        r = client.post(
+            f"/pricing-schemes/{scheme_id}/segment-templates",
+            headers=h,
+            json={
+                "name": name,
+                "segments": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
+            },
+        )
+    assert r.status_code in (200, 201), r.text
+    return _pick_template_id(r.json())
+
+
 def _create_scheme_zone(client: TestClient, token: str, zone_name: str, provinces: list[str]) -> Dict[str, int]:
     h = _auth_headers(token)
     pr = client.get("/shipping-providers", headers=h)
@@ -53,6 +91,8 @@ def _create_scheme_zone(client: TestClient, token: str, zone_name: str, province
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    tpl_id = _create_min_template(client, token, scheme_id, name=f"TPL-{zone_name}")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -61,11 +101,12 @@ def _create_scheme_zone(client: TestClient, token: str, zone_name: str, province
             "priority": 100,
             "active": True,
             "provinces": provinces,
+            "segment_template_id": tpl_id,
         },
     )
     assert zr.status_code == 201, zr.text
     zone_id = int(zr.json()["id"])
-    return {"scheme_id": scheme_id, "zone_id": zone_id}
+    return {"scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
 
 
 def test_bracket_unique_range_conflict_returns_409(client: TestClient) -> None:
@@ -108,6 +149,8 @@ def test_copy_zone_brackets_api(client: TestClient) -> None:
             "priority": 110,
             "active": True,
             "provinces": ["天津市"],
+            # ✅ 必填：绑定模板（复用源 scheme 下创建的模板）
+            "segment_template_id": ids_src["template_id"],
         },
     )
     assert zr.status_code == 201, zr.text
