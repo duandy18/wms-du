@@ -134,6 +134,9 @@ from app.api.routers.supplier_contacts import router as supplier_contacts_router
 from app.api.routers.user import router as user_router
 from app.api.routers.warehouses import router as warehouses_router
 
+# ✅ geo：省市字典（全量数据编译产物 + 查询接口）
+from app.api.routers.geo_cn import router as geo_router
+
 # ✅ 明确挂载：fulfillment-debug（v4-min）
 from app.api.routers.orders_fulfillment_debug_routes import router as orders_fulfillment_debug_router
 
@@ -206,6 +209,7 @@ app.include_router(supplier_contacts_router)
 app.include_router(shipping_providers_router)
 app.include_router(shipping_provider_contacts_router)
 app.include_router(shipping_provider_pricing_schemes_router)
+app.include_router(geo_router)  # ✅ /geo/provinces /geo/provinces/{province_code}/cities
 app.include_router(pricing_integrity_ops_router)
 app.include_router(shipping_quote_router)  # ✅ 新增：/shipping-quote/calc
 app.include_router(shipping_reports_router)

@@ -27,6 +27,10 @@ def _to_out(x: PricingSchemeDestAdjustment) -> DestAdjustmentOut:
         id=int(x.id),
         scheme_id=int(x.scheme_id),
         scope=str(x.scope),
+        province_code=str(x.province_code),
+        city_code=str(x.city_code) if x.city_code is not None else None,
+        province_name=str(x.province_name) if x.province_name is not None else None,
+        city_name=str(x.city_name) if x.city_name is not None else None,
         province=str(x.province),
         city=str(x.city) if x.city is not None else None,
         amount=float(x.amount),
@@ -73,18 +77,21 @@ def register_dest_adjustments_routes(router: APIRouter) -> None:
         user=Depends(get_current_user),
     ):
         """
-        ✅ 新主入口（事实写入点）：
-        - 输入：scope + province(+city) + amount + active
+        ✅ 新主入口（事实写入点，严格 code 世界）：
+        - 输入：scope + province_code(+city_code) + amount + active + priority
         - 行为：同 key 则更新，否则创建（幂等）
         - 互斥：同省 province vs city active 互斥（service 层硬约束）
         """
         check_perm(db, user, "config.store.write")
+
         row = upsert_dest_adjustment(
             db,
             scheme_id=int(scheme_id),
             scope=payload.scope,
-            province=payload.province,
-            city=payload.city,
+            province_code=payload.province_code,
+            city_code=payload.city_code,
+            province_name=payload.province_name,
+            city_name=payload.city_name,
             amount=payload.amount,
             active=bool(payload.active),
             priority=int(payload.priority),
@@ -108,8 +115,10 @@ def register_dest_adjustments_routes(router: APIRouter) -> None:
             db,
             dest_adjustment_id=int(dest_adjustment_id),
             scope=data.get("scope"),
-            province=data.get("province"),
-            city=data.get("city"),
+            province_code=data.get("province_code"),
+            city_code=data.get("city_code"),
+            province_name=data.get("province_name"),
+            city_name=data.get("city_name"),
             amount=data.get("amount"),
             active=data.get("active"),
             priority=data.get("priority"),
