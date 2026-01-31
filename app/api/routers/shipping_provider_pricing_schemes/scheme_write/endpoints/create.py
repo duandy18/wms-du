@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
 from app.api.routers.shipping_provider_pricing_schemes_routes_scheme_helpers import seg_item_to_dict
-from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SchemeCreateIn,
     SchemeDetailOut,
+)
+from app.api.routers.shipping_provider_pricing_schemes.validators import (
     validate_default_pricing_mode,
 )
 from app.api.routers.shipping_provider_pricing_schemes_utils import (

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routers.shipping_provider_pricing_schemes_schemas import SchemeDetailOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import SchemeDetailOut
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
 
@@ -26,7 +26,7 @@ def register_debug_routes(router: APIRouter) -> None:
     ):
         check_perm(db, user, "config.store.read")
 
-        from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+        from app.api.routers.shipping_provider_pricing_schemes.schemas import (
             SchemeOut as _SchemeOut,
             ZoneOut as _ZoneOut,
             ZoneBracketOut as _ZoneBracketOut,

@@ -25,6 +25,9 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_surcharges import 
 from app.api.routers.shipping_provider_pricing_schemes_routes_segment_templates import (
     register_segment_templates_routes,
 )
+from app.api.routers.shipping_provider_pricing_schemes.dest_adjustments.routes import (
+    register_dest_adjustments_routes,
+)
 
 # ==========================
 # Router 聚合（唯一出口）
@@ -39,3 +42,4 @@ register_zones_routes(router)  # zones / zones-atomic
 register_members_routes(router)  # zone members
 register_brackets_routes(router)  # brackets + copy
 register_surcharges_routes(router)  # surcharges
+register_dest_adjustments_routes(router)  # ✅ dest adjustments (structured destination facts)

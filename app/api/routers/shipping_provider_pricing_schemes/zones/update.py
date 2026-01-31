@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_zone_out
-from app.api.routers.shipping_provider_pricing_schemes_schemas import ZoneOut, ZoneUpdateIn
+from app.api.routers.shipping_provider_pricing_schemes.schemas import ZoneOut, ZoneUpdateIn
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm, norm_nonempty
 from app.api.routers.shipping_provider_pricing_schemes_zones_helpers import assert_zone_brackets_compatible_with_template, load_template_or_422
 from app.db.deps import get_db

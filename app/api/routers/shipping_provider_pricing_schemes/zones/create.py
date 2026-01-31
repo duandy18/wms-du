@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_zone_out
-from app.api.routers.shipping_provider_pricing_schemes_schemas import ZoneCreateAtomicIn, ZoneCreateIn, ZoneOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+    ZoneCreateAtomicIn,
+    ZoneCreateIn,
+    ZoneOut,
+)
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm, clean_list_str, norm_nonempty
 from app.api.routers.shipping_provider_pricing_schemes_zones_helpers import assert_provinces_no_overlap, load_template_or_422
 from app.db.deps import get_db
