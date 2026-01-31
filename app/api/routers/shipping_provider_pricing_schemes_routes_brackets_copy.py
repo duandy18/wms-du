@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routers.shipping_provider_pricing_schemes_schemas import ZoneBracketOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import ZoneBracketOut
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.api.routers.shipping_provider_pricing_schemes_routes_brackets_shared import (
     as_bracket_out,

@@ -11,6 +11,7 @@ from .zone import (
     ZoneProvinceMembersReplaceIn,
 )
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
+from .dest_adjustment import DestAdjustmentOut, DestAdjustmentUpsertIn, DestAdjustmentUpdateIn
 from .scheme import (
     SchemeOut,
     SchemeSegmentOut,
@@ -54,6 +55,10 @@ __all__ = [
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
+    # dest adjustment
+    "DestAdjustmentOut",
+    "DestAdjustmentUpsertIn",
+    "DestAdjustmentUpdateIn",
     # scheme
     "SchemeOut",
     "SchemeSegmentOut",

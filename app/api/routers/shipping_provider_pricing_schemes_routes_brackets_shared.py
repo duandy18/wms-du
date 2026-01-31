@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.api.routers.shipping_provider_pricing_schemes_schemas import ZoneBracketOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import ZoneBracketOut
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
 
 

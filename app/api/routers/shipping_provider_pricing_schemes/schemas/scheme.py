@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .common import WeightSegmentIn
+from .dest_adjustment import DestAdjustmentOut
 from .surcharge import SurchargeOut
 from .zone import ZoneOut
 
@@ -75,6 +76,9 @@ class SchemeOut(BaseModel):
 
     zones: List[ZoneOut] = Field(default_factory=list)
     surcharges: List[SurchargeOut] = Field(default_factory=list)
+
+    # ✅ 新：目的地附加费（结构化事实模型）
+    dest_adjustments: List[DestAdjustmentOut] = Field(default_factory=list)
 
 
 class SchemeListOut(BaseModel):

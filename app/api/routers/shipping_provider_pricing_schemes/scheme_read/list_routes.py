@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
-from app.api.routers.shipping_provider_pricing_schemes_schemas import SchemeListOut, SchemeOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import SchemeListOut, SchemeOut
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider

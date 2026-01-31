@@ -1,7 +1,29 @@
 # app/api/routers/shipping_provider_pricing_schemes_schemas.py
 from __future__ import annotations
 
-from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+# ============================================================
+# DEPRECATED COMPAT LAYER (DO NOT USE IN NEW CODE)
+# ------------------------------------------------------------
+# ✅ 唯一事实出口已收敛为：
+#   app.api.routers.shipping_provider_pricing_schemes.schemas
+#
+# 本文件仅为“历史兼容层”，原则上不应再被任何模块引用。
+# 为避免新债引入漂移，可通过环境变量开启硬失败：
+#
+#   WMS_STRICT_SCHEMA_EXPORTS=1
+#
+# 开启后：一旦有代码 import 本文件，将直接抛错，逼迫使用新出口。
+# ============================================================
+
+import os
+
+if os.getenv("WMS_STRICT_SCHEMA_EXPORTS", "").strip() in ("1", "true", "yes", "on"):
+    raise RuntimeError(
+        "Deprecated import: app.api.routers.shipping_provider_pricing_schemes_schemas. "
+        "Use: app.api.routers.shipping_provider_pricing_schemes.schemas"
+    )
+
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (  # noqa: F401
     # common
     WeightSegmentIn,
     ZoneMemberOut,
@@ -20,6 +42,10 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SurchargeOut,
     SurchargeCreateIn,
     SurchargeUpdateIn,
+    # dest adjustment (structured destination facts)
+    DestAdjustmentOut,
+    DestAdjustmentUpsertIn,
+    DestAdjustmentUpdateIn,
     # scheme
     SchemeOut,
     SchemeSegmentOut,
@@ -36,13 +62,13 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SegmentTemplateCreateIn,
     SegmentTemplateItemsPutIn,
     SegmentTemplateItemActivePatchIn,
-    # zone brackets matrix (NEW)
+    # zone brackets matrix
     ZoneBracketsMatrixOut,
     ZoneBracketsMatrixGroupOut,
     SegmentRangeOut,
 )
 
-from app.api.routers.shipping_provider_pricing_schemes.validators import (
+from app.api.routers.shipping_provider_pricing_schemes.validators import (  # noqa: F401
     validate_default_pricing_mode,
 )
 
@@ -65,6 +91,10 @@ __all__ = [
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
+    # dest adjustment
+    "DestAdjustmentOut",
+    "DestAdjustmentUpsertIn",
+    "DestAdjustmentUpdateIn",
     # scheme
     "SchemeOut",
     "SchemeSegmentOut",
@@ -81,7 +111,7 @@ __all__ = [
     "SegmentTemplateCreateIn",
     "SegmentTemplateItemsPutIn",
     "SegmentTemplateItemActivePatchIn",
-    # zone brackets matrix (NEW)
+    # zone brackets matrix
     "ZoneBracketsMatrixOut",
     "ZoneBracketsMatrixGroupOut",
     "SegmentRangeOut",

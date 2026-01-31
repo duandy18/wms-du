@@ -1,12 +1,25 @@
 # app/services/shipping_quote/surcharges.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .types import Dest, _s
 
 
-def _cond_match(condition: Dict[str, Any], dest: Dest, flags: List[str]) -> bool:
+JsonObject = Dict[str, object]
+
+
+def _cond_match(condition: JsonObject, dest: Dest, flags: List[str]) -> bool:
+    """
+    ✅ dest 条件匹配（新旧兼容）：
+
+    旧结构（列表）：
+      {"dest":{"province":["广东省"],"city":["深圳市"]}}
+
+    新结构（单值 + scope）：
+      {"dest":{"scope":"province","province":"广东省"}}
+      {"dest":{"scope":"city","province":"广东省","city":"深圳市"}}
+    """
     cond = condition or {}
     flags_norm = set([f.strip().lower() for f in (flags or []) if f and f.strip()])
 
@@ -18,6 +31,38 @@ def _cond_match(condition: Dict[str, Any], dest: Dest, flags: List[str]) -> bool
 
     d = cond.get("dest")
     if isinstance(d, dict):
+        # ✅ 新结构优先：scope + 单值
+        scope = d.get("scope")
+        prov = d.get("province")
+        city = d.get("city")
+        dist = d.get("district")
+
+        if isinstance(scope, str) and scope.strip().lower() in ("province", "city"):
+            sc = scope.strip().lower()
+            if sc == "province":
+                if isinstance(prov, str) and prov.strip():
+                    if _s(dest.province) != prov.strip():
+                        return False
+                else:
+                    return False
+            elif sc == "city":
+                if not (isinstance(prov, str) and prov.strip()):
+                    return False
+                if not (isinstance(city, str) and city.strip()):
+                    return False
+                if _s(dest.province) != prov.strip():
+                    return False
+                if _s(dest.city) != city.strip():
+                    return False
+
+            # district 单值（可选）
+            if isinstance(dist, str) and dist.strip():
+                if _s(dest.district) != dist.strip():
+                    return False
+
+            return True
+
+        # ✅ 旧结构：province/city/district 列表
         provs = d.get("province")
         cities = d.get("city")
         dists = d.get("district")
@@ -35,10 +80,10 @@ def _cond_match(condition: Dict[str, Any], dest: Dest, flags: List[str]) -> bool
 
 
 def _calc_surcharge_amount(
-    amount_json: Dict[str, Any],
+    amount_json: JsonObject,
     billable_weight_kg: float,
-    scheme_rounding: Optional[Dict[str, Any]],
-) -> Tuple[float, Dict[str, Any]]:
+    scheme_rounding: Optional[JsonObject],
+) -> Tuple[float, JsonObject]:
     """
     ✅ 重要合同（本轮落地）：
     - billable_weight_kg 已由 _compute_billable_weight_kg 计算并完成 rounding（进位/取整）。
@@ -68,16 +113,19 @@ def _calc_surcharge_amount(
         default_amt = float(aj.get("default_amount") or 0.0)
 
         picked = None
-        for r in rules:
-            try:
-                mx = r.get("max_kg")
-                if mx is None:
+        if isinstance(rules, list):
+            for r in rules:
+                if not isinstance(r, dict):
                     continue
-                if w <= float(mx) + 1e-9:
-                    picked = r
-                    break
-            except Exception:
-                continue
+                try:
+                    mx = r.get("max_kg")
+                    if mx is None:
+                        continue
+                    if w <= float(mx) + 1e-9:
+                        picked = r
+                        break
+                except Exception:
+                    continue
 
         if picked is not None:
             amt = float(picked.get("amount") or 0.0)

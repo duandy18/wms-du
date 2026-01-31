@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
 from app.api.routers.shipping_provider_pricing_schemes_query_helpers import load_scheme_entities
-from app.api.routers.shipping_provider_pricing_schemes_schemas import SchemeDetailOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import SchemeDetailOut
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme

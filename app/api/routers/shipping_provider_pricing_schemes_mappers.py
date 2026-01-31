@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import List
 
-from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+    DestAdjustmentOut,
     SchemeOut,
     SchemeSegmentOut,
     SurchargeOut,
@@ -11,6 +12,7 @@ from app.api.routers.shipping_provider_pricing_schemes_schemas import (
     ZoneMemberOut,
     ZoneOut,
 )
+from app.models.pricing_scheme_dest_adjustment import PricingSchemeDestAdjustment
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
@@ -69,6 +71,21 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
     )
 
 
+def to_dest_adjustment_out(x: PricingSchemeDestAdjustment) -> DestAdjustmentOut:
+    return DestAdjustmentOut(
+        id=int(x.id),
+        scheme_id=int(x.scheme_id),
+        scope=str(x.scope),
+        province=str(x.province),
+        city=str(x.city) if x.city is not None else None,
+        amount=float(x.amount),
+        active=bool(x.active),
+        priority=int(x.priority or 100),
+        created_at=x.created_at,
+        updated_at=x.updated_at,
+    )
+
+
 def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSegmentOut:
     return SchemeSegmentOut(
         id=seg.id,
@@ -106,6 +123,7 @@ def to_scheme_out(
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
 
     segs = getattr(sch, "segments", None) or []
+    das = getattr(sch, "dest_adjustments", None) or []
 
     return SchemeOut(
         id=sch.id,
@@ -126,4 +144,5 @@ def to_scheme_out(
         segments=[to_scheme_segment_out(x) for x in segs],
         zones=zones,
         surcharges=surcharges,
+        dest_adjustments=[to_dest_adjustment_out(x) for x in das],
     )
