@@ -13,6 +13,7 @@ from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracke
 from app.models.shipping_provider_zone_member import ShippingProviderZoneMember
 
 from .calc_core import check_scheme_warehouse_allowed, scheme_is_effective
+from .dest_adjustments import build_dest_adjustment_details, match_dest_adjustments
 from .matchers import _match_bracket, _match_zone
 from .pricing import _calc_base_amount
 from .surcharge_select import select_surcharges_city_wins
@@ -21,52 +22,6 @@ from .types import Dest, _utcnow
 from .weight import _compute_billable_weight_kg
 
 JsonObject = Dict[str, object]
-
-
-def _match_dest_adjustments(
-    rows: List[PricingSchemeDestAdjustment],
-    dest: Dest,
-    reasons: List[str],
-) -> List[PricingSchemeDestAdjustment]:
-    """
-    ✅ 目的地附加费命中（结构化事实）：
-    - 先找同省 province 命中
-    - 再找同省同市 city 命中
-    - 若 city 命中，则 province 被 suppressed（记录 reasons）
-    - 理论上 service 层已保证 active 互斥，但算价层仍做“保险式解释”，防止脏数据/历史数据影响
-    """
-    prov = (dest.province or "").strip()
-    city = (dest.city or "").strip()
-
-    if not prov:
-        return []
-
-    hit_province: List[PricingSchemeDestAdjustment] = []
-    hit_city: List[PricingSchemeDestAdjustment] = []
-
-    for r in rows:
-        if not bool(r.active):
-            continue
-        if (r.province or "").strip() != prov:
-            continue
-        sc = (r.scope or "").strip().lower()
-        if sc == "province":
-            hit_province.append(r)
-        elif sc == "city":
-            if city and (r.city or "").strip() == city:
-                hit_city.append(r)
-
-    # 约束下正常情况：最多命中 1 条（unique key + 互斥）
-    chosen: List[PricingSchemeDestAdjustment] = []
-    if hit_city:
-        # city wins
-        chosen.extend(sorted(hit_city, key=lambda x: int(x.id)))
-        if hit_province:
-            reasons.append(f"dest_adjustment_suppressed: province={prov} (city wins)")
-    else:
-        chosen.extend(sorted(hit_province, key=lambda x: int(x.id)))
-
-    return chosen
 
 
 def calc_quote(
@@ -108,7 +63,7 @@ def calc_quote(
         .all()
     )
 
-    # ✅ 新：目的地附加费（结构化事实模型）
+    # ✅ 目的地附加费（结构化事实模型）
     dest_adjustments_all = (
         db.query(PricingSchemeDestAdjustment)
         .filter(
@@ -150,27 +105,8 @@ def calc_quote(
     reasons.append(f"bracket_match: ({mn}kg, {('inf' if mx is None else mx)}kg] (billable={bw}kg)")
 
     # ✅ 目的地附加费命中（city > province）
-    chosen_dest_adjustments = _match_dest_adjustments(dest_adjustments_all, dest, reasons)
-    da_details: List[JsonObject] = []
-    da_sum = 0.0
-    for r in chosen_dest_adjustments:
-        amt = float(r.amount)
-        da_sum += amt
-        da_details.append(
-            {
-                "id": r.id,
-                "scheme_id": r.scheme_id,
-                "scope": r.scope,
-                "province": r.province,
-                "city": r.city,
-                "amount": float(amt),
-                "priority": int(getattr(r, "priority", 100) or 100),
-            }
-        )
-        if (r.scope or "").strip().lower() == "city":
-            reasons.append(f"dest_adjustment_hit: {r.province}-{(r.city or '')} (+{amt:.2f})")
-        else:
-            reasons.append(f"dest_adjustment_hit: {r.province} (+{amt:.2f})")
+    chosen_dest_adjustments = match_dest_adjustments(dest_adjustments_all, dest, reasons)
+    da_details, da_sum = build_dest_adjustment_details(chosen_dest_adjustments, reasons)
 
     base_amt, base_detail = _calc_base_amount(bracket, bw, scheme_rounding)
 
