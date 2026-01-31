@@ -28,6 +28,11 @@ from app.models.shipping_provider_pricing_scheme_warehouse import (  # noqa: F40
     ShippingProviderPricingSchemeWarehouse,
 )
 
+# ✅ 新增：目的地附加费模型（结构化）
+from app.models.pricing_scheme_dest_adjustment import (  # noqa: F401
+    PricingSchemeDestAdjustment,
+)
+
 
 class ShippingProviderPricingScheme(Base):
     __tablename__ = "shipping_provider_pricing_schemes"
@@ -52,7 +57,7 @@ class ShippingProviderPricingScheme(Base):
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ✅ 方案默认口径（仅作为默认建议，不再用于刚性锁定 bracket 的 pricing_mode）
+    # ✅ 方案默认口径
     default_pricing_mode: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -62,12 +67,12 @@ class ShippingProviderPricingScheme(Base):
 
     billable_weight_rule: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
-    # ✅ 兼容字段：scheme 级 segments_json（仅允许通过显式写入口修改；模板动作不再隐式写回）
+    # ✅ 兼容字段：scheme 级 segments_json
     segments_json: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     segments_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ✅ 显式默认回退模板：zone 未绑定 segment_template_id 时使用
+    # ✅ 显式默认回退模板
     default_segment_template_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         ForeignKey("shipping_provider_pricing_scheme_segment_templates.id", ondelete="SET NULL"),
@@ -82,13 +87,28 @@ class ShippingProviderPricingScheme(Base):
         onupdate=func.now(),
     )
 
-    # ✅ Phase 6：刚性关系（用于 SchemeOut.shipping_provider_name）
+    # =========================
+    # relationships
+    # =========================
+
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
 
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
+
+    # 旧：JSON surcharge（保留，用于 bulky / flags）
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
 
-    # ✅ Phase 3：显式关系（方案适用哪些仓作为起运地）
+    # ✅ 新：目的地附加费（结构化事实）
+    dest_adjustments = relationship(
+        "PricingSchemeDestAdjustment",
+        back_populates="scheme",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PricingSchemeDestAdjustment.id.asc()",
+    )
+
+    # Phase 3：方案适用起运仓
     scheme_warehouses: Mapped[list["ShippingProviderPricingSchemeWarehouse"]] = relationship(
         "ShippingProviderPricingSchemeWarehouse",
         back_populates="scheme",
@@ -97,7 +117,7 @@ class ShippingProviderPricingScheme(Base):
         passive_deletes=True,
     )
 
-    # ✅ 现有：段表 relationship（前端当前仍在使用）
+    # 现有：段表
     segments = relationship(
         "ShippingProviderPricingSchemeSegment",
         back_populates="scheme",
@@ -106,8 +126,7 @@ class ShippingProviderPricingScheme(Base):
         cascade="all, delete-orphan",
     )
 
-    # ✅ 新增：模板列表（路线 1 的真相）
-    # 关键：显式指定 foreign_keys，避免与 default_segment_template_id 的反向 FK 产生歧义
+    # 模板列表
     segment_templates = relationship(
         "ShippingProviderPricingSchemeSegmentTemplate",
         back_populates="scheme",
@@ -117,7 +136,6 @@ class ShippingProviderPricingScheme(Base):
         foreign_keys="ShippingProviderPricingSchemeSegmentTemplate.scheme_id",
     )
 
-    # ✅ 显式默认模板（回退真相）
     default_segment_template = relationship(
         "ShippingProviderPricingSchemeSegmentTemplate",
         lazy="selectin",
@@ -127,6 +145,6 @@ class ShippingProviderPricingScheme(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<ShippingProviderPricingScheme id={self.id} provider_id={self.shipping_provider_id} "
-            f"name={self.name!r}>"
+            f"<ShippingProviderPricingScheme id={self.id} "
+            f"provider_id={self.shipping_provider_id} name={self.name!r}>"
         )

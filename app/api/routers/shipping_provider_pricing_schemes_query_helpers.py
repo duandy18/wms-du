@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_surcharge_out, to_zone_out
-from app.api.routers.shipping_provider_pricing_schemes_schemas import SurchargeOut, ZoneOut
+from app.api.routers.shipping_provider_pricing_schemes.schemas import SurchargeOut, ZoneOut
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_pricing_scheme_segment import (  # noqa: F401
     ShippingProviderPricingSchemeSegment,
@@ -29,10 +29,14 @@ def load_scheme_entities(
     - ✅ Phase 6：刚性契约
       - SchemeOut.shipping_provider_name 必须由后端提供
       - 因此这里必须确定性加载 ShippingProvider 关系，避免隐式 lazy-load
+    - ✅ 目的地附加费（dest_adjustments）作为结构化事实：这里显式 selectinload，避免隐式加载漂移
     """
     sch = (
         db.query(ShippingProviderPricingScheme)
-        .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
+        .options(
+            selectinload(ShippingProviderPricingScheme.shipping_provider),
+            selectinload(ShippingProviderPricingScheme.dest_adjustments),
+        )
         .filter(ShippingProviderPricingScheme.id == scheme_id)
         .one_or_none()
     )
