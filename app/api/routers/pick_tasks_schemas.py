@@ -68,6 +68,11 @@ class PickTaskScanIn(BaseModel):
 class PickTaskCommitIn(BaseModel):
     platform: str = Field(..., description="平台标识，如 PDD / TAOBAO")
     shop_id: str = Field(..., description="店铺 ID（字符串）")
+    handoff_code: str = Field(
+        ...,
+        min_length=1,
+        description="订单确认码（WMS / 扫码枪输入）；v1: WMS:ORDER:v1:{platform}:{shop_id}:{ext_order_no}",
+    )
     trace_id: Optional[str] = Field(
         None,
         description="链路 trace_id，可选；若空则由服务层 fallback 到 ref",

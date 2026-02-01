@@ -10,24 +10,24 @@ from app.services.outbound_service import OutboundService
 async def _pick_one_stock_slot(session: AsyncSession):
     """
     从 stocks 中挑一个 (item_id, warehouse_id, batch_code, sum_qty)。
-    若没有可用，则跳过测试。
+    强护栏下可能存在 batch_code=NULL 的真实槽位，因此不再排除 NULL。
     """
     row = await session.execute(
         text(
             """
             SELECT item_id, warehouse_id, batch_code, SUM(qty) AS qty
             FROM stocks
-            WHERE qty > 0 AND batch_code IS NOT NULL
+            WHERE qty > 0
             GROUP BY item_id, warehouse_id, batch_code
-            ORDER BY item_id, warehouse_id, batch_code
+            ORDER BY item_id, warehouse_id, batch_code NULLS FIRST
             LIMIT 1
             """
         )
     )
     r = row.first()
     if not r:
-        pytest.skip("当前基线中没有带 batch_code 的 stocks 记录")
-    return int(r[0]), int(r[1]), str(r[2]), int(r[3])
+        pytest.skip("当前基线中没有 qty>0 的 stocks 记录")
+    return int(r[0]), int(r[1]), r[2], int(r[3])
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code = :batch_code
+              AND batch_code IS NOT DISTINCT FROM :batch_code
             """
         ),
         {
@@ -116,7 +116,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code = :batch_code
+              AND batch_code IS NOT DISTINCT FROM :batch_code
             """
         ),
         {
@@ -132,7 +132,6 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     # 第二次同 payload
     r2 = await svc.commit(session, order_id=order_id, lines=lines, occurred_at=ts)
     assert r2["status"] == "OK"
-    # 理论上 total_qty 应该为 0 或 <= 0，表示没有额外扣减
     assert r2["total_qty"] <= 0
 
     row = await session.execute(
@@ -144,7 +143,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code = :batch_code
+              AND batch_code IS NOT DISTINCT FROM :batch_code
             """
         ),
         {

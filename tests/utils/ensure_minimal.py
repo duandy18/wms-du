@@ -72,7 +72,6 @@ async def ensure_location(
         )
         new_id = ins.scalar()
         if new_id is None:
-            # 已存在 → 回查
             row = await session.execute(
                 text("SELECT id FROM locations WHERE warehouse_id=:wid AND code=:code LIMIT 1"),
                 {"wid": warehouse_id, "code": code},
@@ -83,7 +82,6 @@ async def ensure_location(
             return int(got)
         return int(new_id)
 
-    # 显式 id：避免撞车，统一 ON CONFLICT (id) DO NOTHING
     await session.execute(
         text(
             """
@@ -94,7 +92,6 @@ async def ensure_location(
         ),
         {"id": int(id), "wid": warehouse_id, "code": code, "name": name},
     )
-    # 显式 id 后同步序列到 MAX(id)+1，避免后续“自动取号”撞主键
     await _sync_locations_seq(session)
 
     return int(id)
@@ -124,44 +121,45 @@ async def ensure_item(
 
 
 # ---------- batches / stocks ----------
-async def ensure_batch(
-    session: AsyncSession, *, item_id: int, location_id: int, batch_code: str
-) -> None:
+async def ensure_batch(session: AsyncSession, *, item_id: int, location_id: int, batch_code: str) -> None:
     """
-    基于当前口径创建批次主档：batches(item_id, warehouse_id, location_id, batch_code) 唯一。
-    warehouse_id 由 locations 推导。
+    基于当前口径创建批次主档：
+    - warehouse_id 由 locations 推导；
+    - batches 唯一维度： (item_id, warehouse_id, batch_code)
     """
     await session.execute(
         text(
             """
             INSERT INTO batches (item_id, warehouse_id, batch_code)
-            SELECT :item, l.warehouse_id, :loc, :code
+            SELECT :item, l.warehouse_id, :code
               FROM locations l
              WHERE l.id = :loc
             ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
         """
         ),
-        {"item": item_id, "loc": location_id, "code": batch_code},
+        {"item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
     )
 
 
-async def ensure_stock_slot(
-    session: AsyncSession, *, item_id: int, location_id: int, batch_code: str
-) -> None:
+async def ensure_stock_slot(session: AsyncSession, *, item_id: int, location_id: int, batch_code: str) -> None:
     """
-    创建 stocks 槽位（item_id, location_id, batch_id) → 0；已存在则忽略。
+    创建 stocks 槽位（旧测试工具，尽量保持行为）：
+
+    注意：当前 stocks 的唯一约束已经迁移为 uq_stocks_item_wh_batch（item_id, warehouse_id, batch_code_key）。
+    这里仍通过 batches 找到 warehouse_id，再插入 stocks 3D 槽位。
     """
     await session.execute(
         text(
             """
-            INSERT INTO stocks (item_id, location_id, batch_id, qty)
-            SELECT :item, :loc, b.id, 0
+            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+            SELECT :item, b.warehouse_id, b.batch_code, 0
               FROM batches b
-             WHERE b.item_id=:item   AND b.batch_code=:code
-            ON CONFLICT ON CONSTRAINT uq_stocks_item_loc_batch DO NOTHING
+             WHERE b.item_id=:item AND b.batch_code=:code
+             LIMIT 1
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
         """
         ),
-        {"item": item_id, "loc": location_id, "code": batch_code},
+        {"item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
     )
 
 
@@ -177,11 +175,13 @@ async def set_stock_qty(
             UPDATE stocks s
                SET qty = :q
               FROM batches b
-             WHERE s.batch_id = b.id
-               AND b.item_id=:item   AND b.batch_code=:code
+             WHERE s.item_id = b.item_id
+               AND s.warehouse_id = b.warehouse_id
+               AND s.batch_code IS NOT DISTINCT FROM b.batch_code
+               AND b.item_id=:item AND b.batch_code=:code
         """
         ),
-        {"q": qty, "item": item_id, "loc": location_id, "code": batch_code},
+        {"q": int(qty), "item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
     )
 
 
@@ -198,11 +198,7 @@ async def ensure_batch_with_stock(
     组合式工具：补齐依赖 → item / location / batch / stock 槽位，然后把 qty 设置到目标值。
     """
     await ensure_item(session, id=item_id)
-    loc_id = await ensure_location(
-        session, id=location_id, warehouse_id=warehouse_id, code=f"LOC-{location_id}"
-    )
+    loc_id = await ensure_location(session, id=location_id, warehouse_id=warehouse_id, code=f"LOC-{location_id}")
     await ensure_batch(session, item_id=item_id, location_id=loc_id, batch_code=batch_code)
     await ensure_stock_slot(session, item_id=item_id, location_id=loc_id, batch_code=batch_code)
-    await set_stock_qty(
-        session, item_id=item_id, location_id=loc_id, batch_code=batch_code, qty=qty
-    )
+    await set_stock_qty(session, item_id=item_id, location_id=loc_id, batch_code=batch_code, qty=qty)

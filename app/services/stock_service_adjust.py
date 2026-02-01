@@ -17,6 +17,10 @@ EnsureBatchFn = Callable[
     Awaitable[None],
 ]
 
+# 第三阶段护栏（保守版）：
+# 仅拦截“明确属于历史假批次占位符”的码，避免误伤可能被测试/业务当作真实批次码的字符串（例如 IDEM）
+_FAKE_BATCH_CODES = {"NOEXP", "NEAR", "FAR"}
+
 
 def _meta_bool(meta: Optional[Dict[str, Any]], key: str) -> bool:
     if not meta:
@@ -34,6 +38,48 @@ def _meta_str(meta: Optional[Dict[str, Any]], key: str) -> Optional[str]:
         raise ValueError(f"meta.{key} 必须为字符串")
     s = v.strip()
     return s or None
+
+
+def _norm_batch_code(batch_code: Optional[str]) -> Optional[str]:
+    if batch_code is None:
+        return None
+    s = str(batch_code).strip()
+    return s or None
+
+
+def _batch_key(batch_code: Optional[str]) -> str:
+    bc = _norm_batch_code(batch_code)
+    return bc if bc is not None else "__NULL_BATCH__"
+
+
+async def _item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
+    """
+    临时事实派生（本窗口主线）：
+    - items.has_shelf_life == True  => requires_batch == True
+    - 其他（False/NULL）            => requires_batch == False
+
+    重要：item 不存在时不要在这里提前 raise，
+    让后续写库触发 FK（测试依赖此行为）。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT has_shelf_life
+                  FROM items
+                 WHERE id = :item_id
+                 LIMIT 1
+                """
+            ),
+            {"item_id": int(item_id)},
+        )
+    ).first()
+    if not row:
+        return False
+    try:
+        return bool(row[0] is True)
+    except Exception:
+        return False
 
 
 async def adjust_impl(  # noqa: C901
@@ -57,26 +103,20 @@ async def adjust_impl(  # noqa: C901
     ],
 ) -> Dict[str, Any]:
     """
-    批次增减（单一真实来源 stocks）；全量支持日期推导：
+    批次增减（单一真实来源 stocks）
 
-    - 入库(delta>0)：
-          必须提供 batch_code；
-          必须有日期（prod 或 exp），否则自动兜底 + 推导；
-          若批次主档缺失，自动创建；
-          批次主档日期缺失时可由本次补齐（但我们当前策略是不覆盖已有日期）。
+    ✅ 无批次槽位支持（唯一主线）：
+    - requires_batch=true  => batch_code 必须非空
+    - requires_batch=false => batch_code 允许为 NULL（表示“无批次”）
 
-    - 出库(delta<0)：
-          只需要 batch_code；
-          日期无需提供（不会改变批次元数据）。
+    ✅ 入库日期推导的兼容口径（为保持既有测试/行为）：
+    - 只要 delta>0 且 batch_code 非空，就会自动兜底并推导日期
+    - batch_code 为 NULL（无批次槽位）时不推导日期
 
-    - delta==0：
-          默认不写台账（避免噪声）；
-          但如果 meta.allow_zero_delta_ledger=true，则允许写入“确认类事件流水账”：
-            * 必须提供 meta.sub_reason（例如 COUNT_ADJUST）
-            * 会写 stock_ledger（delta=0, after_qty=当前 qty），不会更新 stocks
-
-    - 幂等：
-          按 (warehouse_id, item_id, batch_code, reason, ref, ref_line) 判断。
+    ✅ 第三阶段护栏（防历史假批次回流，保守版）：
+    - 对 requires_batch=false 的商品：
+        若 batch_code 是明确假批次占位符（NOEXP/NEAR/FAR），则归一为 NULL
+      注意：不再把 IDEM 当作假码，避免误伤现有测试/业务批次码。
     """
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
@@ -91,13 +131,19 @@ async def adjust_impl(  # noqa: C901
     if delta == 0 and allow_zero and not sub_reason:
         raise ValueError("delta==0 记账必须提供 meta.sub_reason（例如 COUNT_ADJUST）")
 
-    # ---------- 基础校验 ----------
-    if not batch_code or not str(batch_code).strip():
-        raise ValueError("批次操作必须指定 batch_code。")
-    batch_code = str(batch_code).strip()
+    requires_batch = await _item_requires_batch(session, item_id=int(item_id))
+    bc_norm = _norm_batch_code(batch_code)
 
-    # 入库 & 盘盈：必须有日期（prod 或 exp），并做统一推算
-    if delta > 0:
+    # ✅ 第三阶段护栏：非批次商品遇到明确假码 → 归一为 NULL
+    if not requires_batch and bc_norm is not None:
+        if bc_norm.upper() in _FAKE_BATCH_CODES:
+            bc_norm = None
+
+    if requires_batch and not bc_norm:
+        raise ValueError("批次受控商品必须指定 batch_code。")
+
+    # 入库/盘盈：只要 batch_code 非空，就推导日期（兼容原测试口径）
+    if delta > 0 and bc_norm is not None:
         if production_date is None and expiry_date is None:
             production_date = production_date or date.today()
 
@@ -112,7 +158,12 @@ async def adjust_impl(  # noqa: C901
             if expiry_date < production_date:
                 raise ValueError(f"expiry_date({expiry_date}) < production_date({production_date})")
 
-    # ---------- 幂等 ----------
+    # 无批次槽位：不推导/不写日期
+    if bc_norm is None:
+        production_date = None
+        expiry_date = None
+
+    # ---------- 幂等：用 batch_code_key 对齐 NULL 语义 ----------
     idem = await session.execute(
         text(
             """
@@ -120,7 +171,7 @@ async def adjust_impl(  # noqa: C901
               FROM stock_ledger
              WHERE warehouse_id = :w
                AND item_id      = :i
-               AND batch_code   = :c
+               AND batch_code_key = :ck
                AND reason       = :r
                AND ref          = :ref
                AND ref_line     = :rl
@@ -129,8 +180,8 @@ async def adjust_impl(  # noqa: C901
         ),
         {
             "w": int(warehouse_id),
-            "i": item_id,
-            "c": batch_code,
+            "i": int(item_id),
+            "ck": _batch_key(bc_norm),
             "r": reason_val,
             "ref": ref,
             "rl": rl,
@@ -139,13 +190,13 @@ async def adjust_impl(  # noqa: C901
     if idem.scalar_one_or_none() is not None:
         return {"idempotent": True, "applied": False}
 
-    # ---------- 入库：确保批次主档存在 ----------
-    if delta > 0:
+    # ---------- 入库：确保批次主档存在（仅 batch_code 非空时才有意义） ----------
+    if delta > 0 and bc_norm is not None:
         await ensure_batch_dict_fn(
             session,
             int(warehouse_id),
-            item_id,
-            batch_code,
+            int(item_id),
+            str(bc_norm),
             production_date,
             expiry_date,
             ts,
@@ -157,17 +208,13 @@ async def adjust_impl(  # noqa: C901
             """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES (:i, :w, :c, 0)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
-        {
-            "i": item_id,
-            "w": int(warehouse_id),
-            "c": batch_code,
-        },
+        {"i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
     )
 
-    # ---------- 加锁读取当前库存 ----------
+    # ---------- 加锁读取当前库存（支持 NULL batch_code） ----------
     row = (
         (
             await session.execute(
@@ -175,24 +222,23 @@ async def adjust_impl(  # noqa: C901
                     """
                     SELECT id AS sid, qty AS q
                       FROM stocks
-                     WHERE item_id=:i AND warehouse_id=:w AND batch_code=:c
+                     WHERE item_id=:i
+                       AND warehouse_id=:w
+                       AND batch_code IS NOT DISTINCT FROM :c
                      FOR UPDATE
                     """
                 ),
-                {"i": item_id, "w": int(warehouse_id), "c": batch_code},
+                {"i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
             )
         )
         .mappings()
         .first()
     )
     if not row:
-        raise ValueError(
-            f"stock slot missing for item={item_id}, wh={warehouse_id}, code={batch_code}"
-        )
+        raise ValueError(f"stock slot missing for item={item_id}, wh={warehouse_id}, code={bc_norm}")
 
     stock_id, before_qty = int(row["sid"]), int(row["q"])
 
-    # delta==0 的确认类事件：after_qty 就是当前 qty
     if delta == 0:
         new_qty = before_qty
     else:
@@ -200,12 +246,11 @@ async def adjust_impl(  # noqa: C901
         if new_qty < 0:
             raise ValueError(f"insufficient stock: before={before_qty}, delta={delta}")
 
-    # ---------- 写台账（带上 trace_id + 日期 + sub_reason） ----------
     await write_ledger(
         session=session,
         warehouse_id=int(warehouse_id),
-        item_id=item_id,
-        batch_code=batch_code,
+        item_id=int(item_id),
+        batch_code=bc_norm,  # ✅ may be NULL
         reason=reason_val,
         sub_reason=sub_reason,
         delta=int(delta),
@@ -218,11 +263,10 @@ async def adjust_impl(  # noqa: C901
         expiry_date=expiry_date,
     )
 
-    # ---------- 更新余额（delta==0 不更新 stocks） ----------
     if delta != 0:
         await session.execute(
             text("UPDATE stocks SET qty = qty + :d WHERE id = :sid"),
-            {"d": int(delta), "sid": stock_id},
+            {"d": int(delta), "sid": int(stock_id)},
         )
 
     meta_out: Dict[str, Any] = dict(meta or {})

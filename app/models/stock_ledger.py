@@ -13,20 +13,11 @@ from app.db.base import Base
 class StockLedger(Base):
     """
     台账（只增不改）
-    幂等唯一： (reason, ref, ref_line, item_id, batch_code, warehouse_id)
-    - ref 非空，用于业务幂等
-    - delta/after_qty 使用整型，配合 v2 “件数级”余额
 
-    Phase 3.7-A 扩展：
-    - trace_id：跨表 trace
-    - production_date / expiry_date：用于仅靠 ledger 重建批次生命周期
-
-    Phase 3.8（已落地）：
-    - sub_reason：业务细分（PO_RECEIPT / COUNT_ADJUST / ORDER_SHIP ...）
-
-    Phase 3.11（本次启动长期）：
-    - reason_canon：reason 的稳定口径（RECEIPT / SHIPMENT / ADJUSTMENT）
-      注意：不替换原 reason，避免破坏幂等与历史兼容。
+    ✅ 无批次槽位支持：
+    - batch_code 允许为 NULL（表示“无批次”，不是“未知批次”）
+    - batch_code_key 为生成列：COALESCE(batch_code,'__NULL_BATCH__')
+      并参与幂等唯一约束 uq_ledger_wh_batch_item_reason_ref_line
     """
 
     __tablename__ = "stock_ledger"
@@ -35,14 +26,22 @@ class StockLedger(Base):
 
     warehouse_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
     item_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
-    batch_code: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+
+    batch_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True, index=True)
+
+    batch_code_key: Mapped[str] = mapped_column(
+        sa.String(64),
+        sa.Computed("coalesce(batch_code, '__NULL_BATCH__')", persisted=True),
+        nullable=False,
+        index=True,
+    )
 
     reason: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     reason_canon: Mapped[str | None] = mapped_column(sa.String(32), nullable=True, index=True)
 
     sub_reason: Mapped[str | None] = mapped_column(sa.String(32), nullable=True, index=True)
 
-    ref: Mapped[str] = mapped_column(sa.String(128), nullable=False)  # NOT NULL for idempotency
+    ref: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     ref_line: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=1)
 
     delta: Mapped[int] = mapped_column(sa.Integer, nullable=False)
@@ -64,7 +63,7 @@ class StockLedger(Base):
             "ref",
             "ref_line",
             "item_id",
-            "batch_code",
+            "batch_code_key",
             "warehouse_id",
             name="uq_ledger_wh_batch_item_reason_ref_line",
         ),

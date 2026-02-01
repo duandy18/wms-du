@@ -3,23 +3,39 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from sqlalchemy import text
 
-# ✅ 你仓库里已经有 async_session_maker fixture，通常也能 import 到这里
 from app.db.session import async_session_maker
 
 
-# ✅ reason 必须符合“原子动作”合同（tests/api/test_outbound_reason_contract.py）
-# opening 的解释性放在 sub_reason（不参与 reason 合同校验）
 OPEN_REASON = "ADJUST"
 OPEN_SUB_REASON = "OPENING_BALANCE"
 OPEN_REF_PREFIX = "OPEN:"
 
 
+def _norm_bc(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
+def _batch_key(bc: Optional[str]) -> str:
+    return bc if bc is not None else "__NULL_BATCH__"
+
+
 async def main() -> None:
     """
-    目标：让每个 (warehouse_id,item_id,batch_code) 满足：
+    目标：让每个 (warehouse_id,item_id,batch_code_key) 满足：
       SUM(stock_ledger.delta) == stocks.qty
 
     做法：
@@ -27,34 +43,38 @@ async def main() -> None:
     - 若 diff != 0，则写入一条 opening ledger（append-only）
     - 幂等：以 (reason, ref, ref_line) 唯一，ref 设计为每个 key 唯一
 
-    合同说明（Phase 3）：
-    - baseline seed 阶段可能只写 stocks、不写 stock_ledger（部分测试要求 baseline ledger_sum == 0）
-    - 因此 opening ledger 作为“解释层补账”，应在 pytest 之后执行（Makefile 已制度化）
-    - 且 reason 必须保持原子（这里用 ADJUST），解释性放 sub_reason=OPENING_BALANCE
+    注意：
+    - join 统一走 batch_code_key（NULL 语义稳定）
+    - 绝不允许把 NULL batch_code 写成字符串 "None"
     """
     ts = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     async with async_session_maker() as session:
-        # 1) 找出所有不一致 keys
         rows = (
             await session.execute(
                 text(
                     """
                     WITH ledger_sum AS (
-                      SELECT warehouse_id, item_id, batch_code, COALESCE(SUM(delta),0) AS sum_delta
-                      FROM stock_ledger
-                      GROUP BY warehouse_id, item_id, batch_code
+                      SELECT warehouse_id,
+                             item_id,
+                             batch_code_key,
+                             COALESCE(SUM(delta),0) AS sum_delta
+                        FROM stock_ledger
+                       GROUP BY warehouse_id, item_id, batch_code_key
                     )
                     SELECT
-                      s.warehouse_id, s.item_id, s.batch_code,
+                      s.warehouse_id,
+                      s.item_id,
+                      s.batch_code,
+                      s.batch_code_key,
                       s.qty AS stock_qty,
                       COALESCE(l.sum_delta, 0) AS ledger_qty,
                       (s.qty - COALESCE(l.sum_delta, 0)) AS diff
                     FROM stocks s
                     LEFT JOIN ledger_sum l
-                      ON l.warehouse_id=s.warehouse_id
-                     AND l.item_id=s.item_id
-                     AND l.batch_code=s.batch_code
+                      ON l.warehouse_id   = s.warehouse_id
+                     AND l.item_id        = s.item_id
+                     AND l.batch_code_key = s.batch_code_key
                     WHERE (s.qty - COALESCE(l.sum_delta, 0)) <> 0
                     ORDER BY ABS(s.qty - COALESCE(l.sum_delta, 0)) DESC
                     """
@@ -73,18 +93,18 @@ async def main() -> None:
         inserted = 0
         skipped = 0
 
-        # 2) 逐条补 opening ledger
         for r in rows:
             w = int(r["warehouse_id"])
             i = int(r["item_id"])
-            b = str(r["batch_code"])
+            bc = _norm_bc(r["batch_code"])
+            ck = str(r["batch_code_key"] or _batch_key(bc))
+
             stock_qty = int(r["stock_qty"])
             diff = int(r["diff"])
 
-            # 对每个 key 唯一
-            ref = f"{OPEN_REF_PREFIX}{w}:{i}:{b}"
+            # 对每个 key 唯一：ref 使用 batch_code_key，避免 None 字符串污染
+            ref = f"{OPEN_REF_PREFIX}{w}:{i}:{ck}"
 
-            # 幂等检查：已有则跳过（以 reason/ref/ref_line 为锚点）
             exists = (
                 await session.execute(
                     text(
@@ -131,7 +151,7 @@ async def main() -> None:
                     "ref": ref,
                     "item_id": i,
                     "warehouse_id": w,
-                    "batch_code": b,
+                    "batch_code": bc,  # ✅ may be NULL
                 },
             )
             inserted += 1

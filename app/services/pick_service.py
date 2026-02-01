@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
 
+from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
@@ -16,8 +17,8 @@ class PickService:
 
     设计要点
     - 拣货即扣减：扫码确认后立刻扣减库存（原子 + 幂等由 StockService.adjust 保障）
-    - 批次强制：扫码必须提供 batch_code；未提供即拒绝
-    - 粒度统一：以 (item_id, warehouse_id, batch_code) 为唯一槽位
+    - 批次强制：仅对 requires_batch=true 的商品强制 batch_code；requires_batch=false 允许 NULL
+    - 粒度统一：库存槽位最终以 (item_id, warehouse_id, batch_code|NULL) 表达
     - FEFO 柔性：不强制 FEFO，只要指定批次即可扣减；FEFO 风险通过快照/查询提示
 
     Phase N（订单驱动增强）：
@@ -29,10 +30,40 @@ class PickService:
     - “扣减库存”只是动作；台账 reason 必须表达业务语义。
     - 默认：通用拣货使用 MovementType.PICK（当前映射为 ADJUSTMENT）。
     - 订单出库：调用方应显式传入 movement_type=MovementType.SHIP（落库为 SHIPMENT）。
+
+    ✅ 本窗口演进（唯一主线）：
+    - requires_batch=true  => batch_code 必填
+    - requires_batch=false => batch_code 允许为 NULL（表示“无批次”，不是“未知批次”）
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self.stock_svc = stock_svc or StockService()
+
+    async def _item_requires_batch(self, session: AsyncSession, *, item_id: int) -> bool:
+        """
+        临时事实派生：
+        - items.has_shelf_life == True  => requires_batch == True
+        - 其他（False/NULL）            => requires_batch == False
+
+        重要：item 不存在时不要在这里提前 raise，
+        让后续写库触发 FK（测试依赖此行为）。
+        """
+        row = (
+            await session.execute(
+                SA(
+                    """
+                    SELECT has_shelf_life
+                      FROM items
+                     WHERE id = :item_id
+                     LIMIT 1
+                    """
+                ),
+                {"item_id": int(item_id)},
+            )
+        ).first()
+        if not row:
+            return False
+        return bool(row[0] is True)
 
     async def record_pick(
         self,
@@ -42,61 +73,54 @@ class PickService:
         qty: int,
         ref: str,
         occurred_at: datetime,
-        batch_code: str,
+        batch_code: Optional[str],
         warehouse_id: int,
-        trace_id: Optional[str] = None,  # ⭐ 新增：可选 trace_id（订单驱动时传入）
+        trace_id: Optional[str] = None,
         start_ref_line: Optional[int] = None,
-        task_line_id: Optional[int] = None,  # 预留：任务/拣货单整合
+        task_line_id: Optional[int] = None,
         movement_type: Union[str, MovementType] = MovementType.PICK,
     ) -> Dict[str, Any]:
-        """
-        人工拣货（扫码确认）→ 直接扣减 (item_id, warehouse_id, batch_code) 槽位上的库存。
-        幂等键由台账唯一键保障：(warehouse_id, item_id, batch_code, reason, ref, ref_line)
-
-        参数说明：
-          - trace_id: 若为订单驱动拣货，可传入对应订单的 trace_id；
-                      将透传给 StockService.adjust，最终写入 stock_ledger.trace_id，
-                      便于 TraceService 统一聚合。
-          - movement_type:
-                      本次扣减应落入 stock_ledger.reason 的业务语义（MovementType 映射）。
-                      默认 PICK；订单出库应传 SHIP（落库为 SHIPMENT）。
-        """
-        # —— 基础校验 ——
         if qty <= 0:
             raise ValueError("Qty must be > 0 for pick record.")
-        if not batch_code or not str(batch_code).strip():
-            raise ValueError("扫码拣货必须提供 batch_code。")
         if warehouse_id is None or int(warehouse_id) <= 0:
             raise ValueError("拣货必须明确 warehouse_id。")
 
+        requires_batch = await self._item_requires_batch(session, item_id=int(item_id))
+
+        bc_norm: Optional[str]
+        if batch_code is None:
+            bc_norm = None
+        else:
+            s = str(batch_code).strip()
+            bc_norm = s or None
+
+        if requires_batch and not bc_norm:
+            raise ValueError("批次受控商品扫码拣货必须提供 batch_code。")
+
         ref_line = int(start_ref_line or 1)
 
-        # —— 核心原子操作：统一走 StockService.adjust（delta < 0 扣减） ——
         try:
             result = await self.stock_svc.adjust(
                 session=session,
                 item_id=item_id,
                 delta=-int(qty),
-                reason=movement_type,  # ✅ 由调用方决定落库 reason 语义
+                reason=movement_type,
                 ref=ref,
                 ref_line=ref_line,
                 occurred_at=occurred_at,
-                batch_code=str(batch_code),
+                batch_code=bc_norm,
                 warehouse_id=int(warehouse_id),
-                trace_id=trace_id,  # ⭐ 将 trace_id 透传到 ledger
+                trace_id=trace_id,
             )
         except ValueError as e:
-            # 典型：库存不足 / 批次不存在等业务校验失败
             raise ValueError(f"拣货失败：{e}") from e
         except Exception as e:
-            # 其他异常：继续抛出交由上层审计/处理
             raise e
 
-        # —— 返回结果：与出库链路保持一致的最小契约 ——
         return {
             "picked": int(qty),
             "stock_after": result.get("after") if result else None,
-            "batch_code": str(batch_code),
+            "batch_code": bc_norm,
             "warehouse_id": int(warehouse_id),
             "ref": ref,
             "ref_line": ref_line,

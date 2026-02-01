@@ -80,7 +80,7 @@ def register(router: APIRouter) -> None:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"scan(count) failed: {e}")
 
-        scan_ref = f"scan:api:{req.occurred_at.isoformat(timespec='minutes')}"
+        scan_ref = f"scan:count:api:{req.occurred_at.isoformat(timespec='minutes')}"
         return ScanResponse(
             ok=True,
             committed=True,

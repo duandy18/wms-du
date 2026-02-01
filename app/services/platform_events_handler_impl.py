@@ -27,6 +27,22 @@ except Exception:
         MAIN = "MAIN"
 
 
+def _norm_bc(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        if s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
 async def handle_event_batch(
     events: List[Dict[str, Any]],
     session: Optional[AsyncSession] = None,
@@ -59,9 +75,7 @@ async def handle_event_batch(
                 "state": mapped.get("state") or extract_state(raw),
                 "lines": mapped.get("lines") or raw.get("lines") or [],
                 "payload": mapped.get("payload") or raw,
-                "warehouse_code": (
-                    mapped.get("warehouse_code") if isinstance(mapped, dict) else None
-                ),
+                "warehouse_code": (mapped.get("warehouse_code") if isinstance(mapped, dict) else None),
             }
 
             inc_event_metric(platform, task["shop_id"] or "", task["state"] or "")
@@ -165,42 +179,29 @@ async def handle_event_batch(
                     if not arr:
                         return False
                     required_keys = {"item_id", "warehouse_id", "batch_code", "qty"}
-                    return all(
-                        required_keys.issubset(x.keys())  # type: ignore[arg-type]
-                        for x in arr  # type: ignore[assignment]
-                    )
+                    return all(required_keys.issubset(x.keys()) for x in arr)  # type: ignore[arg-type]
 
-                # ⭐ 核心改动在这里：
-                # 优先使用新 world 的 ship_lines（location_hint），
-                # 若不存在则回退到 legacy 的 ship_lines_legacy。
                 mapped_ship = None
                 if isinstance(mapped, dict):
-                    mapped_ship = (
-                        mapped.get("ship_lines")
-                    )
+                    mapped_ship = mapped.get("ship_lines")
 
                 mapped_lines = mapped.get("lines") if isinstance(mapped, dict) else None
 
-                chosen = (
-                    raw_lines
-                    if has_all(raw_lines)
-                    else (mapped_ship or mapped_lines or task.get("lines") or [])
-                )
+                chosen = raw_lines if has_all(raw_lines) else (mapped_ship or mapped_lines or task.get("lines") or [])
 
+                # ✅ 关键：batch_code 保留 None，不要 str(None) -> "None"
                 lines = [
                     {
                         "item_id": int(x["item_id"]),
                         "warehouse_id": int(x["warehouse_id"]),
-                        "batch_code": str(x["batch_code"]),
+                        "batch_code": _norm_bc(x.get("batch_code")),
                         "qty": int(x["qty"]),
                     }
                     for x in chosen
                     if {"item_id", "warehouse_id", "batch_code", "qty"}.issubset(x.keys())
                 ]
                 if not lines:
-                    raise ValueError(
-                        "No valid ship lines (need item_id, warehouse_id, batch_code, qty)"
-                    )
+                    raise ValueError("No valid ship lines (need item_id, warehouse_id, batch_code, qty)")
 
                 # 先按 (item,wh,batch) 合并，供 OutboundService 使用
                 lines = merge_lines(lines)
@@ -222,7 +223,6 @@ async def handle_event_batch(
                     shop_id=task["shop_id"],
                 )
 
-                # ✅ 关键改造：消费候选仓 = [默认仓（若有）] + [事件 lines 中显式 warehouse_id（location_hint）]
                 wh_candidates: List[int] = []
                 if wh_for_reserve is not None:
                     try:
@@ -230,7 +230,6 @@ async def handle_event_batch(
                     except Exception:
                         pass
 
-                # 从 lines 中提取 distinct warehouse_id（location_hint）
                 for x in lines:
                     try:
                         wid = int(x["warehouse_id"])
@@ -241,7 +240,6 @@ async def handle_event_batch(
 
                 reserve_used = False
                 if not wh_candidates:
-                    # ✅ 仍然禁止隐性 fallback：既无默认仓，也无显式 location_hint，则不 consume reserve
                     await audit.write_json(
                         session,
                         level="INFO",

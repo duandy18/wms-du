@@ -27,10 +27,28 @@ def _env(name: str, default: str | None = None) -> str:
 def _infer_ref(source_type: str | None, task_id: int, source_id: int | None) -> str:
     st = (source_type or "").strip().upper()
     if st == "ORDER":
-        # 与 receive_task_commit.py 的 ref 规则一致：RMA-{source_id or task_id}
         sid = int(source_id or 0) or int(task_id)
         return f"RMA-{sid}"
     return f"RT-{int(task_id)}"
+
+
+def _norm_bc(v: Any) -> Optional[str]:
+    """
+    统一归一 batch_code（backfill 不制造假码）：
+    - None / "" / "None" -> None
+    - 其他 -> strip 后的字符串
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
 
 
 async def _task_has_receipt(session: AsyncSession, task_id: int) -> bool:
@@ -44,7 +62,6 @@ async def _task_has_receipt(session: AsyncSession, task_id: int) -> bool:
 
 
 async def _load_tasks(session: AsyncSession, limit: int = 5000) -> List[Dict[str, Any]]:
-    # 只回填已 COMMITTED 的任务
     rows = (
         await session.execute(
             text(
@@ -163,7 +180,6 @@ async def _insert_line(
         factor = 1
     qty_units = qty_purchase * factor
 
-    # 快照字段：优先 PO 行快照，否则用任务行快照
     item_name = None
     item_sku = None
     unit_cost: Optional[Decimal] = None
@@ -183,6 +199,8 @@ async def _insert_line(
         item_name = task_line.get("item_name")
     if not item_sku:
         item_sku = task_line.get("item_sku")
+
+    bc = _norm_bc(task_line.get("batch_code"))
 
     await session.execute(
         text(
@@ -214,7 +232,7 @@ async def _insert_line(
             "item_id": int(task_line["item_id"]),
             "item_name": str(item_name) if item_name else None,
             "item_sku": str(item_sku) if item_sku else None,
-            "batch_code": str(task_line.get("batch_code") or "NOEXP"),
+            "batch_code": bc,  # ✅ 不制造 NOEXP 假码；缺省就是 NULL
             "production_date": task_line.get("production_date"),
             "expiry_date": task_line.get("expiry_date"),
             "qty_received": int(qty_purchase),
@@ -230,7 +248,6 @@ async def _insert_line(
 
 async def backfill() -> Tuple[int, int]:
     dsn = _env("WMS_DATABASE_URL")
-    # 兼容：有人传的是 sync DSN（postgresql+psycopg://），这里要求 async（postgresql+psycopg:// 也能被 async_engine 接受）
     engine = create_async_engine(dsn, pool_pre_ping=True)
     async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -245,18 +262,20 @@ async def backfill() -> Tuple[int, int]:
                 continue
 
             lines = await _load_task_lines(session, tid)
-            # 只处理有实收的任务
-            real_lines = [ln for ln in lines if int(ln.get("scanned_qty") or 0) > 0 or int(ln.get("committed_qty") or 0) > 0]
+            real_lines = [
+                ln
+                for ln in lines
+                if int(ln.get("scanned_qty") or 0) > 0 or int(ln.get("committed_qty") or 0) > 0
+            ]
             if not real_lines:
                 continue
 
             occurred_at = t.get("updated_at") or _utc_now()
             if isinstance(occurred_at, str):
-                # 极端情况：字符串时间，直接用 now（避免解析失败）
                 occurred_at = _utc_now()
 
             ref = _infer_ref(t.get("source_type"), tid, t.get("source_id"))
-            trace_id = None  # 历史任务多半没有 trace_id；如未来有字段可补
+            trace_id = None
 
             receipt_id = await _insert_receipt(
                 session,

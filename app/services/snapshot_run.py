@@ -41,6 +41,7 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
             text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"),
             {"d": today},
         )
+        # ✅ batch_code_key 是 generated column，不能显式插入
         await session.execute(
             text(
                 """

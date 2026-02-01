@@ -37,7 +37,7 @@ async def _seed_batch_and_stock(
             """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES (:item, :wh, :code, :qty)
-            ON CONFLICT (item_id, warehouse_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
@@ -65,7 +65,6 @@ async def test_soft_reserve_ship_then_reserve_out_of_order(session: AsyncSession
     batch_code = "B-OOO-1"
     ref = "SR-OUTOFORDER-1"
 
-    # 造 3 件库存（仓 + 批次）
     await _seed_batch_and_stock(
         session,
         item_id=item_id,
@@ -74,7 +73,6 @@ async def test_soft_reserve_ship_then_reserve_out_of_order(session: AsyncSession
         qty=3,
     )
 
-    # Step 1: SHIP 先到 —— 无 reservation，应该 NOOP
     r1 = await svc.pick_consume(
         session,
         platform=platform,
@@ -85,14 +83,12 @@ async def test_soft_reserve_ship_then_reserve_out_of_order(session: AsyncSession
     )
     assert r1["status"] == "NOOP"
 
-    # 不应写任何负账
     row = await session.execute(
         text("SELECT COUNT(*) FROM stock_ledger WHERE ref=:ref AND delta<0"),
         {"ref": ref},
     )
     assert int(row.scalar() or 0) == 0
 
-    # Step 2: RESERVE 后到 —— 持久化 open reservation
     await svc.persist(
         session,
         platform=platform,
@@ -102,7 +98,6 @@ async def test_soft_reserve_ship_then_reserve_out_of_order(session: AsyncSession
         lines=[{"item_id": item_id, "qty": 3}],
     )
 
-    # Step 3: 再次 SHIP —— 正常消费 reservation
     r2 = await svc.pick_consume(
         session,
         platform=platform,
@@ -113,7 +108,6 @@ async def test_soft_reserve_ship_then_reserve_out_of_order(session: AsyncSession
     )
     assert r2["status"] in ("CONSUMED", "PARTIAL")
 
-    # reservation 状态 consumed
     row = await session.execute(
         text(
             """
