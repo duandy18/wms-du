@@ -34,13 +34,13 @@ def register_list_create_routes(router: APIRouter) -> None:
         if not sch:
             raise HTTPException(status_code=404, detail="Scheme not found")
 
+        # ✅ UI 心智收敛：
+        # - 不再强调 is_active（可绑定候选池）排序
+        # - 列表默认按 id desc（最新在前）
         tpls = (
             db.query(ShippingProviderPricingSchemeSegmentTemplate)
             .filter(ShippingProviderPricingSchemeSegmentTemplate.scheme_id == scheme_id)
-            .order_by(
-                ShippingProviderPricingSchemeSegmentTemplate.is_active.desc(),
-                ShippingProviderPricingSchemeSegmentTemplate.id.desc(),
-            )
+            .order_by(ShippingProviderPricingSchemeSegmentTemplate.id.desc())
             .all()
         )
         return SegmentTemplateListOut(ok=True, data=tpls)

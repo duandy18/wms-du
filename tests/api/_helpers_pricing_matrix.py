@@ -226,6 +226,37 @@ async def ensure_scheme_id(client: httpx.AsyncClient, headers: Dict[str, str], p
     pytest.fail(f"Cannot resolve scheme_id from list item: {items[-1]}")
 
 
+def _minimal_put_items_from_segments(
+    segments: List[Tuple[str, Optional[str]]],
+) -> List[Dict[str, Any]]:
+    """
+    ✅ 新合同：publish 需要 items >= 1，且 items 必须满足后端的连续性校验。
+    这里统一生成一个“最小可用行结构”：
+      0.000–1.000, 1.000–∞
+    （无论传入 segments 如何，测试造数只需要一个稳定可绑定模板）
+    """
+    return [
+        {"ord": 0, "min_kg": "0.000", "max_kg": "1.000", "active": True},
+        {"ord": 1, "min_kg": "1.000", "max_kg": None, "active": True},
+    ]
+
+
+async def _put_template_items(client: httpx.AsyncClient, headers: Dict[str, str], template_id: int, segments: List[Tuple[str, Optional[str]]]) -> None:
+    items = _minimal_put_items_from_segments(segments)
+    r = await client.put(
+        f"/segment-templates/{int(template_id)}/items",
+        headers=headers,
+        json={"items": items},
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+async def _publish_segment_template(client: httpx.AsyncClient, headers: Dict[str, str], template_id: int) -> None:
+    # ✅ 新合同：Zone 绑定模板必须为 published
+    r = await client.post(f"/segment-templates/{int(template_id)}:publish", headers=headers, json={})
+    assert r.status_code in (200, 201), r.text
+
+
 async def create_segment_template(
     client: httpx.AsyncClient,
     headers: Dict[str, str],
@@ -234,13 +265,16 @@ async def create_segment_template(
     segments: List[Tuple[str, Optional[str]]],
 ) -> int:
     """
-    Pricing smoke 只需要 template_id 用于分组，不强制验证模板段生命周期。
-    因此这里仅负责创建并返回 template_id，不做 publish/activate/items 持久化的强制动作。
+    ✅ 新合同（测试造数版）：
+    - Zone 绑定模板必须为 published
+    - publish 前必须至少写入 1 条 items
+    因此：create(draft) -> put items -> publish -> return template_id
     """
-    items = [{"min_kg": mn, "max_kg": mx} for (mn, mx) in segments]
+    # create endpoint 可能不接受 items/segments；这里仅确保能创建出模板
     payload_candidates = [
-        {"name": name, "items": items},
-        {"name": name, "segments": items},
+        {"name": name},
+        {"name": name, "items": [{"min_kg": "0.000", "max_kg": "1.000"}]},
+        {"name": name, "segments": [{"min_kg": "0.000", "max_kg": "1.000"}]},
     ]
 
     last_resp: Optional[httpx.Response] = None
@@ -250,13 +284,18 @@ async def create_segment_template(
         if r.status_code in (200, 201):
             data = r.json()
             tid = _pick_id_any(data)
-            if tid is not None:
-                return tid
-            # 兼容旧形态
-            raw = data.get("id") or data.get("template_id") or data.get("segment_template_id")
-            if raw is not None:
-                return int(raw)
-            pytest.fail(f"Cannot resolve template_id from create response: {data}")
+            if tid is None:
+                raw = data.get("id") or data.get("template_id") or data.get("segment_template_id")
+                if raw is None:
+                    pytest.fail(f"Cannot resolve template_id from create response: {data}")
+                tid = int(raw)
+
+            # ✅ put items（至少 1 条且连续）
+            await _put_template_items(client, headers, tid, segments)
+
+            # ✅ publish
+            await _publish_segment_template(client, headers, tid)
+            return tid
 
     pytest.skip(
         f"Cannot create segment template (last_status={getattr(last_resp,'status_code',None)} body={getattr(last_resp,'text','')})."
@@ -274,12 +313,11 @@ async def create_zone(
     segment_template_id: Optional[int] = None,
 ) -> int:
     """
-    ✅ 新合同：Zone 必须绑定 segment_template_id
+    ✅ 新合同：Zone 必须绑定 segment_template_id（且模板必须 published）。
     为了让测试造数简单：当 segment_template_id 缺省时，这里自动创建一个最小模板并绑定。
     同时：由于此 helper 需要 provinces，因此统一走 zones-atomic 入口。
     """
     if segment_template_id is None:
-        # 最小行结构即可：不要求生命周期，不要求 items 长度 > 1
         segment_template_id = await create_segment_template(
             client,
             headers,

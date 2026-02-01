@@ -35,12 +35,64 @@ def _pick_id_any(obj: Any) -> Optional[int]:
     return None
 
 
-async def _create_template_only(
+def _items_payload_variants(items: List[Dict[str, Any]]) -> List[Any]:
+    # 兼容不同后端写法：直接 list / 包一层 items / 包一层 data
+    return [items, {"items": items}, {"data": items}]
+
+
+async def _put_template_items(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    template_id: int,
+    segments: List[Tuple[str, Optional[str]]],
+) -> None:
+    """
+    ✅ 新合同：publish 需要 items >= 1，且 items 必须满足连续性校验。
+    这里用确定性的 PUT /segment-templates/{id}/items 写入 items，并确保 active=true。
+    """
+    items: List[Dict[str, Any]] = []
+    for i, (mn, mx) in enumerate(segments):
+        items.append({"ord": i, "min_kg": mn, "max_kg": mx, "active": True})
+
+    # 真实 endpoint（你后端已固定）
+    path = f"/segment-templates/{template_id}/items"
+
+    last: Optional[httpx.Response] = None
+    for payload in _items_payload_variants(items):
+        r = await client.put(path, headers=headers, json=payload)
+        last = r
+        if r.status_code in (200, 201):
+            return
+
+        # 422/409/400：可能 payload shape 不对，继续尝试其它形态
+        continue
+
+    pytest.fail(
+        f"cannot write segment template items for template_id={template_id}. "
+        f"last_status={getattr(last,'status_code',None)} last_body={getattr(last,'text','')}"
+    )
+
+
+async def _publish_template(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    template_id: int,
+) -> None:
+    r = await client.post(f"/segment-templates/{template_id}:publish", headers=headers, json={})
+    assert r.status_code in (200, 201), r.text
+
+
+async def _create_published_template(
     client: httpx.AsyncClient,
     headers: Dict[str, str],
     scheme_id: int,
     name: str,
+    segments: List[Tuple[str, Optional[str]]],
 ) -> int:
+    """
+    ✅ 新合同：Zone 绑定模板必须为 published。
+    流程：create(draft) -> put items -> publish
+    """
     r = await client.post(
         f"/pricing-schemes/{scheme_id}/segment-templates",
         headers=headers,
@@ -50,72 +102,10 @@ async def _create_template_only(
     data = r.json()
     tid = _pick_id_any(data)
     assert tid is not None, f"cannot resolve template_id from response: {data}"
+
+    await _put_template_items(client, headers, tid, segments=segments)
+    await _publish_template(client, headers, tid)
     return tid
-
-
-def _items_payload_variants(items: List[Dict[str, Any]]) -> List[Any]:
-    # 兼容不同后端写法：直接 list / 包一层 items / 包一层 data
-    return [items, {"items": items}, {"data": items}]
-
-
-async def _ensure_template_items_active(
-    client: httpx.AsyncClient,
-    headers: Dict[str, str],
-    template_id: int,
-    segments: List[Tuple[str, Optional[str]]],
-) -> None:
-    """
-    ✅ 关键：matrix 的 segments 来自 segment_template_items 且会过滤 active=False。
-    由于当前 create_template 接口只创建模板本体，不创建 items，
-    所以这里必须再走“items 写入口”把 items 写进去，并确保 active=true。
-
-    我们不猜你的 items 写入口实际路径，而是对一组常见路径做探测式写入：
-    - /segment-templates/{id}/items
-    - /segment-templates/{id}/items:replace
-    - /segment-templates/{id}/items:upsert
-    - /segment-templates/{id}/items/batch
-    直到任意一个返回 200/201/204 即视为成功。
-    """
-    items: List[Dict[str, Any]] = []
-    for i, (mn, mx) in enumerate(segments):
-        items.append({"ord": i, "min_kg": mn, "max_kg": mx, "active": True})
-
-    candidates = [
-        ("POST", f"/segment-templates/{template_id}/items"),
-        ("PUT", f"/segment-templates/{template_id}/items"),
-        ("POST", f"/segment-templates/{template_id}/items:replace"),
-        ("PUT", f"/segment-templates/{template_id}/items:replace"),
-        ("POST", f"/segment-templates/{template_id}/items:upsert"),
-        ("PUT", f"/segment-templates/{template_id}/items:upsert"),
-        ("POST", f"/segment-templates/{template_id}/items/batch"),
-        ("PUT", f"/segment-templates/{template_id}/items/batch"),
-    ]
-
-    last: Optional[httpx.Response] = None
-    for method, path in candidates:
-        for payload in _items_payload_variants(items):
-            if method == "POST":
-                r = await client.post(path, headers=headers, json=payload)
-            else:
-                r = await client.put(path, headers=headers, json=payload)
-            last = r
-
-            # 404：说明路径不对，继续探测下一个 path
-            if r.status_code == 404:
-                continue
-
-            # 200/201/204：视为成功
-            if r.status_code in (200, 201, 204):
-                return
-
-            # 422/409/400：可能是 payload shape 不对或语义冲突，继续尝试同路径其它 payload 或其它路径
-            continue
-
-    # 如果所有候选都失败，明确报错，方便你定位真实 endpoint
-    pytest.fail(
-        f"cannot write segment template items for template_id={template_id}. "
-        f"last_status={getattr(last,'status_code',None)} last_body={getattr(last,'text','')}"
-    )
 
 
 @pytest.mark.asyncio
@@ -133,21 +123,17 @@ async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(clien
     uniq = uuid4().hex[:8]
     scheme_id = await ensure_scheme_id(client, headers, provider_id, name=f"UT_MX_GROUPS_{uniq}")
 
-    # 1) 创建两套模板（仅创建模板本体）
-    tpl1 = await _create_template_only(client, headers, scheme_id, name=f"UT_TPL_A_{uniq}")
-    tpl2 = await _create_template_only(client, headers, scheme_id, name=f"UT_TPL_B_{uniq}")
+    # 1) 创建两套模板（create -> put items -> publish）
+    tpl1 = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_A_{uniq}", segments=[("0", "1"), ("1", None)])
+    tpl2 = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_B_{uniq}", segments=[("0", "2"), ("2", None)])
 
-    # 2) 为每套模板写入 active items（否则 matrix segments 会为空）
-    await _ensure_template_items_active(client, headers, tpl1, segments=[("0", "1"), ("1", None)])
-    await _ensure_template_items_active(client, headers, tpl2, segments=[("0", "2"), ("2", None)])
-
-    # 3) 创建 4 个 zones：2 个绑 tpl1，2 个绑 tpl2
+    # 2) 创建 4 个 zones：2 个绑 tpl1，2 个绑 tpl2
     z1 = await create_zone(client, headers, scheme_id, name=f"UT_Z_A1_{uniq}", provinces=["北京市"], segment_template_id=tpl1)
     z2 = await create_zone(client, headers, scheme_id, name=f"UT_Z_A2_{uniq}", provinces=["天津市"], segment_template_id=tpl1)
     z3 = await create_zone(client, headers, scheme_id, name=f"UT_Z_B1_{uniq}", provinces=["河北省"], segment_template_id=tpl2)
     z4 = await create_zone(client, headers, scheme_id, name=f"UT_Z_B2_{uniq}", provinces=["河南省"], segment_template_id=tpl2)
 
-    # 4) 给每个 zone 写一条 bracket，确保 brackets 字段存在且可解析
+    # 3) 给每个 zone 写一条 bracket，确保 brackets 字段存在且可解析
     await create_bracket_step_over(client, headers, z1, "0", "1")
     await create_bracket_step_over(client, headers, z2, "0", "1")
     await create_bracket_step_over(client, headers, z3, "0", "2")
@@ -178,7 +164,7 @@ async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(clien
 
         segments = g["segments"]
         assert isinstance(segments, list)
-        assert len(segments) > 0  # ✅ items 写入后，matrix 必须输出 segments
+        assert len(segments) > 0
 
         for s in segments:
             assert "ord" in s
@@ -226,9 +212,8 @@ async def test_zone_brackets_matrix_unbound_zones_contract_is_deprecated_under_z
     uniq = uuid4().hex[:8]
     scheme_id = await ensure_scheme_id(client, headers, provider_id, name=f"UT_MX_UNBOUND_DEPRECATED_{uniq}")
 
-    # 创建 1 套模板，并写入 items（确保 matrix segments 非空）
-    tpl = await _create_template_only(client, headers, scheme_id, name=f"UT_TPL_ONLY_{uniq}")
-    await _ensure_template_items_active(client, headers, tpl, segments=[("0", "1"), ("1", None)])
+    # 创建 1 套模板（create -> put items -> publish）
+    tpl = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_ONLY_{uniq}", segments=[("0", "1"), ("1", None)])
 
     # 创建 3 个 zones，全部绑定同一模板（新合同下不允许 unbound）
     await create_zone(client, headers, scheme_id, name=f"UT_U1_{uniq}", provinces=["北京市"], segment_template_id=tpl)

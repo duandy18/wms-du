@@ -42,33 +42,45 @@ def _pick_template_id(data: dict) -> int:
     raise AssertionError(f"cannot resolve template_id from response: {data}")
 
 
+def _publish_template(client: TestClient, token: str, template_id: int) -> None:
+    h = _auth_headers(token)
+    r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
+    assert r.status_code in (200, 201), r.text
+
+
+def _put_min_items(client: TestClient, token: str, template_id: int) -> None:
+    h = _auth_headers(token)
+    r = client.put(
+        f"/segment-templates/{int(template_id)}/items",
+        headers=h,
+        json={
+            "items": [
+                {"ord": 0, "min_kg": "0.000", "max_kg": "1.000", "active": True},
+                {"ord": 1, "min_kg": "1.000", "max_kg": None, "active": True},
+            ]
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+
+
 def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
     """
-    Zone 新合同：必须绑定 segment_template_id。
-    这里创建一个最小模板（带最小 items），不依赖 publish/activate 生命周期。
+    ✅ 新合同：Zone 绑定模板必须为 published 且 items>=1。
+    流程：create(draft) -> put items -> publish
     """
     h = _auth_headers(token)
+
     r = client.post(
         f"/pricing-schemes/{scheme_id}/segment-templates",
         headers=h,
-        json={
-            "name": name,
-            # 尽量兼容：后端可能接受 items 或 segments
-            "items": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
-        },
+        json={"name": name},
     )
-    if r.status_code not in (200, 201):
-        # fallback 再试一次 segments 形态
-        r = client.post(
-            f"/pricing-schemes/{scheme_id}/segment-templates",
-            headers=h,
-            json={
-                "name": name,
-                "segments": [{"min_kg": "0.000", "max_kg": "1.000"}, {"min_kg": "1.000", "max_kg": None}],
-            },
-        )
     assert r.status_code in (200, 201), r.text
-    return _pick_template_id(r.json())
+    tid = _pick_template_id(r.json())
+
+    _put_min_items(client, token, tid)
+    _publish_template(client, token, tid)
+    return tid
 
 
 def _create_scheme_zone(client: TestClient, token: str, zone_name: str, provinces: list[str]) -> Dict[str, int]:
@@ -140,7 +152,6 @@ def test_copy_zone_brackets_api(client: TestClient) -> None:
     ids_tgt = _create_scheme_zone(client, token, "目标Zone", ["天津市"])
 
     # 让它们属于同一个 scheme：为了简单，直接在同一个 scheme 下再建 target zone
-    # 重新建一个 target zone（同 scheme）
     zr = client.post(
         f"/pricing-schemes/{ids_src['scheme_id']}/zones-atomic",
         headers=h,
@@ -149,7 +160,7 @@ def test_copy_zone_brackets_api(client: TestClient) -> None:
             "priority": 110,
             "active": True,
             "provinces": ["天津市"],
-            # ✅ 必填：绑定模板（复用源 scheme 下创建的模板）
+            # ✅ 必填：绑定模板（复用源 scheme 下创建的模板，且其为 published）
             "segment_template_id": ids_src["template_id"],
         },
     )
