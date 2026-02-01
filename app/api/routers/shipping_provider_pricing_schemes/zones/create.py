@@ -20,6 +20,14 @@ from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_member import ShippingProviderZoneMember
 
 
+def _assert_template_bindable(tpl_status: str | None) -> None:
+    # ✅ Zone 绑定只允许：published 且未归档
+    if tpl_status == "archived":
+        raise HTTPException(status_code=409, detail="cannot bind archived segment template")
+    if tpl_status != "published":
+        raise HTTPException(status_code=409, detail="cannot bind non-published segment template (must be published)")
+
+
 def register_create_routes(router: APIRouter) -> None:
     @router.post(
         "/pricing-schemes/{scheme_id}/zones",
@@ -41,8 +49,9 @@ def register_create_routes(router: APIRouter) -> None:
         # ✅ 新合同：zones 页只负责“区域编辑”，允许不绑定模板
         seg_tpl_id = getattr(payload, "segment_template_id", None)
         if seg_tpl_id is not None:
-            # 传了就校验：模板必须属于同 scheme
-            load_template_or_422(db, scheme_id=scheme_id, template_id=int(seg_tpl_id))
+            # 传了就校验：模板必须属于同 scheme，并且必须是 published
+            tpl = load_template_or_422(db, scheme_id=scheme_id, template_id=int(seg_tpl_id))
+            _assert_template_bindable(getattr(tpl, "status", None))
 
         z = ShippingProviderZone(
             scheme_id=scheme_id,
@@ -79,10 +88,11 @@ def register_create_routes(router: APIRouter) -> None:
         # ✅ 省份不交叉
         assert_provinces_no_overlap(db, scheme_id=scheme_id, provinces=provinces, exclude_zone_id=None)
 
-        # ✅ 新合同：允许不绑定模板；如果传了则校验属于同 scheme
+        # ✅ 新合同：允许不绑定模板；如果传了则校验属于同 scheme + 必须 published
         seg_tpl_id = getattr(payload, "segment_template_id", None)
         if seg_tpl_id is not None:
-            load_template_or_422(db, scheme_id=scheme_id, template_id=int(seg_tpl_id))
+            tpl = load_template_or_422(db, scheme_id=scheme_id, template_id=int(seg_tpl_id))
+            _assert_template_bindable(getattr(tpl, "status", None))
 
         z = ShippingProviderZone(
             scheme_id=scheme_id,

@@ -8,11 +8,22 @@ from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_zone_out
 from app.api.routers.shipping_provider_pricing_schemes.schemas import ZoneOut, ZoneUpdateIn
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm, norm_nonempty
-from app.api.routers.shipping_provider_pricing_schemes_zones_helpers import assert_zone_brackets_compatible_with_template, load_template_or_422
+from app.api.routers.shipping_provider_pricing_schemes_zones_helpers import (
+    assert_zone_brackets_compatible_with_template,
+    load_template_or_422,
+)
 from app.db.deps import get_db
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
 from app.models.shipping_provider_zone_member import ShippingProviderZoneMember
+
+
+def _assert_template_bindable(tpl_status: str | None) -> None:
+    # ✅ Zone 绑定只允许：published 且未归档
+    if tpl_status == "archived":
+        raise HTTPException(status_code=409, detail="cannot bind archived segment template")
+    if tpl_status != "published":
+        raise HTTPException(status_code=409, detail="cannot bind non-published segment template (must be published)")
 
 
 def register_update_routes(router: APIRouter) -> None:
@@ -59,9 +70,11 @@ def register_update_routes(router: APIRouter) -> None:
                     )
                 z.segment_template_id = None
             else:
-                # 1) 模板必须属于同 scheme
-                load_template_or_422(db, scheme_id=z.scheme_id, template_id=int(next_tpl_id))
-                # 2) 若该 zone 已有 brackets，必须兼容
+                # 1) 模板必须属于同 scheme（并返回 tpl）
+                tpl = load_template_or_422(db, scheme_id=z.scheme_id, template_id=int(next_tpl_id))
+                # 2) 绑定只允许 published 且未归档
+                _assert_template_bindable(getattr(tpl, "status", None))
+                # 3) 若该 zone 已有 brackets，必须兼容
                 assert_zone_brackets_compatible_with_template(db, zone_id=zone_id, template_id=int(next_tpl_id))
                 z.segment_template_id = int(next_tpl_id)
 
