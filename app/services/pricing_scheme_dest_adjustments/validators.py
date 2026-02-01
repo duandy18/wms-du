@@ -61,16 +61,63 @@ def resolve_province_code(province_code: Optional[str], province_name: Optional[
     return item.code, item.name
 
 
+def _is_municipality_province_code(province_code: str) -> bool:
+    pc = norm(province_code) or ""
+    return pc in {"110000", "120000", "310000", "500000"}
+
+
+def _municipality_city_code_from_prov_code(province_code: str) -> str:
+    pc = norm(province_code) or ""
+    try:
+        n = int(pc)
+    except Exception:
+        return ""
+    return str(n + 100).zfill(6)
+
+
 def resolve_city_code(scope: str, province_code: str, city_code: Optional[str], city_name: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """
     ✅ 强制标准：
-    - scope=province：city_code/city_name 必须为空
-    - scope=city：city_code 必须来自该省的城市字典（或 name 可解析）
+    - scope=province：city_code/city_name 必须为空（由调用方护栏确保）
+    - scope=city：
+        - 普通省份：city_code 必须来自该省的城市字典（或 name 可解析）
+        - 直辖市：city_code 只允许唯一市码（xx0100），且不依赖 city 字典（避免字典为空导致无法配置）
     返回：(city_code, city_name)
     """
     if scope == "province":
         return None, None
 
+    prov_code = norm(province_code) or ""
+    if _is_municipality_province_code(prov_code):
+        expected = _municipality_city_code_from_prov_code(prov_code)
+        cc = norm(city_code)
+        if not cc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "geo_missing_code",
+                    "message": "city_code is required (must be geo code)",
+                    "field": "city_code",
+                },
+            )
+        if expected and cc != expected:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "geo_invalid_municipality_city",
+                    "message": "invalid city for municipality (must be the unique municipality city code)",
+                    "province_code": prov_code,
+                    "city_code": cc,
+                    "expected_city_code": expected,
+                },
+            )
+
+        # ✅ 直辖市 city_name 规范化：优先用省字典名（例如 北京市）
+        prov_item = resolve_province(code=prov_code, name=None)
+        std_name = prov_item.name if prov_item is not None else (norm(city_name) or "")
+        return cc, (std_name or None)
+
+    # 普通省份：走城市字典校验
     item = resolve_city(province_code=province_code, code=city_code, name=city_name)
     if item is None:
         raise HTTPException(
