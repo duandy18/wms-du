@@ -24,7 +24,19 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
     r = client.post(
         "/shipping-quote/calc",
         headers=h,
-        json={"warehouse_id": wid, "scheme_id": 999999, "dest": {"province": "北京市"}, "real_weight_kg": 1.0, "flags": []},
+        json={
+            "warehouse_id": wid,
+            "scheme_id": 999999,
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": None,
+                "province_code": "110000",
+                "city_code": "110100",
+            },
+            "real_weight_kg": 1.0,
+            "flags": [],
+        },
     )
     assert r.status_code == 422, r.text
 

@@ -55,7 +55,13 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
         json={
             "warehouse_id": wid,
             "scheme_id": ids_a["scheme_id"],
-            "dest": {"province": "河北省", "city": "廊坊市", "district": "固安县"},
+            "dest": {
+                "province": "河北省",
+                "city": "廊坊市",
+                "district": "固安县",
+                "province_code": "130000",
+                "city_code": "131000",
+            },
             "real_weight_kg": 1.0,
             "flags": [],
         },
@@ -69,7 +75,13 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
         json={
             "warehouse_id": wid,
             "provider_ids": [],
-            "dest": {"province": "河北省", "city": "廊坊市", "district": "固安县"},
+            "dest": {
+                "province": "河北省",
+                "city": "廊坊市",
+                "district": "固安县",
+                "province_code": "130000",
+                "city_code": "131000",
+            },
             "real_weight_kg": 1.0,
             "flags": [],
             "max_results": 10,
@@ -116,7 +128,13 @@ def test_shipping_quote_recommend_provider_ids_intersect_warehouse_phase3(client
         json={
             "warehouse_id": wid,
             "provider_ids": [provider_b],
-            "dest": {"province": "河北省", "city": "廊坊市", "district": "固安县"},
+            "dest": {
+                "province": "河北省",
+                "city": "廊坊市",
+                "district": "固安县",
+                "province_code": "130000",
+                "city_code": "131000",
+            },
             "real_weight_kg": 1.0,
             "flags": [],
             "max_results": 10,
