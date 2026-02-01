@@ -41,7 +41,7 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
             INSERT INTO stocks(item_id, warehouse_id, batch_code, qty) VALUES
               (3003, 1, 'A_NEAR', 3),
               (3003, 1, 'B_FAR',  3)
-            ON CONFLICT (item_id, warehouse_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
             """
         )

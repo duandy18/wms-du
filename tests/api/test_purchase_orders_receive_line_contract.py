@@ -105,8 +105,13 @@ async def _fetch_stock_qty(
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code: str,
+    batch_code: str | None,
 ) -> int:
+    """
+    强护栏口径：
+    - 非批次商品：batch_code = NULL 槽位
+    - 批次商品：batch_code = 具体字符串
+    """
     res = await session.execute(
         text(
             """
@@ -114,14 +119,13 @@ async def _fetch_stock_qty(
               FROM stocks
              WHERE warehouse_id = :wid
                AND item_id = :item_id
-               AND batch_code = :batch_code
+               AND batch_code IS NOT DISTINCT FROM :batch_code
             """
         ),
         {"wid": warehouse_id, "item_id": item_id, "batch_code": batch_code},
     )
     row = res.first()
     if row is None:
-        # stocks 在你的体系里应该被 upsert/ensure；若没有就是事实层断裂
         raise AssertionError(
             f"stocks row not found: wid={warehouse_id}, item_id={item_id}, batch_code={batch_code}"
         )
@@ -138,11 +142,11 @@ async def _assert_stock_matches_last_ledger(
     rows: List[Dict[str, Any]],
 ) -> None:
     """
-    合同：同一 (wid,item_id,batch_code) 的 stocks.qty 必须等于最新一条 ledger.after_qty
+    合同：同一 (wid,item_id,batch_code|NULL) 的 stocks.qty 必须等于最新一条 ledger.after_qty
     """
-    last_by_key: Dict[Tuple[int, int, str], Dict[str, Any]] = {}
+    last_by_key: Dict[Tuple[int, int, str | None], Dict[str, Any]] = {}
     for r in rows:
-        key = (int(r["warehouse_id"]), int(r["item_id"]), str(r["batch_code"]))
+        key = (int(r["warehouse_id"]), int(r["item_id"]), r.get("batch_code"))
         last_by_key[key] = r
 
     for (wid, item_id, batch_code), last in last_by_key.items():
@@ -168,7 +172,10 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     1) receive-line 支持多次收货（累加）并推进 PO 状态；
     2) 有效期商品必须补录 production_date；若无法推算 expiry_date，则必须补录 expiry_date；
     3) 每次成功收货必须写入 stock_ledger（RECEIPT / PO-{id} / ref_line 连续）；
-    4) stocks.qty 必须与最新 ledger.after_qty 一致（按 wid+item+batch_code 对齐）。
+    4) stocks.qty 必须与最新 ledger.after_qty 一致（按 wid+item+batch_code|NULL 对齐）。
+
+    强护栏口径：
+    - has_shelf_life=false 的商品不再接受“假批次字符串”，应落在 batch_code=NULL 槽位
     """
     headers = await _login_admin_headers(client)
 
@@ -187,11 +194,9 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     po = await _create_po_two_lines(client, headers, item_ids)
     po_id = int(po["id"])
 
-    # 初始：qty_received=0
     assert int(_find_line(po, 1).get("qty_received", 0)) == 0
     assert int(_find_line(po, 2).get("qty_received", 0)) == 0
 
-    # 初始：ledger 无记录
     rows0 = await _fetch_po_ledger_rows(session, po_id)
     assert rows0 == []
 
@@ -242,6 +247,7 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     await _assert_stock_matches_last_ledger(session, rows2)
 
     # 正例3：收第二行（非有效期商品一次收完 3）
+    # 强护栏下：该行应落在 batch_code=NULL 槽位，ledger.batch_code 也应为 NULL
     r_ok3 = await _receive_line(client, headers, po_id, line_no=2, qty=3)
     assert r_ok3.status_code == 200, r_ok3.text
     po3 = r_ok3.json()
@@ -252,6 +258,5 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     _assert_refline_is_contiguous(rows3)
     await _assert_stock_matches_last_ledger(session, rows3)
 
-    # 最终状态
     status = str(po3.get("status", "")).upper()
     assert status in ("RECEIVED", "CLOSED"), f"unexpected status={status}"

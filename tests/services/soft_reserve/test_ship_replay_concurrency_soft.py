@@ -42,7 +42,7 @@ async def _seed_batch_and_stock(
             """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES (:item, :wh, :code, :qty)
-            ON CONFLICT (item_id, warehouse_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
@@ -91,7 +91,6 @@ async def test_soft_reserve_pick_consume_idempotent_under_concurrency(
     batch_code = "B-CONC-1"
     ref = "SR-CONC-1"
 
-    # 1) 用一个短生命周期 Session 造数据：库存=3，reservation=open
     async with async_session_maker() as s0:
         await _seed_batch_and_stock(
             s0,
@@ -110,7 +109,6 @@ async def test_soft_reserve_pick_consume_idempotent_under_concurrency(
         )
         await s0.commit()
 
-    # 2) 并发 10 次 pick_consume，每个 worker 独立 Session
     async def worker() -> dict:
         async with async_session_maker() as s:
             return await svc.pick_consume(
@@ -125,11 +123,9 @@ async def test_soft_reserve_pick_consume_idempotent_under_concurrency(
     results = await asyncio.gather(*[worker() for _ in range(10)])
 
     statuses = {r["status"] for r in results}
-    # 至少有一次真正消费，其余为 NOOP/重复调用
     assert statuses <= {"CONSUMED", "PARTIAL", "NOOP"}
     assert "CONSUMED" in statuses or "PARTIAL" in statuses
 
-    # 3) 最终状态应为 consumed
     async with async_session_maker() as s1:
         final_status = await _get_reservation_status(
             s1,

@@ -19,11 +19,10 @@ async def _seed_minimal_order_for_outbound(
 ) -> tuple[str, int, int, str]:
     """
     为出库写台账准备一条最小订单头：
-
     - platform = 'PDD'
     - shop_id = 'UT-SHOP'
-    - warehouse_id = 1  （conftest 已种好 WH-1）
-    - item_id = 1      （conftest 已种好 ITEM-1，batch='NEAR' 有库存）
+    - warehouse_id = 1
+    - item_id = 1
     - ext_order_no = 'LEDGER-OUT-1'
     - ref = ORD:{platform}:{shop_id}:{ext_order_no}
     """
@@ -35,7 +34,6 @@ async def _seed_minimal_order_for_outbound(
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
     trace_id = "TRACE-LEDGER-OUT-1"
 
-    # 确保 item 存在（conftest 已经种了 id=1，这里幂等兜一层）
     await session.execute(
         text(
             """
@@ -44,14 +42,9 @@ async def _seed_minimal_order_for_outbound(
             ON CONFLICT (id) DO NOTHING
             """
         ),
-        {
-            "item_id": item_id,
-            "sku": "SKU-0001",
-            "name": "UT-ITEM-1",
-        },
+        {"item_id": item_id, "sku": "SKU-0001", "name": "UT-ITEM-1"},
     )
 
-    # 插入一条订单头（如已存在则跳过）
     await session.execute(
         text(
             """
@@ -91,23 +84,47 @@ async def _seed_minimal_order_for_outbound(
     return order_ref, wh_id, item_id, trace_id
 
 
+async def _pick_one_stock_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
+    """
+    从 stocks 中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，返回 batch_code（可能为 NULL）。
+    强护栏下，非批次商品一般是 NULL 槽位。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT batch_code, qty
+                  FROM stocks
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND qty > 0
+                 ORDER BY id ASC
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id)},
+        )
+    ).first()
+    if not row:
+        pytest.skip("no stock slot with qty>0 for item/warehouse in baseline")
+    return row[0]
+
+
 @pytest.mark.asyncio
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
     验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 stocks 槽位一致。
 
     这里不关心完整业务流程（soft reserve / audit / platform events），只关心：
-
     - OutboundService.commit 能在当前 schema 下正常运行；
     - 写出来的 stock_ledger 行：
         * reason = 'OUTBOUND_SHIP'
-        * warehouse_id / item_id / batch_code 维度正确
+        * warehouse_id / item_id / batch_code|NULL 维度正确
         * delta < 0（出库）
     """
     order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 
-    # 使用 conftest 的种子：stocks(warehouse_id=1, item_id=1, batch_code='NEAR', qty=10)
-    batch_code = "NEAR"
+    batch_code = await _pick_one_stock_slot_for_item(session, warehouse_id=wh_id, item_id=item_id)
     qty_to_ship = 3
 
     svc = OutboundService()
@@ -122,7 +139,6 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
 
     occurred_at = datetime.now(UTC)
 
-    # 使用字符串型的 order_ref 作为 order_id，这样 ledger.ref 就等于 ORD:... 形式
     result = await svc.commit(
         session=session,
         order_id=order_ref,
@@ -132,7 +148,6 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
     )
     assert isinstance(result, dict)
 
-    # 查找 OUTBOUND_SHIP 台账记录（按 ref + reason）
     rows = (
         await session.execute(
             text(
@@ -160,6 +175,6 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
     for r in rows:
         assert int(r["warehouse_id"]) == wh_id
         assert int(r["item_id"]) == item_id
-        assert r["batch_code"] == batch_code
+        assert (r["batch_code"] == batch_code) or (r["batch_code"] is None and batch_code is None)
         assert r["reason"] == "OUTBOUND_SHIP"
-        assert int(r["delta"]) < 0  # 出库必须是负数
+        assert int(r["delta"]) < 0

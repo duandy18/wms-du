@@ -12,7 +12,8 @@ pytestmark = pytest.mark.asyncio
 
 WAREHOUSE_ID = 1
 ITEM_ID = 3003
-BATCH_CODE = "NEAR"
+# 强护栏口径：非批次商品走 NULL 槽位
+BATCH_CODE: str | None = None
 ORDER_NO = "P3-ORDER-001"
 
 
@@ -23,7 +24,7 @@ async def _read_stocks(session: AsyncSession) -> int:
                 """
                 SELECT qty
                 FROM stocks
-                WHERE item_id=:i AND warehouse_id=:w AND batch_code=:b
+                WHERE item_id=:i AND warehouse_id=:w AND batch_code IS NOT DISTINCT FROM :b
                 LIMIT 1
                 """
             ),
@@ -39,7 +40,7 @@ async def _sum_ledger(session: AsyncSession) -> int:
             """
             SELECT COALESCE(SUM(delta), 0)
             FROM stock_ledger
-            WHERE item_id=:i AND warehouse_id=:w AND batch_code=:b
+            WHERE item_id=:i AND warehouse_id=:w AND batch_code IS NOT DISTINCT FROM :b
             """
         ),
         {"i": ITEM_ID, "w": WAREHOUSE_ID, "b": BATCH_CODE},
@@ -92,7 +93,6 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, platform: str, sh
 async def _ingest_order(session: AsyncSession, ext_order_no: str):
     province = "UT-P3"
     await _ensure_store_route_to_wh1(session, platform="PDD", shop_id="S-01", province=province)
-    # 订单仅用于生成 ref，不改变库存
     return await OrderService.ingest(
         session,
         platform="PDD",

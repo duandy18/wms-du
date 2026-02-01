@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,24 +23,29 @@ class StockSnapshot(Base):
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
     warehouse_id: Mapped[int] = mapped_column(Integer, ForeignKey("warehouses.id"), nullable=False)
     item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id"), nullable=False)
-    batch_code: Mapped[str] = mapped_column(String(length=64), nullable=False)
 
-    qty_on_hand: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4), nullable=False, server_default=text("0")
+    # ✅ v2：允许 NULL 表达“无批次”
+    batch_code: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
+
+    # ✅ 生成列：把 NULL 映射为稳定 sentinel，用于唯一性/对齐 joins
+    batch_code_key: Mapped[str] = mapped_column(
+        sa.String(64),
+        sa.Computed("coalesce(batch_code, '__NULL_BATCH__')", persisted=True),
+        nullable=False,
+        index=True,
     )
-    qty_allocated: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4), nullable=False, server_default=text("0")
-    )
-    qty_available: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4), nullable=False, server_default=text("0")
-    )
+
+    qty_on_hand: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+    qty_allocated: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+    qty_available: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
 
     __table_args__ = (
+        # ✅ 唯一性改为 batch_code_key（保持约束名不变，便于 ON CONFLICT ON CONSTRAINT）
         UniqueConstraint(
             "snapshot_date",
             "warehouse_id",
             "item_id",
-            "batch_code",
+            "batch_code_key",
             name="uq_stock_snapshot_grain_v2",
         ),
         Index("ix_stock_snapshots_item_id", "item_id"),

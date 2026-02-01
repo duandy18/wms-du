@@ -18,7 +18,7 @@ async def test_write_ledger_idempotent(session: AsyncSession):
             """
         INSERT INTO stocks(item_id, warehouse_id, batch_code, qty)
         VALUES (3003, 1, 'IDEM', 5)
-        ON CONFLICT (item_id, warehouse_id, batch_code) DO UPDATE SET qty=5
+        ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO UPDATE SET qty = EXCLUDED.qty
     """
         )
     )

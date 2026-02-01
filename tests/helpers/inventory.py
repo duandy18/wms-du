@@ -119,12 +119,12 @@ async def seed_batch_slot(
 
     - batches：按 (item_id, warehouse_id, batch_code, expiry_date) 插入；
     - warehouse_id 通过 locations.warehouse_id 解析；
-    - stocks：按 (item_id, warehouse_id, batch_code) 维度存 qty。
+    - stocks：按 (item_id, warehouse_id, batch_code_key) 唯一约束存 qty（通过约束名 upsert）。
     """
     wh = await _resolve_wh_by_loc(session, loc)
     expiry = date.today() + timedelta(days=days)
 
-    # 1) 批次建档
+    # 1) 批次建档（batches 的唯一维度仍是 (item_id, warehouse_id, batch_code)）
     await session.execute(
         SA(
             """
@@ -136,13 +136,13 @@ async def seed_batch_slot(
         {"i": item, "w": wh, "code": code, "exp": expiry},
     )
 
-    # 2) 库存槽位建档
+    # 2) 库存槽位建档（stocks 的唯一约束已经迁移到 batch_code_key）
     await session.execute(
         SA(
             """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES (:i, :w, :code, 0)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
         {"i": item, "w": wh, "code": code},
@@ -163,9 +163,7 @@ async def seed_batch_slot(
     )
 
 
-async def seed_many(
-    session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]
-) -> None:
+async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]) -> None:
     for item, loc, code, qty, days in entries:
         await seed_batch_slot(session, item=item, loc=loc, code=code, qty=qty, days=days)
 
@@ -203,14 +201,11 @@ async def sum_reserved_active(session: AsyncSession, *, item: int, loc: int) -> 
             {"i": item, "l": loc},
         )
         return int(row.scalar_one() or 0)
-    # 新 schema 下交由上层服务负责“reserved”计算
     return 0
 
 
 async def available(session: AsyncSession, *, item: int, loc: int) -> int:
-    return await sum_on_hand(session, item=item, loc=loc) - await sum_reserved_active(
-        session, item=item, loc=loc
-    )
+    return await sum_on_hand(session, item=item, loc=loc) - await sum_reserved_active(session, item=item, loc=loc)
 
 
 async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:
@@ -232,7 +227,7 @@ async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) 
 
 
 # ------------------------------------------------------------------------------
-# 快照插入（v2：按 (snapshot_date, warehouse_id, item_id, batch_code) 粒度）
+# 快照插入（v2：按 (snapshot_date, warehouse_id, item_id, batch_code_key) 粒度）
 # ------------------------------------------------------------------------------
 
 
@@ -250,7 +245,7 @@ async def insert_snapshot(
     向 v2 stock_snapshots 表插入/累加一条快照记录。
 
     v2/v3 语义：
-    - 粒度 = snapshot_date + warehouse_id + item_id + batch_code；
+    - 粒度 = snapshot_date + warehouse_id + item_id + batch_code_key；
     - 测试仍按 (day, item, loc) 造数，我们：
         * loc → 解析出 warehouse_id；
         * batch_code 固定为 'SNAP-TEST'（测试专用）；
@@ -258,6 +253,7 @@ async def insert_snapshot(
     """
     wh = await _resolve_wh_by_loc(session, loc)
 
+    # ✅ batch_code_key 是 generated column，INSERT 不写它；冲突用约束名
     await session.execute(
         SA(
             """
@@ -271,7 +267,7 @@ async def insert_snapshot(
                 qty_allocated
             )
             VALUES (:day, :w, :i, 'SNAP-TEST', :oh, :av, 0)
-            ON CONFLICT (snapshot_date, warehouse_id, item_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stock_snapshot_grain_v2
             DO UPDATE SET
                 qty_on_hand   = stock_snapshots.qty_on_hand + EXCLUDED.qty_on_hand,
                 qty_available = stock_snapshots.qty_available + EXCLUDED.qty_available

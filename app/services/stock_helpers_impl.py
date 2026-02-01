@@ -24,9 +24,7 @@ async def exec_retry(session: AsyncSession, stmt, params=None):
     base, mx = 0.03, 0.35
     for i in range(24):
         try:
-            return await (
-                session.execute(stmt) if params is None else session.execute(stmt, params)
-            )
+            return await (session.execute(stmt) if params is None else session.execute(stmt, params))
         except OperationalError as e:
             msg = (str(e) or "").lower()
             if ("database is locked" not in msg and "database is busy" not in msg) or i >= 23:
@@ -73,42 +71,28 @@ async def ensure_item(session: AsyncSession, item_id: int) -> None:
     try:
         await exec_retry(
             session,
-            insert(Item).values(
-                {"id": item_id, "sku": f"ITEM-{item_id}", "name": f"Auto Item {item_id}"}
-            ),
+            insert(Item).values({"id": item_id, "sku": f"ITEM-{item_id}", "name": f"Auto Item {item_id}"}),
         )
     except IntegrityError:
         await session.rollback()
 
 
 async def resolve_warehouse_by_location(session: AsyncSession, location_id: int) -> int:
-    wid = (
-        await session.execute(select(Location.warehouse_id).where(Location.id == location_id))
-    ).scalar_one_or_none()
+    wid = (await session.execute(select(Location.warehouse_id).where(Location.id == location_id))).scalar_one_or_none()
     if wid is not None:
         return int(wid)
 
     # 自动兜底：没有就创建默认仓与库位
-    w_first = (
-        await session.execute(select(Warehouse.id).order_by(Warehouse.id.asc()))
-    ).scalar_one_or_none()
+    w_first = (await session.execute(select(Warehouse.id).order_by(Warehouse.id.asc()))).scalar_one_or_none()
     if w_first is None:
-        wid = int(
-            (
-                await exec_retry(
-                    session, insert(Warehouse).values({"name": "AUTO-WH"}).returning(Warehouse.id)
-                )
-            ).scalar_one()
-        )
+        wid = int((await exec_retry(session, insert(Warehouse).values({"name": "AUTO-WH"}).returning(Warehouse.id))).scalar_one())
     else:
         wid = int(w_first)
 
     try:
         await exec_retry(
             session,
-            insert(Location).values(
-                {"id": location_id, "name": f"AUTO-LOC-{location_id}", "warehouse_id": wid}
-            ),
+            insert(Location).values({"id": location_id, "name": f"AUTO-LOC-{location_id}", "warehouse_id": wid}),
         )
     except IntegrityError:
         pass
@@ -116,51 +100,73 @@ async def resolve_warehouse_by_location(session: AsyncSession, location_id: int)
     return wid
 
 
-# ======================== Lock-A：stocks 槽位（新增） ========================
+# ======================== stocks 槽位（新宇宙观：item + wh + batch_code_key） ========================
 
 
 async def ensure_stock_slot(
-    session: AsyncSession, *, item_id: int, warehouse_id: int, location_id: int, batch_code: str
+    session: AsyncSession,
+    *,
+    item_id: int,
+    warehouse_id: int,
+    location_id: int,
+    batch_code: str | None,
 ) -> None:
     """
-    在 stocks 落位 Lock-A 维度的“空槽位”（qty=0）。幂等：冲突即忽略。
+    在 stocks 维度的“空槽位”（qty=0）。
+
+    ✅ 重要：当前 DB 唯一性为 uq_stocks_item_wh_batch = (item_id, warehouse_id, batch_code_key)，
+    location_id 不再是唯一维度，因此这里必须使用 ON CONFLICT ON CONSTRAINT。
+
+    说明：
+    - location_id 参数保留仅为兼容调用方；stocks 的唯一性不依赖它。
+    - batch_code 允许 None（无批次槽位）。
     """
     await session.execute(
         text(
             """
             INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
             VALUES (:i, :w, :l, :c, 0)
-            ON CONFLICT (item_id, warehouse_id, batch_code)
-            DO NOTHING
-        """
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
+            """
         ),
-        {"i": item_id, "w": warehouse_id, "l": location_id, "c": batch_code},
+        {"i": int(item_id), "w": int(warehouse_id), "l": int(location_id), "c": batch_code},
     )
 
 
-# ======================== stocks 行维护（Lock-A） ========================
+# ======================== stocks 行维护（兼容旧接口，但按新唯一维度落地） ========================
 
 
 async def ensure_stock_row(
-    session: AsyncSession, *, item_id: int, location_id: int, batch_code: str | None = None
+    session: AsyncSession,
+    *,
+    item_id: int,
+    location_id: int,
+    batch_code: str | None = None,
 ) -> tuple[int, float]:
     """
-    返回：stock_id, before_qty（Lock-A 维度唯一行）
+    返回：stock_id, before_qty（按当前唯一维度：item_id + warehouse_id + batch_code_key）
+
+    兼容旧调用：
+    - 仍接收 location_id，但内部先 resolve warehouse_id
+    - 不再用 location_id 参与 stocks 行定位（因为 DB 不再保证该维度唯一）
     """
-    wid = (
-        await session.execute(select(Location.warehouse_id).where(Location.id == location_id))
-    ).scalar_one_or_none()
+    wid = (await session.execute(select(Location.warehouse_id).where(Location.id == location_id))).scalar_one_or_none()
     if wid is None:
         raise ValueError(f"locations({location_id}) missing; cannot resolve warehouse_id")
-    if not batch_code:
-        raise ValueError("batch_code is required under Lock-A")
+
+    bc_norm: str | None
+    if batch_code is None:
+        bc_norm = None
+    else:
+        s = str(batch_code).strip()
+        bc_norm = s or None
 
     await ensure_stock_slot(
         session,
-        item_id=item_id,
+        item_id=int(item_id),
         warehouse_id=int(wid),
-        location_id=location_id,
-        batch_code=batch_code,
+        location_id=int(location_id),
+        batch_code=bc_norm,
     )
 
     row = await session.execute(
@@ -168,11 +174,13 @@ async def ensure_stock_row(
             """
             SELECT id, qty
               FROM stocks
-             WHERE item_id=:i AND warehouse_id=:w AND location_id=:l AND batch_code=:c
+             WHERE item_id=:i
+               AND warehouse_id=:w
+               AND batch_code IS NOT DISTINCT FROM :c
              LIMIT 1
-        """
+            """
         ),
-        {"i": item_id, "w": int(wid), "l": location_id, "c": batch_code},
+        {"i": int(item_id), "w": int(wid), "c": bc_norm},
     )
     rec = row.first()
     if not rec:
@@ -184,44 +192,56 @@ async def ensure_stock_row(
 
 
 async def bump_stock_by_stock_id(session: AsyncSession, *, stock_id: int, delta: float) -> None:
-    """按 stocks.id 精确加减，适配 Lock-A 维度。"""
+    """按 stocks.id 精确加减。"""
     qcol = stock_qty_col()
     await exec_retry(
         session,
-        update(Stock)
-        .where(Stock.id == stock_id)
-        .values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
+        update(Stock).where(Stock.id == stock_id).values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
     )
 
 
 # ======================== 兼容：按 item+loc 的粗粒度加减 ========================
 
 
-async def bump_stock(
-    session: AsyncSession, *, item_id: int, location_id: int, delta: float
-) -> None:
+async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, delta: float) -> None:
     """
-    保留旧接口（部分路径可能还在用）。建议逐步替换为 bump_stock_by_stock_id。
-    汇总到该 loc 下的全部批次行。
+    保留旧接口（部分路径可能还在用）。
+
+    旧语义：按 loc 汇总全部批次行。
+    新现实：stocks 的唯一性不再以 location_id 区分，因此这里按 location -> warehouse 归一后，
+            对该 warehouse 下该 item 的所有批次行做汇总更新。
+
+    如果该 item 在该 warehouse 下没有任何 stocks 行，则创建一个 “无批次(NULL) 槽位” 来承接 delta。
     """
+    wid = await resolve_warehouse_by_location(session, location_id)
     qcol = stock_qty_col()
-    sid = (
-        await session.execute(
-            select(Stock.id).where(Stock.item_id == item_id, Stock.location_id == location_id)
-        )
+
+    # 是否已有任意 stocks 行
+    any_sid = (
+        await session.execute(select(Stock.id).where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid)).limit(1))
     ).scalar_one_or_none()
-    if sid is None:
+
+    if any_sid is None:
+        # 落到无批次槽位（batch_code=NULL）
         await exec_retry(
             session,
             insert(Stock).values(
-                {"item_id": item_id, "location_id": location_id, qcol.key: float(delta)}
+                {
+                    "item_id": int(item_id),
+                    "warehouse_id": int(wid),
+                    "location_id": int(location_id),
+                    "batch_code": None,
+                    qcol.key: float(delta),
+                }
             ),
         )
         return
+
+    # 已有行：对该 warehouse 下该 item 的所有行一起加减
     await exec_retry(
         session,
         update(Stock)
-        .where(Stock.id == sid)
+        .where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid))
         .values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
     )
 
@@ -231,14 +251,14 @@ async def bump_stock(
 
 async def get_current_qty(session: AsyncSession, *, item_id: int, location_id: int) -> float:
     """
-    汇总该 loc 下所有批次的 qty。
+    旧语义：汇总该 loc 下所有批次的 qty。
+    新现实：location_id 不再是 stocks 唯一维度，因此按 location -> warehouse 归一后汇总。
     """
+    wid = await resolve_warehouse_by_location(session, location_id)
     qcol = stock_qty_col()
     val = (
         await session.execute(
-            select(func.coalesce(func.sum(qcol), 0)).where(
-                Stock.item_id == item_id, Stock.location_id == location_id
-            )
+            select(func.coalesce(func.sum(qcol), 0)).where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid))
         )
     ).scalar_one()
     return float(val or 0.0)
@@ -281,14 +301,11 @@ async def ensure_batch_full(
         "production_date": production_date,
         "expiry_date": expiry_date,
     }
-    # 仅在模型存在 qty 列时才写入，避免对不存在列的 insert 报错
     if hasattr(Batch, "qty"):
         vals["qty"] = 0
 
     try:
-        rid = (
-            await exec_retry(session, insert(Batch).values(vals).returning(Batch.id))
-        ).scalar_one()
+        rid = (await exec_retry(session, insert(Batch).values(vals).returning(Batch.id))).scalar_one()
         return int(rid)
     except IntegrityError:
         await session.rollback()

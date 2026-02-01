@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 
 import sqlalchemy as sa
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.db.base import Base
@@ -12,11 +12,17 @@ from app.db.base import Base
 
 class Stock(Base):
     """
-    v2：库存余额维度 (warehouse_id, item_id, batch_code)
+    v2：库存余额维度 (warehouse_id, item_id, batch_code|NULL)
 
     - qty 为唯一真实库存来源
     - expiry_date：从 batches 表按 (item_id, warehouse_id, batch_code) 精确映射
+                 （当 batch_code 为 NULL 时，expiry_date 必然为 NULL）
     - location_id：兼容旧时代，始终固定为 1
+
+    ✅ 本窗口演进：
+    - batch_code 允许为 NULL，用于表达“无批次商品”的真实槽位
+    - (item_id, warehouse_id) 下只允许存在一个 NULL 槽位：
+      通过生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与唯一性（见迁移）
     """
 
     __tablename__ = "stocks"
@@ -35,12 +41,23 @@ class Stock(Base):
         nullable=False,
         index=True,
     )
-    batch_code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+    # ✅ 允许 NULL：NULL 表示“无批次”
+    batch_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+
+    # ✅ 生成列：把 NULL 映射为稳定 sentinel，参与唯一性
+    batch_code_key: Mapped[str] = mapped_column(
+        sa.String(64),
+        sa.Computed("coalesce(batch_code, '__NULL_BATCH__')", persisted=True),
+        nullable=False,
+        index=True,
+    )
 
     qty: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
 
     __table_args__ = (
-        UniqueConstraint("item_id", "warehouse_id", "batch_code", name="uq_stocks_item_wh_batch"),
+        # ✅ 唯一性用 batch_code_key（DB 迁移会创建/重建同名约束）
+        sa.UniqueConstraint("item_id", "warehouse_id", "batch_code_key", name="uq_stocks_item_wh_batch"),
         Index("ix_stocks_item_wh_batch", "item_id", "warehouse_id", "batch_code"),
     )
 

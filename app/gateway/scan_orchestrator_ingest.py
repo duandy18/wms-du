@@ -55,7 +55,11 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
         expiry_date,
     ) = await parse_scan(scan, session)
 
-    scan_ref_norm = await normalize_ref(session, scan_ref(scan))
+    # ✅ 关键：确保 scan_ref 一定含 mode（哪怕调用方没传、parse_scan 推导了）
+    scan_with_mode: Dict[str, Any] = dict(scan or {})
+    scan_with_mode["mode"] = mode
+
+    scan_ref_norm = await normalize_ref(session, scan_ref(scan_with_mode))
     evidence: List[Dict[str, Any]] = []
 
     if mode not in ALLOWED_SCAN_MODES:

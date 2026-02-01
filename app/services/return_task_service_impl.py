@@ -17,6 +17,24 @@ from app.services.three_books_enforcer import enforce_three_books
 UTC = timezone.utc
 
 
+def _norm_bc(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
+def _batch_key(bc: Optional[str]) -> str:
+    return bc if bc is not None else "__NULL_BATCH__"
+
+
 class ReturnTaskServiceImpl:
     """
     订单退货回仓任务服务（实现层）
@@ -32,11 +50,13 @@ class ReturnTaskServiceImpl:
         self.stock_svc = stock_svc or StockService()
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
+        # ✅ 用 batch_code_key 聚合 shipped 事实，避免 NULL/"None" 分裂
         res = await session.execute(
             select(
                 StockLedger.item_id,
                 StockLedger.warehouse_id,
                 StockLedger.batch_code,
+                StockLedger.batch_code_key,
                 StockLedger.delta,
                 StockLedger.reason,
             )
@@ -44,25 +64,32 @@ class ReturnTaskServiceImpl:
             .where(StockLedger.delta < 0)
         )
 
+        # key: (item, wh, batch_code_key)
         agg: dict[tuple[int, int, str], int] = {}
+        any_bc: dict[tuple[int, int, str], Optional[str]] = {}
 
-        for item_id, wh_id, batch_code, delta, reason in res.all():
+        for item_id, wh_id, batch_code, batch_code_key, delta, reason in res.all():
             r = str(reason or "").strip().upper()
             if r not in self.SHIP_OUT_REASONS:
                 continue
 
-            key = (int(item_id), int(wh_id), str(batch_code))
+            bc = _norm_bc(batch_code)
+            ck = str(batch_code_key or _batch_key(bc))
+            key = (int(item_id), int(wh_id), ck)
+
             agg[key] = agg.get(key, 0) + int(-int(delta or 0))
+            any_bc.setdefault(key, bc)
 
         out: list[dict[str, Any]] = []
-        for (item_id, wh_id, batch_code), shipped_qty in agg.items():
+        for (item_id, wh_id, ck), shipped_qty in agg.items():
             if shipped_qty <= 0:
                 continue
             out.append(
                 {
                     "item_id": item_id,
                     "warehouse_id": wh_id,
-                    "batch_code": batch_code,
+                    "batch_code": any_bc.get((item_id, wh_id, ck)),
+                    "batch_code_key": ck,
                     "shipped_qty": shipped_qty,
                 }
             )
@@ -120,14 +147,14 @@ class ReturnTaskServiceImpl:
 
         for x in shipped:
             item_id = int(x["item_id"])
-            batch_code = str(x["batch_code"])
+            batch_code = _norm_bc(x.get("batch_code"))
             expected_qty = int(x["shipped_qty"])
 
             line = ReturnTaskLine(
                 task_id=task.id,
                 order_line_id=None,
                 item_id=item_id,
-                batch_code=batch_code,
+                batch_code=batch_code,  # ✅ may be NULL（非批次商品回仓）
                 expected_qty=expected_qty,
                 picked_qty=0,
                 committed_qty=0,
@@ -227,7 +254,7 @@ class ReturnTaskServiceImpl:
                 ref=str(task.order_id),
                 ref_line=ref_line,
                 occurred_at=ts,
-                batch_code=str(ln.batch_code),
+                batch_code=_norm_bc(ln.batch_code),  # ✅ keep NULL, forbid "None"
                 warehouse_id=int(task.warehouse_id),
                 trace_id=trace_id,
                 meta={"sub_reason": "RETURN_RECEIPT"},
@@ -237,12 +264,10 @@ class ReturnTaskServiceImpl:
                 {
                     "warehouse_id": int(task.warehouse_id),
                     "item_id": int(ln.item_id),
-                    "batch_code": str(ln.batch_code),
+                    "batch_code": _norm_bc(ln.batch_code),
                     "qty": int(picked),
                     "ref": str(task.order_id),
                     "ref_line": ref_line,
-                    # ✅ 关键：同 ref/ref_line 下可能存在多种 reason（例如 OUTBOUND_SHIP 与 RETURN）
-                    # 用 adjust 返回的 reason 作为硬锚点，避免误命中其他事件
                     "reason": str(res.get("reason") or ""),
                 }
             )
@@ -260,4 +285,4 @@ class ReturnTaskServiceImpl:
         if effects:
             await enforce_three_books(session, ref=str(task.order_id), effects=effects, at=ts)
 
-        return await self.get_with_lines(session, task_id=task_id, for_update=False)
+        return await self.get_with_lines(session, task_id=int(task.id), for_update=False)

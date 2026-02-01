@@ -60,7 +60,7 @@ async def test_smoke_multi_platform_end2end():
               (1, 1, 'B-1', 10),
               (1, 2, 'B-2', 20),
               (1, 3, 'B-3',  5)
-            ON CONFLICT (warehouse_id, item_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
         """
             )

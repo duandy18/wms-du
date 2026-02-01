@@ -61,22 +61,24 @@ SELECT setval(
 );
 
 -- ===== batches =====
+-- 注意：
+-- - batches 用于“批次受控商品”的主档；非批次商品不应强行塞假批次（例如 NEAR）
 INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
 VALUES
-  (1,    1, 'NEAR',      CURRENT_DATE + INTERVAL '10 day'),
   (3001, 1, 'B-CONC-1',  CURRENT_DATE + INTERVAL '7 day'),
   (3002, 1, 'B-OOO-1',   CURRENT_DATE + INTERVAL '7 day'),
-  (3003, 1, 'NEAR',      CURRENT_DATE + INTERVAL '5 day'),
   (4001, 1, 'B-MERGE-1', CURRENT_DATE + INTERVAL '10 day'),
   (4002, 1, 'B-PO-1',    CURRENT_DATE + INTERVAL '20 day');
 
 -- ===== stocks =====
+-- 重要：
+-- - 非批次商品走 NULL 槽位（与 StockService.adjust 的护栏口径一致）
 INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
 VALUES
-  (1,    1, 'NEAR',      10),
+  (1,    1, NULL,        10),
   (3001, 1, 'B-CONC-1',   3),
   (3002, 1, 'B-OOO-1',    3),
-  (3003, 1, 'NEAR',      10),
+  (3003, 1, NULL,        10),
   (4001, 1, 'B-MERGE-1', 10),
   (4002, 1, 'B-PO-1',     0);
 

@@ -10,24 +10,24 @@ from app.services.platform_events import handle_event_batch
 async def _pick_one_stock_slot(session: AsyncSession):
     """
     从 stocks 中挑一个 (item_id, warehouse_id, batch_code, sum_qty)。
-    若没有可用，则跳过测试。
+    强护栏下允许 batch_code=NULL 的真实槽位，因此不再排除 NULL。
     """
     row = await session.execute(
         text(
             """
             SELECT item_id, warehouse_id, batch_code, SUM(qty) AS qty
             FROM stocks
-            WHERE qty > 0 AND batch_code IS NOT NULL
+            WHERE qty > 0
             GROUP BY item_id, warehouse_id, batch_code
-            ORDER BY item_id, warehouse_id, batch_code
+            ORDER BY item_id, warehouse_id, batch_code NULLS FIRST
             LIMIT 1
             """
         )
     )
     r = row.first()
     if not r:
-        pytest.skip("当前基线中没有带 batch_code 的 stocks 记录")
-    return int(r[0]), int(r[1]), str(r[2]), int(r[3])
+        pytest.skip("当前基线中没有 qty>0 的 stocks 记录")
+    return int(r[0]), int(r[1]), r[2], int(r[3])
 
 
 @pytest.mark.asyncio
@@ -57,8 +57,6 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     ref = "PL-SHIP-RSV-1"
     qty = 3
 
-    # 1) 先插入一张 reservation（open）
-    #    ✅ 关键：warehouse_id 必须与 event 中一致，否则消费逻辑无法命中
     res = await session.execute(
         text(
             """
@@ -96,7 +94,6 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     )
     await session.commit()
 
-    # 2) 构造平台 SHIP event
     raw_event = {
         "platform": platform,
         "order_sn": ref,
@@ -114,7 +111,6 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
 
     await handle_event_batch([raw_event], session=session)
 
-    # 3) reservation 应被消费
     row = await session.execute(
         text("SELECT status FROM reservations WHERE id = :rid"),
         {"rid": rid},
@@ -136,7 +132,6 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
     assert int(q) == qty
     assert int(cq) == qty
 
-    # 4) ledger：这一条 SHIP 不动库存，两个 reason 都应为 0
     row = await session.execute(
         text(
             """
@@ -148,11 +143,7 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
                AND warehouse_id = :warehouse_id
             """
         ),
-        {
-            "ref": ref,
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-        },
+        {"ref": ref, "item_id": item_id, "warehouse_id": warehouse_id},
     )
     out_delta = int(row.scalar() or 0)
     assert out_delta == 0
@@ -168,11 +159,7 @@ async def test_platform_ship_consumes_soft_reserve_when_exists(session: AsyncSes
                AND warehouse_id = :warehouse_id
             """
         ),
-        {
-            "ref": ref,
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-        },
+        {"ref": ref, "item_id": item_id, "warehouse_id": warehouse_id},
     )
     soft_delta = int(row.scalar() or 0)
     assert soft_delta == 0
@@ -199,7 +186,6 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
     ref = "PL-SHIP-OUT-1"
     qty = 2
 
-    # 确保当前没有这个 ref 的 reservation
     await session.execute(
         text(
             """
@@ -230,7 +216,6 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
 
     await handle_event_batch([raw_event], session=session)
 
-    # 1) 不应产生 reservation
     row = await session.execute(
         text(
             """
@@ -246,7 +231,6 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
     cnt_rsv = row.scalar_one()
     assert cnt_rsv == 0
 
-    # 2) ledger 中应有 OUTBOUND_SHIP，且总和为 -qty
     row = await session.execute(
         text(
             """
@@ -258,16 +242,11 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
                AND warehouse_id = :warehouse_id
             """
         ),
-        {
-            "ref": ref,
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-        },
+        {"ref": ref, "item_id": item_id, "warehouse_id": warehouse_id},
     )
     out_delta = int(row.scalar() or 0)
     assert out_delta == -qty
 
-    # 3) 同一 ref 下 SOFT_SHIP 应为 0
     row = await session.execute(
         text(
             """
@@ -279,11 +258,7 @@ async def test_platform_ship_falls_back_to_outbound_when_no_reserve(session: Asy
                AND warehouse_id = :warehouse_id
             """
         ),
-        {
-            "ref": ref,
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-        },
+        {"ref": ref, "item_id": item_id, "warehouse_id": warehouse_id},
     )
     soft_delta = int(row.scalar() or 0)
     assert soft_delta == 0

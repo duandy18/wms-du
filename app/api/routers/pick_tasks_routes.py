@@ -151,13 +151,18 @@ def register(router: APIRouter) -> None:
                 task_id=task_id,
                 platform=payload.platform,
                 shop_id=payload.shop_id,
+                handoff_code=payload.handoff_code,
                 trace_id=payload.trace_id,
                 allow_diff=payload.allow_diff,
             )
             await session.commit()
         except ValueError as e:
             await session.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
+            msg = str(e)
+            # “确认码不匹配 / 业务冲突 / 不允许提交” 更像 409
+            if "handoff_code" in msg or "confirm code" in msg or "not match" in msg:
+                raise HTTPException(status_code=409, detail=msg)
+            raise HTTPException(status_code=400, detail=msg)
         except Exception:
             await session.rollback()
             raise

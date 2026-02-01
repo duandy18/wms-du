@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 _PAID_ALIASES = {
@@ -37,15 +37,39 @@ def classify(state: str) -> str:
     return "IGNORE"
 
 
+def _norm_bc(v: Any) -> Optional[str]:
+    """
+    统一归一 batch_code：
+    - None / "" / "None" -> None
+    - 其他字符串 -> strip 后的值
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
 def merge_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    acc: Dict[tuple, int] = defaultdict(int)
+    """
+    合并同一 (item_id, warehouse_id, batch_code) 的 qty。
+    ✅ 关键：batch_code 允许 None，且绝对不能 str(None) -> "None"。
+    """
+    acc: Dict[tuple[int, int, str | None], int] = defaultdict(int)
     for x in lines:
         key = (
             int(x["item_id"]),
             int(x["warehouse_id"]),
-            str(x["batch_code"]),
+            _norm_bc(x.get("batch_code")),
         )
         acc[key] += int(x["qty"])
+
     return [
         {
             "item_id": k[0],

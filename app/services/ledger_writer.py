@@ -40,12 +40,24 @@ def _canon_reason(reason: str) -> Optional[str]:
     return None
 
 
+def _norm_batch_code(batch_code: Optional[str]) -> Optional[str]:
+    if batch_code is None:
+        return None
+    s = str(batch_code).strip()
+    return s or None
+
+
+def _batch_key(batch_code: Optional[str]) -> str:
+    bc = _norm_batch_code(batch_code)
+    return bc if bc is not None else "__NULL_BATCH__"
+
+
 async def write_ledger(
     session: AsyncSession,
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code: str,
+    batch_code: Optional[str],
     reason: str,
     sub_reason: Optional[str] = None,
     delta: int,
@@ -62,19 +74,17 @@ async def write_ledger(
     - 幂等唯一键以 DB 约束 uq_ledger_wh_batch_item_reason_ref_line 为准
     - 返回 0 表示命中幂等，否则返回新 id
 
-    可解释性补全（冲突时仅补齐缺字段，不修改核心事实字段）：
-    - 由于幂等键不包含 sub_reason/trace_id/reason_canon，历史可能先写入“缺字段”记录；
-      再写同键时会触发 ON CONFLICT。
-    - 过去 DO NOTHING 会导致缺字段永远补不回来。
-    - 现在：先 DO NOTHING 保持幂等返回语义；若命中冲突，再做一次 UPDATE 补全缺字段。
-    - 并且将空字符串视为缺失（NULLIF）。
+    ✅ 无批次槽位支持：
+    - batch_code 允许为 NULL（表示“无批次”）
+    - DB 侧用生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与幂等唯一性
     """
     reason_canon = _canon_reason(reason)
+    bc_norm = _norm_batch_code(batch_code)
 
     base_values = dict(
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=str(batch_code),
+        batch_code=bc_norm,  # ✅ may be NULL
         reason=str(reason),
         reason_canon=reason_canon,
         sub_reason=sub_reason,
@@ -102,12 +112,10 @@ async def write_ledger(
         return int(new_id)
 
     # 2) 冲突命中：补齐缺字段（不改变核心事实字段），最终仍返回 0
-    # 把空串当成缺失：NULLIF(col, '')
     old_reason_canon = sa.func.nullif(StockLedger.reason_canon, "")
     old_sub_reason = sa.func.nullif(StockLedger.sub_reason, "")
     old_trace_id = sa.func.nullif(StockLedger.trace_id, "")
 
-    # 仅当本次传入有值时，才有必要尝试补齐（减少无意义 update）
     need_patch = any(
         [
             bool((reason_canon or "").strip()) if isinstance(reason_canon, str) else reason_canon is not None,
@@ -128,12 +136,13 @@ async def write_ledger(
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),
     }
 
+    # ✅ 用 batch_code_key 让 NULL 也能稳定命中同一幂等行
     await session.execute(
         sa.update(StockLedger)
         .where(
             StockLedger.warehouse_id == int(warehouse_id),
             StockLedger.item_id == int(item_id),
-            StockLedger.batch_code == str(batch_code),
+            StockLedger.batch_code_key == _batch_key(bc_norm),
             StockLedger.reason == str(reason),
             StockLedger.ref == str(ref),
             StockLedger.ref_line == int(ref_line),

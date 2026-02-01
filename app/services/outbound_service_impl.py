@@ -17,10 +17,32 @@ UTC = timezone.utc
 __all__ = ["ShipLine", "OutboundService", "ship_commit", "commit_outbound"]
 
 
+def _norm_batch_code(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        # 防御：上游若把 None 走了 str()，会变成 "None"
+        if s.lower() == "none":
+            return None
+        return s
+    # 其它类型（比如 int）按字符串化处理，但仍做空/none 防御
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
+def _batch_key(bc: Optional[str]) -> str:
+    return bc if bc is not None else "__NULL_BATCH__"
+
+
 @dataclass
 class ShipLine:
     item_id: int
-    batch_code: str
+    batch_code: Optional[str]
     qty: int
     warehouse_id: Optional[int] = None
     batch_id: Optional[int] = None
@@ -31,8 +53,8 @@ class OutboundService:
     """
     Phase 3 出库服务（硬口径 + 强幂等）：
 
-    - 粒度：(warehouse_id, item_id, batch_code)
-    - 幂等：以 (ref=order_id, item_id, warehouse_id, batch_code) 为键，
+    - 粒度：(warehouse_id, item_id, batch_code|NULL)
+    - 幂等：以 (ref=order_id, item_id, warehouse_id, batch_code_key) 为键，
       先查已扣数量，再扣“剩余需要扣”的量。
     - 同一 payload 中重复的 (item,wh,batch) 会先合并为一行，再做一次扣减。
 
@@ -139,12 +161,13 @@ class OutboundService:
         if ts.tzinfo is None:
             ts = datetime.now(UTC)
 
-        agg_qty: Dict[Tuple[int, int, str], int] = defaultdict(int)
+        # ✅ 聚合维度：item + wh + batch_code（允许 NULL）
+        agg_qty: Dict[Tuple[int, int, Optional[str]], int] = defaultdict(int)
         for raw in lines:
             ln = self._coerce_line(raw)
             if ln.warehouse_id is None:
                 raise ValueError("warehouse_id is required in each ship line")
-            key = (int(ln.item_id), int(ln.warehouse_id), str(ln.batch_code))
+            key = (int(ln.item_id), int(ln.warehouse_id), _norm_batch_code(ln.batch_code))
             agg_qty[key] += int(ln.qty)
 
         committed = 0
@@ -156,6 +179,9 @@ class OutboundService:
         effects: List[Dict[str, Any]] = []
 
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
+            ck = _batch_key(batch_code)
+
+            # ✅ 幂等查询：用 batch_code_key（NULL 语义稳定）
             row = await session.execute(
                 sa.text(
                     """
@@ -164,11 +190,11 @@ class OutboundService:
                     WHERE ref=:ref
                       AND item_id=:item
                       AND warehouse_id=:wid
-                      AND batch_code=:code
+                      AND batch_code_key=:ck
                       AND delta < 0
                     """
                 ),
-                {"ref": str(order_id), "item": item_id, "wid": wh_id, "code": batch_code},
+                {"ref": str(order_id), "item": item_id, "wid": wh_id, "ck": ck},
             )
             already = int(row.scalar() or 0)
             need = int(want_qty) + already  # 目标是总 delta = -want_qty
@@ -196,7 +222,7 @@ class OutboundService:
                     ref_line=1,
                     occurred_at=ts,
                     warehouse_id=wh_id,
-                    batch_code=batch_code,
+                    batch_code=batch_code,  # ✅ may be NULL
                     trace_id=trace_id,
                     meta={
                         "sub_reason": "ORDER_SHIP",
@@ -210,7 +236,7 @@ class OutboundService:
                     {
                         "warehouse_id": int(wh_id),
                         "item_id": int(item_id),
-                        "batch_code": str(batch_code),
+                        "batch_code": batch_code,  # ✅ keep None, do NOT str()
                         "qty": -int(need),
                         "ref": str(order_id),
                         "ref_line": 1,
@@ -265,13 +291,9 @@ class OutboundService:
             return raw
         return ShipLine(
             item_id=int(raw["item_id"]),
-            batch_code=str(raw["batch_code"]),
+            batch_code=_norm_batch_code(raw.get("batch_code")),
             qty=int(raw["qty"]),
-            warehouse_id=(
-                int(raw["warehouse_id"])
-                if "warehouse_id" in raw and raw["warehouse_id"] is not None
-                else None
-            ),
+            warehouse_id=(int(raw["warehouse_id"]) if raw.get("warehouse_id") is not None else None),
             batch_id=raw.get("batch_id"),
             meta=raw.get("meta"),
         )

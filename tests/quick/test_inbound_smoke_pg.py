@@ -45,7 +45,7 @@ async def _ensure_min_domain_v2(
             """
             INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
             VALUES (:w, :i, :b, 0)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
         {"w": warehouse_id, "i": item_id, "b": batch_code},

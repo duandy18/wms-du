@@ -37,7 +37,7 @@ async def _seed_batch_and_stock(
             """
             INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
             VALUES (:item, :wh, :code, :qty)
-            ON CONFLICT (item_id, warehouse_id, batch_code)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
@@ -65,7 +65,6 @@ async def test_outbound_merge_duplicate_lines_in_single_payload(session: AsyncSe
     warehouse_id = 1
     batch_code = "B-MERGE-1"
 
-    # 初始库存 10（仓 + 批次）
     await _seed_batch_and_stock(
         session,
         item_id=item_id,
@@ -74,20 +73,9 @@ async def test_outbound_merge_duplicate_lines_in_single_payload(session: AsyncSe
         qty=10,
     )
 
-    # 同一 (item, wh, batch) 的重复行
     lines = [
-        {
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-            "batch_code": batch_code,
-            "qty": 1,
-        },
-        {
-            "item_id": item_id,
-            "warehouse_id": warehouse_id,
-            "batch_code": batch_code,
-            "qty": 2,
-        },
+        {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 1},
+        {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 2},
     ]
 
     result = await svc.commit(
@@ -98,7 +86,6 @@ async def test_outbound_merge_duplicate_lines_in_single_payload(session: AsyncSe
     )
     assert result["status"] == "OK"
 
-    # ledger 中该 (order_id, item, wh, batch) 的负向 delta 合计应为 -3
     row = await session.execute(
         text(
             """
@@ -116,7 +103,6 @@ async def test_outbound_merge_duplicate_lines_in_single_payload(session: AsyncSe
     total_delta = int(row.scalar() or 0)
     assert total_delta == -3
 
-    # 实仓从 10 → 7（不按库位分拆）
     row = await session.execute(
         text(
             """

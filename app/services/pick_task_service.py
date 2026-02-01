@@ -85,6 +85,7 @@ class PickTaskService:
         task_id: int,
         platform: str,
         shop_id: str,
+        handoff_code: str,
         trace_id: Optional[str] = None,
         allow_diff: bool = True,
     ) -> Dict[str, Any]:
@@ -93,6 +94,7 @@ class PickTaskService:
             task_id=task_id,
             platform=platform,
             shop_id=shop_id,
+            handoff_code=handoff_code,
             trace_id=trace_id,
             allow_diff=allow_diff,
         )

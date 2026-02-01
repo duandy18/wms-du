@@ -71,25 +71,14 @@ async def run_once(
       - backfill：
         * 对 T 先跑，再跑 T-1，只会影响各自日期的记录，互不污染。
     """
-
     if grain not in VALID_GRAINS:
         raise ValueError(f"Unsupported grain={grain!r}; only 'day' is implemented")
 
     cut_date = at.date()
 
     async with engine.begin() as conn:
-        # 1) 删掉已有该日 snapshot 行
-        await conn.execute(
-            SNAP_DELETE_SQL,
-            {"cut_date": cut_date},
-        )
-
-        # 2) 汇总当日 ledger.delta 写入快照
-        await conn.execute(
-            SNAP_INSERT_SQL,
-            {
-                "cut_date": cut_date,
-            },
-        )
+        await conn.execute(SNAP_DELETE_SQL, {"cut_date": cut_date})
+        # ✅ batch_code_key 是 generated column，INSERT 不写它
+        await conn.execute(SNAP_INSERT_SQL, {"cut_date": cut_date})
 
     return {"grain": grain, "cut_date": str(cut_date)}
