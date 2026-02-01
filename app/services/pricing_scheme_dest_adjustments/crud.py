@@ -70,6 +70,17 @@ def upsert_dest_adjustment(
             },
         )
 
+    # ✅ 护栏：province scope 不允许夹带 city_code/city_name（避免运营误配）
+    if scope2 == "province" and (norm(city_code) or norm(city_name)):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "geo_city_not_allowed_in_province_scope",
+                "message": "city_code/city_name must be empty when scope='province'",
+                "field": "city_code",
+            },
+        )
+
     prov_code_raw = _require_code(province_code, "province_code")
     # 使用字典校验并补全标准 name（允许 province_name 为空）
     prov_code2, prov_name2 = resolve_province_code(prov_code_raw, province_name)
@@ -188,6 +199,17 @@ def update_dest_adjustment(
         )
 
     next_scope = validate_scope(scope) if scope is not None else str(row.scope)
+
+    # ✅ 护栏：若最终是 province scope，则不允许 patch 带 city_code/city_name
+    if next_scope == "province" and (norm(city_code) or norm(city_name)):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "geo_city_not_allowed_in_province_scope",
+                "message": "city_code/city_name must be empty when scope='province'",
+                "field": "city_code",
+            },
+        )
 
     # 如果用户要改 province_code：必须提供 code（并通过字典校验）
     if province_code is not None:
