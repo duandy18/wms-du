@@ -8,9 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class _Base(BaseModel):
     """
     snapshot 相关模型的通用基类。
-    目前仅保留 TrendPoint，用于未来基于 stocks 的趋势分析。
     """
-
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -21,18 +19,21 @@ class _Base(BaseModel):
 class TrendPoint(_Base):
     """
     库存趋势图数据点（按日聚合）。
-    当前并未直接被 /snapshot 路由使用，保留作为将来扩展的类型。
+
+    ✅ Stage C.2：对外契约统一使用 qty
+    - qty            : 当日库存事实（与 stocks.qty / stock_snapshots.qty 语义一致）
+    - qty_available  : 可用量（当前阶段等同 qty，后续可引入分配逻辑）
     """
 
     snapshot_date: date
-    qty_on_hand: int
+    qty: int
     qty_available: int
 
     model_config = _Base.model_config | {
         "json_schema_extra": {
             "example": {
                 "snapshot_date": "2025-10-28",
-                "qty_on_hand": 1500,
+                "qty": 1500,
                 "qty_available": 1320,
             }
         }

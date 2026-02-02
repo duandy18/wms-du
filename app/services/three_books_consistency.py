@@ -51,6 +51,10 @@ async def verify_commit_three_books(
     验证：
     1) ledger：每个 ref_line 必须存在，并且 delta 与 qty 一致
     2) snapshot(today) == stocks（只校验本次 touched keys）
+
+    ✅ Stage C.2-1：snapshot 新事实列为 stock_snapshots.qty
+    - DB 迁移已添加 trigger 同步 qty 与 qty_on_hand
+    - 本服务开始以 qty 为准（不再读 qty_on_hand）
     """
     if not effects:
         return
@@ -185,6 +189,7 @@ async def verify_commit_three_books(
             stocks_map[key] = int(r["qty"] or 0)
 
     # 4) 读取 snapshot(today)：按 batch_code_key 对齐 NULL 语义
+    # ✅ Stage C.2-1：读 sn.qty（新事实列）
     snap_map: Dict[Tuple[int, int, str], int] = {}
     if touched_keys:
         snap_rows = (
@@ -197,7 +202,7 @@ async def verify_commit_three_books(
                     SELECT k.warehouse_id,
                            k.item_id,
                            k.batch_code_key,
-                           COALESCE(sn.qty_on_hand, 0) AS qty_on_hand
+                           COALESCE(sn.qty, 0) AS qty
                       FROM keys k
                       LEFT JOIN stock_snapshots sn
                         ON sn.snapshot_date   = :d
@@ -212,7 +217,7 @@ async def verify_commit_three_books(
 
         for r in snap_rows:
             key = (int(r["warehouse_id"]), int(r["item_id"]), str(r["batch_code_key"]))
-            snap_map[key] = int(r["qty_on_hand"] or 0)
+            snap_map[key] = int(r["qty"] or 0)
 
     # 5) 校验 snapshot == stocks（只对 touched keys）
     mismatches: List[Dict[str, Any]] = []

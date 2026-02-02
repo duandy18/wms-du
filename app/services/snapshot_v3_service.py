@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class SnapshotV3Service:
     """
-    Snapshot v3：台账驱动快照引擎。
+    Snapshot v3：台账驱动快照引擎（Stage C.2：以 stock_snapshots.qty 为事实列）。
     """
 
     @staticmethod
@@ -55,7 +55,6 @@ class SnapshotV3Service:
 
         await session.execute(text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"), {"d": d})
 
-        # batch_code_key 为 generated column，INSERT 不写它
         await session.execute(
             text(
                 """
@@ -64,7 +63,7 @@ class SnapshotV3Service:
                     warehouse_id,
                     item_id,
                     batch_code,
-                    qty_on_hand,
+                    qty,
                     qty_available,
                     qty_allocated
                 )
@@ -73,7 +72,7 @@ class SnapshotV3Service:
                     warehouse_id,
                     item_id,
                     batch_code,
-                    SUM(delta) AS qty_on_hand,
+                    SUM(delta) AS qty,
                     SUM(delta) AS qty_available,
                     0 AS qty_allocated
                 FROM stock_ledger
@@ -90,7 +89,7 @@ class SnapshotV3Service:
                 await session.execute(
                     text(
                         """
-                        SELECT COUNT(*) AS slots, COALESCE(SUM(qty_on_hand),0) AS total_qty
+                        SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty
                         FROM stock_snapshots
                         WHERE snapshot_date = :d
                         """
@@ -119,9 +118,9 @@ class SnapshotV3Service:
             x.batch_code,
             x.batch_code_key,
             x.ledger_qty,
-            COALESCE(s.qty_on_hand, 0) AS snapshot_qty,
+            COALESCE(s.qty, 0) AS snapshot_qty,
             COALESCE(st.qty, 0) AS stock_qty,
-            (x.ledger_qty - COALESCE(s.qty_on_hand, 0)) AS diff_snapshot,
+            (x.ledger_qty - COALESCE(s.qty, 0)) AS diff_snapshot,
             (x.ledger_qty - COALESCE(st.qty, 0)) AS diff_stock
         FROM (
             SELECT

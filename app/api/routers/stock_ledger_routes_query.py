@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import normalize_optional_batch_code
 from app.db.session import get_session
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import (
@@ -51,6 +52,12 @@ def register(router: APIRouter) -> None:
         - 支持 item_id/item_keyword/warehouse_id/batch_code/reason/reason_canon/sub_reason/ref/trace_id 过滤；
         - 返回 item_name（当前页批量补齐）。
         """
+        # ✅ 主线 A：查询级 batch_code 归一（None/空串/'None' -> None），避免把无批次槽位过滤错
+        # 注意：这是“查询过滤”归一，不等价于“写入合同容错”。
+        norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
+        if getattr(payload, "batch_code", None) != norm_bc:
+            payload = payload.model_copy(update={"batch_code": norm_bc})
+
         time_from, time_to = normalize_time_range(payload)
 
         # ✅ 过滤合同统一收敛到 helper（build_common_filters -> build_base_ids_stmt）

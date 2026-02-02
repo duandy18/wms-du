@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._problem import as_problem
 from tests.api._helpers_shipping_quote import auth_headers, login, pick_warehouse_id, require_env
 
 
@@ -40,9 +41,8 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
     )
     assert r.status_code == 422, r.text
 
-    detail = r.json()["detail"]
-    assert isinstance(detail, dict), r.text
-    assert detail["code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
+    p = as_problem(r.json())
+    assert p["error_code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
 
     # 查询当日 failures（UTC day 由服务端取 created_at 统计；这里用固定 day 可能受时区影响）
     # 为保证稳定，这里用 /metrics/shipping-quote/failures 的 day=今天（UTC）：

@@ -1,13 +1,14 @@
 # app/api/routers/receive_tasks/base.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.db.session import get_session
 from app.models.receive_task import ReceiveTask
 from app.schemas.receive_task import ReceiveTaskCommitIn, ReceiveTaskOut, ReceiveTaskScanIn
@@ -67,13 +68,21 @@ def register(router: APIRouter) -> None:
         payload: ReceiveTaskScanIn,
         session: AsyncSession = Depends(get_session),
     ) -> ReceiveTaskOut:
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, {int(payload.item_id)})
+        if payload.item_id not in has_shelf_life_map:
+            raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
+
+        requires_batch = has_shelf_life_map.get(payload.item_id, False) is True
+        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+
         try:
             task = await svc.record_scan(
                 session,
                 task_id=task_id,
                 item_id=payload.item_id,
                 qty=payload.qty,
-                batch_code=payload.batch_code,
+                batch_code=batch_code,
                 production_date=payload.production_date,
                 expiry_date=payload.expiry_date,
             )
@@ -89,6 +98,29 @@ def register(router: APIRouter) -> None:
         payload: ReceiveTaskCommitIn,
         session: AsyncSession = Depends(get_session),
     ) -> ReceiveTaskOut:
+        # ✅ 主线 A：提交前再次做合同校验（防止历史脏数据/绕过 scan 入口）
+        try:
+            task_before = await svc.get_with_lines(session, task_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+        item_ids: Set[int] = {int(ln.item_id) for ln in (task_before.lines or [])}
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+
+        missing_items = [str(i) for i in sorted(item_ids) if i not in has_shelf_life_map]
+        if missing_items:
+            raise HTTPException(status_code=422, detail=f"unknown item_id(s): {', '.join(missing_items)}")
+
+        for ln in (task_before.lines or []):
+            requires_batch = has_shelf_life_map.get(int(ln.item_id), False) is True
+            try:
+                validate_batch_code_contract(requires_batch=requires_batch, batch_code=ln.batch_code)
+            except HTTPException as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"receive_task_line invalid (line_id={ln.id}, item_id={ln.item_id}): {e.detail}",
+                )
+
         try:
             task = await svc.commit(
                 session,

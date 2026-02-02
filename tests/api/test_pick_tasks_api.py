@@ -34,7 +34,18 @@ def _handoff_from_order_ref(order_ref: str) -> str:
     return f"WMS:ORDER:v1:{plat}:{shop}:{ext}"
 
 
-async def _seed_order_and_stock(session: AsyncSession) -> int:
+async def _get_item_has_shelf_life(session: AsyncSession, item_id: int) -> bool:
+    row = (
+        await session.execute(
+            text("SELECT has_shelf_life FROM items WHERE id = :id LIMIT 1"),
+            {"id": int(item_id)},
+        )
+    ).scalar_one_or_none()
+    # has_shelf_life is True 才算“批次受控”
+    return bool(row is True)
+
+
+async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None]:
     """
     用 OrderService.ingest 落一张简单订单，并为其准备足够的库存：
 
@@ -45,12 +56,16 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     - 库存：
         warehouse_id = 1
         item_id      = 1
-        batch_code   = "BATCH-TEST-001"
+        batch_code   = (has_shelf_life=true ? "BATCH-TEST-001" : NULL)
         qty          = 10 (RECEIPT)
 
     假定测试环境里：
         - items 表中已存在 id=1 的商品
         - warehouses 表中已存在 id=1 的仓库
+
+    主线 A 合同：
+      - has_shelf_life=true：batch_code 必填且非空
+      - has_shelf_life IS NOT TRUE：batch_code 必须为 NULL
     """
     platform = "PDD"
     shop_id = "1"
@@ -92,6 +107,10 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         {"wid": 1, "oid": order_id},
     )
 
+    # 关键：根据 item.has_shelf_life 决定批次语义
+    requires_batch = await _get_item_has_shelf_life(session, 1)
+    expected_batch_code: str | None = "BATCH-TEST-001" if requires_batch else None
+
     stock = StockService()
     prod = date.today()
     exp = prod + timedelta(days=365)
@@ -105,14 +124,14 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         ref="SEED-STOCK-PICK-TASK-CASE-1",
         ref_line=1,
         occurred_at=now,
-        batch_code="BATCH-TEST-001",
+        batch_code=expected_batch_code,
         production_date=prod,
         expiry_date=exp,
         trace_id=trace_id,
     )
 
     await session.commit()
-    return order_id
+    return order_id, requires_batch, expected_batch_code
 
 
 async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, monkeypatch):
@@ -121,7 +140,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
 
     1) 落一张订单，并为其准备足够库存；
     2) /pick-tasks/from-order/{order_id} 创建拣货任务；
-    3) /pick-tasks/{task_id}/scan 录入拣货（带 batch_code）；
+    3) /pick-tasks/{task_id}/scan 录入拣货（按 has_shelf_life 决定是否带 batch_code）；
     4) /pick-tasks/{task_id}/commit 执行出库（必须带 handoff_code）；
     5) 验证：
        - 任务状态为 DONE；
@@ -132,7 +151,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    order_id = await _seed_order_and_stock(session)
+    order_id, requires_batch, expected_batch_code = await _seed_order_and_stock(session)
 
     # 2) 创建拣货任务
     resp = await client.post(
@@ -152,10 +171,14 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     assert line["req_qty"] == 2
     assert line["picked_qty"] == 0
 
-    # 3) 扫描拣货：拣两件，指定 batch_code
+    # 3) 扫描拣货：拣两件
+    scan_payload = {"item_id": 1, "qty": 2}
+    if requires_batch:
+        scan_payload["batch_code"] = expected_batch_code
+
     resp2 = await client.post(
         f"/pick-tasks/{task_id}/scan",
-        json={"item_id": 1, "qty": 2, "batch_code": "BATCH-TEST-001"},
+        json=scan_payload,
     )
     assert resp2.status_code == 200, resp2.text
     task_after_scan = resp2.json()
@@ -163,7 +186,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
 
     target_line = None
     for ln in lines_after:
-        if ln["item_id"] == 1 and ln["batch_code"] == "BATCH-TEST-001":
+        if ln["item_id"] == 1 and ln.get("batch_code") == expected_batch_code:
             target_line = ln
             break
     assert target_line is not None
@@ -245,8 +268,12 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
         assert int(item_id) == 1
         assert int(delta) < 0
 
-        if batch_code is not None:
-            assert str(batch_code) == "BATCH-TEST-001"
+        # 批次商品：尽量按批次校验；非批次：batch_code 可能为 NULL
+        if requires_batch:
+            assert batch_code is not None
+            assert str(batch_code) == str(expected_batch_code)
+        else:
+            assert batch_code is None
 
         assert str(reason) in ("PICK", "SHIPMENT") or reason in (MovementType.PICK, MovementType.SHIPMENT), reason
         assert (trace2 == trace_id) or (ref2 == ref)

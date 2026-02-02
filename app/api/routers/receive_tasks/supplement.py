@@ -1,13 +1,14 @@
 # app/api/routers/receive_tasks/supplement.py
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.db.session import get_session
 from app.models.receive_task import ReceiveTask
 from app.schemas.receive_task import ReceiveTaskOut
@@ -142,14 +143,24 @@ def register(router: APIRouter) -> None:
         if target is None:
             raise HTTPException(status_code=404, detail="ReceiveTaskLine not found")
 
-        if payload.batch_code is not None:
-            bc = str(payload.batch_code).strip()
-            target.batch_code = bc or None
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        # 仅当客户端显式提交了 batch_code 字段时才处理（支持传 null 表示清空）
+        fields_set = getattr(payload, "model_fields_set", set())
 
-        if payload.production_date is not None:
+        if "batch_code" in fields_set:
+            item_ids: Set[int] = {int(item_id)}
+            has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+            if item_id not in has_shelf_life_map:
+                raise HTTPException(status_code=422, detail=f"unknown item_id: {item_id}")
+
+            requires_batch = has_shelf_life_map.get(item_id, False) is True
+            bc = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+            target.batch_code = bc
+
+        if "production_date" in fields_set and payload.production_date is not None:
             target.production_date = payload.production_date
 
-        if payload.expiry_date is not None:
+        if "expiry_date" in fields_set and payload.expiry_date is not None:
             target.expiry_date = payload.expiry_date
 
         await session.commit()

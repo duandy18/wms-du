@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Set
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.deps import get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import PickRequest, PickResponse
 from app.models.enums import MovementType
 from app.services.pick_service import PickService
-from app.services.soft_reserve_service import SoftReserveService
 
 
 def register(router: APIRouter) -> None:
@@ -32,6 +32,29 @@ def register(router: APIRouter) -> None:
         if not body.lines:
             return []
 
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        item_ids: Set[int] = {int(ln.item_id) for ln in body.lines}
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+
+        missing_items = [str(i) for i in sorted(item_ids) if i not in has_shelf_life_map]
+        if missing_items:
+            raise HTTPException(status_code=422, detail=f"unknown item_id(s): {', '.join(missing_items)}")
+
+        any_requires = any(has_shelf_life_map.get(i, False) is True for i in item_ids)
+        any_not_requires = any(has_shelf_life_map.get(i, False) is not True for i in item_ids)
+
+        # 由于该接口只有一个 body.batch_code，无法同时满足“批次必填”和“非批次必须为 null”
+        if any_requires and any_not_requires:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "mixed items detected (has_shelf_life true and not true). "
+                    "This endpoint requires per-line batch_code; single body.batch_code is not allowed for mixed orders."
+                ),
+            )
+
+        batch_code = validate_batch_code_contract(requires_batch=any_requires, batch_code=getattr(body, "batch_code", None))
+
         order_ref, trace_id = await get_order_ref_and_trace_id(
             session=session,
             platform=plat,
@@ -40,7 +63,6 @@ def register(router: APIRouter) -> None:
         )
 
         svc = PickService()
-        soft_reserve = SoftReserveService()
         occurred_at = body.occurred_at or datetime.now(timezone.utc)
 
         responses: List[PickResponse] = []
@@ -54,7 +76,7 @@ def register(router: APIRouter) -> None:
                     qty=line.qty,
                     ref=order_ref,
                     occurred_at=occurred_at,
-                    batch_code=body.batch_code,
+                    batch_code=batch_code,
                     warehouse_id=body.warehouse_id,
                     trace_id=trace_id,
                     start_ref_line=ref_line,
@@ -67,7 +89,7 @@ def register(router: APIRouter) -> None:
                     PickResponse(
                         item_id=line.item_id,
                         warehouse_id=result.get("warehouse_id", body.warehouse_id),
-                        batch_code=result.get("batch_code", body.batch_code),
+                        batch_code=result.get("batch_code", batch_code),
                         picked=result.get("picked", line.qty),
                         stock_after=result.get("stock_after"),
                         ref=result.get("ref", order_ref),
@@ -75,15 +97,8 @@ def register(router: APIRouter) -> None:
                     )
                 )
 
-            await soft_reserve.pick_consume(
-                session=session,
-                platform=plat,
-                shop_id=shop_id,
-                warehouse_id=body.warehouse_id,
-                ref=order_ref,
-                occurred_at=occurred_at,
-                trace_id=trace_id,
-            )
+            # ✅ Pick 蓝皮书：出库/拣货主线不再消费 soft reserve（reservation_lines.consumed_qty）
+            # Soft reserve 属于 legacy 子系统（可售/trace），不得参与主线裁决。
 
             await session.commit()
 

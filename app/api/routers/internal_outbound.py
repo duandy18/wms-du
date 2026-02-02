@@ -1,13 +1,14 @@
 # app/api/routers/internal_outbound.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.db.session import get_session
 from app.models.internal_outbound import InternalOutboundDoc
 from app.schemas.internal_outbound import (
@@ -118,13 +119,22 @@ async def upsert_internal_outbound_line(
     - 否则新建一行（line_no = 当前最大 + 1）。
     """
     try:
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        item_ids: Set[int] = {int(payload.item_id)}
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+        if payload.item_id not in has_shelf_life_map:
+            raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
+
+        requires_batch = has_shelf_life_map.get(payload.item_id, False) is True
+        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+
         # 先执行行修改
         await svc.upsert_line(
             session,
             doc_id=doc_id,
             item_id=payload.item_id,
             qty=payload.qty,
-            batch_code=payload.batch_code,
+            batch_code=batch_code,
             uom=payload.uom,
             note=payload.note,
         )

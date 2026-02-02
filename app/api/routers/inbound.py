@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import fetch_item_by_sku, fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.deps import get_session
 from app.services.inbound_service import InboundService
 
@@ -63,17 +64,36 @@ async def receive(
     - 幂等由 StockService.adjust 命中唯一键保障。
     """
     try:
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        item_id: Optional[int] = payload.item_id
+        requires_batch: Optional[bool] = None
+
+        if item_id is not None:
+            has_shelf_life_map = await fetch_item_has_shelf_life_map(session, {int(item_id)})
+            if item_id not in has_shelf_life_map:
+                raise HTTPException(status_code=422, detail=f"unknown item_id: {item_id}")
+            requires_batch = has_shelf_life_map.get(item_id, False) is True
+        else:
+            if not payload.sku or not payload.sku.strip():
+                raise HTTPException(status_code=422, detail="either item_id or sku is required.")
+            found = await fetch_item_by_sku(session, payload.sku)
+            if not found:
+                raise HTTPException(status_code=422, detail=f"unknown sku: {payload.sku.strip()}")
+            item_id, requires_batch = found[0], found[1]
+
+        batch_code = validate_batch_code_contract(requires_batch=requires_batch is True, batch_code=payload.batch_code)
+
         svc = InboundService()
         result = await svc.receive(
             session=session,
-            item_id=payload.item_id,
+            item_id=item_id,
             sku=payload.sku,
             qty=payload.qty,
             ref=payload.ref,
             ref_line=int(payload.ref_line),  # 已通过校验器规范化
             occurred_at=datetime.now(UTC),
             warehouse_id=payload.warehouse_id,
-            batch_code=payload.batch_code,
+            batch_code=batch_code,
             production_date=payload.production_date,
             expiry_date=payload.expiry_date,
         )

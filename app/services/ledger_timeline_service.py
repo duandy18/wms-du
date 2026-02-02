@@ -7,6 +7,10 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import normalize_optional_batch_code
+
+_NULL_BATCH_KEY = "__NULL_BATCH__"
+
 
 class LedgerTimelineService:
     """
@@ -19,6 +23,8 @@ class LedgerTimelineService:
     - 事件溯源
     - 并发顺序审计
     - 订单/盘点/出库链路还原
+
+    ✅ 主线 B：查询维度统一切 batch_code_key，消灭 NULL= NULL 吞数据问题。
     """
 
     @staticmethod
@@ -38,25 +44,29 @@ class LedgerTimelineService:
         - occurred_at
         - movement_type
         - reason / ref / ref_line / trace_id
-        - warehouse_id / item_id / batch_code
+        - warehouse_id / item_id / batch_code / batch_code_key
         - delta / after_qty
         """
-
         cond = ["occurred_at >= :t1", "occurred_at <= :t2"]
+        params: Dict[str, Any] = {"t1": time_from, "t2": time_to}
 
-        params = {"t1": time_from, "t2": time_to}
-
-        if warehouse_id:
+        if warehouse_id is not None:
             cond.append("warehouse_id = :w")
             params["w"] = warehouse_id
 
-        if item_id:
+        if item_id is not None:
             cond.append("item_id = :i")
             params["i"] = item_id
 
-        if batch_code:
-            cond.append("batch_code = :b")
-            params["b"] = batch_code
+        # ✅ 主线 B：batch_code 过滤统一映射到 batch_code_key
+        # - 不传：不加过滤
+        # - 传 "" / "None"：归一为 None -> batch_code_key='__NULL_BATCH__'
+        # - 传 "Bxxx"：batch_code_key='Bxxx'
+        norm_bc = normalize_optional_batch_code(batch_code)
+        if batch_code is not None:
+            key = _NULL_BATCH_KEY if norm_bc is None else norm_bc
+            cond.append("batch_code_key = :bkey")
+            params["bkey"] = key
 
         if trace_id:
             cond.append("trace_id = :trace")
@@ -78,6 +88,7 @@ class LedgerTimelineService:
                 warehouse_id,
                 item_id,
                 batch_code,
+                batch_code_key,
                 delta,
                 after_qty,
                 CASE

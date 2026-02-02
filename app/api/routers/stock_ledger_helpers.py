@@ -11,9 +11,12 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import normalize_optional_batch_code
 from app.models.item import Item
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import LedgerQuery
+
+_NULL_BATCH_KEY = "__NULL_BATCH__"
 
 
 def normalize_time_range(q: LedgerQuery) -> Tuple[datetime, datetime]:
@@ -106,8 +109,15 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if q.warehouse_id is not None:
         conditions.append(StockLedger.warehouse_id == q.warehouse_id)
 
-    if q.batch_code:
-        conditions.append(StockLedger.batch_code == q.batch_code)
+    # ✅ 主线 A：batch_code 过滤合同（查询级）统一切 batch_code_key
+    # - 不传 batch_code：不加过滤
+    # - 传 "" / "None"：归一为 None -> batch_code_key='__NULL_BATCH__'（无批次槽位）
+    # - 传 "B2026..."：batch_code_key='B2026...'
+    fields_set = getattr(q, "model_fields_set", set())
+    if "batch_code" in fields_set:
+        norm_bc = normalize_optional_batch_code(getattr(q, "batch_code", None))
+        key = _NULL_BATCH_KEY if norm_bc is None else norm_bc
+        conditions.append(StockLedger.batch_code_key == key)
 
     if q.reason:
         conditions.append(StockLedger.reason == q.reason)

@@ -23,6 +23,9 @@ class Stock(Base):
     - batch_code 允许为 NULL，用于表达“无批次商品”的真实槽位
     - (item_id, warehouse_id) 下只允许存在一个 NULL 槽位：
       通过生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与唯一性（见迁移）
+
+    ✅ Route 2.3：
+    - 已彻底删除 stocks.qty_on_hand（事实列收敛到 stocks.qty）
     """
 
     __tablename__ = "stocks"
@@ -65,22 +68,19 @@ class Stock(Base):
     item = relationship("Item", lazy="selectin")
 
     # ★ Batch v3 兼容：按 仓 + 商品 + 批次 精确取 expiry_date
+    # ✅ 主线 B：使用 IS NOT DISTINCT FROM，避免 NULL= NULL 吞数据（即使 batches 不会有 NULL 行，也让语义稳定）
     expiry_date: Mapped[date | None] = column_property(
         sa.select(sa.text("b.expiry_date"))
         .select_from(sa.text("batches AS b"))
         .where(sa.text("b.item_id = stocks.item_id"))
         .where(sa.text("b.warehouse_id = stocks.warehouse_id"))
-        .where(sa.text("b.batch_code = stocks.batch_code"))
+        .where(sa.text("b.batch_code IS NOT DISTINCT FROM stocks.batch_code"))
         .limit(1)
         .scalar_subquery()
     )
 
     # 兼容旧用例：location_id 恒为 1
     location_id: Mapped[int] = column_property(sa.literal(1, type_=sa.Integer()))
-
-    @property
-    def qty_on_hand(self) -> int:
-        return int(self.qty or 0)
 
     def __repr__(self) -> str:
         return (

@@ -84,7 +84,7 @@ class FefoAllocator:
             LEFT   JOIN batches b
               ON  b.item_id      = s.item_id
              AND b.warehouse_id  = s.warehouse_id
-             AND b.batch_code    = s.batch_code
+             AND b.batch_code IS NOT DISTINCT FROM s.batch_code
             WHERE  s.item_id = :item_id
               AND  GREATEST(COALESCE(s.qty, 0), 0) > 0
         """
