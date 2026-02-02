@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pick_task import PickTask
 from app.models.pick_task_line import PickTaskLine
-from app.services.order_service import OrderService
 from app.services.pick_task_loaders import load_order_head, load_order_items, load_task
 
 UTC = timezone.utc
@@ -30,9 +29,10 @@ async def create_for_order(
     - 且该仓库必须与订单已明确的执行仓一致（orders.warehouse_id 必须已存在）。
     - ❌ 禁止任何“隐性回填 orders.warehouse_id”的路径（本函数不写 orders.warehouse_id）。
 
-    其它行为保持不变：
-    - 同步构造/更新软预占：OrderService.reserve（要求订单已具备 warehouse_id 且状态允许）
-    - 再创建 pick_tasks + pick_task_lines
+    ✅ Pick 蓝皮书（主线收敛）：
+    - create_for_order 只创建任务 + 行（facts container）。
+    - ❌ 不做任何库存/台账/预占判断，不触碰 stocks / ledger / reservations。
+    - 库存是否足够、幂等裁决、台账写入：全部在 Commit 单点完成。
     """
     order = await load_order_head(session, order_id)
     if not order:
@@ -41,7 +41,6 @@ async def create_for_order(
     platform = str(order["platform"]).upper()
     shop_id = str(order["shop_id"])
     ext_no = str(order["ext_order_no"])
-    trace_id = order.get("trace_id")
 
     # ✅ 硬合同：创建拣货任务必须选仓库
     if warehouse_id is None:
@@ -80,16 +79,6 @@ async def create_for_order(
     items = await load_order_items(session, order_id)
     if not items:
         raise ValueError("创建拣货任务失败：该订单没有商品行。")
-
-    # ✅ reserve：OrderService.reserve 内部会读取 orders.warehouse_id 作为事实
-    await OrderService.reserve(
-        session=session,
-        platform=platform,
-        shop_id=shop_id,
-        ref=order_ref,
-        lines=[{"item_id": r["item_id"], "qty": r["qty"]} for r in items],
-        trace_id=trace_id,
-    )
 
     now = datetime.now(UTC)
 

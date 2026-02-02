@@ -20,13 +20,11 @@ os.environ["FULL_ROUTES"] = "1"
 os.environ["WMS_FULL_ROUTES"] = "1"
 
 # Phase 5 Blueprint：禁止隐式省份兜底（必须显式提供 address.province）
-# - 旧版本曾在测试进程中 setdefault("WMS_TEST_DEFAULT_PROVINCE", "UT")，会导致“忘传 province”也能跑
-# - 现在改为：显式清理该 env，任何依赖默认省份的测试必须在用例内 monkeypatch.setenv(...)
 os.environ.pop("WMS_TEST_DEFAULT_PROVINCE", None)
 
-from app.main import app  # noqa: E402
-from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
-
+# ============================================================
+# ★★ 关键：在 import app.main 之前强制把 DB env 绑定到测试库 ★★
+# ============================================================
 WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
 WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
 ALLOW_TRUNCATE = str(os.getenv("WMS_TEST_DB_ALLOW_TRUNCATE", "")).strip().lower() in {"1", "true", "yes"}
@@ -51,6 +49,17 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+# ✅ 强制：API 侧（app.main -> app.db.session）也必须使用同一个测试库
+os.environ["WMS_DATABASE_URL"] = DATABASE_URL
+os.environ["WMS_TEST_DATABASE_URL"] = DATABASE_URL
+
+# 重新读取（确保后续变量一致）
+WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
+WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
+
+from app.main import app  # noqa: E402
+from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
 
 
 def _load_truncate_sql() -> str:
@@ -121,29 +130,12 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         await conn.execute(text(truncate_sql))
 
         # 2) 统一种子（items/barcodes/batches/stocks + shipping + admin + RBAC）
-        old_dsn = os.environ.get("WMS_DATABASE_URL")
-        os.environ["WMS_DATABASE_URL"] = DATABASE_URL
-        try:
-            await seed_in_conn(conn)
-        finally:
-            if old_dsn is None:
-                os.environ.pop("WMS_DATABASE_URL", None)
-            else:
-                os.environ["WMS_DATABASE_URL"] = old_dsn
+        await seed_in_conn(conn)
 
         # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）
-        # 3.1 取第一个仓库作为测试服务仓/默认绑定仓
         row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
         wh_id = int(row.scalar_one())
 
-        # 3.2 Route C：常用 UT 省码 -> wh_id（幂等）
-        #
-        # Phase 5 合同要求：
-        # - address.province 必须显式提供
-        # - 且必须能命中 service warehouse，否则 ingest 正确返回 FULFILLMENT_BLOCKED
-        #
-        # 但在多数非路由测试里，province 的具体字符串只是“占位符”。
-        # 为避免无意义的 BLOCKED 干扰其它链路测试，这里把常见 UT-* 省码统一映射到同一个 service warehouse。
         for prov in ("UT", "UT-P3", "UT-PROV"):
             await conn.execute(
                 text(
@@ -157,7 +149,6 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 {"wid": wh_id, "prov": prov},
             )
 
-        # 3.3 确保至少存在一个 store（stores.name NOT NULL）
         row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))
         any_store_id = row.scalar_one_or_none()
         if any_store_id is None:
@@ -170,7 +161,6 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 )
             )
 
-        # 3.4 将所有 stores 设为 active，并确保 name 非空（防御性）
         await conn.execute(
             text(
                 """
@@ -181,7 +171,6 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
             )
         )
 
-        # 3.5 为所有 stores 绑定到 wh_id（幂等）
         rows = await conn.execute(text("SELECT id FROM stores"))
         store_ids = [int(x[0]) for x in rows.fetchall()]
         for sid in store_ids:

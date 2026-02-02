@@ -1,13 +1,15 @@
 # app/api/routers/pick_tasks_routes.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.problem import raise_422
 from app.db.session import get_session
 from app.models.pick_task import PickTask
 from app.services.pick_task_service import PickTaskService
@@ -30,9 +32,12 @@ def register(router: APIRouter) -> None:
         payload: PickTaskCreateFromOrder,
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskOut:
-        # ✅ 新合同：创建拣货任务必须选仓库
         if payload.warehouse_id is None:
-            raise HTTPException(status_code=422, detail="创建拣货任务必须选择仓库。")
+            raise_422(
+                "warehouse_required",
+                "创建拣货任务必须选择仓库。",
+                details=[{"type": "validation", "path": "warehouse_id", "reason": "required"}],
+            )
 
         svc = PickTaskService(session)
         try:
@@ -43,10 +48,12 @@ def register(router: APIRouter) -> None:
                 priority=payload.priority,
             )
             await session.commit()
+        except HTTPException:
+            await session.rollback()
+            raise
         except ValueError as e:
             await session.rollback()
-            # 业务可理解错误仍走 400
-            raise HTTPException(status_code=400, detail=str(e))
+            raise_422("pick_task_create_reject", str(e))
         except Exception:
             await session.rollback()
             raise
@@ -89,21 +96,32 @@ def register(router: APIRouter) -> None:
         payload: PickTaskScanIn,
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskOut:
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, {int(payload.item_id)})
+        if payload.item_id not in has_shelf_life_map:
+            raise_422(
+                "unknown_item",
+                f"未知商品 item_id={payload.item_id}。",
+                details=[{"type": "validation", "path": "item_id", "item_id": int(payload.item_id), "reason": "unknown"}],
+            )
+
+        requires_batch = has_shelf_life_map.get(payload.item_id, False) is True
+        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+
         svc = PickTaskService(session)
         try:
             task = await svc.record_scan(
                 task_id=task_id,
                 item_id=payload.item_id,
                 qty=payload.qty,
-                batch_code=payload.batch_code,
+                batch_code=batch_code,
             )
             await session.commit()
-        except ValueError as e:
-            await session.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
         except HTTPException:
             await session.rollback()
             raise
+        except ValueError as e:
+            await session.rollback()
+            raise_422("pick_scan_reject", str(e))
         except Exception:
             await session.rollback()
             raise
@@ -119,7 +137,7 @@ def register(router: APIRouter) -> None:
         try:
             summary = await svc.compute_diff(task_id=task_id)
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise_422("pick_task_not_found", str(e))
 
         lines = [
             PickTaskDiffLineOut(
@@ -145,6 +163,42 @@ def register(router: APIRouter) -> None:
         payload: PickTaskCommitIn,
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskCommitResult:
+        # 提交前再次做合同校验（防止历史脏数据/绕过 scan 入口）
+        task = await load_task_with_lines(session, task_id)
+        item_ids: Set[int] = {int(ln.item_id) for ln in (task.lines or [])}
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+
+        missing_items = [int(i) for i in sorted(item_ids) if i not in has_shelf_life_map]
+        if missing_items:
+            raise_422(
+                "unknown_item",
+                "存在未知商品，禁止提交。",
+                details=[
+                    {"type": "validation", "path": f"lines[{idx}].item_id", "item_id": int(ln.item_id), "reason": "unknown"}
+                    for idx, ln in enumerate(task.lines or [])
+                    if int(ln.item_id) in set(missing_items)
+                ],
+            )
+
+        for idx, ln in enumerate(task.lines or []):
+            requires_batch = has_shelf_life_map.get(int(ln.item_id), False) is True
+            try:
+                validate_batch_code_contract(requires_batch=requires_batch, batch_code=ln.batch_code)
+            except HTTPException as e:
+                raise_422(
+                    "batch_required" if requires_batch else "invalid_batch",
+                    "批次信息不合法，禁止提交。",
+                    details=[
+                        {
+                            "type": "batch",
+                            "path": f"lines[{idx}]",
+                            "item_id": int(ln.item_id),
+                            "batch_code": ln.batch_code,
+                            "reason": str(e.detail),
+                        }
+                    ],
+                )
+
         svc = PickTaskService(session)
         try:
             result = await svc.commit_ship(
@@ -156,13 +210,16 @@ def register(router: APIRouter) -> None:
                 allow_diff=payload.allow_diff,
             )
             await session.commit()
+        except HTTPException:
+            await session.rollback()
+            raise
         except ValueError as e:
             await session.rollback()
-            msg = str(e)
-            # “确认码不匹配 / 业务冲突 / 不允许提交” 更像 409
-            if "handoff_code" in msg or "confirm code" in msg or "not match" in msg:
-                raise HTTPException(status_code=409, detail=msg)
-            raise HTTPException(status_code=400, detail=msg)
+            raise_422(
+                "pick_commit_reject",
+                str(e),
+                details=[{"type": "state", "path": "commit", "reason": str(e)}],
+            )
         except Exception:
             await session.rollback()
             raise

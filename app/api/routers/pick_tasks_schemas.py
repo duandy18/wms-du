@@ -100,9 +100,23 @@ class PickTaskDiffSummaryOut(BaseModel):
 
 class PickTaskCommitResult(BaseModel):
     status: str
+
+    # ✅ 蓝皮书合同字段：幂等与链路
+    # FastAPI response_model 会丢弃未声明字段，因此必须在 schema 中显式声明。
+    idempotent: bool = Field(
+        False,
+        description="是否为幂等重放结果（True 表示未重复落账/未重复扣库）",
+    )
+    trace_id: Optional[str] = Field(
+        None,
+        description="本次提交最终使用的 trace_id（幂等重放时为已存在的 trace_id）",
+    )
+
     task_id: int
     warehouse_id: int
     platform: str
     shop_id: str
     ref: str
+
+    # diff 保持现状（当前服务层返回 dict；后续可逐步收敛到 PickTaskDiffSummaryOut）
     diff: Dict[str, Any]

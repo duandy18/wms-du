@@ -96,6 +96,28 @@ test-phase5-service-assignment: venv audit-all upgrade-dev-test-db
 	$(PYTEST) -q tests/phase5_service_assignment
 
 # =================================
+# ✅ Pick 蓝皮书：最小主线（scan facts + commit judgment + insufficient_stock + db evidence）
+# =================================
+.PHONY: test-pick-blueprint
+test-pick-blueprint: venv audit-all upgrade-dev-test-db
+	@echo "[pytest] Pick Blueprint (scan facts + commit judgment + insufficient_stock + db evidence)"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	$(PYTEST) -q -s \
+	  tests/services/pick/test_pick_blueprint_contract.py \
+	  tests/services/pick/test_pick_blueprint_commit_idempotency_contract.py \
+	  tests/services/pick/test_pick_blueprint_insufficient_stock_contract.py \
+	  tests/services/pick/test_pick_blueprint_db_evidence_contract.py
+
+# =================================
+# ✅ 全量回归（排除 legacy soft_reserve / phase2p9）
+# =================================
+.PHONY: test-no-legacy
+test-no-legacy: venv audit-all upgrade-dev-test-db
+	@echo "[pytest] Running full test suite excluding legacy soft_reserve (marker: legacy_soft_reserve)"
+	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	$(PYTEST) -q -m "not legacy_soft_reserve"
+
+# =================================
 # 全量回归
 # =================================
 .PHONY: test-all

@@ -4,11 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.problem import raise_problem
 from app.services.pick_service import PickService
-from app.services.soft_reserve_service import SoftReserveService
 
 from app.services.pick_task_commit_ship_requirements import item_requires_batch, normalize_batch_code
 
@@ -31,6 +32,14 @@ async def apply_stock_deductions(
     agg: Dict[Tuple[int, Optional[str]], int],
     trace_id: Optional[str],
 ) -> int:
+    """
+    主线裁决：扣库存 + 写台账（通过 PickService.record_pick）。
+
+    关键合同：
+    - HTTPException(detail=Problem) 必须原样透传（避免 details/next_actions 丢失）
+    - 其它未知异常统一收敛为 500 Problem（系统异常）
+    - 绝不使用 “raise_problem(...) from e”（语法非法）
+    """
     pick_svc = PickService()
     ref_line = 1
 
@@ -42,48 +51,67 @@ async def apply_stock_deductions(
         bc_norm = normalize_batch_code(batch_code)
 
         if requires_batch and not bc_norm:
-            raise ValueError(
-                f"PickTask {task_id} missing batch_code for requires_batch item={item_id}; cannot commit."
+            raise_problem(
+                status_code=422,
+                error_code="batch_required",
+                message="批次受控商品必须提供批次，禁止提交。",
+                context={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "ref": str(order_ref),
+                    "item_id": int(item_id),
+                },
+                details=[
+                    {
+                        "type": "batch",
+                        "path": f"commit_lines[item_id={int(item_id)}]",
+                        "item_id": int(item_id),
+                        "batch_code": None,
+                        "reason": "requires_batch",
+                    }
+                ],
+                next_actions=[
+                    {"action": "edit_batch", "label": "补录/更正批次"},
+                    {"action": "continue_pick", "label": "继续拣货"},
+                ],
             )
 
-        result = await pick_svc.record_pick(
-            session=session,
-            item_id=int(item_id),
-            qty=int(total_picked),
-            ref=order_ref,
-            occurred_at=occurred_at,
-            batch_code=bc_norm,
-            warehouse_id=int(warehouse_id),
-            trace_id=trace_id,
-            start_ref_line=ref_line,
-        )
+        try:
+            result = await pick_svc.record_pick(
+                session=session,
+                item_id=int(item_id),
+                qty=int(total_picked),
+                ref=order_ref,
+                occurred_at=occurred_at,
+                batch_code=bc_norm,
+                warehouse_id=int(warehouse_id),
+                trace_id=trace_id,
+                start_ref_line=ref_line,
+            )
+        except HTTPException:
+            # PickService.record_pick 已经按 Problem 合同抛出（如 409 insufficient_stock），直接透传
+            raise
+        except Exception as e:
+            # 其它未知异常：统一 500 Problem（系统异常）
+            raise_problem(
+                status_code=500,
+                error_code="pick_apply_failed",
+                message="拣货扣减失败：系统异常。",
+                context={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "ref": str(order_ref),
+                    "item_id": int(item_id),
+                    "batch_code": bc_norm,
+                },
+                details=[
+                    {"type": "state", "path": "apply_stock_deductions", "reason": str(e)}
+                ],
+            )
+
         ref_line = int(result.get("ref_line", ref_line)) + 1
 
     return ref_line
-
-
-async def consume_soft_reserve_if_needed(
-    session: AsyncSession,
-    *,
-    task: Any,
-    platform: str,
-    shop_id: str,
-    warehouse_id: int,
-    order_ref: str,
-    occurred_at: datetime,
-    trace_id: Optional[str],
-) -> None:
-    if getattr(task, "source", None) == "ORDER" and order_ref.startswith(f"ORD:{platform}:{shop_id}:"):
-        soft_reserve = SoftReserveService()
-        await soft_reserve.pick_consume(
-            session=session,
-            platform=platform,
-            shop_id=shop_id,
-            warehouse_id=int(warehouse_id),
-            ref=order_ref,
-            occurred_at=occurred_at,
-            trace_id=trace_id,
-        )
 
 
 async def write_outbound_commit_v2(
