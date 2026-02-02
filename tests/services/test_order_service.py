@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
+from tests.helpers.inventory import ensure_wh_loc_item
 
 from app.services.order_service import OrderService
-from app.services.stock_availability_service import StockAvailabilityService
+from app.services.pick_task_commit_ship import commit_ship
+from app.services.pick_task_commit_ship_handoff import expected_handoff_code_from_task_ref
 
 UTC = timezone.utc
 pytestmark = pytest.mark.contract
@@ -62,35 +64,38 @@ async def _ensure_order_row(
 
 
 @pytest.mark.asyncio
-async def test_fefo_reserve_then_cancel(session: AsyncSession):
+async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     """
-    Phase 3.6+ 版合同（升级版）：
+    硬防线：通过 pick_task commit 出库写入的 stock_ledger.reason 必须是 SHIPMENT。
 
-    场景：
-      - 仓库 1 / 库位 1 / 商品 7301，有一批次 code='RES-7301'，qty=5
-      - 平台 PDD / 店铺 SHOP1：
-          * 基于真实订单（ORD:PDD:SHOP1:RES-TEST-7301）调用 OrderService.reserve 占用 2
-          * 可售库存应从 available0 降到 available0-2
-          * 调用 OrderService.cancel 取消该 ref
-          * 可售库存应恢复为 available0
-
-    注意：
-      - reserve/cancel 统一走 Golden Flow：OrderReserveFlow + SoftReserveService；
-      - 仓库依赖 orders.warehouse_id，而非拍脑袋传 warehouse_id。
-      - 可售查询使用事实层：StockAvailabilityService（stocks - open reservations）
+    该用例覆盖：
+    - enter_pickable（OrderService.reserve）生成 pick_task + pick_task_lines
+    - commit_ship 唯一裁决点：扣库存 + 写 ledger + 写 outbound_commits_v2
     """
+    wh, item = 1, 3003
 
-    wh, loc, item, code = 1, 1, 7301, "RES-7301"
+    await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 
-    # 1) 基线：准备仓/库位/商品 + 批次 + 库存槽位
-    await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
-    await seed_batch_slot(session, item=item, loc=loc, code=code, qty=5, days=365)
-    await session.commit()
+    # 非批次库存槽位：qty=10
+    await session.execute(
+        text(
+            """
+            INSERT INTO stocks(item_id, warehouse_id, batch_id, batch_code, qty)
+            VALUES (:item_id, :wid, NULL, NULL, 10)
+            ON CONFLICT (item_id, warehouse_id, batch_code_key)
+            DO UPDATE SET qty = EXCLUDED.qty
+            """
+        ),
+        {"item_id": int(item), "wid": int(wh)},
+    )
+    await session.flush()
 
-    # 2) 准备订单头（带 warehouse_id + trace_id）
-    platform = "PDD"
-    shop_id = "SHOP1"
-    ext_order_no = "RES-TEST-7301"
+    platform = "TB"
+    shop_id = "TEST"
+
+    # ✅ 用例级唯一 ref，避免命中 outbound_commits_v2 幂等短路
+    uniq = uuid4().hex[:10]
+    ext_order_no = f"UT-LEDGER-REASON-SHIPMENT-{uniq}"
     trace_id = f"TRACE-{ext_order_no}"
 
     order_ref = await _ensure_order_row(
@@ -102,57 +107,84 @@ async def test_fefo_reserve_then_cancel(session: AsyncSession):
         trace_id=trace_id,
     )
 
-    # 3) 读 baseline 可售库存（按平台/店铺/仓库）
-    available0 = await StockAvailabilityService.get_available_for_item(
-        session,
-        platform=platform,
-        shop_id=shop_id,
-        warehouse_id=wh,
-        item_id=item,
-    )
-
-    # 至少有 5 件（我们刚 seed 了一批），但为了容忍已有基础数据，只要求 >=2
-    assert available0 >= 2
-
-    # 4) 调用 OrderService.reserve 占用 2 件
-    r1 = await OrderService.reserve(
+    # enter_pickable：生成 pick_task（不触库存）
+    r = await OrderService.reserve(
         session,
         platform=platform,
         shop_id=shop_id,
         ref=order_ref,
-        lines=[{"item_id": item, "qty": 2}],
+        lines=[{"item_id": int(item), "qty": 1}],
+        trace_id=trace_id,
     )
-    assert r1["status"] == "OK"
-    assert r1.get("reservation_id") is not None
-    await session.commit()
+    assert r.get("status") == "OK"
 
-    available1 = await StockAvailabilityService.get_available_for_item(
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM pick_tasks
+                 WHERE ref = :ref AND warehouse_id = :wid
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"ref": order_ref, "wid": int(wh)},
+        )
+    ).first()
+    assert row, "pick_task not created"
+    task_id = int(row[0])
+
+    # picked_qty=req_qty（无 diff）
+    await session.execute(
+        text(
+            """
+            UPDATE pick_task_lines
+               SET picked_qty = req_qty,
+                   updated_at = now()
+             WHERE task_id = :tid
+            """
+        ),
+        {"tid": task_id},
+    )
+    await session.flush()
+
+    handoff = expected_handoff_code_from_task_ref(ref=order_ref)
+    assert handoff, "invalid handoff code"
+
+    result = await commit_ship(
         session,
+        task_id=task_id,
         platform=platform,
         shop_id=shop_id,
-        warehouse_id=wh,
-        item_id=item,
+        handoff_code=handoff,
+        trace_id=trace_id,
+        allow_diff=False,
     )
-    assert available1 == available0 - 2
+    assert result.get("status") == "OK"
+    assert result.get("idempotent") is False, f"unexpected idempotent short-circuit: {result}"
 
-    # 5) 调用 OrderService.cancel 取消该预留
-    r2 = await OrderService.cancel(
-        session,
-        platform=platform,
-        shop_id=shop_id,
-        ref=order_ref,
-        lines=[{"item_id": item, "qty": 2}],
-    )
-    assert r2["status"] in ("CANCELED", "NOOP")  # 在高并发/重放场景下允许 NOOP
-    await session.commit()
+    await session.flush()
 
-    available2 = await StockAvailabilityService.get_available_for_item(
-        session,
-        platform=platform,
-        shop_id=shop_id,
-        warehouse_id=wh,
-        item_id=item,
-    )
+    row2 = (
+        await session.execute(
+            text(
+                """
+                SELECT reason, ref, trace_id, delta
+                  FROM stock_ledger
+                 WHERE ref = :ref
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"ref": order_ref},
+        )
+    ).first()
+    assert row2 is not None, f"no stock_ledger written for ref={order_ref}"
 
-    # 最终可售应回到 baseline
-    assert available2 == available0
+    reason, ref2, trace2, delta = row2
+    assert str(ref2) == order_ref
+    assert str(reason) == "SHIPMENT"
+    assert int(delta) < 0
+    if trace2 is not None:
+        assert str(trace2) == trace_id

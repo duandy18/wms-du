@@ -8,8 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.audit_writer import AuditEventWriter
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_trace_helper import set_order_status_by_ref
-from app.services.reservation_service import ReservationService
-from app.services.soft_reserve_service import SoftReserveService
 
 from app.services.order_reserve_flow_reserve import resolve_warehouse_for_order
 
@@ -23,6 +21,13 @@ async def cancel_flow(
     lines: Sequence[Mapping[str, Any]],
     trace_id: Optional[str] = None,
 ) -> dict:
+    """
+    ✅ 新语义：取消订单（彻底删除预占概念）
+
+    - 不再查询/释放 reservation
+    - 不涉及任何预占 / reservation 行为
+    - 取消仅表达“订单不再执行出库链路”，属于订单状态与审计层动作
+    """
     platform_db = platform.upper()
 
     warehouse_id = await resolve_warehouse_for_order(
@@ -32,45 +37,21 @@ async def cancel_flow(
         ref=ref,
     )
 
-    reservation_svc = ReservationService()
-    soft_reserve_svc = SoftReserveService()
+    status = "CANCELED"
 
-    existing = await reservation_svc.get_by_key(
-        session,
-        platform=platform_db,
-        shop_id=shop_id,
-        warehouse_id=warehouse_id,
-        ref=ref,
-    )
+    # 尽力设置订单状态（不阻塞主线）
+    try:
+        await set_order_status_by_ref(
+            session,
+            platform=platform_db,
+            shop_id=shop_id,
+            ref=ref,
+            new_status="CANCELED",
+        )
+    except Exception:
+        pass
 
-    if existing is None:
-        status = "NOOP"
-        reservation_id = None
-    else:
-        reservation_id, current_status = existing
-        if current_status != "open":
-            status = "NOOP"
-        else:
-            await soft_reserve_svc.release_reservation(
-                session,
-                reservation_id=reservation_id,
-                reason="canceled",
-                trace_id=trace_id,
-            )
-            status = "CANCELED"
-
-    if status == "CANCELED":
-        try:
-            await set_order_status_by_ref(
-                session,
-                platform=platform_db,
-                shop_id=shop_id,
-                ref=ref,
-                new_status="CANCELED",
-            )
-        except Exception:
-            pass
-
+    # 写审计（ORDER 事件 + OUTBOUND 侧事件）
     try:
         await OrderEventBus.order_canceled(
             session,
@@ -85,7 +66,7 @@ async def cancel_flow(
         await AuditEventWriter.write(
             session,
             flow="OUTBOUND",
-            event="RESERVE_CANCELED",
+            event="ORDER_CANCELED",
             ref=ref,
             trace_id=trace_id,
             meta={
@@ -93,6 +74,7 @@ async def cancel_flow(
                 "shop": shop_id,
                 "warehouse_id": warehouse_id,
                 "status": status,
+                "lines": len(lines or ()),
             },
             auto_commit=False,
         )
@@ -102,5 +84,5 @@ async def cancel_flow(
     return {
         "status": status,
         "ref": ref,
-        "reservation_id": reservation_id,
+        "reservation_id": None,
     }

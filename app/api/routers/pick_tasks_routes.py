@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,7 @@ from app.api.problem import raise_422
 from app.db.session import get_session
 from app.models.pick_task import PickTask
 from app.services.pick_task_service import PickTaskService
+from app.services.print_jobs_service import enqueue_pick_list_job
 from app.api.routers.pick_tasks_helpers import load_task_with_lines
 from app.api.routers.pick_tasks_schemas import (
     PickTaskCommitIn,
@@ -22,7 +23,74 @@ from app.api.routers.pick_tasks_schemas import (
     PickTaskDiffSummaryOut,
     PickTaskOut,
     PickTaskScanIn,
+    PrintJobOut,
 )
+
+
+async def _load_latest_pick_list_print_job(session: AsyncSession, *, task_id: int) -> Optional[PrintJobOut]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    kind,
+                    ref_type,
+                    ref_id,
+                    status,
+                    payload,
+                    requested_at,
+                    printed_at,
+                    error,
+                    created_at,
+                    updated_at
+                  FROM print_jobs
+                 WHERE kind = 'pick_list'
+                   AND ref_type = 'pick_task'
+                   AND ref_id = :tid
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"tid": int(task_id)},
+        )
+    ).mappings().first()
+
+    if not row:
+        return None
+
+    return PrintJobOut(
+        id=int(row["id"]),
+        kind=str(row["kind"]),
+        ref_type=str(row["ref_type"]),
+        ref_id=int(row["ref_id"]),
+        status=str(row["status"]),
+        payload=dict(row["payload"] or {}),
+        requested_at=row["requested_at"],
+        printed_at=row["printed_at"],
+        error=row["error"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def _load_order_meta(session: AsyncSession, *, order_id: int) -> dict:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT platform, shop_id, ext_order_no, trace_id, warehouse_id
+                  FROM orders
+                 WHERE id = :oid
+                 LIMIT 1
+                """
+            ),
+            {"oid": int(order_id)},
+        )
+    ).mappings().first()
+    if not row:
+        raise ValueError(f"order not found: id={order_id}")
+    return dict(row)
 
 
 def register(router: APIRouter) -> None:
@@ -47,6 +115,28 @@ def register(router: APIRouter) -> None:
                 source=payload.source,
                 priority=payload.priority,
             )
+
+            # ✅ 幂等 enqueue pick_list print_job（可观测闭环）
+            om = await _load_order_meta(session, order_id=int(order_id))
+            lines_payload = [
+                {"item_id": int(ln.item_id), "req_qty": int(ln.req_qty or 0)}
+                for ln in (task.lines or [])
+                if int(ln.req_qty or 0) > 0
+            ]
+            pj_payload = {
+                "kind": "pick_list",
+                "platform": str(om.get("platform") or "").upper(),
+                "shop_id": str(om.get("shop_id") or ""),
+                "ext_order_no": str(om.get("ext_order_no") or ""),
+                "order_id": int(order_id),
+                "pick_task_id": int(task.id),
+                "warehouse_id": int(task.warehouse_id),
+                "lines": lines_payload,
+                "trace_id": om.get("trace_id"),
+                "version": 1,
+            }
+            await enqueue_pick_list_job(session, ref_type="pick_task", ref_id=int(task.id), payload=pj_payload)
+
             await session.commit()
         except HTTPException:
             await session.rollback()
@@ -58,7 +148,9 @@ def register(router: APIRouter) -> None:
             await session.rollback()
             raise
 
-        return PickTaskOut.model_validate(task)
+        out = PickTaskOut.model_validate(task)
+        out.print_job = await _load_latest_pick_list_print_job(session, task_id=int(out.id))
+        return out
 
     @router.get("", response_model=List[PickTaskOut])
     async def list_pick_tasks(
@@ -88,7 +180,9 @@ def register(router: APIRouter) -> None:
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskOut:
         task = await load_task_with_lines(session, task_id)
-        return PickTaskOut.model_validate(task)
+        out = PickTaskOut.model_validate(task)
+        out.print_job = await _load_latest_pick_list_print_job(session, task_id=int(out.id))
+        return out
 
     @router.post("/{task_id}/scan", response_model=PickTaskOut)
     async def record_scan_for_pick_task(
@@ -126,7 +220,9 @@ def register(router: APIRouter) -> None:
             await session.rollback()
             raise
 
-        return PickTaskOut.model_validate(task)
+        out = PickTaskOut.model_validate(task)
+        out.print_job = await _load_latest_pick_list_print_job(session, task_id=int(out.id))
+        return out
 
     @router.get("/{task_id}/diff", response_model=PickTaskDiffSummaryOut)
     async def get_pick_task_diff(
@@ -163,7 +259,6 @@ def register(router: APIRouter) -> None:
         payload: PickTaskCommitIn,
         session: AsyncSession = Depends(get_session),
     ) -> PickTaskCommitResult:
-        # 提交前再次做合同校验（防止历史脏数据/绕过 scan 入口）
         task = await load_task_with_lines(session, task_id)
         item_ids: Set[int] = {int(ln.item_id) for ln in (task.lines or [])}
         has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)

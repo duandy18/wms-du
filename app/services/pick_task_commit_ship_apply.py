@@ -9,7 +9,8 @@ from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
-from app.services.pick_service import PickService
+from app.models.enums import MovementType
+from app.services.stock_service import StockService
 
 from app.services.pick_task_commit_ship_requirements import item_requires_batch, normalize_batch_code
 
@@ -20,6 +21,67 @@ def build_agg_from_commit_lines(commit_lines: Any) -> Dict[Tuple[int, Optional[s
         key = (int(line.item_id), (line.batch_code or None))
         agg[key] = agg.get(key, 0) + int(line.picked_qty)
     return agg
+
+
+async def _load_on_hand_qty(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code: Optional[str],
+) -> int:
+    """
+    读取当前库存槽位 qty（支持 NULL batch_code）。
+    槽位不存在时视为 0。
+    """
+    row = (
+        await session.execute(
+            SA(
+                """
+                SELECT qty
+                  FROM stocks
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND batch_code IS NOT DISTINCT FROM :c
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "c": batch_code},
+        )
+    ).first()
+    if not row:
+        return 0
+    try:
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+
+
+def _shortage_detail(
+    *,
+    item_id: int,
+    batch_code: Optional[str],
+    available_qty: int,
+    required_qty: int,
+    path: str,
+) -> Dict[str, Any]:
+    short_qty = max(0, int(required_qty) - int(available_qty))
+    return {
+        "type": "shortage",
+        "path": path,
+        "item_id": int(item_id),
+        "batch_code": batch_code,
+        # ✅ 蓝皮书合同字段（必需）
+        "required_qty": int(required_qty),
+        "available_qty": int(available_qty),
+        "short_qty": int(short_qty),
+        # ✅ 兼容/同义字段（保留，便于旧用例/调试）
+        "shortage_qty": int(short_qty),
+        "need": int(required_qty),
+        "on_hand": int(available_qty),
+        "shortage": int(short_qty),
+        "reason": "insufficient_stock",
+    }
 
 
 async def apply_stock_deductions(
@@ -33,14 +95,19 @@ async def apply_stock_deductions(
     trace_id: Optional[str],
 ) -> int:
     """
-    主线裁决：扣库存 + 写台账（通过 PickService.record_pick）。
+    主线裁决：扣库存 + 写台账（通过 StockService.adjust）。
 
     关键合同：
     - HTTPException(detail=Problem) 必须原样透传（避免 details/next_actions 丢失）
+    - 库存不足必须 409 insufficient_stock（可行动 shortage 细节）
     - 其它未知异常统一收敛为 500 Problem（系统异常）
     - 绝不使用 “raise_problem(...) from e”（语法非法）
+
+    语义约束（非常重要）：
+    - 订单出库提交属于 SHIP 语义，落台账必须是 SHIPMENT
+    - 禁止使用默认 MovementType.PICK（当前映射为 ADJUSTMENT），否则报表/审计会失真
     """
-    pick_svc = PickService()
+    stock_svc = StockService()
     ref_line = 1
 
     for (item_id, batch_code), total_picked in agg.items():
@@ -76,23 +143,103 @@ async def apply_stock_deductions(
                 ],
             )
 
+        need = int(total_picked)
+
+        on_hand = await _load_on_hand_qty(
+            session,
+            warehouse_id=int(warehouse_id),
+            item_id=int(item_id),
+            batch_code=bc_norm,
+        )
+        if on_hand < need:
+            raise_problem(
+                status_code=409,
+                error_code="insufficient_stock",
+                message="库存不足，禁止提交出库。",
+                context={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "ref": str(order_ref),
+                    "item_id": int(item_id),
+                    "batch_code": bc_norm,
+                },
+                details=[
+                    _shortage_detail(
+                        item_id=int(item_id),
+                        batch_code=bc_norm,
+                        available_qty=int(on_hand),
+                        required_qty=int(need),
+                        path=f"commit_lines[item_id={int(item_id)}]",
+                    )
+                ],
+                next_actions=[
+                    {"action": "rescan_stock", "label": "刷新库存"},
+                    {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                    {"action": "continue_pick", "label": "返回继续拣货/调整"},
+                ],
+            )
+
         try:
-            result = await pick_svc.record_pick(
+            await stock_svc.adjust(
                 session=session,
                 item_id=int(item_id),
-                qty=int(total_picked),
-                ref=order_ref,
+                delta=-int(need),
+                reason=MovementType.SHIPMENT,
+                ref=str(order_ref),
+                ref_line=int(ref_line),
                 occurred_at=occurred_at,
+                meta={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "item_id": int(item_id),
+                    "batch_code": (bc_norm if bc_norm else None),
+                    "picked_qty": int(need),
+                    "source": "pick_task_commit_ship",
+                },
                 batch_code=bc_norm,
+                production_date=None,
+                expiry_date=None,
                 warehouse_id=int(warehouse_id),
                 trace_id=trace_id,
-                start_ref_line=ref_line,
             )
         except HTTPException:
-            # PickService.record_pick 已经按 Problem 合同抛出（如 409 insufficient_stock），直接透传
             raise
-        except Exception as e:
-            # 其它未知异常：统一 500 Problem（系统异常）
+        except ValueError as e:
+            msg = str(e)
+            if "insufficient stock" in msg:
+                on_hand2 = await _load_on_hand_qty(
+                    session,
+                    warehouse_id=int(warehouse_id),
+                    item_id=int(item_id),
+                    batch_code=bc_norm,
+                )
+                raise_problem(
+                    status_code=409,
+                    error_code="insufficient_stock",
+                    message="库存不足，提交时被并发抢占。",
+                    context={
+                        "task_id": int(task_id),
+                        "warehouse_id": int(warehouse_id),
+                        "ref": str(order_ref),
+                        "item_id": int(item_id),
+                        "batch_code": bc_norm,
+                    },
+                    details=[
+                        _shortage_detail(
+                            item_id=int(item_id),
+                            batch_code=bc_norm,
+                            available_qty=int(on_hand2),
+                            required_qty=int(need),
+                            path=f"commit_lines[item_id={int(item_id)}]",
+                        )
+                    ],
+                    next_actions=[
+                        {"action": "rescan_stock", "label": "刷新库存"},
+                        {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                        {"action": "continue_pick", "label": "返回继续拣货/调整"},
+                    ],
+                )
+
             raise_problem(
                 status_code=500,
                 error_code="pick_apply_failed",
@@ -104,12 +251,24 @@ async def apply_stock_deductions(
                     "item_id": int(item_id),
                     "batch_code": bc_norm,
                 },
-                details=[
-                    {"type": "state", "path": "apply_stock_deductions", "reason": str(e)}
-                ],
+                details=[{"type": "state", "path": "apply_stock_deductions", "reason": msg}],
+            )
+        except Exception as e:
+            raise_problem(
+                status_code=500,
+                error_code="pick_apply_failed",
+                message="拣货扣减失败：系统异常。",
+                context={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "ref": str(order_ref),
+                    "item_id": int(item_id),
+                    "batch_code": bc_norm,
+                },
+                details=[{"type": "state", "path": "apply_stock_deductions", "reason": str(e)}],
             )
 
-        ref_line = int(result.get("ref_line", ref_line)) + 1
+        ref_line += 1
 
     return ref_line
 

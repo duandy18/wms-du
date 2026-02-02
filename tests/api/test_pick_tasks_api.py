@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -45,7 +46,7 @@ async def _get_item_has_shelf_life(session: AsyncSession, item_id: int) -> bool:
     return bool(row is True)
 
 
-async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None]:
+async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None, str]:
     """
     用 OrderService.ingest 落一张简单订单，并为其准备足够的库存：
 
@@ -69,8 +70,12 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
     """
     platform = "PDD"
     shop_id = "1"
-    ext_order_no = "PICK-TASK-CASE-1"
-    trace_id = "TRACE-PICK-TASK-CASE-1"
+
+    # ✅ 关键：用例级唯一后缀，避免 ref/任务唯一键被其它测试污染
+    uniq = uuid4().hex[:10]
+    ext_order_no = f"PICK-TASK-CASE-1-{uniq}"
+    trace_id = f"TRACE-PICK-TASK-CASE-1-{uniq}"
+
     now = datetime.now(timezone.utc)
 
     result = await OrderService.ingest(
@@ -121,7 +126,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
         warehouse_id=1,
         delta=10,
         reason=MovementType.RECEIPT,
-        ref="SEED-STOCK-PICK-TASK-CASE-1",
+        ref=f"SEED-STOCK-PICK-TASK-CASE-1-{uniq}",
         ref_line=1,
         occurred_at=now,
         batch_code=expected_batch_code,
@@ -131,7 +136,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
     )
 
     await session.commit()
-    return order_id, requires_batch, expected_batch_code
+    return order_id, requires_batch, expected_batch_code, trace_id
 
 
 async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, monkeypatch):
@@ -151,7 +156,7 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    order_id, requires_batch, expected_batch_code = await _seed_order_and_stock(session)
+    order_id, requires_batch, expected_batch_code, trace_id = await _seed_order_and_stock(session)
 
     # 2) 创建拣货任务
     resp = await client.post(
@@ -203,7 +208,6 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     order_ref = str(row_ref)
     handoff_code = _handoff_from_order_ref(order_ref)
 
-    trace_id = "TRACE-PICK-TASK-CASE-1"
     resp3 = await client.post(
         f"/pick-tasks/{task_id}/commit",
         json={

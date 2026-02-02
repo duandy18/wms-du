@@ -1,5 +1,4 @@
 # app/services/order_event_bus.py
-# app/services/order_event_bus.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -55,26 +54,33 @@ class OrderEventBus:
         )
 
     @staticmethod
-    async def order_reserved(
+    async def order_pickable_entered(
         session: AsyncSession,
         *,
         ref: str,
         platform: str,
         shop_id: str,
+        order_id: int,
         warehouse_id: int,
         lines: int,
         trace_id: Optional[str] = None,
     ) -> None:
+        """
+        订单进入“可仓内执行态（pickable）”：
+        - 不代表库存已预占/已扣减
+        - 只代表可以生成拣货任务、进入仓内作业链路
+        """
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
             "shop_id": shop_id,
+            "order_id": order_id,
             "warehouse_id": warehouse_id,
             "lines": lines,
         }
         await AuditEventWriter.write(
             session,
             flow="ORDER",
-            event="ORDER_RESERVED",
+            event="ORDER_PICKABLE_ENTERED",
             ref=ref,
             trace_id=trace_id,
             meta=meta,

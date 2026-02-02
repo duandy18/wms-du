@@ -98,12 +98,15 @@ async def write_ledger(
         expiry_date=expiry_date,
     )
 
+    # ✅ 关键修复：给 pg_insert 明确 Table 目标，避免 ORM class 解析歧义
+    tbl = StockLedger.__table__
+
     # 1) 先尝试插入：冲突就不插入 -> returning None -> 语义返回 0
     ins = (
-        pg_insert(StockLedger)
+        pg_insert(tbl)
         .values(**base_values)
         .on_conflict_do_nothing(constraint="uq_ledger_wh_batch_item_reason_ref_line")
-        .returning(StockLedger.id)
+        .returning(tbl.c.id)
     )
 
     res = await session.execute(ins)

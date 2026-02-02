@@ -5,6 +5,7 @@ pytestmark = pytest.mark.grp_scan
 
 # --- 最小版 PickService（直接内联，避免依赖你仓库中的实现差异） ---
 from datetime import datetime, timezone
+from uuid import uuid4
 
 
 class _DummyStockService:
@@ -91,10 +92,14 @@ class PickService:
 
 @pytest.mark.asyncio
 async def test_pick_service_min_flow(session):
-    # 建任务头
+    # 建任务头：用例级唯一 ref，避免 uq_pick_tasks_ref_wh 冲突
+    ref = f"T-DEMO-{uuid4().hex[:10]}"
     tid = (
         await session.execute(
-            text("INSERT INTO pick_tasks (warehouse_id, ref) VALUES (1, 'T-DEMO') RETURNING id")
+            text(
+                "INSERT INTO pick_tasks (warehouse_id, ref) VALUES (1, :ref) RETURNING id"
+            ),
+            {"ref": ref},
         )
     ).scalar_one()
 
