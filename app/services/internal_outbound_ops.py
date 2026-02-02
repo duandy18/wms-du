@@ -94,7 +94,7 @@ async def fefo_deduct_internal(
                       LEFT JOIN batches b
                         ON b.item_id      = s.item_id
                        AND b.warehouse_id = s.warehouse_id
-                       AND b.batch_code   = s.batch_code
+                       AND b.batch_code IS NOT DISTINCT FROM s.batch_code
                      WHERE s.item_id = :i
                        AND s.warehouse_id = :w
                        AND s.qty > 0
@@ -109,7 +109,9 @@ async def fefo_deduct_internal(
         if not row:
             raise ValueError(f"内部出库 FEFO 扣减失败：库存不足 item_id={item_id}, remain={remain}")
 
-        batch_code, on_hand = str(row[0]), int(row[1])
+        # ✅ 关键：batch_code 允许为 None（无批次槽位），绝不能 str(None) 变成 'None'
+        batch_code = row[0]
+        on_hand = int(row[1])
         take = min(remain, on_hand)
         idx += 1
 
@@ -159,6 +161,7 @@ async def confirm(
             continue
 
         if line.batch_code:
+            bc = str(line.batch_code).strip()
             await stock_svc.adjust(
                 session=session,
                 item_id=line.item_id,
@@ -168,7 +171,7 @@ async def confirm(
                 ref=ref,
                 ref_line=line.line_no,
                 occurred_at=now,
-                batch_code=str(line.batch_code).strip(),
+                batch_code=bc or None,
                 trace_id=trace_id,
             )
         else:

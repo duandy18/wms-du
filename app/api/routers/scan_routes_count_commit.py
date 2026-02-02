@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.deps import get_session
 from app.models.enums import MovementType
 from app.api.routers.scan_schemas import ScanCountCommitRequest, ScanResponse
@@ -28,13 +29,21 @@ def register(router: APIRouter) -> None:
         """
         svc = StockService()
 
+        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, {int(req.item_id)})
+        if req.item_id not in has_shelf_life_map:
+            raise HTTPException(status_code=422, detail=f"unknown item_id: {req.item_id}")
+
+        requires_batch = has_shelf_life_map.get(req.item_id, False) is True
+        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=req.batch_code)
+
         # 1) 解析/幂等建档 → batch_id
         try:
             batch_id = await svc._resolve_batch_id(
                 session=session,
                 item_id=req.item_id,
                 location_id=req.location_id,
-                batch_code=req.batch_code,
+                batch_code=batch_code,
                 production_date=req.production_date,
                 expiry_date=req.expiry_date,
                 warehouse_id=None,
@@ -71,7 +80,7 @@ def register(router: APIRouter) -> None:
                 ref=req.ref,
                 ref_line=1,
                 occurred_at=req.occurred_at,
-                batch_code=req.batch_code,
+                batch_code=batch_code,
                 production_date=req.production_date,
                 expiry_date=req.expiry_date,
             )
@@ -90,5 +99,5 @@ def register(router: APIRouter) -> None:
             item_id=req.item_id,
             location_id=req.location_id,
             qty=req.qty,
-            batch_code=req.batch_code,
+            batch_code=batch_code,
         )

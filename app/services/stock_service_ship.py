@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.services.three_books_enforcer import enforce_three_books
 
-
 AdjustFn = Callable[..., Awaitable[Dict[str, Any]]]
 
 
@@ -87,7 +86,7 @@ async def ship_commit_direct_impl(
                           LEFT JOIN batches b
                             ON b.item_id      = s.item_id
                            AND b.warehouse_id = s.warehouse_id
-                           AND b.batch_code   = s.batch_code
+                           AND b.batch_code IS NOT DISTINCT FROM s.batch_code
                          WHERE s.item_id=:i AND s.warehouse_id=:w AND s.qty>0
                          ORDER BY b.expiry_date ASC NULLS LAST, s.id ASC
                          LIMIT 1
@@ -100,7 +99,9 @@ async def ship_commit_direct_impl(
             if not row:
                 raise ValueError(f"insufficient stock for item={item_id}")
 
-            batch_code, on_hand = str(row[0]), int(row[1])
+            # ✅ 关键：batch_code 允许为 None（无批次槽位），绝不能 str(None) 变成 'None'
+            batch_code = row[0]
+            on_hand = int(row[1])
             take = min(remain, on_hand)
 
             await adjust_fn(
@@ -124,7 +125,7 @@ async def ship_commit_direct_impl(
                 {
                     "warehouse_id": int(warehouse_id),
                     "item_id": int(item_id),
-                    "batch_code": str(batch_code),
+                    "batch_code": batch_code,
                     "qty": -int(take),
                     "ref": str(ref),
                     "ref_line": 1,

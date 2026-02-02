@@ -9,6 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.routers.stock_ledger_helpers import build_base_ids_stmt, infer_movement_type
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
@@ -26,7 +28,6 @@ from app.schemas.stock_ledger_explain import (
     ExplainReceiveTaskLine,
     LedgerExplainOut,
 )
-from app.api.routers.stock_ledger_helpers import build_base_ids_stmt, infer_movement_type
 
 UTC = timezone.utc
 MAX_HISTORY_DAYS = 3650  # 10 years
@@ -137,7 +138,10 @@ def register(router: APIRouter) -> None:
         ledger_stmt = select(StockLedger).where(StockLedger.ref == ref)
         if trace_id and trace_id.strip():
             ledger_stmt = ledger_stmt.where(StockLedger.trace_id == trace_id.strip())
-        ledger_stmt = ledger_stmt.order_by(StockLedger.occurred_at.asc(), StockLedger.ref_line.asc(), StockLedger.id.asc()).limit(limit)
+        ledger_stmt = (
+            ledger_stmt.order_by(StockLedger.occurred_at.asc(), StockLedger.ref_line.asc(), StockLedger.id.asc())
+            .limit(limit)
+        )
         ledger_rows = (await session.execute(ledger_stmt)).scalars().all()
 
         # 4) 向上解释：receive_task / po
@@ -216,6 +220,12 @@ def register(router: APIRouter) -> None:
         - 必须提供锚点（trace_id/ref/item_id/reason_canon/sub_reason 任意一项）；
         - 返回结构与 /stock/ledger/query 一致（LedgerList）。
         """
+        # ✅ 主线 B：查询级 batch_code 归一（None/空串/'None' -> None）
+        # build_base_ids_stmt -> build_common_filters 已统一用 batch_code_key 过滤，这里做入口层防回潮。
+        norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
+        if getattr(payload, "batch_code", None) != norm_bc:
+            payload = payload.model_copy(update={"batch_code": norm_bc})
+
         if not _has_anchor(payload):
             raise HTTPException(
                 status_code=400,

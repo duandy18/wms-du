@@ -20,6 +20,9 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
     - 主数据字段：来自 items（1:1 join，不放大）
     - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
     - 日期相关：后端统一 UTC 计算，前端不推导
+
+    ✅ 主线 B：避免 NULL 吞数据
+    - join batches 时使用 IS NOT DISTINCT FROM，确保 batch_code=NULL 的槽位也能匹配到 batches(NULL) 行（如果存在）。
     """
     rows = (
         (
@@ -56,7 +59,7 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 LEFT JOIN batches AS b
                   ON b.item_id      = s.item_id
                  AND b.warehouse_id = s.warehouse_id
-                 AND b.batch_code   = s.batch_code
+                 AND b.batch_code IS NOT DISTINCT FROM s.batch_code
                 WHERE s.qty <> 0
                 ORDER BY s.item_id, s.warehouse_id, s.batch_code
                 """

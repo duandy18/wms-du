@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Set
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, constr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.deps import get_session
 from app.core.audit import new_trace
 from app.services.outbound_service import OutboundService
@@ -22,7 +23,7 @@ class OutboundLineIn(BaseModel):
 
     warehouse_id: int
     item_id: int
-    batch_code: str
+    batch_code: Optional[str] = None
     qty: int = Field(gt=0)
 
 
@@ -68,6 +69,27 @@ async def outbound_ship_commit(
     """
     trace = new_trace("http:/outbound/ship/commit")
 
+    # ✅ 主线 A：API 合同收紧（422 拦假码）
+    item_ids: Set[int] = {ln.item_id for ln in payload.lines}
+    has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+
+    missing_items = [str(i) for i in sorted(item_ids) if i not in has_shelf_life_map]
+    if missing_items:
+        raise HTTPException(status_code=422, detail=f"unknown item_id(s): {', '.join(missing_items)}")
+
+    normalized_lines = []
+    for ln in payload.lines:
+        requires_batch = has_shelf_life_map.get(ln.item_id, False) is True
+        norm_batch = validate_batch_code_contract(requires_batch=requires_batch, batch_code=ln.batch_code)
+        normalized_lines.append(
+            {
+                "warehouse_id": ln.warehouse_id,
+                "item_id": ln.item_id,
+                "batch_code": norm_batch,
+                "qty": ln.qty,
+            }
+        )
+
     svc = OutboundService()
 
     # 业务幂等键：platform + shop_id + ref
@@ -76,15 +98,7 @@ async def outbound_ship_commit(
     result = await svc.commit(
         session=session,
         order_id=order_id,
-        lines=[
-            {
-                "warehouse_id": ln.warehouse_id,
-                "item_id": ln.item_id,
-                "batch_code": ln.batch_code,
-                "qty": ln.qty,
-            }
-            for ln in payload.lines
-        ],
+        lines=normalized_lines,
         occurred_at=payload.occurred_at,
         trace_id=trace.trace_id,
     )

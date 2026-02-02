@@ -35,7 +35,9 @@ class StockSnapshot(Base):
         index=True,
     )
 
-    qty_on_hand: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+    # ✅ Stage C.2 最终态：snapshot 事实列为 qty（彻底删除 qty_on_hand）
+    qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+
     qty_allocated: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
     qty_available: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
 

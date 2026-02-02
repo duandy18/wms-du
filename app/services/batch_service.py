@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
+from app.api.batch_code_contract import normalize_optional_batch_code
 from app.models.batch import Batch
 
 
@@ -17,6 +18,10 @@ class BatchService:
     约定：
     - 不在服务内 commit/rollback；事务由调用方控制。
     - 本服务**不写台账**；仅维护批次行本身。
+
+    ✅ 主线 B：批次语义与 NULL 世界观对齐
+    - batch_code 允许为 NULL（用于无批次槽位对齐/兼容）
+    - 查询/创建时必须正确处理 NULL（避免 NULL= NULL 吞数据）
     """
 
     def __init__(self, db_session: Session) -> None:
@@ -31,21 +36,25 @@ class BatchService:
         item_id: int,
         warehouse_id: int,
         location_id: int,
-        batch_code: str,
+        batch_code: Optional[str] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
     ) -> Batch:
-        q = (
-            self.db.query(Batch)
-            .filter(
-                Batch.item_id == item_id,
-                Batch.warehouse_id == warehouse_id,
-                Batch.location_id == location_id,
-                Batch.batch_code == batch_code,
-            )
-            .limit(1)
+        norm_code = normalize_optional_batch_code(batch_code)
+
+        q = self.db.query(Batch).filter(
+            Batch.item_id == item_id,
+            Batch.warehouse_id == warehouse_id,
+            Batch.location_id == location_id,
         )
-        row: Optional[Batch] = q.first()
+
+        # ✅ NULL 语义：必须用 IS NULL，而不是 ==（避免 NULL= NULL 的歧义）
+        if norm_code is None:
+            q = q.filter(Batch.batch_code.is_(None))
+        else:
+            q = q.filter(Batch.batch_code == norm_code)
+
+        row: Optional[Batch] = q.limit(1).first()
         if row:
             return row
 
@@ -53,7 +62,7 @@ class BatchService:
             item_id=item_id,
             warehouse_id=warehouse_id,
             location_id=location_id,
-            batch_code=batch_code,
+            batch_code=norm_code,
             qty=0,
             production_date=production_date,
             expiry_date=expiry_date,
@@ -117,9 +126,7 @@ class BatchService:
     # 写：数量调整（行级锁，非负；无显式 commit）
     # ------------------------------------------------------------------
     def increment_qty(self, *, batch_id: int, delta: int) -> Batch:
-        b: Optional[Batch] = (
-            self.db.query(Batch).filter(Batch.id == batch_id).with_for_update().first()
-        )
+        b: Optional[Batch] = self.db.query(Batch).filter(Batch.id == batch_id).with_for_update().first()
         if b is None:
             raise ValueError(f"批次不存在：id={batch_id}")
         new_val = int(b.qty or 0) + int(delta)
@@ -133,9 +140,7 @@ class BatchService:
     def set_qty(self, *, batch_id: int, qty: int) -> Batch:
         if int(qty) < 0:
             raise ValueError("批次数量不能为负数")
-        b: Optional[Batch] = (
-            self.db.query(Batch).filter(Batch.id == batch_id).with_for_update().first()
-        )
+        b: Optional[Batch] = self.db.query(Batch).filter(Batch.id == batch_id).with_for_update().first()
         if b is None:
             raise ValueError(f"批次不存在：id={batch_id}")
         b.qty = int(qty)

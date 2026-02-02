@@ -20,6 +20,7 @@ class FefoAllocator:
     核心思想：
     ------------------------------------------
     • 分配维度： (warehouse_id, item_id, batch_code)
+      - 对非批次商品：batch_code = NULL 是合法槽位（不是未知）
     • expiry_date 为 FEFO 核心排序依据
     • expiry_date NULL → 排最后
     • stocks.qty 为库存唯一真相（batches.qty 无作用）
@@ -32,7 +33,6 @@ class FefoAllocator:
         async with session.begin():
             plan = await fefo.plan(...)
             await fefo.ship(...)
-
     """
 
     def __init__(self, stock: Optional[StockService] = None) -> None:
@@ -50,15 +50,17 @@ class FefoAllocator:
         need: int,
         occurred_date: date,
         allow_expired: bool = False,
-    ) -> List[Tuple[str, int]]:
+    ) -> List[Tuple[Optional[str], int]]:
         """
         （只读 + 锁）计算 FEFO 计划。
 
         基于 stocks + batches 的最新 V3 模型，按以下顺序排序：
         1. expiry_date ASC（NULLS LAST）
         2. stock_id ASC（稳定 tie-breaker）
-        """
 
+        ✅ 主线 B：join batches 使用 IS NOT DISTINCT FROM，避免 batch_code=NULL 吞数据。
+        ✅ 支持非批次商品：batch_code 允许为 None。
+        """
         sql = text(
             """
             -- 锁定 stocks（库存真实来源）
@@ -71,7 +73,7 @@ class FefoAllocator:
             LEFT JOIN batches b
               ON b.item_id = s.item_id
              AND b.warehouse_id = s.warehouse_id
-             AND b.batch_code = s.batch_code
+             AND b.batch_code IS NOT DISTINCT FROM s.batch_code
             WHERE s.item_id = :item
               AND s.warehouse_id = :wh
               AND s.qty > 0
@@ -82,7 +84,7 @@ class FefoAllocator:
         rows = (await session.execute(sql, {"item": item_id, "wh": warehouse_id})).all()
 
         # 将结果整理并排序
-        seq: List[Tuple[str, Optional[date], int, int]] = []
+        seq: List[Tuple[Optional[str], Optional[date], int, int]] = []
         for r in rows:
             seq.append((r.code, r.exp, int(r.qty), int(r.stock_id)))
 
@@ -95,9 +97,11 @@ class FefoAllocator:
 
         # 贪心切片
         remaining = need
-        plan: List[Tuple[str, int]] = []
+        plan: List[Tuple[Optional[str], int]] = []
 
         for code, exp, qty, sid in seq:
+            _ = exp
+            _ = sid
             if remaining <= 0:
                 break
             take = min(remaining, qty)
@@ -131,8 +135,9 @@ class FefoAllocator:
         按 FEFO 计划逐批扣减：
             - 每个批次一条 ledger
             - 共享事务锁保证一致性
-        """
 
+        ✅ 支持 batch_code=None（非批次商品合法槽位），严禁 str(None)。
+        """
         plan = await self.plan(
             session=session,
             item_id=item_id,

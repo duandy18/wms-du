@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.db.session import get_session
 from app.services.pick_service import PickService
 
@@ -21,7 +22,7 @@ class PickIn(BaseModel):
         * item_id: 商品 ID
         * qty: 本次拣货数量（>0）
         * warehouse_id: 仓库 ID
-        * batch_code: 扣减的批次编码
+        * batch_code: 扣减的批次编码（主线 A：将语义前置到 API 合同）
         * ref: 拣货引用（用于台账幂等，如 SCAN-xxx）
     - 可选：
         * occurred_at: 拣货时间，默认当前时间（UTC）
@@ -32,19 +33,13 @@ class PickIn(BaseModel):
     item_id: int = Field(..., ge=1, description="商品 ID")
     qty: int = Field(..., ge=1, description="拣货数量")
     warehouse_id: int = Field(..., ge=1, description="仓库 ID")
-    batch_code: str = Field(..., min_length=1, description="批次编码")
+    batch_code: Optional[str] = Field(default=None, description="批次编码（批次商品必填；非批次商品必须为 null）")
     ref: str = Field(..., min_length=1, description="拣货引用（如扫描号）")
 
-    occurred_at: Optional[datetime] = Field(
-        default=None, description="拣货时间（缺省为当前 UTC 时间）"
-    )
+    occurred_at: Optional[datetime] = Field(default=None, description="拣货时间（缺省为当前 UTC 时间）")
 
-    task_line_id: Optional[int] = Field(
-        default=None, description="可选：拣货任务行 ID，用于后续扩展 remain 计算"
-    )
-    location_id: Optional[int] = Field(
-        default=None, ge=0, description="拣货库位 ID（当前不参与扣减，仅作记录）"
-    )
+    task_line_id: Optional[int] = Field(default=None, description="可选：拣货任务行 ID，用于后续扩展 remain 计算")
+    location_id: Optional[int] = Field(default=None, ge=0, description="拣货库位 ID（当前不参与扣减，仅作记录）")
     device_id: Optional[str] = Field(default=None, description="设备 ID（扫描枪等）")
     operator: Optional[str] = Field(default=None, description="操作人 ID 或姓名")
 
@@ -60,7 +55,7 @@ class PickOut(BaseModel):
 
     item_id: int
     warehouse_id: int
-    batch_code: str
+    batch_code: Optional[str]
     picked: int
     stock_after: Optional[int] = None
     ref: str
@@ -79,8 +74,16 @@ async def pick_commit(
     后续可在此基础上增加任务维度的 picked/remain 统计。
     """
     svc = PickService()
-
     occurred_at = body.occurred_at or datetime.now(timezone.utc)
+
+    # ✅ 主线 A：API 合同收紧（422 拦假码）
+    item_ids: Set[int] = {int(body.item_id)}
+    has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+    if body.item_id not in has_shelf_life_map:
+        raise HTTPException(status_code=422, detail=f"unknown item_id: {body.item_id}")
+
+    requires_batch = has_shelf_life_map.get(body.item_id, False) is True
+    batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=body.batch_code)
 
     try:
         result = await svc.record_pick(
@@ -89,7 +92,7 @@ async def pick_commit(
             qty=body.qty,
             ref=body.ref,
             occurred_at=occurred_at,
-            batch_code=body.batch_code,
+            batch_code=batch_code,
             warehouse_id=body.warehouse_id,
             task_line_id=body.task_line_id,
         )
@@ -105,7 +108,7 @@ async def pick_commit(
     return PickOut(
         item_id=body.item_id,
         warehouse_id=result.get("warehouse_id", body.warehouse_id),
-        batch_code=result.get("batch_code", body.batch_code),
+        batch_code=result.get("batch_code", batch_code),
         picked=result.get("picked", body.qty),
         stock_after=result.get("stock_after"),
         ref=result.get("ref", body.ref),

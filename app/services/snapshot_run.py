@@ -12,21 +12,12 @@ from app.services.snapshot_time import UTC
 
 async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
     """
-    兼容 snapshot_v2/v3 合同的入口：
+    兼容 snapshot_v2/v3 合同的入口（同事务内安全）：
 
-    ⚠️ Phase 3 要求：
-    - run_snapshot 可能在“业务 commit 的同一个 session/事务”内被调用；
-    - 因此这里 **绝对不能** 用 session.rollback() 回滚外层事务，
-      否则会把刚写入的 stocks / stock_ledger 也一并回滚，导致“成功变失败、失败变成功”的幽灵状态。
-
-    实现策略：
-    - 对可能失败的 CALL / VIEW 读取，使用 SAVEPOINT（begin_nested）隔离失败；
-    - 失败只回滚到 savepoint，不污染外层事务。
+    ✅ Stage C.2：以 stock_snapshots.qty 为新事实列
     """
     today = datetime.now(UTC).date()
 
-    # 1) 尝试执行存储过程 snapshot_today()
-    # 用 savepoint 隔离异常（例如过程不存在、权限不足等）
     called_proc = False
     try:
         async with session.begin_nested():
@@ -35,13 +26,12 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
     except Exception:
         called_proc = False
 
-    # 若未成功调用过程，则退回内建实现（同样在当前事务内执行）
     if not called_proc:
         await session.execute(
             text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"),
             {"d": today},
         )
-        # ✅ batch_code_key 是 generated column，不能显式插入
+        # ✅ batch_code_key 是 generated column，INSERT 不写它
         await session.execute(
             text(
                 """
@@ -50,7 +40,7 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
                     warehouse_id,
                     item_id,
                     batch_code,
-                    qty_on_hand,
+                    qty,
                     qty_available,
                     qty_allocated
                 )
@@ -59,7 +49,7 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
                     s.warehouse_id,
                     s.item_id,
                     s.batch_code,
-                    SUM(s.qty) AS qty_on_hand,
+                    SUM(s.qty) AS qty,
                     SUM(s.qty) AS qty_available,
                     0 AS qty_allocated
                 FROM stocks AS s
@@ -69,7 +59,6 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
             {"d": today},
         )
 
-    # 2) 尝试读取 v_three_books 视图（隔离异常，不污染外层事务）
     summary: Optional[Dict[str, Any]] = None
     try:
         async with session.begin_nested():
@@ -80,7 +69,6 @@ async def run_snapshot(session: AsyncSession) -> Dict[str, Any]:
     except Exception:
         summary = None
 
-    # 3) 视图不存在时：手动汇总
     if summary is None:
         summary = await compute_summary(session)
 
@@ -97,7 +85,7 @@ async def compute_summary(session: AsyncSession) -> Dict[str, Any]:
             SELECT
               COALESCE((SELECT SUM(qty) FROM stocks), 0)                    AS sum_stocks,
               COALESCE((SELECT SUM(delta) FROM stock_ledger), 0)           AS sum_ledger,
-              COALESCE((SELECT SUM(qty_on_hand) FROM stock_snapshots), 0)  AS sum_snapshot_on_hand,
+              COALESCE((SELECT SUM(qty) FROM stock_snapshots), 0)          AS sum_snapshot_qty,
               COALESCE((SELECT SUM(qty_available) FROM stock_snapshots),0) AS sum_snapshot_available
             """
         )

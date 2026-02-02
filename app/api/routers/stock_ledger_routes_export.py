@@ -10,15 +10,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
-from app.models.stock_ledger import StockLedger
-from app.schemas.stock_ledger import LedgerQuery
-
+from app.api.batch_code_contract import normalize_optional_batch_code
 from app.api.routers.stock_ledger_helpers import (
     apply_common_filters_rows,
     exec_rows,
     normalize_time_range,
 )
+from app.db.session import get_session
+from app.models.stock_ledger import StockLedger
+from app.schemas.stock_ledger import LedgerQuery
 
 
 def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO, str]:
@@ -27,7 +27,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
 
     列：
     id, delta, reason, sub_reason, ref, ref_line, occurred_at, created_at, after_qty,
-    item_id, warehouse_id, batch_code, trace_id
+    item_id, warehouse_id, batch_code, batch_code_key, trace_id
     """
     sio = StringIO()
     writer = csv.writer(sio)
@@ -46,6 +46,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
             "item_id",
             "warehouse_id",
             "batch_code",
+            "batch_code_key",
             "trace_id",
         ]
     )
@@ -65,6 +66,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
                 r.item_id,
                 r.warehouse_id,
                 r.batch_code,
+                r.batch_code_key,
                 r.trace_id or "",
             ]
         )
@@ -87,12 +89,18 @@ def register(router: APIRouter) -> None:
         - 过滤条件与 /stock/ledger/query 一致（基于 LedgerQuery & occurred_at）；
         - 本次增强：支持 sub_reason 过滤，导出列中包含 sub_reason。
         """
+        # ✅ 主线 B：查询级 batch_code 归一（None/空串/'None' -> None）
+        # helper 内会基于 batch_code_key 做过滤；这里先做入口层防回潮。
+        norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
+        if getattr(payload, "batch_code", None) != norm_bc:
+            payload = payload.model_copy(update={"batch_code": norm_bc})
+
         time_from, time_to = normalize_time_range(payload)
 
         rows_stmt = select(StockLedger)
         rows_stmt = apply_common_filters_rows(rows_stmt, payload, time_from, time_to)
 
-        # ✅ 增强：sub_reason 过滤（不改 helper，直接在这里补充条件）
+        # ✅ 增强：sub_reason 过滤（保持原行为；即使 helper 已支持，这里重复条件也不改变结果）
         if getattr(payload, "sub_reason", None):
             rows_stmt = rows_stmt.where(StockLedger.sub_reason == payload.sub_reason)
 

@@ -12,6 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # ==========================
 
 
+def _is_forbidden_none_token(s: Optional[str]) -> bool:
+    if s is None:
+        return False
+    return s.strip().lower() == "none"
+
+
+def _is_blank(s: Optional[str]) -> bool:
+    if s is None:
+        return True
+    return s.strip() == ""
+
+
 class ScanRequest(BaseModel):
     """
     v2 通用 Scan 请求体（与前端 ScanRequest 对齐）：
@@ -38,11 +50,9 @@ class ScanRequest(BaseModel):
     # v2：只认仓库，不认库位
     warehouse_id: Optional[int] = Field(None, description="仓库 ID（缺省时由后端兜底为 1）")
 
-    # 猫粮批次 / 日期信息
-    batch_code: Optional[str] = Field(None, description="批次编码（可选）")
-    production_date: Optional[str] = Field(
-        None, description="生产日期，建议 YYYY-MM-DD 或 YYYYMMDD"
-    )
+    # 批次 / 日期信息（语义由 API 合同层判定）
+    batch_code: Optional[str] = Field(None, description="批次编码（可选；批次语义由 API 合同层判定）")
+    production_date: Optional[str] = Field(None, description="生产日期，建议 YYYY-MM-DD 或 YYYYMMDD")
     expiry_date: Optional[str] = Field(None, description="到期日期，建议 YYYY-MM-DD 或 YYYYMMDD")
 
     # 拣货任务行
@@ -52,9 +62,7 @@ class ScanRequest(BaseModel):
     probe: bool = Field(False, description="探针模式，仅试算不落账")
 
     # 扩展上下文
-    ctx: Optional[Dict[str, Any]] = Field(
-        default=None, description="扩展上下文（device_id/operator 等）"
-    )
+    ctx: Optional[Dict[str, Any]] = Field(default=None, description="扩展上下文（device_id/operator 等）")
 
 
 # ========== 旧模型：仅用于 legacy 接口 / 测试兼容，/scan 已不再使用 ==========
@@ -72,7 +80,7 @@ class ScanReceiveRequest(BaseModel):
     location_id: int
     qty: int = Field(..., ge=0)
     ref: str
-    batch_code: str
+    batch_code: Optional[str] = None
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     production_date: Optional[datetime] = None
     expiry_date: Optional[datetime] = None
@@ -82,8 +90,14 @@ class ScanReceiveRequest(BaseModel):
     def _check(self) -> "ScanReceiveRequest":
         if self.mode.lower() != "receive":
             raise ValueError("unsupported scan mode; only 'receive' is allowed here")
-        if not self.batch_code:
-            raise ValueError("猫粮收货必须提供 batch_code。")
+
+        # 不在 schema 强行要求 batch_code 非空（是否必须由 item.has_shelf_life 决定，应在 API 合同层处理）
+        if self.batch_code is not None:
+            if _is_blank(self.batch_code):
+                raise ValueError("batch_code cannot be empty string; use null when not applicable.")
+            if _is_forbidden_none_token(self.batch_code):
+                raise ValueError("batch_code must not be 'none' (case-insensitive).")
+
         if self.production_date is None and self.expiry_date is None:
             raise ValueError("猫粮收货必须提供 production_date 或 expiry_date（至少一项）。")
         if self.occurred_at.tzinfo is None:
@@ -103,7 +117,7 @@ class ScanPutawayCommitRequest(BaseModel):
     to_location_id: int
     qty: int = Field(..., ge=1)
     ref: str
-    batch_code: str
+    batch_code: Optional[str] = None
     production_date: Optional[datetime] = None
     expiry_date: Optional[datetime] = None
     # 兼容历史/不同命名
@@ -113,8 +127,12 @@ class ScanPutawayCommitRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "ScanPutawayCommitRequest":
-        if not self.batch_code:
-            raise ValueError("猫粮搬运必须提供 batch_code。")
+        if self.batch_code is not None:
+            if _is_blank(self.batch_code):
+                raise ValueError("batch_code cannot be empty string; use null when not applicable.")
+            if _is_forbidden_none_token(self.batch_code):
+                raise ValueError("batch_code must not be 'none' (case-insensitive).")
+
         if self.production_date is None and self.expiry_date is None:
             raise ValueError("猫粮搬运必须提供 production_date 或 expiry_date（至少一项）。")
         return self
@@ -131,15 +149,19 @@ class ScanCountCommitRequest(BaseModel):
     location_id: int
     qty: int = Field(..., ge=0, description="盘点后的绝对量")
     ref: str
-    batch_code: str
+    batch_code: Optional[str] = None
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     production_date: Optional[datetime] = None
     expiry_date: Optional[datetime] = None
 
     @model_validator(mode="after")
     def _check(self) -> "ScanCountCommitRequest":
-        if not self.batch_code:
-            raise ValueError("猫粮盘点必须提供 batch_code。")
+        if self.batch_code is not None:
+            if _is_blank(self.batch_code):
+                raise ValueError("batch_code cannot be empty string; use null when not applicable.")
+            if _is_forbidden_none_token(self.batch_code):
+                raise ValueError("batch_code must not be 'none' (case-insensitive).")
+
         if self.production_date is None and self.expiry_date is None:
             raise ValueError("猫粮盘点必须提供 production_date 或 expiry_date（至少一项）。")
         if self.occurred_at.tzinfo is None:

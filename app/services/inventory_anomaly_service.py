@@ -28,9 +28,10 @@ class InventoryAnomalyService:
         )
         stocks_rows = (await session.execute(stocks_sql)).mappings().all()
 
+        # ✅ Stage C.2-1：snapshot 新事实列为 qty（不再读 qty_on_hand）
         snap_sql = text(
             """
-            SELECT warehouse_id, item_id, batch_code, qty_on_hand
+            SELECT warehouse_id, item_id, batch_code, qty
             FROM stock_snapshots
             WHERE snapshot_date = :d
         """
@@ -46,7 +47,7 @@ class InventoryAnomalyService:
 
         ledger_map = to_map(ledger_rows, "batch_code", "qty")
         stocks_map = to_map(stocks_rows, "batch_code", "qty")
-        snapshot_map = to_map(snap_rows, "batch_code", "qty_on_hand")
+        snapshot_map = to_map(snap_rows, "batch_code", "qty")
 
         anomalies_ledger_stocks = []
         anomalies_ledger_snapshot = []

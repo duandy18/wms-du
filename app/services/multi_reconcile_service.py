@@ -7,6 +7,8 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_NULL_BATCH_KEY = "__NULL_BATCH__"
+
 
 class MultiReconcileService:
     """
@@ -21,7 +23,12 @@ class MultiReconcileService:
     3) trace_id 链路级对账
     4) 账账平衡：ledger vs stocks vs snapshot_v3
 
-    未来可以扩展 GSI 索引/分布式校验。
+    ✅ 主线 B：analytics / reconcile 统一切 batch_code_key
+    - 所有 join / group-by 维度使用 batch_code_key，消灭 NULL= NULL 吞数据问题。
+
+    ✅ Stage C.2-1：snapshot 新事实列为 stock_snapshots.qty
+    - 迁移已添加 trigger 同步 qty 与 qty_on_hand
+    - 本服务开始以 qty 为准（不再读 qty_on_hand）
     """
 
     # -----------------------------------------------
@@ -39,10 +46,11 @@ class MultiReconcileService:
                 warehouse_id,
                 item_id,
                 batch_code,
+                batch_code_key,
                 SUM(delta) AS qty
             FROM stock_ledger
             WHERE occurred_at <= :cut
-            GROUP BY 1,2,3
+            GROUP BY 1,2,3,4
             HAVING SUM(delta) != 0
         """
         )
@@ -148,27 +156,33 @@ class MultiReconcileService:
                 x.warehouse_id,
                 x.item_id,
                 x.batch_code,
+                x.batch_code_key,
                 x.ledger_qty,
                 COALESCE(st.qty, 0) AS stock_qty,
-                COALESCE(sn.qty_on_hand, 0) AS snapshot_qty,
+                COALESCE(sn.qty, 0) AS snapshot_qty,
                 (x.ledger_qty - COALESCE(st.qty,0)) AS diff_stock,
-                (x.ledger_qty - COALESCE(sn.qty_on_hand,0)) AS diff_snapshot
+                (x.ledger_qty - COALESCE(sn.qty,0)) AS diff_snapshot
             FROM (
-                SELECT warehouse_id, item_id, batch_code, SUM(delta) AS ledger_qty
+                SELECT
+                    warehouse_id,
+                    item_id,
+                    batch_code,
+                    batch_code_key,
+                    SUM(delta) AS ledger_qty
                 FROM stock_ledger
                 WHERE occurred_at <= :cut
-                GROUP BY 1,2,3
+                GROUP BY 1,2,3,4
             ) AS x
             LEFT JOIN stocks st
-                ON st.warehouse_id=x.warehouse_id
-               AND st.item_id=x.item_id
-               AND st.batch_code=x.batch_code
+                ON st.warehouse_id = x.warehouse_id
+               AND st.item_id      = x.item_id
+               AND st.batch_code_key = x.batch_code_key
             LEFT JOIN stock_snapshots sn
                 ON sn.snapshot_date = :cut::date
-               AND sn.warehouse_id=x.warehouse_id
-               AND sn.item_id=x.item_id
-               AND sn.batch_code=x.batch_code
-            ORDER BY x.warehouse_id, x.item_id, x.batch_code
+               AND sn.warehouse_id  = x.warehouse_id
+               AND sn.item_id       = x.item_id
+               AND sn.batch_code_key = x.batch_code_key
+            ORDER BY x.warehouse_id, x.item_id, x.batch_code_key
         """
         )
         rows = (await session.execute(stmt, {"cut": cut})).mappings().all()

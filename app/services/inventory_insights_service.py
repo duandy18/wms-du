@@ -21,6 +21,9 @@ class InventoryInsightsService:
     - batch_activity_30days       批次活跃指数
     - batch_risk_score            批次过期风险指数
     - warehouse_efficiency        仓库事件分布效率（出库事件占比）
+
+    ✅ 主线 B：所有对账 join 维度统一切 batch_code_key，彻底消灭 NULL= NULL 吞数据问题。
+    ✅ Stage C.2-1：snapshot 新事实列为 stock_snapshots.qty（本服务开始读 qty，不再读 qty_on_hand）。
     """
 
     @staticmethod
@@ -51,14 +54,14 @@ class InventoryInsightsService:
             """
             SELECT COUNT(*) FROM (
                 SELECT
-                    l.warehouse_id, l.item_id, l.batch_code,
+                    l.warehouse_id, l.item_id, l.batch_code_key,
                     SUM(l.delta) AS ledger_qty,
                     s.qty AS stock_qty
                 FROM stock_ledger AS l
                 LEFT JOIN stocks AS s
-                  ON s.warehouse_id=l.warehouse_id
-                 AND s.item_id=l.item_id
-                 AND s.batch_code=l.batch_code
+                  ON s.warehouse_id   = l.warehouse_id
+                 AND s.item_id        = l.item_id
+                 AND s.batch_code_key = l.batch_code_key
                 GROUP BY 1,2,3, s.qty
             ) AS x
             WHERE x.ledger_qty = x.stock_qty
@@ -78,15 +81,15 @@ class InventoryInsightsService:
             """
             SELECT COUNT(*) FROM (
                 SELECT
-                    l.warehouse_id, l.item_id, l.batch_code,
+                    l.warehouse_id, l.item_id, l.batch_code_key,
                     SUM(l.delta) AS ledger_qty,
-                    COALESCE(s.qty_on_hand, 0) AS snap_qty
+                    COALESCE(s.qty, 0) AS snap_qty
                 FROM stock_ledger AS l
                 LEFT JOIN stock_snapshots AS s
-                  ON s.warehouse_id=l.warehouse_id
-                 AND s.item_id=l.item_id
-                 AND s.batch_code=l.batch_code
-                 AND s.snapshot_date = CURRENT_DATE
+                  ON s.warehouse_id   = l.warehouse_id
+                 AND s.item_id        = l.item_id
+                 AND s.batch_code_key = l.batch_code_key
+                 AND s.snapshot_date  = CURRENT_DATE
                 GROUP BY 1,2,3, snap_qty
             ) AS x
             WHERE x.ledger_qty = x.snap_qty

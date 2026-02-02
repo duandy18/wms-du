@@ -18,6 +18,9 @@ async def query_item_detail(
 ) -> Dict[str, Any]:
     """
     返回单个商品的“仓 + 批次”明细。
+
+    ✅ 主线 B：避免 NULL 吞数据
+    - join batches 时使用 IS NOT DISTINCT FROM，确保 batch_code=NULL 的槽位也能匹配到 batches(NULL) 行（如果存在）。
     """
     _pools = [p.upper() for p in (pools or [])] or ["MAIN"]  # 预留参数，不过滤
     _ = _pools
@@ -44,7 +47,7 @@ async def query_item_detail(
                 LEFT JOIN batches AS b
                   ON b.item_id      = s.item_id
                  AND b.warehouse_id = s.warehouse_id
-                 AND b.batch_code   = s.batch_code
+                 AND b.batch_code IS NOT DISTINCT FROM s.batch_code
                 WHERE s.item_id = :item_id
                   AND s.qty <> 0
                 ORDER BY s.warehouse_id, s.batch_code

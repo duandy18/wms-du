@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 import pytest
 import httpx
 
+from tests._problem import as_problem
+
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     """
@@ -51,7 +53,7 @@ async def test_items_filter_by_supplier_id_returns_only_supplier_items(client: h
 @pytest.mark.asyncio
 async def test_create_po_rejects_nonexistent_item(client: httpx.AsyncClient) -> None:
     """
-    合同：创建 PO 时，item_id 不存在 -> 400 且 detail 可解释。
+    合同：创建 PO 时，item_id 不存在 -> 400 且 message 可解释。
     """
     headers = await _login_admin_headers(client)
 
@@ -66,7 +68,8 @@ async def test_create_po_rejects_nonexistent_item(client: httpx.AsyncClient) -> 
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
     assert r.status_code == 400, r.text
-    assert "商品不存在" in r.json().get("detail", "")
+    p = as_problem(r.json())
+    assert "商品不存在" in (p.get("message") or "")
 
 
 @pytest.mark.asyncio
@@ -88,7 +91,8 @@ async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClien
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
     assert r.status_code == 400, r.text
-    assert "不属于当前供应商" in r.json().get("detail", "")
+    p = as_problem(r.json())
+    assert "不属于当前供应商" in (p.get("message") or "")
 
 
 @pytest.mark.asyncio

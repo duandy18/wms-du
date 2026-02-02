@@ -8,6 +8,8 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests._problem import as_problem
+
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     r = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
@@ -203,7 +205,8 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     # 负例：缺 production_date → 400，且不写 ledger
     r_bad = await _receive_line(client, headers, po_id, line_no=1, qty=1)
     assert r_bad.status_code == 400, r_bad.text
-    assert "必须提供生产日期" in r_bad.json().get("detail", "")
+    p_bad = as_problem(r_bad.json())
+    assert "必须提供生产日期" in (p_bad.get("message") or "")
 
     rows_bad = await _fetch_po_ledger_rows(session, po_id)
     assert rows_bad == []

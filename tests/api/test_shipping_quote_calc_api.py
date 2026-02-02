@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._problem import as_problem
 from tests.api._helpers_shipping_quote import (
     auth_headers,
     bind_scheme_to_warehouse,
@@ -109,5 +110,5 @@ def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> 
         },
     )
     assert r.status_code == 422, r.text
-    detail = r.json()["detail"]
-    assert detail["code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
+    p = as_problem(r.json())
+    assert p["error_code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"

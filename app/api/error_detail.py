@@ -3,20 +3,23 @@ from __future__ import annotations
 
 from typing import Dict
 
-from fastapi import HTTPException
+from app.api.problem import raise_409 as _raise_409
+from app.api.problem import raise_422 as _raise_422
+from app.api.problem import raise_500 as _raise_500
 
 
 def raise_422(code: str, message: str) -> None:
-    raise HTTPException(status_code=422, detail={"code": code, "message": message})
+    _raise_422(error_code=code, message=message)
 
 
 def raise_409(code: str, message: str) -> None:
-    raise HTTPException(status_code=409, detail={"code": code, "message": message})
+    _raise_409(error_code=code, message=message)
 
 
 def raise_500(code: str, message: str) -> None:
-    raise HTTPException(status_code=500, detail={"code": code, "message": message})
+    _raise_500(error_code=code, message=message)
 
 
 def as_error_detail(code: str, message: str) -> Dict[str, str]:
+    # 兼容旧调用点：仍返回 {code,message}，但强烈建议迁移到 Problem 结构
     return {"code": code, "message": message}
