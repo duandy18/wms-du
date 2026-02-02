@@ -10,11 +10,9 @@ from app.services.audit_writer import AuditEventWriter
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_trace_helper import set_order_status_by_ref
 from app.services.order_utils import to_int_pos
-from app.services.reservation_service import ReservationService
-from app.services.soft_reserve_service import SoftReserveService
-from app.services.stock_availability_service import StockAvailabilityService
-
 from app.services.order_reserve_flow_types import extract_ext_order_no
+
+from app.services.pick_task_auto import resolve_order_and_ensure_task_and_print
 
 
 async def resolve_warehouse_for_order(
@@ -79,6 +77,34 @@ async def resolve_warehouse_for_order(
     return int(warehouse_id)
 
 
+async def _resolve_order_id_and_trace_id(
+    session: AsyncSession,
+    *,
+    platform: str,
+    shop_id: str,
+    ext_order_no: str,
+) -> tuple[int, Optional[str]]:
+    row = await session.execute(
+        text(
+            """
+            SELECT id, trace_id
+              FROM orders
+             WHERE platform = :p
+               AND shop_id  = :s
+               AND ext_order_no = :o
+             LIMIT 1
+            """
+        ),
+        {"p": platform.upper(), "s": shop_id, "o": ext_order_no},
+    )
+    rec = row.first()
+    if rec is None:
+        raise ValueError(
+            f"order not found: platform={platform.upper()}, shop={shop_id}, ext_order_no={ext_order_no}"
+        )
+    return int(rec[0]), (str(rec[1]) if rec[1] else None)
+
+
 async def reserve_flow(
     session: AsyncSession,
     *,
@@ -88,7 +114,25 @@ async def reserve_flow(
     lines: Sequence[Mapping[str, Any]],
     trace_id: Optional[str] = None,
 ) -> dict:
+    """
+    ✅ enter_pickable（彻底删除“预占”概念）
+
+    - 不做 soft reserve / reservation / anti-oversell
+    - 不做库存判断
+    - 只做：
+      1) 确保订单仓库已解析
+      2) 将订单 status 置为 PICKABLE（可仓内执行态信号）
+      3) 幂等 ensure pick_task + pick_task_lines
+      4) 幂等 enqueue pick_list print_job（payload 快照，可回放）
+      5) 写 ORDER_PICKABLE_ENTERED 审计事件
+    """
     platform_db = platform.upper()
+
+    ext_order_no = extract_ext_order_no(platform_db, shop_id, ref)
+    if not ext_order_no:
+        raise ValueError(
+            f"invalid ref={ref!r}, expected 'ORD:{platform_db}:{shop_id}:{{ext_order_no}}'"
+        )
 
     warehouse_id = await resolve_warehouse_for_order(
         session,
@@ -97,75 +141,37 @@ async def reserve_flow(
         ref=ref,
     )
 
+    order_id, trace_id_db = await _resolve_order_id_and_trace_id(
+        session,
+        platform=platform_db,
+        shop_id=shop_id,
+        ext_order_no=ext_order_no,
+    )
+    trace_id_final = trace_id or trace_id_db
+
+    # 聚合 target_qty（用入参 lines，避免依赖 order_lines/order_items 结构）
     target_qty: Dict[int, int] = {}
     for row in lines or ():
         item_id = row.get("item_id")
         qty = to_int_pos(row.get("qty"), default=0)
         if item_id is None or qty <= 0:
             continue
-        item_id = int(item_id)
-        target_qty[item_id] = target_qty.get(item_id, 0) + qty
-
-    soft_reserve_svc = SoftReserveService()
-    reservation_svc = ReservationService()
-
-    existing = await reservation_svc.get_by_key(
-        session,
-        platform=platform_db,
-        shop_id=shop_id,
-        warehouse_id=warehouse_id,
-        ref=ref,
-    )
-
-    existing_id: Optional[int] = None
-    existing_status: Optional[str] = None
-    old_qty: Dict[int, int] = {}
-
-    if existing is not None:
-        existing_id, existing_status = existing
-        if existing_status != "open":
-            raise ValueError(
-                f"reservation {platform_db}:{shop_id}:{warehouse_id}:{ref} "
-                f"already in status={existing_status}, cannot reserve again"
-            )
-        old_lines = await reservation_svc.get_lines(session, existing_id)
-        for item_id, qty in old_lines:
-            old_qty[int(item_id)] = int(qty)
-
-    # ✅ anti-oversell：用事实层 raw available（允许负数）
-    for item_id, new_qty in target_qty.items():
-        prev_qty = old_qty.get(item_id, 0)
-        incr = new_qty - prev_qty
-        if incr <= 0:
-            continue
-
-        available_raw = await StockAvailabilityService.get_available_for_item(
-            session,
-            platform=platform_db,
-            shop_id=shop_id,
-            warehouse_id=warehouse_id,
-            item_id=item_id,
-        )
-
-        if incr > int(available_raw):
-            raise ValueError(
-                f"insufficient available for item={item_id}: "
-                f"need +{incr}, available={available_raw}, "
-                f"platform={platform_db}, shop={shop_id}, wh={warehouse_id}"
-            )
+        item_id_i = int(item_id)
+        target_qty[item_id_i] = target_qty.get(item_id_i, 0) + int(qty)
 
     if not target_qty:
         try:
             await AuditEventWriter.write(
                 session,
                 flow="OUTBOUND",
-                event="RESERVE_NO_LINES",
+                event="ENTER_PICKABLE_NO_LINES",
                 ref=ref,
-                trace_id=trace_id,
+                trace_id=trace_id_final,
                 meta={
                     "platform": platform_db,
                     "shop": shop_id,
                     "warehouse_id": warehouse_id,
+                    "order_id": order_id,
                 },
                 auto_commit=False,
             )
@@ -173,52 +179,59 @@ async def reserve_flow(
             pass
         return {"status": "OK", "ref": ref, "lines": 0}
 
-    expire_minutes = 30
-    r = await soft_reserve_svc.persist(
-        session,
-        platform=platform_db,
-        shop_id=shop_id,
-        warehouse_id=warehouse_id,
-        ref=ref,
-        lines=[{"item_id": k, "qty": v} for k, v in target_qty.items()],
-        expire_at=expire_minutes,
-        trace_id=trace_id,
-    )
-    reservation_id = r.get("reservation_id")
-
+    # ✅ 订单状态：PICKABLE 作为仓内执行态信号（彻底去掉 RESERVED）
     try:
         await set_order_status_by_ref(
             session,
             platform=platform_db,
             shop_id=shop_id,
             ref=ref,
-            new_status="RESERVED",
+            new_status="PICKABLE",
         )
     except Exception:
+        # 不阻塞主线：但正常情况下应该写成功
         pass
 
+    # ✅ ensure pick_task + enqueue print_job（幂等）
+    ensured = await resolve_order_and_ensure_task_and_print(
+        session,
+        platform=platform_db,
+        shop_id=shop_id,
+        ext_order_no=ext_order_no,
+        ref=ref,
+        warehouse_id=warehouse_id,
+        order_id=order_id,
+        target_qty=target_qty,
+        trace_id=trace_id_final,
+    )
+
+    # ✅ 订单进入 pickable 的审计事件（只保留新事件）
     try:
-        await OrderEventBus.order_reserved(
+        await OrderEventBus.order_pickable_entered(
             session,
             ref=ref,
             platform=platform_db,
             shop_id=shop_id,
+            order_id=order_id,
             warehouse_id=warehouse_id,
             lines=len(target_qty),
-            trace_id=trace_id,
+            trace_id=trace_id_final,
         )
 
         await AuditEventWriter.write(
             session,
             flow="OUTBOUND",
-            event="RESERVE_APPLIED",
+            event="ENTER_PICKABLE_APPLIED",
             ref=ref,
-            trace_id=trace_id,
+            trace_id=trace_id_final,
             meta={
                 "platform": platform_db,
                 "shop": shop_id,
                 "warehouse_id": warehouse_id,
+                "order_id": order_id,
                 "lines": len(target_qty),
+                "pick_task_id": ensured.get("pick_task_id"),
+                "print_job_id": ensured.get("print_job_id"),
             },
             auto_commit=False,
         )
@@ -228,6 +241,7 @@ async def reserve_flow(
     return {
         "status": "OK",
         "ref": ref,
-        "reservation_id": reservation_id,
         "lines": len(target_qty),
+        "pick_task_id": ensured.get("pick_task_id"),
+        "print_job_id": ensured.get("print_job_id"),
     }

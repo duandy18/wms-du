@@ -58,7 +58,7 @@
 
 ---
 
-### 2.3 预占链路（Soft Reserve v2）
+### 2.3 预占链路（已移除）
 
 - `reservation_service.py`
   Soft Reserve 头表/明细 + 状态机：
@@ -67,21 +67,10 @@
   - `mark_consumed() / mark_released()`：状态迁移
   - 引入 `trace_id`，与订单/出库/trace 对齐。
 
-- `reservation_consumer.py`
-  Soft Reserve 消费器：
 
-  - `pick_consume()`：
-    - 读取 reservation_lines
-    - 通过 `StockService.adjust(delta<0)` 扣库存
-    - 更新 `reservation_lines.consumed_qty` + 头表状态
-  - `release_expired_by_id()`：TTL 回收，将 `status=open` 的单标记为 `expired`（不动库存）。
-
-- `soft_reserve_service.py`
-  对外 façade：
-  - `/reserve/persist`
-  - `/reserve/pick/commit`
-  - `/reserve/release`
-  入口在 `app/api/routers/reserve_soft.py` 中。
+  - 原 soft reserve HTTP 接口（/reserve/*）已移除
+  - 当前系统不再提供任何预占类 API
+  - 出库唯一裁决点为 Pick Task Commit（见 2.4）
 
 > ✅ 旧的 lock-based Reserve（`_deprecated legacy reservation modules` 等）已经放入 `_deprecated`，
 > Soft Reserve v2 是**唯一现役预占引擎**。
@@ -130,12 +119,11 @@
 
   - 根据 platform + status 分类为：`RESERVE / CANCEL / SHIP / IGNORE`
   - **RESERVE**：
-    `OrderService.reserve` → Soft Reserve persist
+    `OrderService.reserve` → enter_pickable（生成拣货任务/打印队列，不做预占）
   - **CANCEL**：
-    `OrderService.cancel` → Soft Reserve release
+    `OrderService.cancel` → 取消订单执行态（不做预占释放）
   - **SHIP**：
-    先 `SoftReserveService.pick_consume`（有 reservation 就吃掉）
-    若无 reservation，则走 `OutboundService.commit` 硬出库
+    直接走 `OutboundService.commit` 硬出库（库存裁决点）
   - 全程写入 `EventWriter(source="platform-events")` 进行审计。
 
 > 这是你未来 “平台订单 → 仓库预占 → 出库” 的唯一入口，不再通过杂乱的事件总线实现。

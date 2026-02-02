@@ -24,6 +24,20 @@ class PickTaskLineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PrintJobOut(BaseModel):
+    id: int
+    kind: str
+    ref_type: str
+    ref_id: int
+    status: str
+    payload: Dict[str, Any]
+    requested_at: datetime
+    printed_at: Optional[datetime]
+    error: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
 class PickTaskOut(BaseModel):
     id: int
     warehouse_id: int
@@ -36,6 +50,9 @@ class PickTaskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     lines: List[PickTaskLineOut] = []
+
+    # ✅ 可观测闭环：最近一次 pick_list print_job（若存在）
+    print_job: Optional[PrintJobOut] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -102,7 +119,6 @@ class PickTaskCommitResult(BaseModel):
     status: str
 
     # ✅ 蓝皮书合同字段：幂等与链路
-    # FastAPI response_model 会丢弃未声明字段，因此必须在 schema 中显式声明。
     idempotent: bool = Field(
         False,
         description="是否为幂等重放结果（True 表示未重复落账/未重复扣库）",
@@ -118,5 +134,4 @@ class PickTaskCommitResult(BaseModel):
     shop_id: str
     ref: str
 
-    # diff 保持现状（当前服务层返回 dict；后续可逐步收敛到 PickTaskDiffSummaryOut）
     diff: Dict[str, Any]

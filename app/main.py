@@ -202,12 +202,12 @@ from app.api.routers.pdd_auth import router as pdd_auth_router
 from app.api.routers.permissions import router as permissions_router
 from app.api.routers.pick import router as pick_router
 from app.api.routers.pick_tasks import router as pick_tasks_router
+from app.api.routers.print_jobs import router as print_jobs_router
 from app.api.routers.platform_shops import router as platform_shops_router
 from app.api.routers.pricing_integrity_ops import router as pricing_integrity_ops_router
 from app.api.routers.purchase_orders import router as purchase_orders_router
 from app.api.routers.purchase_reports import router as purchase_reports_router
 from app.api.routers.receive_tasks import router as receive_tasks_router
-from app.api.routers.reserve_soft import router as reserve_soft_router
 from app.api.routers.return_tasks import router as return_tasks_router
 from app.api.routers.roles import router as roles_router
 
@@ -295,9 +295,8 @@ app.include_router(purchase_reports_router)
 app.include_router(receive_tasks_router)
 app.include_router(inbound_receipts_router)
 app.include_router(return_tasks_router)
-app.include_router(reserve_soft_router)
 app.include_router(pick_tasks_router)
-
+app.include_router(print_jobs_router)
 app.include_router(stores_router)
 app.include_router(warehouses_router)
 app.include_router(platform_shops_router)

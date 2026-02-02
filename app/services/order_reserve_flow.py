@@ -11,10 +11,13 @@ from app.services.order_reserve_flow_reserve import reserve_flow, resolve_wareho
 
 class OrderReserveFlow:
     """
-    订单预占 / 取消流程中控：
+    订单进入仓内执行态 / 取消流程中控（历史文件名保留）：
 
-    - reserve：构造/更新软预占 + anti-oversell + ORDER_RESERVED 事件 + status；
-    - cancel：释放软预占 + ORDER_CANCELED 事件 + status。
+    ✅ 当前语义（蓝皮书一致）：
+    - reserve：enter_pickable（自动生成 pick task + 入队拣货单打印），不做库存预占/不做库存校验；
+    - cancel：取消（仍保留，后续你要“取消预占”概念，这里会继续收敛为“取消 pickable/取消任务”）。
+
+    注意：本阶段不引入 reservation / soft reserve 世界观。
     """
 
     @staticmethod
@@ -42,6 +45,7 @@ class OrderReserveFlow:
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,
     ) -> dict:
+        # 兼容旧调用点：reserve 已被收敛为 enter_pickable
         return await reserve_flow(
             session,
             platform=platform,

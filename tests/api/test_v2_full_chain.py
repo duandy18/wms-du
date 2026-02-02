@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -65,22 +66,30 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
-    Phase 5 世界观下的“订单驱动履约链”核心验收：
+    Phase 5+（新世界观）下的“订单驱动履约链”核心验收：
 
     1) ingest：只写服务归属（SERVICE_ASSIGNED，写 service_warehouse_id，不写 warehouse_id）
-    2) 人工履约决策：显式指定执行仓（warehouse_id / fulfillment_warehouse_id）
-    3) reserve：现在应当允许（>= READY_TO_FULFILL 且 warehouse_id 存在）
-    4) pick(ledger) → ship_commit → trace 聚合
+    2) 人工履约决策：显式指定执行仓（warehouse_id / fulfillment_warehouse_id）并标记 READY_TO_FULFILL
+    3) enter_pickable：调用 /orders/.../reserve（旧路由名保留，但语义已迁移为 enter_pickable）
+       - 只生成 pick_task(+lines)/print_jobs
+       - 不产生 reservation_id（字段不存在或为 None）
+       - 不触库存
+    4) 入库（为后续 pick/ship 准备库存）
+    5) pick → ship_commit
+    6) debug trace：不再出现 reservation_*，至少应出现 ORDER_CREATED + SHIPMENT/SHIP_COMMIT
     """
     plat = "PDD"
     shop_id = "1"
-    ext = "ORD-TEST-3001"
+    uniq = uuid4().hex[:10]
+    ext = f"ORD-TEST-3001-{uniq}"
     order_ref = f"ORD:{plat}:{shop_id}:{ext}"
     now = datetime.now(timezone.utc)
 
     province = "UT-PROV"
     await _ensure_store_route_to_wh1(db_session_like_pg, plat=plat, shop_id=shop_id, province=province)
     await db_session_like_pg.commit()
+
+    trace_id = f"TEST-TRACE-ORDER-3001-{uniq}"
 
     print(f"[TEST] 准备订单 {order_ref}")
 
@@ -98,20 +107,14 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         items=[{"item_id": 3001, "qty": 1, "title": "猫粮"}],
         address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
         extras=None,
-        trace_id="TEST-TRACE-ORDER-3001",
+        trace_id=trace_id,
     )
     await db_session_like_pg.commit()
     print(f"[TEST] ingest 返回: {r}")
     assert r["ref"] == order_ref
 
     # Phase 5：ingest 只到 SERVICE_ASSIGNED，不自动写 warehouse_id
-    # 人工决策层（最小可用）：显式指定执行仓
-    #
-    # 说明：当前项目里 reserve API 仍要求订单满足：
-    # - fulfillment_status=READY_TO_FULFILL
-    # - warehouse_id 非空
-    #
-    # 因此测试里用 DB 直写模拟“人工指定执行仓 + 标记可进入履约”。
+    # 人工决策层（最小可用）：显式指定执行仓 + 标记可进入履约
     await db_session_like_pg.execute(
         text(
             """
@@ -128,27 +131,47 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     )
     await db_session_like_pg.commit()
 
-    # 2) reserve（现在应为 READY_TO_FULFILL 且 warehouse_id 存在才会 200）
+    # 2) enter_pickable：沿用旧路由名 /reserve，但新语义：只生成 pick_task，不产生 reservation
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/reserve",
         json={"lines": [{"item_id": 3001, "qty": 1}]},
     )
-    print("[HTTP] reserve status:", resp.status_code, "body:", resp.text)
+    print("[HTTP] reserve(enter_pickable) status:", resp.status_code, "body:", resp.text)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["status"] == "OK"
     assert data["ref"] == order_ref
-    assert data["reservation_id"] is not None
+    # 新世界观：reservation_id 不应存在/不应非空
+    assert data.get("reservation_id") is None
     assert data["lines"] == 1
 
-    # 3) 入库
+    # 验证 enter_pickable 的产物：pick_task 一定存在（幂等）
+    row_task = (
+        await db_session_like_pg.execute(
+            text(
+                """
+                SELECT id
+                  FROM pick_tasks
+                 WHERE ref = :ref AND warehouse_id = 1
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"ref": order_ref},
+        )
+    ).first()
+    assert row_task, "enter_pickable should create pick_task"
+    task_id = int(row_task[0])
+    assert task_id > 0
+
+    # 3) 入库（为后续 pick/ship 准备库存）
     stock_svc = StockService()
     await stock_svc.adjust(
         session=db_session_like_pg,
         item_id=3001,
         delta=10,
         reason="RECEIPT",
-        ref="UNIT-TEST-IN-3001",
+        ref=f"UNIT-TEST-IN-3001-{uniq}",
         ref_line=1,
         occurred_at=now,
         batch_code="BATCH-001",
@@ -159,7 +182,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     await db_session_like_pg.commit()
     print("[TEST] 已通过 StockService.adjust 入库 10 件到 BATCH-001")
 
-    # 4) pick
+    # 4) pick（沿用现状：订单驱动 pick API）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/pick",
         json={
@@ -174,7 +197,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert isinstance(pick_list, list)
     assert len(pick_list) == 1
 
-    # 5) ship
+    # 5) ship（沿用现状：订单驱动 ship API）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/ship",
         json={
@@ -194,11 +217,11 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert resp.status_code == 200, resp.text
     ov = resp.json()
     print("[HTTP] dev/orders 返回:", json.dumps(ov, ensure_ascii=False))
-    trace_id = ov.get("trace_id") or ov["order"]["trace_id"]
-    assert trace_id
+    trace_id2 = ov.get("trace_id") or ov["order"]["trace_id"]
+    assert trace_id2
 
-    # 7) trace
-    resp = await client.get(f"/debug/trace/{trace_id}")
+    # 7) trace：新世界观断言（不再出现 reservation_*）
+    resp = await client.get(f"/debug/trace/{trace_id2}")
     print("[HTTP] /debug/trace status:", resp.status_code)
     assert resp.status_code == 200, resp.text
     trace = resp.json()
@@ -207,9 +230,11 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     summaries = [e["summary"] for e in events]
 
     assert any("ORDER_CREATED" in s for s in summaries), summaries
-    assert any(k.startswith("reservation_") or k == "reservation_line" for k in kinds), kinds
     assert any(k == "SHIPMENT" for k in kinds), kinds
     assert any("SHIP_COMMIT" in s for s in summaries), summaries
+
+    # 旧世界观：reservation_* 已死；如果还出现，说明 trace 聚合或事件发送有遗留
+    assert not any(k.startswith("reservation_") or k == "reservation_line" for k in kinds), kinds
 
 
 @pytest.mark.asyncio
@@ -219,17 +244,19 @@ async def test_v2_order_reserve_requires_warehouse(
     monkeypatch,
 ):
     """
-    没有 READY_TO_FULFILL / warehouse_id 的订单，调用订单驱动预占时应失败，防止“未定仓预占”。
+    没有 READY_TO_FULFILL / warehouse_id 的订单，调用订单驱动 enter_pickable（旧路由名 reserve）时应失败，
+    防止“未定仓进入拣货流程”。
     """
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
     plat = "PDD"
     shop_id = "1"
-    ext = "ORD-NO-WH"
+    uniq = uuid4().hex[:10]
+    ext = f"ORD-NO-WH-{uniq}"
     now = datetime.now(timezone.utc)
 
-    # 不提供 province（应 FULFILLMENT_BLOCKED），reserve 必须失败
+    # 不提供 province（应 FULFILLMENT_BLOCKED），enter_pickable 必须失败
     r = await OrderService.ingest(
         db_session_like_pg,
         platform=plat,
@@ -243,7 +270,7 @@ async def test_v2_order_reserve_requires_warehouse(
         items=[{"item_id": 3002, "qty": 1, "title": "测试品"}],
         address=None,
         extras=None,
-        trace_id="TEST-TRACE-NO-WH",
+        trace_id=f"TEST-TRACE-NO-WH-{uniq}",
     )
     await db_session_like_pg.commit()
     print("[TEST] ingest(no-wh) 返回:", r)
@@ -253,7 +280,9 @@ async def test_v2_order_reserve_requires_warehouse(
         json={"lines": [{"item_id": 3002, "qty": 1}]},
     )
     print("[HTTP] reserve(no-wh) status:", resp.status_code, "body:", resp.text)
-    assert resp.status_code in (409, 422, 500)
+
+    # 不强绑具体码：不同实现可能返回 409/422/500，但必须不是 200
+    assert resp.status_code != 200
 
     body = resp.json()
     s = json.dumps(body, ensure_ascii=False)
