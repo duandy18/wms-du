@@ -4,6 +4,28 @@ from __future__ import annotations
 from typing import Optional
 
 
+class HandoffCodeError(ValueError):
+    """
+    轻量结构化异常：用于把 handoff 失败原因从“字符串”升级为“稳定字段”。
+    不引入新概念，只是 ValueError 的一个子类，方便上层做 Problem 化输出。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        order_ref: str,
+        expected: Optional[str] = None,
+        got: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = str(reason)
+        self.order_ref = str(order_ref)
+        self.expected = str(expected) if expected is not None else None
+        self.got = str(got) if got is not None else None
+
+
 def _normalize_wms_order_confirm_code_v1(*, platform: str, shop_id: str, ext_order_no: str) -> str:
     plat = (platform or "").upper().strip()
     shop = str(shop_id or "").strip()
@@ -35,11 +57,29 @@ def expected_handoff_code_from_task_ref(*, ref: str) -> Optional[str]:
 def assert_handoff_code_match(*, order_ref: str, handoff_code: str) -> None:
     expected = expected_handoff_code_from_task_ref(ref=order_ref)
     if not expected:
-        raise ValueError(
-            f"handoff_code invalid: task.ref is not a valid order ref (expected ORD:*), ref={order_ref}"
+        raise HandoffCodeError(
+            f"handoff_code invalid: task.ref is not a valid order ref (expected ORD:*), ref={order_ref}",
+            reason="invalid_ref",
+            order_ref=str(order_ref),
+            expected=None,
+            got=(str(handoff_code or "").strip() or None),
         )
+
     got = str(handoff_code or "").strip()
     if not got:
-        raise ValueError("handoff_code invalid: empty")
+        raise HandoffCodeError(
+            "handoff_code invalid: empty",
+            reason="empty",
+            order_ref=str(order_ref),
+            expected=str(expected),
+            got=None,
+        )
+
     if got != expected:
-        raise ValueError(f"handoff_code not match: expected={expected}, got={got}")
+        raise HandoffCodeError(
+            "handoff_code not match",
+            reason="mismatch",
+            order_ref=str(order_ref),
+            expected=str(expected),
+            got=str(got),
+        )

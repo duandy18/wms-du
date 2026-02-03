@@ -2,6 +2,7 @@
 from datetime import date, datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,8 +127,7 @@ async def test_adjust_outbound_requires_batch(session: AsyncSession):
     """出库必须指定批次（batch_code 不能为空）——仅针对批次受控商品。"""
     svc = StockService()
 
-    # ✅ 使用明确批次受控商品（基线：item=3001 has_shelf_life=true）
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
             item_id=3001,
@@ -139,6 +139,10 @@ async def test_adjust_outbound_requires_batch(session: AsyncSession):
             batch_code="",
             warehouse_id=1,
         )
+
+    assert exc.value.status_code == 422
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("error_code") == "batch_required"
 
 
 @pytest.mark.asyncio
@@ -183,7 +187,7 @@ async def test_adjust_idempotent(session: AsyncSession):
 @pytest.mark.asyncio
 async def test_adjust_outbound_and_insufficient(session: AsyncSession):
     """
-    出库正常扣减一次，第二次强制超量扣减应抛 ValueError。
+    出库正常扣减一次，第二次强制超量扣减应抛 409 Problem(insufficient_stock)。
     该测试不再依赖 conftest 的隐式基线库存，而是先 seed 目标槽位。
     """
     svc = StockService()
@@ -210,7 +214,7 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
     assert r["after"] == before - 1
 
     remain = await _qty(session, item_id=item_id, wh=wh, code=code)
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
             item_id=item_id,
@@ -222,3 +226,7 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
             batch_code=code,
             warehouse_id=wh,
         )
+
+    assert exc.value.status_code == 409
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("error_code") == "insufficient_stock"

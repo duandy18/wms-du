@@ -22,7 +22,7 @@ AUDIT = AuditWriter()
 
 async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[str, Any]:
     """
-    v2 扫描编排器（receive / pick / count，putaway 禁用）：
+    v2 扫描编排器（receive / pick / count；历史 putaway 已下线）：
       - 解析 ScanRequest / barcode / GS1 / item_barcodes / BarcodeResolver
       - probe 模式：
           * receive / count：跑 handler，但不提交 Tx
@@ -64,6 +64,7 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
 
     if mode not in ALLOWED_SCAN_MODES:
         ev = await AUDIT.other(session, scan_ref_norm)
+        # 这里不再把所有非法 mode 误报为 putaway；明确为 unsupported_mode
         return {
             "ok": False,
             "committed": False,
@@ -71,7 +72,7 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
             "event_id": ev,
             "source": "scan_feature_disabled",
             "evidence": [{"source": "scan_feature_disabled", "db": True}],
-            "errors": [{"stage": "ingest", "error": "FEATURE_DISABLED: putaway"}],
+            "errors": [{"stage": "ingest", "error": f"FEATURE_DISABLED: unsupported_mode:{mode}"}],
             "item_id": item_id,
         }
 

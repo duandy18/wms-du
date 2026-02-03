@@ -128,6 +128,12 @@ class PickTaskCommitResult(BaseModel):
         description="本次提交最终使用的 trace_id（幂等重放时为已存在的 trace_id）",
     )
 
+    # ✅ 可观测：提交时间（ISO8601 字符串，UTC）
+    committed_at: Optional[str] = Field(
+        None,
+        description="本次提交时间（ISO8601，UTC；幂等重放时为首次提交 created_at）",
+    )
+
     task_id: int
     warehouse_id: int
     platform: str

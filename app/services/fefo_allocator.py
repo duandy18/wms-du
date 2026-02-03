@@ -7,10 +7,37 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
 
 JsonLike = Dict[str, Any]
+
+
+def _shortage_detail(
+    *,
+    item_id: int,
+    batch_code: Optional[str],
+    available_qty: int,
+    required_qty: int,
+    path: str,
+) -> Dict[str, Any]:
+    short_qty = max(0, int(required_qty) - int(available_qty))
+    return {
+        "type": "shortage",
+        "path": path,
+        "item_id": int(item_id),
+        "batch_code": batch_code,
+        "required_qty": int(required_qty),
+        "available_qty": int(available_qty),
+        "short_qty": int(short_qty),
+        # ✅ 兼容/同义字段（保留）
+        "shortage_qty": int(short_qty),
+        "need": int(required_qty),
+        "on_hand": int(available_qty),
+        "shortage": int(short_qty),
+        "reason": "insufficient_stock",
+    }
 
 
 class FefoAllocator:
@@ -96,7 +123,7 @@ class FefoAllocator:
             seq = [x for x in seq if x[1] is None or x[1] >= occurred_date]
 
         # 贪心切片
-        remaining = need
+        remaining = int(need)
         plan: List[Tuple[Optional[str], int]] = []
 
         for code, exp, qty, sid in seq:
@@ -110,7 +137,31 @@ class FefoAllocator:
                 remaining -= take
 
         if remaining > 0:
-            raise ValueError(f"insufficient stock: need={need}, lack={remaining}")
+            available = int(need) - int(remaining)
+            raise_problem(
+                status_code=409,
+                error_code="insufficient_stock",
+                message="库存不足，无法生成 FEFO 分配计划。",
+                context={
+                    "warehouse_id": int(warehouse_id),
+                    "item_id": int(item_id),
+                    "allow_expired": bool(allow_expired),
+                    "occurred_date": occurred_date.isoformat(),
+                },
+                details=[
+                    _shortage_detail(
+                        item_id=int(item_id),
+                        batch_code=None,
+                        available_qty=int(available),
+                        required_qty=int(need),
+                        path="fefo.plan",
+                    )
+                ],
+                next_actions=[
+                    {"action": "rescan_stock", "label": "刷新库存"},
+                    {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                ],
+            )
 
         return plan
 
@@ -151,7 +202,7 @@ class FefoAllocator:
         total = 0
 
         for idx, (code, take_qty) in enumerate(plan, start=start_ref_line):
-            # 扣减库存
+            # 扣减库存（库存不足会由 StockService.adjust 统一 Problem 化并透传）
             await self.stock.adjust(
                 session=session,
                 item_id=item_id,

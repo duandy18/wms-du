@@ -54,13 +54,13 @@ async def _ensure_min_domain_v2(
     await session.commit()
 
 
-async def test_inbound_putaway_ledger_snapshot_smoke(session: AsyncSession):
+async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
     """
-    v2 入库烟雾测试（最小闭环）：
+    v2 入库烟雾测试（最小闭环，stocks + ledger 一致性）：
 
     场景：
     1. 准备一个 (warehouse, item, batch_code) 的库存槽位，初始 qty = 0；
-    2. 模拟“入库 + 上架”合并 +5，直接更新 stocks；
+    2. 模拟入库 +5（直接更新 stocks）；
     3. 调用 ledger_writer.write_ledger 写一条 INBOUND 账本，after_qty 对齐 stocks；
     4. 断言：
        - stocks.qty == after_qty
@@ -92,7 +92,7 @@ async def test_inbound_putaway_ledger_snapshot_smoke(session: AsyncSession):
     ).scalar_one() or 0
     after = int(before) + 5
 
-    # 3) 模拟“入库 + 上架”合并 +5：直接改 stocks
+    # 3) 模拟入库 +5：直接改 stocks
     await session.execute(
         text(
             """

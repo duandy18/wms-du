@@ -81,7 +81,7 @@ async def record_scan(
             prefer_pickface=False,
             target_location_id=None,
             status=status0,
-            note=None,
+            note="TEMP_FACT",
             created_at=now,
             updated_at=now,
         )
