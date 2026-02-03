@@ -105,39 +105,6 @@ class ScanReceiveRequest(BaseModel):
         return self
 
 
-class ScanPutawayCommitRequest(BaseModel):
-    """
-    LEGACY：基于 location 的上架 / 移库请求。
-    当前无 scan-level location 概念，putaway 功能在扫描通路中已禁用。
-    """
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-    item_id: int
-    from_location_id: int
-    to_location_id: int
-    qty: int = Field(..., ge=1)
-    ref: str
-    batch_code: Optional[str] = None
-    production_date: Optional[datetime] = None
-    expiry_date: Optional[datetime] = None
-    # 兼容历史/不同命名
-    start_ref_line: Optional[int] = None
-    left_ref_line: Optional[int] = None
-    warehouse_id: Optional[int] = None
-
-    @model_validator(mode="after")
-    def _check(self) -> "ScanPutawayCommitRequest":
-        if self.batch_code is not None:
-            if _is_blank(self.batch_code):
-                raise ValueError("batch_code cannot be empty string; use null when not applicable.")
-            if _is_forbidden_none_token(self.batch_code):
-                raise ValueError("batch_code must not be 'none' (case-insensitive).")
-
-        if self.production_date is None and self.expiry_date is None:
-            raise ValueError("猫粮搬运必须提供 production_date 或 expiry_date（至少一项）。")
-        return self
-
-
 class ScanCountCommitRequest(BaseModel):
     """
     LEGACY：基于 location 的盘点请求。

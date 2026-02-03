@@ -7,10 +7,59 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.services.three_books_enforcer import enforce_three_books
 
 AdjustFn = Callable[..., Awaitable[Dict[str, Any]]]
+
+
+def _shortage_detail(
+    *,
+    item_id: int,
+    batch_code: Optional[str],
+    available_qty: int,
+    required_qty: int,
+    path: str,
+) -> Dict[str, Any]:
+    short_qty = max(0, int(required_qty) - int(available_qty))
+    return {
+        "type": "shortage",
+        "path": path,
+        "item_id": int(item_id),
+        "batch_code": batch_code,
+        "required_qty": int(required_qty),
+        "available_qty": int(available_qty),
+        "short_qty": int(short_qty),
+        # ✅ 兼容/同义字段（保留）
+        "shortage_qty": int(short_qty),
+        "need": int(required_qty),
+        "on_hand": int(available_qty),
+        "shortage": int(short_qty),
+        "reason": "insufficient_stock",
+    }
+
+
+async def _load_total_available_qty(session: AsyncSession, *, warehouse_id: int, item_id: int) -> int:
+    """
+    当 FEFO 找不到任何可用 stocks 行时，回读总可用 qty 作为 available_qty（通常为 0）。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(qty), 0)
+                  FROM stocks
+                 WHERE warehouse_id=:w AND item_id=:i AND qty>0
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id)},
+        )
+    ).first()
+    try:
+        return int((row[0] if row else 0) or 0)
+    except Exception:
+        return 0
 
 
 async def ship_commit_direct_impl(
@@ -97,7 +146,30 @@ async def ship_commit_direct_impl(
             ).first()
 
             if not row:
-                raise ValueError(f"insufficient stock for item={item_id}")
+                available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
+                raise_problem(
+                    status_code=409,
+                    error_code="insufficient_stock",
+                    message="库存不足，禁止提交出库。",
+                    context={
+                        "warehouse_id": int(warehouse_id),
+                        "item_id": int(item_id),
+                        "ref": str(ref),
+                    },
+                    details=[
+                        _shortage_detail(
+                            item_id=int(item_id),
+                            batch_code=None,
+                            available_qty=int(available),
+                            required_qty=int(remain),
+                            path=f"ship_commit_direct[item_id={int(item_id)}]",
+                        )
+                    ],
+                    next_actions=[
+                        {"action": "rescan_stock", "label": "刷新库存"},
+                        {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                    ],
+                )
 
             # ✅ 关键：batch_code 允许为 None（无批次槽位），绝不能 str(None) 变成 'None'
             batch_code = row[0]

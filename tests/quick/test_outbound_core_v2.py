@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -115,9 +116,9 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     )
     assert res.get("idempotent") is True
 
-    # 不足
+    # 不足：新世界观为 409 + Problem（HTTPException）
     remain = await _qty(session, item_id, wh, code)
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
             item_id=item_id,
@@ -129,3 +130,7 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
             batch_code=code,
             warehouse_id=wh,
         )
+
+    assert exc.value.status_code == 409
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("error_code") == "insufficient_stock"

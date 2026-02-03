@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional, Set
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.problem import raise_409, raise_422
 from app.db.session import get_session
 from app.services.pick_service import PickService
 
@@ -80,7 +81,11 @@ async def pick_commit(
     item_ids: Set[int] = {int(body.item_id)}
     has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
     if body.item_id not in has_shelf_life_map:
-        raise HTTPException(status_code=422, detail=f"unknown item_id: {body.item_id}")
+        raise_422(
+            "unknown_item",
+            f"未知商品 item_id={body.item_id}。",
+            details=[{"type": "validation", "path": "item_id", "item_id": int(body.item_id), "reason": "unknown"}],
+        )
 
     requires_batch = has_shelf_life_map.get(body.item_id, False) is True
     batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=body.batch_code)
@@ -100,7 +105,11 @@ async def pick_commit(
     except ValueError as e:
         # 典型业务错误（库存不足 / 批次不合法等）
         await session.rollback()
-        raise HTTPException(status_code=409, detail=str(e))
+        raise_409(
+            "pick_commit_reject",
+            str(e),
+            details=[{"type": "business", "path": "pick", "reason": str(e)}],
+        )
     except Exception:
         await session.rollback()
         raise
