@@ -26,7 +26,9 @@ async def _ensure_fresh_read_view(session: AsyncSession) -> None:
     if not session.in_transaction():
         return
 
-    has_pending_writes = bool(getattr(session, "new", None) or getattr(session, "dirty", None) or getattr(session, "deleted", None))
+    has_pending_writes = bool(
+        getattr(session, "new", None) or getattr(session, "dirty", None) or getattr(session, "deleted", None)
+    )
     if has_pending_writes:
         return
 
@@ -103,8 +105,9 @@ async def insert_min_order(session: AsyncSession, *, warehouse_id: int) -> int:
             "s": SHOP_ID,
             "ext": ext,
             "wid": int(warehouse_id),
+            # 执行态：让订单可进入仓内执行（以你当前主线状态机为准）
             "fs": "READY_TO_FULFILL",
-            "st": "RESERVED",
+            "st": "CREATED",
         },
     )
     row = r.first()
@@ -124,10 +127,10 @@ async def insert_one_order_item(session: AsyncSession, *, order_id: int, item_id
         "qty": int(qty),
     }
 
+    # 统一把“执行事实字段”归零（不包含旧预占语义字段）
     zero_int_fields = [
         "shipped_qty",
         "picked_qty",
-        "reserved_qty",
         "allocated_qty",
         "packed_qty",
         "packaged_qty",

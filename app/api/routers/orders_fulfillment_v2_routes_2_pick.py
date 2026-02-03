@@ -97,9 +97,6 @@ def register(router: APIRouter) -> None:
                     )
                 )
 
-            # ✅ Pick 蓝皮书：出库/拣货主线不再消费 soft reserve（reservation_lines.consumed_qty）
-            # Soft reserve 属于 legacy 子系统（可售/trace），不得参与主线裁决。
-
             await session.commit()
 
         except ValueError as e:

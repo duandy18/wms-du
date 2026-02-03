@@ -18,11 +18,6 @@ TRUNCATE TABLE
   -- outbound commits
   outbound_commits,
 
-  -- reservations
-  reservation_allocations,
-  reservation_lines,
-  reservations,
-
   -- channel inventory / store_items
   channel_inventory,
   store_items,

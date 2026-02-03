@@ -22,10 +22,9 @@ async def order_lifecycle_v2(
     """
     v2：基于 trace_id 的订单生命周期视图（官方推荐 / 唯一路线）。
 
-    - 由 TraceService 聚合 event_store / audit_events / reservations /
-      reservation_lines / stock_ledger / orders / outbound_v2 等事件；
+    - 由 TraceService 聚合 event_store / audit_events / stock_ledger / orders / outbound_v2 等事件；
     - 再由 OrderLifecycleV2Service 按阶段推断：
-        created / reserved / reserved_consumed / outbound / shipped / returned
+        created / outbound / shipped / returned / delivered（以当前实现为准）
     - 同时给出整体 health + issues 诊断。
     """
     svc = OrderLifecycleV2Service(session)

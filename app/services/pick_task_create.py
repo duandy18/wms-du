@@ -31,7 +31,7 @@ async def create_for_order(
 
     ✅ Pick 蓝皮书（主线收敛）：
     - create_for_order 只创建任务 + 行（facts container）。
-    - ❌ 不做任何库存/台账/预占判断，不触碰 stocks / ledger / reservations。
+    - ❌ 不做任何库存/台账/旧链路判断，不触碰 stocks / ledger。
     - 库存是否足够、幂等裁决、台账写入：全部在 Commit 单点完成。
     """
     order = await load_order_head(session, order_id)

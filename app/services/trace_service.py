@@ -12,7 +12,6 @@ from app.services.trace_sources import (
     from_ledger,
     from_orders,
     from_outbound,
-    from_reservations,
 )
 from app.services.trace_types import TraceEvent, TraceResult
 
@@ -25,14 +24,9 @@ class TraceService:
     - 数据源：
         * event_store.trace_id
         * audit_events.trace_id
-        * reservations.trace_id
-        * reservation_lines（通过 reservations.id）
         * stock_ledger.trace_id
         * orders.trace_id
         * outbound_commits_v2.trace_id
-
-    - Ship v3：
-        * reservation_lines.consumed_qty > 0 时增加 reservation_consumed 事件
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -43,7 +37,6 @@ class TraceService:
 
         events.extend(await from_event_store(self.session, trace_id))
         events.extend(await from_audit_events(self.session, trace_id))
-        events.extend(await from_reservations(self.session, trace_id))
         events.extend(await from_ledger(self.session, trace_id))
         events.extend(await from_orders(self.session, trace_id))
         events.extend(await from_outbound(self.session, trace_id))

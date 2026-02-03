@@ -66,7 +66,6 @@ async def query_item_detail(
             "item_name": "",
             "totals": {
                 "on_hand_qty": 0,
-                "reserved_qty": 0,
                 "available_qty": 0,
             },
             "slices": [],
@@ -104,7 +103,6 @@ async def query_item_detail(
             "production_date": production_date,
             "expiry_date": expiry_date,
             "on_hand_qty": qty,
-            "reserved_qty": 0,
             "available_qty": qty,
             "near_expiry": near,
             "is_top": False,
@@ -123,7 +121,6 @@ async def query_item_detail(
 
     totals = {
         "on_hand_qty": total_on_hand,
-        "reserved_qty": 0,
         "available_qty": total_on_hand,
     }
 

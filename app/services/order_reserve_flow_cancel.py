@@ -22,11 +22,10 @@ async def cancel_flow(
     trace_id: Optional[str] = None,
 ) -> dict:
     """
-    ✅ 新语义：取消订单（彻底删除预占概念）
+    ✅ 取消订单执行流（当前主线语义）
 
-    - 不再查询/释放 reservation
-    - 不涉及任何预占 / reservation 行为
-    - 取消仅表达“订单不再执行出库链路”，属于订单状态与审计层动作
+    - 不触碰库存/台账
+    - 取消仅表达“订单不再进入后续执行链路”，属于订单状态与审计层动作
     """
     platform_db = platform.upper()
 
@@ -84,5 +83,4 @@ async def cancel_flow(
     return {
         "status": status,
         "ref": ref,
-        "reservation_id": None,
     }

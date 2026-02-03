@@ -20,9 +20,6 @@ def build_stages_from_events(events: List[TraceEvent]) -> List[LifecycleStage]:
         return []
 
     created = _first(events, lambda e: e.source == "order")
-    reserved = _first(events, lambda e: e.source == "reservation")
-    reserved_consumed = _first(events, lambda e: e.source == "reservation_consumed")
-
     outbound = _first(events, lambda e: e.source == "outbound")
 
     def _is_shipped(e: TraceEvent) -> bool:
@@ -94,49 +91,11 @@ def build_stages_from_events(events: List[TraceEvent]) -> List[LifecycleStage]:
 
     stages.append(
         LifecycleStage(
-            key="reserved",
-            label="预占创建",
-            ts=reserved.ts if reserved else None,
-            present=reserved is not None,
-            description=(
-                reserved.summary
-                if reserved
-                else "reservations 表中未找到该 trace_id 对应的预占记录。"
-            ),
-            source=reserved.source if reserved else None,
-            ref=reserved.ref if reserved else None,
-            evidence_type="explicit_reservation" if reserved else None,
-            evidence=_evidence_from_event(reserved),
-        )
-    )
-
-    stages.append(
-        LifecycleStage(
-            key="reserved_consumed",
-            label="预占消耗",
-            ts=reserved_consumed.ts if reserved_consumed else None,
-            present=reserved_consumed is not None,
-            description=(
-                reserved_consumed.summary
-                if reserved_consumed
-                else "未检测到预占被消耗的证据（reservation_consumed 事件）。"
-            ),
-            source=reserved_consumed.source if reserved_consumed else None,
-            ref=reserved_consumed.ref if reserved_consumed else None,
-            evidence_type="explicit_reservation_consumed" if reserved_consumed else None,
-            evidence=_evidence_from_event(reserved_consumed),
-        )
-    )
-
-    stages.append(
-        LifecycleStage(
             key="outbound",
             label="出库单生成",
             ts=outbound.ts if outbound else None,
             present=outbound is not None,
-            description=(
-                outbound.summary if outbound else "未检测到 outbound_commits_v2 相关事件。"
-            ),
+            description=outbound.summary if outbound else "未检测到 outbound_commits_v2 相关事件。",
             source=outbound.source if outbound else None,
             ref=outbound.ref if outbound else None,
             evidence_type="explicit_outbound_v2" if outbound else None,

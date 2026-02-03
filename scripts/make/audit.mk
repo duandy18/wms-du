@@ -63,7 +63,6 @@ audit-no-location-leak:
 	    --glob "!app/domain/ports.py" \
 	    --glob "!app/models/_inventory_legacy.py" \
 	    --glob "!app/models/stock.py" \
-	    --glob "!app/models/reservation_allocation.py" \
 	    --glob "!app/models/inventory_movement.py" \
 	    --glob "!app/models/pick_task_line.py" \
 	    --glob "!app/services/_deprecated/**" \

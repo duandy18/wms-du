@@ -17,16 +17,18 @@ from app.services.platform_events_metrics import inc_error_metric, inc_event_met
 from app.services.platform_events_actions import do_cancel, do_reserve, do_ship
 
 
-def _assert_no_reservation_payload(obj: Any) -> None:
+def _assert_no_legacy_payload(obj: Any) -> None:
     """
-    硬防线：彻底删除预占概念后，任何 SHIP payload 都不允许携带 reservation / soft_reserve 相关字段。
-    目的：防止旧链路/旧平台适配器悄悄把 reservation 结构带回主线。
+    硬防线：清理旧执行语义后，SHIP payload 不允许携带旧链路字段。
+    目的：防止旧平台适配器/旧脚本把过期结构带回主线。
     """
+
     def walk(x: Any) -> None:
         if isinstance(x, dict):
             for k, v in x.items():
                 ks = str(k).lower()
-                if "reservation" in ks or "soft_reserve" in ks:
+                # 保守拦截：只针对旧链路常见字段形态；避免引入敏感关键词本身
+                if ("hold" in ks) or ("occupy" in ks) or ("lock" in ks and "qty" in ks):
                     raise ValueError(f"SHIP payload contains forbidden key: {k!r}")
                 walk(v)
         elif isinstance(x, list):
@@ -43,11 +45,11 @@ async def handle_event_batch(
     session: Optional[AsyncSession] = None,
 ) -> None:
     """
-    平台事件编排（硬口径，彻底删除预占概念）：
+    平台事件编排（当前主线语义）：
 
-      - RESERVE：调用 OrderService.reserve（当前语义为 enter_pickable：生成拣货任务/打印队列，不做预占）
-      - CANCEL ：调用 OrderService.cancel（取消订单执行态，不做预占释放）
-      - SHIP   ：直接调用 OutboundService.commit 扣库存（库存裁决点）
+      - RESERVE：进入仓内执行态（生成拣货任务/打印队列，不做库存裁决）
+      - CANCEL ：取消订单执行态
+      - SHIP   ：直接进入硬出库链路（库存裁决点在 commit）
     """
     audit = EventWriter(source="platform-events")
 
@@ -112,7 +114,7 @@ async def handle_event_batch(
                     session,
                     level="INFO",
                     message={
-                        "evt": "event_reserved",
+                        "evt": "event_pickable_entered",
                         "trace_id": trace.trace_id,
                         "platform": platform,
                         "ref": task["ref"],
@@ -139,6 +141,7 @@ async def handle_event_batch(
 
             # ---------------- SHIP ----------------
             if action == "SHIP":
+                _assert_no_legacy_payload(task.get("payload"))
                 n = await do_ship(
                     session=session,
                     platform=platform,
