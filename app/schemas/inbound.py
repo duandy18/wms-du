@@ -31,9 +31,7 @@ class ReceiveIn(_Base):
 
     sku: SKU
     qty: Annotated[int, Field(gt=0, description="入库数量（正整数）")]
-    ref: Annotated[
-        str, Field(min_length=1, max_length=128, description="业务参考号：采购单/入库单等")
-    ]
+    ref: Annotated[str, Field(min_length=1, max_length=128, description="业务参考号：采购单/入库单等")]
     ref_line: int | str
 
     # 可选批次信息（保持接口兼容，服务层可透传/轻度校验）
@@ -78,35 +76,4 @@ class ReceiveOut(_Base):
     }
 
 
-# ---------- Putaway（/inbound/putaway） ----------
-class PutawayIn(_Base):
-    """
-    上架/搬运请求体（v1.0）
-    - 常见流程：从收货暂存位搬至目标库位（服务层做 FEFO/约束检查）
-    - 若未来需要“按批次搬运”，可启用 batch_code 字段
-    """
-
-    sku: SKU
-    qty: Annotated[int, Field(gt=0, description="搬运数量（正整数）")]
-    to_location_id: Annotated[int, Field(gt=0, description="目标库位 ID")]
-    ref: Annotated[str, Field(min_length=1, max_length=128, description="业务参考号")]
-    ref_line: int | str
-
-    # 预留批次字段（可选）
-    batch_code: str | None = Field(default=None, description="批次编码（可选）")
-
-    model_config = _Base.model_config | {
-        "json_schema_extra": {
-            "example": {
-                "sku": "CAT-FOOD-15KG",
-                "qty": 5,
-                "to_location_id": 102,
-                "ref": "PUT-202510-0001",
-                "ref_line": 2,
-                "batch_code": "B-20251028-A",
-            }
-        }
-    }
-
-
-__all__ = ["ReceiveIn", "ReceiveOut", "PutawayIn"]
+__all__ = ["ReceiveIn", "ReceiveOut"]
