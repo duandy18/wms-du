@@ -46,10 +46,6 @@ MODEL_SPECS = [
     ("app.models.event_error_log", "EventErrorLog"),
     ("app.models.audit_event", "AuditEvent"),
 
-    # -------- 预占 / 软预占 --------
-    ("app.models.reservation", "Reservation"),
-    ("app.models.reservation_line", "ReservationLine"),
-
     # -------- 门店 & RBAC --------
     ("app.models.store", "Store"),
     ("app.models.user", "User"),
@@ -129,10 +125,6 @@ __all__ = [
     "EventLog",
     "EventErrorLog",
     "AuditEvent",
-
-    # ---- Reservations ----
-    "Reservation",
-    "ReservationLine",
 
     # ---- Store & RBAC ----
     "Store",

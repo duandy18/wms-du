@@ -1,7 +1,0 @@
-234:  Index('ix_order_lines_order_id', Column('order_id', BIGINT(),
-235:  table=<order_lines>, nullable=False))), ('remove_table',
-236:  Table('order_lines', MetaData(), Column('id', BIGINT(),
-237:  table=<order_lines>, primary_key=True, nullable=False),
-239:  table=<order_lines>, nullable=False), Column('item_id', BIGINT(),
-240:  table=<order_lines>, nullable=False), Column('req_qty', INTEGER(),
-241:  table=<order_lines>, nullable=False), schema=None)), ('remove_index',

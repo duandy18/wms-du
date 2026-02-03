@@ -18,7 +18,7 @@ class AuditEventWriter:
     - 唯一职责：往 audit_events 表写一行。
     - 语义约定：
         * category = flow
-        * ref      = 业务引用（订单号 / reservation ref / ship ref 等）
+        * ref      = 业务引用（订单号 / 发运引用等）
         * meta     = jsonb，至少包含：
             - flow
             - event
@@ -50,7 +50,6 @@ class AuditEventWriter:
         """
         payload: Dict[str, Any] = dict(meta or {})
 
-        # 尽量保证 meta 内一定有 flow / event / trace_id（如未显式给则补充）
         payload.setdefault("flow", flow)
         payload.setdefault("event", event)
         if trace_id:
@@ -80,7 +79,6 @@ class AuditEventWriter:
             if auto_commit:
                 await session.commit()
         except Exception as e:
-            # 不让审计写入影响主流程，统一打 DEBUG + INFO 兜底
             logger.debug("audit_events insert failed: %s", e)
             logger.info(
                 "[audit-fallback] %s | %s | %s",
@@ -88,11 +86,6 @@ class AuditEventWriter:
                 ref,
                 json.dumps(payload, ensure_ascii=False),
             )
-
-
-# ------------------------------------------------------------------------------
-# 兼容层：保留一个简单的 AuditService，供旧代码迁移时使用
-# ------------------------------------------------------------------------------
 
 
 class AuditService:

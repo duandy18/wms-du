@@ -115,13 +115,13 @@ async def reserve_flow(
     trace_id: Optional[str] = None,
 ) -> dict:
     """
-    ✅ enter_pickable（彻底删除“预占”概念）
+    ✅ enter_pickable（当前主线语义）
 
-    - 不做 soft reserve / reservation / anti-oversell
+    - 不做库存裁决
     - 不做库存判断
     - 只做：
       1) 确保订单仓库已解析
-      2) 将订单 status 置为 PICKABLE（可仓内执行态信号）
+      2) 将订单 status 置为 PICKABLE（仓内执行态信号）
       3) 幂等 ensure pick_task + pick_task_lines
       4) 幂等 enqueue pick_list print_job（payload 快照，可回放）
       5) 写 ORDER_PICKABLE_ENTERED 审计事件
@@ -149,7 +149,6 @@ async def reserve_flow(
     )
     trace_id_final = trace_id or trace_id_db
 
-    # 聚合 target_qty（用入参 lines，避免依赖 order_lines/order_items 结构）
     target_qty: Dict[int, int] = {}
     for row in lines or ():
         item_id = row.get("item_id")
@@ -179,7 +178,6 @@ async def reserve_flow(
             pass
         return {"status": "OK", "ref": ref, "lines": 0}
 
-    # ✅ 订单状态：PICKABLE 作为仓内执行态信号（彻底去掉 RESERVED）
     try:
         await set_order_status_by_ref(
             session,
@@ -189,10 +187,8 @@ async def reserve_flow(
             new_status="PICKABLE",
         )
     except Exception:
-        # 不阻塞主线：但正常情况下应该写成功
         pass
 
-    # ✅ ensure pick_task + enqueue print_job（幂等）
     ensured = await resolve_order_and_ensure_task_and_print(
         session,
         platform=platform_db,
@@ -205,7 +201,6 @@ async def reserve_flow(
         trace_id=trace_id_final,
     )
 
-    # ✅ 订单进入 pickable 的审计事件（只保留新事件）
     try:
         await OrderEventBus.order_pickable_entered(
             session,

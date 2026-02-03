@@ -28,8 +28,7 @@ test-flow: venv audit-all upgrade-dev-test-db
 	$(PYTEST) -q -s \
 	  tests/services/test_order_outbound_flow_v3.py \
 	  tests/services/test_outbound_ledger_consistency.py \
-	  tests/services/test_outbound_idempotency.py \
-	  tests/services/test_trace_full_chain_order_reserve_outbound.py
+	  tests/services/test_outbound_idempotency.py
 
 .PHONY: test-snapshot
 test-snapshot: venv audit-all upgrade-dev-test-db
@@ -87,7 +86,6 @@ test-internal-outbound: venv audit-all upgrade-dev-test-db
 # Phase 5 CI Gate：Service Assignment（Route C 简化世界观）
 # - 只写 service_warehouse_id
 # - 不自动写 warehouse_id
-# - ingest 阶段不 reserve
 # =================================
 .PHONY: test-phase5-service-assignment
 test-phase5-service-assignment: venv audit-all upgrade-dev-test-db
@@ -107,15 +105,6 @@ test-pick-blueprint: venv audit-all upgrade-dev-test-db
 	  tests/services/pick/test_pick_blueprint_commit_idempotency_contract.py \
 	  tests/services/pick/test_pick_blueprint_insufficient_stock_contract.py \
 	  tests/services/pick/test_pick_blueprint_db_evidence_contract.py
-
-# =================================
-# ✅ 全量回归（排除 legacy soft_reserve / phase2p9）
-# =================================
-.PHONY: test-no-legacy
-test-no-legacy: venv audit-all upgrade-dev-test-db
-	@echo "[pytest] Running full test suite excluding legacy soft_reserve (marker: legacy_soft_reserve)"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
-	$(PYTEST) -q -m "not legacy_soft_reserve"
 
 # =================================
 # 全量回归
@@ -176,4 +165,4 @@ test-pricing-smoke: dev-reset-test-db audit-all
 	  tests/api/test_shipping_quote_scheme_warehouses_api.py \
 	  tests/api/test_zone_brackets_constraints_and_copy.py \
 	  tests/api/test_zone_brackets_matrix_unbound_contract.py \
-		  tests/api/test_zone_brackets_matrix_grouped_contract.py
+	  tests/api/test_zone_brackets_matrix_grouped_contract.py

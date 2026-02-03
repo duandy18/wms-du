@@ -30,7 +30,6 @@ PHASE2_TABLES = {
     "order_items",
     "order_lines",
     "order_state_snapshot",
-    "reservation_lines",
     "pick_tasks",
     "pick_task_lines",
     "outbound_commits",

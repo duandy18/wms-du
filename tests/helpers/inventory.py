@@ -17,7 +17,6 @@ __all__ = [
     "seed_many",
     "qty_by_code",
     "sum_on_hand",
-    "sum_reserved_active",
     "available",
     "insert_snapshot",
 ]
@@ -147,22 +146,11 @@ async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
     return int(row.scalar_one() or 0)
 
 
-async def sum_reserved_active(session: AsyncSession, *, item: int, loc: int) -> int:
-    cols = await _columns_of(session, "reservations")
-    if {"item_id", "location_id", "qty", "status"}.issubset(set(cols)):
-        row = await session.execute(
-            SA(
-                "SELECT COALESCE(SUM(qty),0) FROM reservations "
-                "WHERE item_id=:i AND location_id=:l AND status='ACTIVE'"
-            ),
-            {"i": item, "l": loc},
-        )
-        return int(row.scalar_one() or 0)
-    return 0
-
-
 async def available(session: AsyncSession, *, item: int, loc: int) -> int:
-    return await sum_on_hand(session, item=item, loc=loc) - await sum_reserved_active(session, item=item, loc=loc)
+    """
+    测试口径：当前可售与在库一致（只看 stocks）。
+    """
+    return await sum_on_hand(session, item=item, loc=loc)
 
 
 async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:

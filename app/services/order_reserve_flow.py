@@ -14,10 +14,10 @@ class OrderReserveFlow:
     订单进入仓内执行态 / 取消流程中控（历史文件名保留）：
 
     ✅ 当前语义（蓝皮书一致）：
-    - reserve：enter_pickable（自动生成 pick task + 入队拣货单打印），不做库存预占/不做库存校验；
-    - cancel：取消（仍保留，后续你要“取消预占”概念，这里会继续收敛为“取消 pickable/取消任务”）。
+    - reserve：enter_pickable（自动生成 pick task + 入队拣货单打印），不做库存裁决/不做库存校验；
+    - cancel：取消（取消订单执行态与审计动作）。
 
-    注意：本阶段不引入 reservation / soft reserve 世界观。
+    注意：本阶段不引入任何旧链路的占用/锁定语义。
     """
 
     @staticmethod
