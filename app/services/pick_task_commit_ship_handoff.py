@@ -54,7 +54,16 @@ def expected_handoff_code_from_task_ref(*, ref: str) -> Optional[str]:
     return _normalize_wms_order_confirm_code_v1(platform=plat, shop_id=shop, ext_order_no=ext)
 
 
-def assert_handoff_code_match(*, order_ref: str, handoff_code: str) -> None:
+def assert_handoff_code_match(*, order_ref: str, handoff_code: Optional[str]) -> None:
+    """
+    Phase 2：确认码已废弃
+    - handoff_code 为空/缺省：不再作为门禁，直接跳过校验（✅ 主线）
+    - handoff_code 非空：仍按旧规则做一致性校验（✅ 兼容旧客户端/风控场景）
+    """
+    got = (str(handoff_code or "").strip() or None)
+    if got is None:
+        return
+
     expected = expected_handoff_code_from_task_ref(ref=order_ref)
     if not expected:
         raise HandoffCodeError(
@@ -62,17 +71,7 @@ def assert_handoff_code_match(*, order_ref: str, handoff_code: str) -> None:
             reason="invalid_ref",
             order_ref=str(order_ref),
             expected=None,
-            got=(str(handoff_code or "").strip() or None),
-        )
-
-    got = str(handoff_code or "").strip()
-    if not got:
-        raise HandoffCodeError(
-            "handoff_code invalid: empty",
-            reason="empty",
-            order_ref=str(order_ref),
-            expected=str(expected),
-            got=None,
+            got=got,
         )
 
     if got != expected:

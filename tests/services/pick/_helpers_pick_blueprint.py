@@ -48,12 +48,33 @@ async def stocks_count(session: AsyncSession) -> int:
 
 
 async def pick_any_item_id(session: AsyncSession) -> int:
+    """
+    选一个可用于“无批次主线”的 item：
+    - 优先挑 has_shelf_life != TRUE 的商品（避免 batch_code 约束影响蓝皮书主线）
+    - 若环境里全是批次受控商品，再 fallback 到任意一条（让用例显式处理 batch_code）
+    """
     await _ensure_fresh_read_view(session)
-    r = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
-    row = r.first()
-    if not row:
+
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM items
+             WHERE COALESCE(has_shelf_life, FALSE) = FALSE
+             ORDER BY id ASC
+             LIMIT 1
+            """
+        )
+    )
+    row = r1.first()
+    if row:
+        return int(row[0])
+
+    r2 = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
+    row2 = r2.first()
+    if not row2:
         raise AssertionError("items 表为空：无法构造蓝皮书 Pick 测试订单（请确保 seed 有 items）")
-    return int(row[0])
+    return int(row2[0])
 
 
 async def columns_of(session: AsyncSession, table_name: str) -> List[Tuple[str, bool, Optional[str], str]]:

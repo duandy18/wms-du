@@ -85,7 +85,7 @@ class PickTaskService:
         task_id: int,
         platform: str,
         shop_id: str,
-        handoff_code: str,
+        handoff_code: Optional[str] = None,
         trace_id: Optional[str] = None,
         allow_diff: bool = True,
     ) -> Dict[str, Any]:

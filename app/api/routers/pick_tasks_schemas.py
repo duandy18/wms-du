@@ -60,7 +60,7 @@ class PickTaskOut(BaseModel):
 class PickTaskCreateFromOrder(BaseModel):
     warehouse_id: Optional[int] = Field(
         None,
-        description="拣货仓库 ID；缺省用订单上的 warehouse_id，若为空则 fallback=1",
+        description="拣货仓库 ID；手工模式必须显式提供。",
     )
     source: str = Field(
         "ORDER",
@@ -73,23 +73,35 @@ class PickTaskCreateFromOrder(BaseModel):
     )
 
 
+class PickTaskPrintPickListIn(BaseModel):
+    order_id: int = Field(..., ge=1, description="订单 ID（手工触发打印必须显式提供）")
+    trace_id: Optional[str] = Field(
+        None,
+        description="可选：打印 payload 里的 trace_id；为空则使用订单 trace_id（如果存在）",
+    )
+
+
 class PickTaskScanIn(BaseModel):
     item_id: int = Field(..., description="商品 ID")
     qty: int = Field(..., gt=0, description="本次拣货数量（>0）")
     batch_code: Optional[str] = Field(
         None,
-        description="批次编码（可选；若为空，后续 commit_ship 会拒绝执行）",
+        description="批次编码（可选；若为空，后续 commit_ship 会按批次规则决定是否拒绝）",
     )
 
 
 class PickTaskCommitIn(BaseModel):
     platform: str = Field(..., description="平台标识，如 PDD / TAOBAO")
     shop_id: str = Field(..., description="店铺 ID（字符串）")
-    handoff_code: str = Field(
-        ...,
-        min_length=1,
-        description="订单确认码（WMS / 扫码枪输入）；v1: WMS:ORDER:v1:{platform}:{shop_id}:{ext_order_no}",
+
+    # ✅ Phase 2：删除确认码（handoff_code）
+    # - 不再强制二次确认码作为门禁
+    # - 若调用方仍传 handoff_code（兼容旧客户端），后端仅在其非空时做一致性校验
+    handoff_code: Optional[str] = Field(
+        None,
+        description="（已废弃/兼容字段）订单确认码。新主线不需要；若传入则会做一致性校验。",
     )
+
     trace_id: Optional[str] = Field(
         None,
         description="链路 trace_id，可选；若空则由服务层 fallback 到 ref",
