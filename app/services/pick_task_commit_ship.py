@@ -92,7 +92,7 @@ async def commit_ship(
     task_id: int,
     platform: str,
     shop_id: str,
-    handoff_code: str,
+    handoff_code: Optional[str],
     trace_id: Optional[str] = None,
     allow_diff: bool = True,
 ) -> Dict[str, Any]:
@@ -106,27 +106,31 @@ async def commit_ship(
     # ✅ 并发护栏：同一订单 ref 的提交串行
     await _advisory_lock_outbound_commit(session, platform=plat, shop_id=shop, ref=order_ref)
 
-    # 1) 最后扫码确认（必须 409 Problem 化，且输出 expected/got/reason）
-    try:
-        assert_handoff_code_match(order_ref=order_ref, handoff_code=handoff_code)
-    except Exception as e:
-        if isinstance(e, HandoffCodeError):
+    # Phase 2：确认码已废弃
+    # - handoff_code 缺省/为空：跳过校验（主线）
+    # - handoff_code 非空：仍做一致性校验（兼容旧客户端）
+    got_code = (str(handoff_code or "").strip() or None)
+    if got_code is not None:
+        try:
+            assert_handoff_code_match(order_ref=order_ref, handoff_code=got_code)
+        except Exception as e:
+            if isinstance(e, HandoffCodeError):
+                raise_handoff_mismatch(
+                    task_id=int(task.id),
+                    warehouse_id=int(wh_id),
+                    order_ref=str(order_ref),
+                    handoff_reason=str(e.reason),
+                    expected_handoff_code=e.expected,
+                    got_handoff_code=e.got,
+                )
             raise_handoff_mismatch(
                 task_id=int(task.id),
                 warehouse_id=int(wh_id),
                 order_ref=str(order_ref),
-                handoff_reason=str(e.reason),
-                expected_handoff_code=e.expected,
-                got_handoff_code=e.got,
+                handoff_reason="unknown",
+                expected_handoff_code=None,
+                got_handoff_code=got_code,
             )
-        raise_handoff_mismatch(
-            task_id=int(task.id),
-            warehouse_id=int(wh_id),
-            order_ref=str(order_ref),
-            handoff_reason="unknown",
-            expected_handoff_code=None,
-            got_handoff_code=(str(handoff_code or "").strip() or None),
-        )
 
     incoming_tid = (trace_id or "").strip() or None
 
