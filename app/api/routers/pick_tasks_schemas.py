@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class PickTaskLineOut(BaseModel):
@@ -20,6 +20,29 @@ class PickTaskLineOut(BaseModel):
     note: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+    # ✅ 展示型纯函数字段：前端不再推导
+    @computed_field  # type: ignore[misc]
+    @property
+    def remain_qty(self) -> int:
+        # remain = req - picked；允许为负（表示 OVER）
+        return int(self.req_qty) - int(self.picked_qty)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def delta(self) -> int:
+        # 与 diff 接口语义一致：delta = picked - req
+        return int(self.picked_qty) - int(self.req_qty)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def diff_status(self) -> str:
+        d = self.delta
+        if d > 0:
+            return "over"
+        if d < 0:
+            return "under"
+        return "ok"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,6 +61,20 @@ class PrintJobOut(BaseModel):
     updated_at: datetime
 
 
+class GateOut(BaseModel):
+    """
+    后端裁决门禁（稳定合同）：
+    - allowed: 前端直接用来禁用按钮/输入
+    - error_code/message/details/next_actions：与 Problem 体系同源（前端无需猜/无需解析字符串）
+    """
+
+    allowed: bool
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    details: List[Dict[str, Any]] = Field(default_factory=list)
+    next_actions: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class PickTaskOut(BaseModel):
     id: int
     warehouse_id: int
@@ -49,10 +86,108 @@ class PickTaskOut(BaseModel):
     note: Optional[str]
     created_at: datetime
     updated_at: datetime
-    lines: List[PickTaskLineOut] = []
+    lines: List[PickTaskLineOut] = Field(default_factory=list)
 
     # ✅ 可观测闭环：最近一次 pick_list print_job（若存在）
     print_job: Optional[PrintJobOut] = None
+
+    # ✅ 汇总：前端不再推导 totals/has_over/has_under
+    @computed_field  # type: ignore[misc]
+    @property
+    def req_total(self) -> int:
+        return sum(int(ln.req_qty) for ln in (self.lines or []))
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def picked_total(self) -> int:
+        return sum(int(ln.picked_qty) for ln in (self.lines or []))
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def remain_total(self) -> int:
+        return int(self.req_total) - int(self.picked_total)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def has_over(self) -> bool:
+        return any((ln.delta > 0) for ln in (self.lines or []))
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def has_under(self) -> bool:
+        return any((ln.delta < 0) for ln in (self.lines or []))
+
+    # ✅ 门禁：scan（与 pick_task_scan.py 的裁决一致）
+    @computed_field  # type: ignore[misc]
+    @property
+    def scan_gate(self) -> GateOut:
+        allowed_status = {"NEW", "READY", "ASSIGNED", "PICKING"}
+        if str(self.status) in allowed_status:
+            return GateOut(allowed=True)
+
+        return GateOut(
+            allowed=False,
+            error_code="pick_task_scan_reject",
+            message="当前任务状态不允许扫码拣货。",
+            details=[
+                {
+                    "type": "guard",
+                    "guard": "scan",
+                    "task_id": int(self.id),
+                    "status": str(self.status),
+                    "allowed": sorted(list(allowed_status)),
+                    "reason": "status_not_allowed",
+                }
+            ],
+            next_actions=[
+                {"action": "view_task", "label": "查看任务详情"},
+                {"action": "back_to_list", "label": "返回任务列表"},
+            ],
+        )
+
+    # ✅ 门禁：commit（主线假设 allow_diff=True；diff_not_allowed 只在 allow_diff=False 场景触发）
+    @computed_field  # type: ignore[misc]
+    @property
+    def commit_gate(self) -> GateOut:
+        # 1) 状态门禁（DONE 等终态不允许提交）
+        if str(self.status) == "DONE":
+            return GateOut(
+                allowed=False,
+                error_code="pick_task_commit_reject",
+                message="任务已完成，禁止重复提交。",
+                details=[{"type": "state", "path": "status", "reason": "already_done", "status": str(self.status)}],
+                next_actions=[{"action": "view_outbound", "label": "查看出库记录"}],
+            )
+
+        # 2) 空提交门禁：picked_qty>0 的行不存在 ⇒ empty_pick_lines（与 problems.py 同源）
+        has_any_picked = any(int(ln.picked_qty or 0) > 0 for ln in (self.lines or []))
+        if not has_any_picked:
+            return GateOut(
+                allowed=False,
+                error_code="empty_pick_lines",
+                message="未采集任何拣货事实，禁止提交。",
+                details=[{"type": "validation", "path": "commit_lines", "reason": "empty"}],
+                next_actions=[{"action": "continue_pick", "label": "继续拣货"}],
+            )
+
+        # 3) 主线 allow_diff=True：OVER/UNDER 不作为门禁
+        return GateOut(allowed=True)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PickTaskCommitCheckOut(BaseModel):
+    """
+    只读预检输出（与 Problem 体系同源）：
+    - 前端可复用同一套 Problem 渲染组件，不需要做字段映射
+    """
+
+    allowed: bool
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+    details: List[Dict[str, Any]] = Field(default_factory=list)
+    next_actions: List[Dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,8 +230,6 @@ class PickTaskCommitIn(BaseModel):
     shop_id: str = Field(..., description="店铺 ID（字符串）")
 
     # ✅ Phase 2：删除确认码（handoff_code）
-    # - 不再强制二次确认码作为门禁
-    # - 若调用方仍传 handoff_code（兼容旧客户端），后端仅在其非空时做一致性校验
     handoff_code: Optional[str] = Field(
         None,
         description="（已废弃/兼容字段）订单确认码。新主线不需要；若传入则会做一致性校验。",
@@ -127,6 +260,24 @@ class PickTaskDiffSummaryOut(BaseModel):
     lines: List[PickTaskDiffLineOut]
 
 
+# ✅ commit 返回 diff 的强类型（替换 Dict[str,Any]）
+class PickTaskCommitDiffLineOut(BaseModel):
+    item_id: int
+    req_qty: int
+    picked_qty: int
+    delta: int
+    status: str
+
+
+class PickTaskCommitDiffOut(BaseModel):
+    task_id: int
+    has_over: bool
+    has_under: bool
+    has_temp_lines: bool
+    temp_lines_n: int
+    lines: List[PickTaskCommitDiffLineOut]
+
+
 class PickTaskCommitResult(BaseModel):
     status: str
 
@@ -152,4 +303,7 @@ class PickTaskCommitResult(BaseModel):
     shop_id: str
     ref: str
 
-    diff: Dict[str, Any]
+    diff: PickTaskCommitDiffOut
+
+    # ✅ 成功路径也给出可行动提示（与 Problem 的 next_actions 同源风格）
+    next_actions: List[Dict[str, Any]] = Field(default_factory=list)

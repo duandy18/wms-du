@@ -84,8 +84,8 @@ test-internal-outbound: venv audit-all upgrade-dev-test-db
 
 # =================================
 # Phase 5 CI Gate：Service Assignment（Route C 简化世界观）
-# - 只写 service_warehouse_id
-# - 不自动写 warehouse_id
+# - 写入 order_fulfillment.planned_warehouse_id（兼容字段名 service_warehouse_id）
+# - 不自动写 order_fulfillment.actual_warehouse_id（执行仓由后续作业/人工决定）
 # =================================
 .PHONY: test-phase5-service-assignment
 test-phase5-service-assignment: venv audit-all upgrade-dev-test-db

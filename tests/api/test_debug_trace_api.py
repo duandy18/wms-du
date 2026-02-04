@@ -15,6 +15,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     - trace_id = 'ORD-UT-1'
     - event_store: trace_id='ORD-UT-1', topic='ORDER.CREATED', key='ORD-UT-1'
     - orders: trace_id='ORD-UT-1'
+    - order_fulfillment: actual_warehouse_id=1（执行仓事实）
     - outbound_commits_v2: trace_id='ORD-UT-1'
     - stock_ledger: trace_id='ORD-UT-1', reason='SHIPMENT', ref='ORD-UT-1', delta=-2
     """
@@ -41,16 +42,51 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         },
     )
 
-    # orders：最小订单行（只保证 trace 聚合能看到）
+    # orders：最小订单头（只保证 trace 聚合能看到）
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO orders (platform, shop_id, ext_order_no, status, trace_id, created_at, updated_at)
+            VALUES (:p, :s, :o, 'CREATED', :tid, now(), now())
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET trace_id = EXCLUDED.trace_id,
+                  updated_at = now()
+            RETURNING id
+            """
+        ),
+        {"p": platform, "s": shop_id, "o": "UT-ORDER-TRACE-1", "tid": trace_id},
+    )
+    order_id = int(row.scalar_one())
+
+    # order_fulfillment：执行仓事实（orders 不再有 warehouse_id 列）
     await session.execute(
         text(
             """
-            INSERT INTO orders (platform, shop_id, ext_order_no, warehouse_id, status, trace_id, created_at, updated_at)
-            VALUES (:p, :s, :o, :w, 'CREATED', :tid, now(), now())
-            ON CONFLICT DO NOTHING
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              :wid,
+              :wid,
+              'READY_TO_FULFILL',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
             """
         ),
-        {"p": platform, "s": shop_id, "o": "UT-ORDER-TRACE-1", "w": wh_id, "tid": trace_id},
+        {"oid": int(order_id), "wid": int(wh_id)},
     )
 
     # event_store

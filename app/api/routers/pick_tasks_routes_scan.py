@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.problem import raise_409, raise_422
 from app.db.session import get_session
+from app.services.pick_task_scan import PickTaskScanError
 from app.services.pick_task_service import PickTaskService
 from app.api.routers.pick_tasks_schemas import PickTaskOut, PickTaskScanIn
 from app.api.routers.pick_tasks_routes_common import load_latest_pick_list_print_job
@@ -42,9 +43,17 @@ def register_scan(router: APIRouter) -> None:
         except HTTPException:
             await session.rollback()
             raise
+        except PickTaskScanError as e:
+            await session.rollback()
+            # ✅ 门禁/业务校验失败：422 Problem（结构化错误合同）
+            raise_422(
+                e.error_code,
+                e.message,
+                details=list(e.details or []),
+            )
         except ValueError as e:
             await session.rollback()
-            # 业务冲突（非法状态等）→ 409 Problem
+            # 兜底：未知业务冲突/非法状态等（历史兼容）→ 409 Problem
             raise_409(
                 "pick_scan_reject",
                 str(e),

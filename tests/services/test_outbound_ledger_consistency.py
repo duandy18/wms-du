@@ -18,10 +18,11 @@ async def _seed_minimal_order_for_outbound(
     session: AsyncSession,
 ) -> tuple[str, int, int, str]:
     """
-    为出库写台账准备一条最小订单头：
+    为出库写台账准备一条最小订单头（Phase 5+）：
+
     - platform = 'PDD'
     - shop_id = 'UT-SHOP'
-    - warehouse_id = 1
+    - actual_warehouse_id = 1（写入 order_fulfillment）
     - item_id = 1
     - ext_order_no = 'LEDGER-OUT-1'
     - ref = ORD:{platform}:{shop_id}:{ext_order_no}
@@ -45,14 +46,14 @@ async def _seed_minimal_order_for_outbound(
         {"item_id": item_id, "sku": "SKU-0001", "name": "UT-ITEM-1"},
     )
 
-    await session.execute(
+    # orders（不再包含 warehouse_id）
+    row = await session.execute(
         text(
             """
             INSERT INTO orders (
                 platform,
                 shop_id,
                 ext_order_no,
-                warehouse_id,
                 status,
                 trace_id,
                 created_at,
@@ -62,22 +63,56 @@ async def _seed_minimal_order_for_outbound(
                 :platform,
                 :shop_id,
                 :ext_order_no,
-                :wh_id,
                 'CREATED',
                 :trace_id,
                 now(),
                 now()
             )
-            ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET status = EXCLUDED.status,
+                  trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
+                  updated_at = now()
+            RETURNING id
             """
         ),
         {
             "platform": platform,
             "shop_id": shop_id,
             "ext_order_no": ext_order_no,
-            "wh_id": wh_id,
             "trace_id": trace_id,
         },
+    )
+    order_id = int(row.scalar_one())
+    assert order_id > 0
+
+    # order_fulfillment：写执行仓事实（Phase 5+）
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              NULL,
+              :awid,
+              'READY_TO_FULFILL',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status  = EXCLUDED.fulfillment_status,
+                   blocked_reasons     = NULL,
+                   updated_at          = now()
+            """
+        ),
+        {"oid": int(order_id), "awid": int(wh_id)},
     )
 
     await session.commit()

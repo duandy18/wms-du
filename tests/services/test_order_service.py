@@ -27,39 +27,81 @@ async def _ensure_order_row(
     warehouse_id: int,
     trace_id: str,
 ) -> str:
+    """
+    Phase 5+ 最小订单头（不再写 orders.warehouse_id）：
+    - orders: 只写 platform/shop_id/ext_order_no/trace_id/created_at
+    - order_fulfillment: 写 actual_warehouse_id + fulfillment_status（让其可进入拣货主线）
+    """
     plat = platform.upper()
     now = datetime.now(UTC)
-    await session.execute(
+
+    row = await session.execute(
         text(
             """
             INSERT INTO orders (
                 platform,
                 shop_id,
                 ext_order_no,
-                warehouse_id,
+                status,
                 trace_id,
-                created_at
+                created_at,
+                updated_at
             )
             VALUES (
                 :p,
                 :s,
                 :o,
-                :w,
+                'CREATED',
                 :tid,
+                :created_at,
                 :created_at
             )
-            ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
+                  updated_at = EXCLUDED.updated_at
+            RETURNING id
             """
         ),
         {
             "p": plat,
             "s": shop_id,
             "o": ext_order_no,
-            "w": warehouse_id,
             "tid": trace_id,
             "created_at": now,
         },
     )
+    order_id = int(row.scalar_one())
+    assert order_id > 0
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              NULL,
+              :awid,
+              'READY_TO_FULFILL',
+              NULL,
+              :at
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status  = EXCLUDED.fulfillment_status,
+                   blocked_reasons     = NULL,
+                   updated_at          = EXCLUDED.updated_at
+            """
+        ),
+        {"oid": int(order_id), "awid": int(warehouse_id), "at": now},
+    )
+
     return f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
 

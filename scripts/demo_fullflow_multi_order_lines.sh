@@ -44,9 +44,40 @@ curl -fsS -X POST "$BASE/orders" \
   }" | jq .
 
 echo
-echo "===== 0.5) DEV: force set orders.warehouse_id=$WH (bypass store binding) ====="
-psql "postgresql://wms:wms@127.0.0.1:5433/wms" -v ON_ERROR_STOP=1 -c \
-  "UPDATE orders SET warehouse_id = $WH WHERE platform = '$PLAT' AND shop_id = '$SHOP' AND ext_order_no = '$EXT';"
+echo "===== 0.5) DEV: force set order_fulfillment planned/actual=$WH (bypass store binding) ====="
+psql "postgresql://wms:wms@127.0.0.1:5433/wms" -v ON_ERROR_STOP=1 -c "
+WITH o AS (
+  SELECT id
+    FROM orders
+   WHERE platform = '${PLAT}'
+     AND shop_id = '${SHOP}'
+     AND ext_order_no = '${EXT}'
+   ORDER BY id DESC
+   LIMIT 1
+)
+INSERT INTO order_fulfillment (
+  order_id,
+  planned_warehouse_id,
+  actual_warehouse_id,
+  fulfillment_status,
+  blocked_reasons,
+  blocked_detail
+)
+SELECT
+  o.id,
+  ${WH},
+  ${WH},
+  'READY_TO_FULFILL',
+  NULL,
+  NULL
+FROM o
+ON CONFLICT (order_id) DO UPDATE
+   SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+       actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+       fulfillment_status   = EXCLUDED.fulfillment_status,
+       blocked_reasons      = NULL,
+       blocked_detail       = NULL;
+"
 
 echo
 echo "===== 1) Seed stock for item A (scan receive) ====="

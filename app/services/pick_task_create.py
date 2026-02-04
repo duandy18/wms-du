@@ -33,8 +33,7 @@ async def _resolve_execution_warehouse_for_order(session: AsyncSession, *, order
     ✅ 核心原则：
     - 订单只提供 platform / shop_id（店铺事实）
     - 执行仓只能通过店铺绑定（store default）解析，避免订单维度仓字段造成事实漂移
-    - ❌ 不使用 fulfillment_warehouse_id（避免与店铺默认仓冲突）
-    - ❌ 不使用 orders.warehouse_id / orders.service_warehouse_id（不从订单字段解析仓）
+    - ❌ 不使用订单上的任何“实际仓/计划仓”字段来解析执行仓（以店铺规则为准）
 
     返回：
     - 解析成功：warehouse_id
@@ -130,7 +129,7 @@ async def create_for_order(
     ✅ Phase 2 合同（收敛版）：
     - 自动入口：不传 warehouse_id → 仅通过「platform/shop_id → 店铺默认仓」解析执行仓
     - 手工入口（兼容）：若调用方显式传 warehouse_id → 直接使用该仓（用于 manual-from-order）
-    - ❌ 不消费订单上的 warehouse_id / service_warehouse_id / fulfillment_warehouse_id 来解析执行仓
+    - ❌ 不消费订单上的任何“计划/实际仓”字段来解析执行仓
     - ❌ 不隐性回填 orders.warehouse_id（本函数不写 orders 表）
 
     ✅ 幂等：

@@ -103,10 +103,36 @@ async def test_full_trace_order_outbound(session: AsyncSession):
     order_id = r_order["id"]
     assert order_id is not None
 
-    # 显式绑定仓库（测试用，避免依赖外部路由策略）
+    # 显式绑定执行仓（测试用，避免依赖外部路由策略）
+    # 新世界观：执行仓事实写入 order_fulfillment.actual_warehouse_id
     await session.execute(
-        text("UPDATE orders SET warehouse_id = :wid WHERE id = :oid"),
-        {"wid": wh_id, "oid": order_id},
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              :wid,
+              :wid,
+              'READY_TO_FULFILL',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
+            """
+        ),
+        {"wid": wh_id, "oid": int(order_id)},
     )
 
     # === 3) 出库（OutboundService.commit）→ ledger.trace_id ===

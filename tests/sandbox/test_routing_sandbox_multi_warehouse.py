@@ -187,20 +187,25 @@ def generate_orders(n: int, *, item_ids: List[int]) -> List[SandboxOrder]:
 
 async def collect_order_summary_phase5(session: AsyncSession):
     """
-    Phase 5：直接从 orders 聚合“服务归属事实 / 阻断事实”，不依赖 Phase4 的 routing metrics view。
+    Phase 5：从 orders + order_fulfillment 聚合“服务归属事实 / 阻断事实”。
+
+    兼容口径：
+      - service_warehouse_id := order_fulfillment.planned_warehouse_id
+      - fulfillment_status  := order_fulfillment.fulfillment_status
     """
     res = await session.execute(
         sa.text(
             """
             SELECT
-              platform,
-              shop_id,
-              fulfillment_status,
-              COALESCE(service_warehouse_id, 0) AS service_warehouse_id,
+              o.platform,
+              o.shop_id,
+              f.fulfillment_status AS fulfillment_status,
+              COALESCE(f.planned_warehouse_id, 0) AS service_warehouse_id,
               COUNT(*) AS n
-            FROM orders
-            GROUP BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0)
-            ORDER BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0);
+            FROM orders o
+            LEFT JOIN order_fulfillment f ON f.order_id = o.id
+            GROUP BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0)
+            ORDER BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0);
             """
         )
     )

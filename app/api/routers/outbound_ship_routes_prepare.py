@@ -223,7 +223,6 @@ def register(router: APIRouter) -> None:
                 fulfillment_scan=[],
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["PROVINCE_MISSING_OR_INVALID"],
-                blocked_detail={"province": province},
             )
 
         # ===== 候选仓：省级路由命中集合 =====
@@ -252,7 +251,6 @@ def register(router: APIRouter) -> None:
                 fulfillment_scan=[],
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["NO_PROVINCE_ROUTE_MATCH"],
-                blocked_detail={"province": prov_norm},
             )
 
         # ===== 扫描：对每个候选仓做整单同仓可履约检查 =====
@@ -304,11 +302,6 @@ def register(router: APIRouter) -> None:
                 fulfillment_scan=scan_out,
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["INSUFFICIENT_QTY"],
-                blocked_detail={
-                    "province": prov_norm,
-                    "candidates": [c.warehouse_id for c in candidates],
-                    "scan": [x.model_dump() for x in scan_out],
-                },
             )
 
         # 有可履约仓：不预设 warehouse_id，让人选；但给出扫描证据
@@ -335,5 +328,4 @@ def register(router: APIRouter) -> None:
             fulfillment_scan=scan_out,
             fulfillment_status="OK",
             blocked_reasons=[],
-            blocked_detail=None,
         )

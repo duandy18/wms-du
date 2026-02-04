@@ -16,24 +16,30 @@ async def _get_order_by_ref(
     shop_id: str,
     ext_order_no: str,
 ) -> Optional[Dict[str, Any]]:
+    """
+    一步到位迁移后：
+    - orders 只保留订单头
+    - 履约/仓库快照在 order_fulfillment
+    这里返回的 key 仍保持兼容旧调用方：warehouse_id/service_warehouse_id/fulfillment_status
+    """
     row = await session.execute(
         text(
             """
             SELECT
-              id,
-              platform,
-              shop_id,
-              ext_order_no,
-              warehouse_id,
-              service_warehouse_id,
-              fulfillment_warehouse_id,
-              fulfillment_status,
-              status,
-              trace_id
-            FROM orders
-            WHERE platform = :p
-              AND shop_id  = :s
-              AND ext_order_no = :o
+              o.id,
+              o.platform,
+              o.shop_id,
+              o.ext_order_no,
+              f.actual_warehouse_id AS warehouse_id,
+              f.planned_warehouse_id AS service_warehouse_id,
+              f.fulfillment_status,
+              o.status,
+              o.trace_id
+            FROM orders o
+            LEFT JOIN order_fulfillment f ON f.order_id = o.id
+            WHERE o.platform = :p
+              AND o.shop_id  = :s
+              AND o.ext_order_no = :o
             LIMIT 1
             """
         ),

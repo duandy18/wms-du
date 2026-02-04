@@ -28,27 +28,49 @@ async def mark_fulfillment_blocked(
     """
     Route C：统一的 BLOCKED 写入 + 审计事件写入 + 返回 payload。
 
-    Phase 5 合同：
-    - BLOCKED 时不写 orders.warehouse_id
-    - 只允许写 service_warehouse_id（事实）
+    一步到位迁移后：
+    - orders 表不再承载履约列
+    - BLOCKED 写入 order_fulfillment（最小事实）：
+        - fulfillment_status = 'FULFILLMENT_BLOCKED'
+        - blocked_reasons（仅原因，不落库 detail）
+        - planned_warehouse_id = service_warehouse_id（计划/归属快照）
+        - actual_warehouse_id = NULL（BLOCKED 时不应有实际仓事实）
+
+    说明：
+    - 参数 detail 仅用于审计/日志（不写入 order_fulfillment）
     """
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET fulfillment_status = 'FULFILLMENT_BLOCKED',
-                   blocked_reasons    = CAST(:reasons AS jsonb),
-                   blocked_detail     = :detail,
-                   service_warehouse_id = :swid,
-                   fulfillment_warehouse_id = NULL
-             WHERE id = :oid
+            INSERT INTO order_fulfillment(
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                :pwid,
+                NULL,
+                'FULFILLMENT_BLOCKED',
+                CAST(:reasons AS jsonb),
+                now()
+            )
+            ON CONFLICT (order_id)
+            DO UPDATE SET
+                planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                actual_warehouse_id = NULL,
+                fulfillment_status = EXCLUDED.fulfillment_status,
+                blocked_reasons = EXCLUDED.blocked_reasons,
+                updated_at = now()
             """
         ),
         {
             "oid": int(order_id),
+            "pwid": int(service_warehouse_id) if service_warehouse_id is not None else None,
             "reasons": reasons_json,
-            "detail": detail,
-            "swid": int(service_warehouse_id) if service_warehouse_id is not None else None,
         },
     )
 
@@ -59,6 +81,8 @@ async def mark_fulfillment_blocked(
         "city": city,
         "service_warehouse_id": int(service_warehouse_id) if service_warehouse_id is not None else None,
     }
+    if detail:
+        meta["detail"] = str(detail)
     if meta_extra:
         meta.update(meta_extra)
 
@@ -104,24 +128,42 @@ async def mark_service_assigned(
     auto_commit: bool = False,
 ) -> dict:
     """
-    Phase 5 世界观（唯一合法的自动写入）：
-
-    - 写 orders.service_warehouse_id
-    - 不写 orders.warehouse_id
-    - fulfillment_status = SERVICE_ASSIGNED
+    一步到位迁移后：
+    - SERVICE_ASSIGNED 写入 order_fulfillment（最小事实）：
+        - planned_warehouse_id = service_warehouse_id（计划/归属快照）
+        - fulfillment_status = 'SERVICE_ASSIGNED'
+        - blocked_reasons = NULL
+    - 不在此阶段写 actual_warehouse_id（实际仓），避免把“计划”误当“事实”。
     """
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET service_warehouse_id = :swid,
-                   fulfillment_status = 'SERVICE_ASSIGNED',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
+            INSERT INTO order_fulfillment(
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                :pwid,
+                NULL,
+                'SERVICE_ASSIGNED',
+                NULL,
+                now()
+            )
+            ON CONFLICT (order_id)
+            DO UPDATE SET
+                planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                actual_warehouse_id = NULL,
+                fulfillment_status = EXCLUDED.fulfillment_status,
+                blocked_reasons = NULL,
+                updated_at = now()
             """
         ),
-        {"swid": int(service_warehouse_id), "oid": int(order_id)},
+        {"pwid": int(service_warehouse_id), "oid": int(order_id)},
     )
 
     try:

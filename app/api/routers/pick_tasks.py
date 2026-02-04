@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from app.api.routers import pick_tasks_routes
 from app.api.routers.pick_tasks_helpers import load_task_with_lines as _load_task_with_lines
 from app.api.routers.pick_tasks_schemas import (
+    PickTaskCommitCheckOut,
     PickTaskCommitIn,
     PickTaskCommitResult,
     PickTaskCreateFromOrder,
@@ -36,5 +37,6 @@ __all__ = [
     "PickTaskDiffLineOut",
     "PickTaskDiffSummaryOut",
     "PickTaskCommitResult",
+    "PickTaskCommitCheckOut",
     "_load_task_with_lines",
 ]

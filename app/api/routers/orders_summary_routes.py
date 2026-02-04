@@ -59,6 +59,11 @@ def _derive_assign_mode(
     warehouse_id: Optional[int],
     service_warehouse_id: Optional[int],
 ) -> str:
+    """
+    说明：这里的 warehouse_id/service_warehouse_id 都是“兼容字段名”，实际来源是：
+      - service_warehouse_id := order_fulfillment.planned_warehouse_id
+      - warehouse_id := order_fulfillment.actual_warehouse_id
+    """
     fs = (fulfillment_status or "").strip().upper()
     if fs == "MANUALLY_ASSIGNED":
         return "MANUAL"
@@ -81,23 +86,34 @@ async def _list_orders_summary_rows(
     time_to: Optional[datetime],
     limit: int,
 ) -> List[Mapping[str, Any]]:
+    """
+    一步到位迁移后：
+    - orders 只保留订单头
+    - 履约/仓库快照在 order_fulfillment
+    因此这里从 orders LEFT JOIN order_fulfillment 取 planned/actual/status。
+
+    注意：这里的 status 查询参数按“履约状态 fulfillment_status”解释（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
+    """
     clauses: List[str] = []
     params: Dict[str, Any] = {"limit": limit}
 
     if platform:
-        clauses.append("platform = :p")
+        clauses.append("o.platform = :p")
         params["p"] = platform.upper()
     if shop_id:
-        clauses.append("shop_id = :s")
+        clauses.append("o.shop_id = :s")
         params["s"] = shop_id
+
+    # ✅ 迁移后：status 以 order_fulfillment.fulfillment_status 为准（不再依赖 orders.status）
     if status:
-        clauses.append("status = :st")
-        params["st"] = status
+        clauses.append("f.fulfillment_status = :fst")
+        params["fst"] = status
+
     if time_from:
-        clauses.append("created_at >= :from_ts")
+        clauses.append("o.created_at >= :from_ts")
         params["from_ts"] = time_from
     if time_to:
-        clauses.append("created_at <= :to_ts")
+        clauses.append("o.created_at <= :to_ts")
         params["to_ts"] = time_to
 
     where_sql = ""
@@ -110,21 +126,22 @@ async def _list_orders_summary_rows(
                 text(
                     f"""
                     SELECT
-                        id,
-                        platform,
-                        shop_id,
-                        ext_order_no,
-                        status,
-                        created_at,
-                        updated_at,
-                        warehouse_id,
-                        service_warehouse_id,
-                        fulfillment_status,
-                        order_amount,
-                        pay_amount
-                      FROM orders
+                        o.id,
+                        o.platform,
+                        o.shop_id,
+                        o.ext_order_no,
+                        o.status,
+                        o.created_at,
+                        o.updated_at,
+                        f.actual_warehouse_id AS warehouse_id,
+                        f.planned_warehouse_id AS service_warehouse_id,
+                        f.fulfillment_status,
+                        o.order_amount,
+                        o.pay_amount
+                      FROM orders o
+                      LEFT JOIN order_fulfillment f ON f.order_id = o.id
                       {where_sql}
-                     ORDER BY created_at DESC, id DESC
+                     ORDER BY o.created_at DESC, o.id DESC
                      LIMIT :limit
                     """
                 ),
@@ -175,7 +192,7 @@ def register(router) -> None:
         session: AsyncSession = Depends(get_session),
         platform: Optional[str] = Query(None),
         shop_id: Optional[str] = Query(None),
-        status: Optional[str] = Query(None),
+        status: Optional[str] = Query(None, description="履约状态：SERVICE_ASSIGNED / READY_TO_FULFILL / ..."),
         time_from: Optional[datetime] = Query(None),
         time_to: Optional[datetime] = Query(None),
         limit: int = Query(100),
@@ -198,6 +215,7 @@ def register(router) -> None:
             whid = r.get("warehouse_id")
             swid = r.get("service_warehouse_id")
 
+            # ✅ 可操作事实：SERVICE_ASSIGNED 且已有 planned 且 actual 为空
             can_manual = (fs == "SERVICE_ASSIGNED") and (swid is not None) and (whid is None)
 
             data.append(
@@ -209,8 +227,8 @@ def register(router) -> None:
                     status=r.get("status"),
                     created_at=r["created_at"],
                     updated_at=r.get("updated_at"),
-                    warehouse_id=whid,
-                    service_warehouse_id=swid,
+                    warehouse_id=int(whid) if whid is not None else None,
+                    service_warehouse_id=int(swid) if swid is not None else None,
                     fulfillment_status=r.get("fulfillment_status"),
                     warehouse_assign_mode=_derive_assign_mode(
                         fulfillment_status=r.get("fulfillment_status"),

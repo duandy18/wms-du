@@ -4,14 +4,28 @@ from __future__ import annotations
 from typing import Set
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
 from app.api.problem import raise_409, raise_422
-from app.db.session import get_session
 from app.api.routers.pick_tasks_helpers import load_task_with_lines
-from app.services.pick_task_service import PickTaskService
 from app.api.routers.pick_tasks_schemas import PickTaskCommitIn, PickTaskCommitResult
+from app.db.session import get_session
+from app.services.pick_task_service import PickTaskService
+
+# 事务内护栏：避免 commit 在 DB 锁等待/慢查询上“无限卡死”
+# - lock_timeout：等待行锁/表锁的上限（超时后 PG 抛 query_canceled 或 lock_not_available）
+# - statement_timeout：单条 SQL 的上限（超时后 PG 抛 query_canceled）
+_COMMIT_LOCK_TIMEOUT_MS = 1500
+_COMMIT_STATEMENT_TIMEOUT_MS = 8000
+
+# Postgres SQLSTATE:
+# - 57014: query_canceled（包含 statement_timeout / lock_timeout）
+# - 55P03: lock_not_available（某些锁等待/nowait/lock_timeout 场景会落到这里）
+_PG_QUERY_CANCELED = "57014"
+_PG_LOCK_NOT_AVAILABLE = "55P03"
 
 
 def register_commit(router: APIRouter) -> None:
@@ -57,7 +71,12 @@ def register_commit(router: APIRouter) -> None:
                 )
 
         svc = PickTaskService(session)
+
         try:
+            # ✅ 事务内护栏：防止 commit 路径在 DB 等锁/慢 SQL 上无限卡住
+            await session.execute(text(f"SET LOCAL lock_timeout = {_COMMIT_LOCK_TIMEOUT_MS}"))
+            await session.execute(text(f"SET LOCAL statement_timeout = {_COMMIT_STATEMENT_TIMEOUT_MS}"))
+
             result = await svc.commit_ship(
                 task_id=task_id,
                 platform=payload.platform,
@@ -67,9 +86,11 @@ def register_commit(router: APIRouter) -> None:
                 allow_diff=payload.allow_diff,
             )
             await session.commit()
+
         except HTTPException:
             await session.rollback()
             raise
+
         except ValueError as e:
             await session.rollback()
             # 业务冲突（状态/幂等/交接码等）→ 409 Problem
@@ -78,6 +99,26 @@ def register_commit(router: APIRouter) -> None:
                 str(e),
                 details=[{"type": "state", "path": "commit", "reason": str(e)}],
             )
+
+        except DBAPIError as e:
+            await session.rollback()
+            pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+            if pgcode in {_PG_QUERY_CANCELED, _PG_LOCK_NOT_AVAILABLE}:
+                raise_409(
+                    "pick_commit_timeout",
+                    "提交拣货单超时（可能存在锁等待或慢查询）。",
+                    details=[
+                        {
+                            "type": "timeout",
+                            "path": "commit",
+                            "pgcode": pgcode,
+                            "lock_timeout_ms": _COMMIT_LOCK_TIMEOUT_MS,
+                            "statement_timeout_ms": _COMMIT_STATEMENT_TIMEOUT_MS,
+                        }
+                    ],
+                )
+            raise
+
         except Exception:
             await session.rollback()
             raise

@@ -72,6 +72,7 @@ class CandidateWarehouseOut(BaseModel):
     """
     候选仓（来自省级路由命中后的集合）
     """
+
     warehouse_id: int
     warehouse_name: Optional[str] = None
     warehouse_code: Optional[str] = None
@@ -91,6 +92,7 @@ class FulfillmentScanWarehouseOut(BaseModel):
     - OK / INSUFFICIENT
     - missing：缺口明细（可解释证据）
     """
+
     warehouse_id: int
     status: str
     missing: List[FulfillmentMissingLineOut] = Field(default_factory=list)
@@ -130,7 +132,6 @@ class ShipPrepareResponse(BaseModel):
     # ✅ 不可履约事实（用于“智能退货/取消”）
     fulfillment_status: Optional[str] = None  # OK / FULFILLMENT_BLOCKED
     blocked_reasons: List[str] = Field(default_factory=list)
-    blocked_detail: Optional[Dict[str, Any]] = None
 
 
 # -------------------- /ship/confirm --------------------
