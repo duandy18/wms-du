@@ -1,337 +1,98 @@
 # tests/services/pick/_helpers_pick_blueprint.py
 from __future__ import annotations
 
-import json
-import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from ._client_pick_api import (  # 拆分：HTTP 调用集中到单独文件
+    commit_pick_task as _commit_pick_task,
+    create_pick_task_from_order,
+    get_pick_task,
+    scan_pick,
+)
+from ._seed_order_items import (  # 拆分：order_items 写入策略与 item 选择
+    ensure_order_has_items as _ensure_order_has_items,
+    pick_any_item_id as _pick_any_item_id,
+)
+from ._seed_orders import (  # re-export：保持旧 import 路径不变
+    PLATFORM,
+    SHOP_ID,
+    WAREHOUSE_ID,
+    BlueprintOrderSeed,
+    insert_min_order,
+    insert_orders_bulk,
+)
+from ._utils_pick import (  # 拆分：杂项工具集中
+    build_handoff_code,
+    force_no_stock,
+    get_task_ref,
+    ledger_count,
+    stocks_count,
+)
 
-from sqlalchemy import text
+from typing import Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-PICK_TASKS_PREFIX = "/pick-tasks"
-WAREHOUSE_ID = 1
 
-PLATFORM = "pdd"
-SHOP_ID = "1"
-
-
-# -----------------------------
-# DB helpers (transaction view)
-# -----------------------------
-async def _ensure_fresh_read_view(session: AsyncSession) -> None:
+async def ensure_pickable_order(
+    session: AsyncSession,
+    *,
+    warehouse_id: int = WAREHOUSE_ID,
+    platform: str = PLATFORM,
+    shop_id: str = SHOP_ID,
+    ext_order_no: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    item_id: Optional[int] = None,
+    qty: int = 1,
+) -> int:
     """
-    只在“没有 pending writes”的情况下 rollback，释放事务快照，
-    以便读取到 HTTP API 侧（其它连接）提交的最新数据。
-    """
-    if not session.in_transaction():
-        return
+    兼容入口：确保存在一张“可拣货订单”并具备执行仓事实 + 至少一条商品行。
 
-    has_pending_writes = bool(
-        getattr(session, "new", None) or getattr(session, "dirty", None) or getattr(session, "deleted", None)
+    重要：这里必须 COMMIT。
+    原因：多数 API 测试是“DB session 造数据 + http client 调 API（服务端新 session）”的组合，
+    若不提交，服务端看不到订单，会返回 422（订单不存在）。
+    """
+    import uuid
+
+    ext = ext_order_no or f"UT-PICK-BLUEPRINT-{uuid.uuid4().hex[:12]}"
+    oid = await insert_min_order(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ext_order_no=ext,
+        warehouse_id=int(warehouse_id),
+        fulfillment_status="READY_TO_FULFILL",
+        status="CREATED",
+        trace_id=trace_id,
     )
-    if has_pending_writes:
-        return
 
-    await session.rollback()
+    iid = int(item_id) if item_id is not None else await _pick_any_item_id(session)
+    await _ensure_order_has_items(session, order_id=int(oid), item_id=iid, qty=int(qty))
 
-
-async def ledger_count(session: AsyncSession) -> int:
-    await _ensure_fresh_read_view(session)
-    r = await session.execute(text("SELECT COUNT(*) FROM stock_ledger"))
-    return int((r.first() or (0,))[0] or 0)
-
-
-async def stocks_count(session: AsyncSession) -> int:
-    await _ensure_fresh_read_view(session)
-    r = await session.execute(text("SELECT COUNT(*) FROM stocks"))
-    return int((r.first() or (0,))[0] or 0)
+    await session.commit()
+    return int(oid)
 
 
 async def pick_any_item_id(session: AsyncSession) -> int:
-    """
-    选一个可用于“无批次主线”的 item：
-    - 优先挑 has_shelf_life != TRUE 的商品（避免 batch_code 约束影响蓝皮书主线）
-    - 若环境里全是批次受控商品，再 fallback 到任意一条（让用例显式处理 batch_code）
-    """
-    await _ensure_fresh_read_view(session)
-
-    r1 = await session.execute(
-        text(
-            """
-            SELECT id
-              FROM items
-             WHERE COALESCE(has_shelf_life, FALSE) = FALSE
-             ORDER BY id ASC
-             LIMIT 1
-            """
-        )
-    )
-    row = r1.first()
-    if row:
-        return int(row[0])
-
-    r2 = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
-    row2 = r2.first()
-    if not row2:
-        raise AssertionError("items 表为空：无法构造蓝皮书 Pick 测试订单（请确保 seed 有 items）")
-    return int(row2[0])
-
-
-async def columns_of(session: AsyncSession, table_name: str) -> List[Tuple[str, bool, Optional[str], str]]:
-    await _ensure_fresh_read_view(session)
-    r = await session.execute(
-        text(
-            """
-            SELECT column_name,
-                   (is_nullable = 'YES') AS is_nullable,
-                   column_default,
-                   data_type
-              FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name = :t
-             ORDER BY ordinal_position
-            """
-        ),
-        {"t": table_name},
-    )
-    rows = r.fetchall()
-    out: List[Tuple[str, bool, Optional[str], str]] = []
-    for name, is_nullable, default, data_type in rows:
-        out.append(
-            (
-                str(name),
-                bool(is_nullable),
-                default if default is None else str(default),
-                str(data_type),
-            )
-        )
-    return out
-
-
-# -----------------------------
-# Minimal order seeding helpers
-# -----------------------------
-async def insert_min_order(session: AsyncSession, *, warehouse_id: int) -> int:
-    ext = f"UT-PICK-BLUEPRINT-{uuid.uuid4().hex[:10]}"
-    r = await session.execute(
-        text(
-            """
-            INSERT INTO orders (platform, shop_id, ext_order_no, warehouse_id, fulfillment_status, status)
-            VALUES (:p, :s, :ext, :wid, :fs, :st)
-            RETURNING id
-            """
-        ),
-        {
-            "p": PLATFORM,
-            "s": SHOP_ID,
-            "ext": ext,
-            "wid": int(warehouse_id),
-            # 执行态：让订单可进入仓内执行（以你当前主线状态机为准）
-            "fs": "READY_TO_FULFILL",
-            "st": "CREATED",
-        },
-    )
-    row = r.first()
-    if not row:
-        raise AssertionError("failed to insert orders row")
-    return int(row[0])
-
-
-async def insert_one_order_item(session: AsyncSession, *, order_id: int, item_id: int, qty: int) -> int:
-    cols = await columns_of(session, "order_items")
-    col_names = {c[0] for c in cols}
-    col_types = {c[0]: c[3] for c in cols}
-
-    data: Dict[str, Any] = {
-        "order_id": int(order_id),
-        "item_id": int(item_id),
-        "qty": int(qty),
-    }
-
-    # 统一把“执行事实字段”归零（不包含旧预占语义字段）
-    zero_int_fields = [
-        "shipped_qty",
-        "picked_qty",
-        "allocated_qty",
-        "packed_qty",
-        "packaged_qty",
-        "canceled_qty",
-        "cancelled_qty",
-        "refunded_qty",
-        "returned_qty",
-    ]
-    for k in zero_int_fields:
-        if k in col_names:
-            data[k] = 0
-
-    zero_num_fields = [
-        "price",
-        "discount",
-        "amount",
-        "cost",
-        "cost_estimated",
-        "cost_real",
-    ]
-    for k in zero_num_fields:
-        if k in col_names and k not in data:
-            data[k] = 0
-
-    json_fields: List[str] = [name for name, _n, _d, dtype in cols if dtype in ("json", "jsonb")]
-
-    if "meta" in col_names and "meta" not in data:
-        data["meta"] = {}
-    if "extras" in col_names and "extras" not in data:
-        data["extras"] = {}
-
-    for k in list(data.keys()):
-        if k in json_fields and isinstance(data[k], (dict, list)):
-            data[k] = json.dumps(data[k], ensure_ascii=False)
-
-    insert_cols = list(data.keys())
-    value_exprs: List[str] = []
-    for k in insert_cols:
-        dtype = col_types.get(k, "")
-        if dtype == "jsonb":
-            value_exprs.append(f"CAST(:{k} AS JSONB)")
-        elif dtype == "json":
-            value_exprs.append(f"CAST(:{k} AS JSON)")
-        else:
-            value_exprs.append(f":{k}")
-
-    sql = f"""
-        INSERT INTO order_items ({", ".join(insert_cols)})
-        VALUES ({", ".join(value_exprs)})
-        RETURNING id
-    """
-
-    r = await session.execute(text(sql), data)
-    row = r.first()
-    if not row:
-        raise AssertionError("failed to insert order_items row")
-    return int(row[0])
-
-
-async def ensure_pickable_order(session: AsyncSession, *, warehouse_id: int = WAREHOUSE_ID) -> int:
-    """
-    两段提交，避免任何 rollback/快照刷新误伤 FK：
-      1) orders -> commit
-      2) order_items -> commit
-    """
-    item_id = await pick_any_item_id(session)
-
-    order_id = await insert_min_order(session, warehouse_id=warehouse_id)
-    await session.commit()
-
-    _ = await insert_one_order_item(session, order_id=order_id, item_id=item_id, qty=1)
-    await session.commit()
-
-    return order_id
-
-
-# -----------------------------
-# API helpers (names must match test imports)
-# -----------------------------
-async def create_pick_task_from_order(client_like, *, warehouse_id: int, order_id: int) -> Dict[str, Any]:
-    r = await client_like.post(
-        f"{PICK_TASKS_PREFIX}/from-order/{order_id}",
-        json={"warehouse_id": warehouse_id, "source": "ORDER", "priority": 10},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert isinstance(body, dict)
-    assert int(body.get("id") or 0) > 0
-    return body
-
-
-async def get_pick_task(client_like, *, task_id: int) -> Dict[str, Any]:
-    r = await client_like.get(f"{PICK_TASKS_PREFIX}/{task_id}")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert isinstance(body, dict)
-    return body
-
-
-def get_task_ref(task: Dict[str, Any]) -> str:
-    ref = str(task.get("ref") or "").strip()
-    if ref:
-        return ref
-    return f"PICKTASK:{int(task['id'])}"
-
-
-def build_handoff_code(ref: str) -> str:
-    s = str(ref or "").strip()
-    if s.startswith("ORD:"):
-        parts = s.split(":", 3)
-        if len(parts) == 4:
-            _, plat, shop, ext = parts
-            return f"WMS:ORDER:v1:{plat}:{shop}:{ext}"
-    return s
-
-
-async def scan_pick(
-    client_like,
-    *,
-    task_id: int,
-    item_id: int,
-    qty: int,
-    batch_code: Optional[str],
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"item_id": int(item_id), "qty": int(qty)}
-    if batch_code is not None:
-        payload["batch_code"] = batch_code
-    r = await client_like.post(f"{PICK_TASKS_PREFIX}/{task_id}/scan", json=payload)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert isinstance(body, dict)
-    return body
+    # 兼容旧 API：仍然暴露 pick_any_item_id，但实现已搬到 _seed_order_items.py
+    return await _pick_any_item_id(session)
 
 
 async def commit_pick_task(
     client_like,
     *,
     task_id: int,
-    platform: str,
-    shop_id: str,
-    handoff_code: str,
-    trace_id: str,
-    allow_diff: bool,
+    platform: str = PLATFORM,
+    shop_id: str = SHOP_ID,
+    handoff_code: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    allow_diff: bool = True,
 ):
-    r = await client_like.post(
-        f"{PICK_TASKS_PREFIX}/{task_id}/commit",
-        json={
-            "platform": platform,
-            "shop_id": shop_id,
-            "handoff_code": handoff_code,
-            "trace_id": trace_id,
-            "allow_diff": allow_diff,
-        },
+    # 兼容旧签名：handoff_code 当前未入参到 API payload（保持历史行为）
+    _ = handoff_code
+    return await _commit_pick_task(
+        client_like,
+        task_id=int(task_id),
+        platform=str(platform),
+        shop_id=str(shop_id),
+        trace_id=(str(trace_id) if trace_id else None),
+        allow_diff=bool(allow_diff),
     )
-    return r
-
-
-async def force_no_stock(session: AsyncSession, *, warehouse_id: int, item_id: int) -> None:
-    await _ensure_fresh_read_view(session)
-    await session.execute(
-        text("DELETE FROM stocks WHERE warehouse_id = :w AND item_id = :i"),
-        {"w": int(warehouse_id), "i": int(item_id)},
-    )
-    await session.commit()
-
-
-__all__ = [
-    "PICK_TASKS_PREFIX",
-    "WAREHOUSE_ID",
-    "PLATFORM",
-    "SHOP_ID",
-    "ledger_count",
-    "stocks_count",
-    "pick_any_item_id",
-    "ensure_pickable_order",
-    "create_pick_task_from_order",
-    "get_pick_task",
-    "get_task_ref",
-    "build_handoff_code",
-    "scan_pick",
-    "commit_pick_task",
-    "force_no_stock",
-]

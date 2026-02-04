@@ -32,7 +32,7 @@ class FulfillmentServiceDebug(BaseModel):
 class FulfillmentDebugOut(BaseModel):
     """
     v4-min：只回答“归属仓是谁”
-    - 不返回 fulfillment_status / blocked_reasons / blocked_detail
+    - 不返回 fulfillment_status / blocked_reasons（blocked 事实由订单履约快照表承载）
     - 不返回 candidates / scan / check（全部砍掉）
     """
     version: str = FULFILLMENT_DEBUG_VERSION

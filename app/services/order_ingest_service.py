@@ -18,7 +18,6 @@ from app.services.order_ingest_routing import auto_route_warehouse_if_possible
 from app.services.order_ingest_schema_probe import (
     order_items_has_extras as _order_items_has_extras,
     orders_has_extras as _orders_has_extras,
-    orders_has_warehouse_id as _orders_has_warehouse_id,
 )
 from app.services.order_ingest_address_writer import upsert_order_address
 
@@ -28,12 +27,13 @@ class OrderIngestService:
     订单接入（ingest）主线 —— Route C（收敛版）
 
     ✅ 新主线合同（两态）：
-      - OK / IDEMPOTENT：订单落库 + 行事实 + 地址快照 + 服务归属（service_warehouse_id）
+      - OK / IDEMPOTENT：订单落库 + 行事实 + 地址快照 + 触发 routing 写入 order_fulfillment（planned/actual）
       - FULFILLMENT_BLOCKED：省份缺失 / 服务仓未配置（显式暴露，等待人工/配置修复）
 
     ❌ 明确不做：
       - ingest 阶段库存判断
       - ingest 阶段自动 reserve（库存不足由人工改派/退单处理）
+      - ingest 阶段探测 orders 是否存在 warehouse_id（routing 自己写 order_fulfillment）
     """
 
     @staticmethod
@@ -86,7 +86,6 @@ class OrderIngestService:
 
         orders_has_extras = await _orders_has_extras(session)
         order_items_has_extras = await _order_items_has_extras(session)
-        orders_has_whid = await _orders_has_warehouse_id(session)
 
         # 1) orders（幂等）
         ins_res = await insert_order_or_get_idempotent(
@@ -151,11 +150,11 @@ class OrderIngestService:
         except Exception:
             pass
 
-        # 4) Route C：只写服务归属（service_warehouse_id）或 BLOCKED
+        # 4) Route C：不再探测 orders 是否存在 warehouse_id；routing 直接写 order_fulfillment（planned/actual）或 BLOCKED
         route_payload: Optional[dict] = None
         route_status = "SKIPPED"
 
-        if items and orders_has_whid:
+        if items:
             rr = await auto_route_warehouse_if_possible(
                 session,
                 platform=plat,

@@ -52,17 +52,34 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     order_id = int(result["id"])
 
     # 可拣货护栏：避免订单被 BLOCKED 误伤测试主线
+    # 新世界观：orders 不再有 fulfillment_status / blocked_* 列，统一写 order_fulfillment（blocked 只保留 reasons）
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET fulfillment_status = 'READY_TO_FULFILL',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              NULL,
+              1,
+              'READY_TO_FULFILL',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status  = EXCLUDED.fulfillment_status,
+                   blocked_reasons     = NULL,
+                   updated_at          = now()
             """
         ),
-        {"oid": order_id},
+        {"oid": int(order_id)},
     )
 
     requires_batch = await _get_item_has_shelf_life(session, 1)

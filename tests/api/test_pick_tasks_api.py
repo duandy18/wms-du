@@ -60,17 +60,33 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
     order_id = int(result["id"])
 
     # ✅ Route C 测试基线：显式设置“可履约事实”
+    # 新世界观：不再写 orders.warehouse_id/service_warehouse_id/fulfillment_warehouse_id
+    # 统一写入 order_fulfillment（planned/actual/status），blocked 只保留 blocked_reasons（不保留 detail）
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET warehouse_id = :wid,
-                   service_warehouse_id = :wid,
-                   fulfillment_warehouse_id = :wid,
-                   fulfillment_status = 'READY_TO_FULFILL',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
+            INSERT INTO order_fulfillment (
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                :wid,
+                :wid,
+                'READY_TO_FULFILL',
+                NULL,
+                now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
             """
         ),
         {"wid": 1, "oid": order_id},

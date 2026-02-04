@@ -59,14 +59,28 @@ async def load_latest_pick_list_print_job(session: AsyncSession, *, task_id: int
 
 
 async def load_order_meta_or_404(session: AsyncSession, *, order_id: int) -> dict:
+    """
+    Phase 5+：
+    - orders 不再有 warehouse_id
+    - 执行仓/计划仓事实统一在 order_fulfillment
+    - 这里为了兼容调用方（打印/取单元信息），仍输出 warehouse_id 字段：
+      warehouse_id = COALESCE(actual_warehouse_id, planned_warehouse_id)
+    """
     row = (
         await session.execute(
             text(
                 """
-                SELECT platform, shop_id, ext_order_no, trace_id, warehouse_id
-                  FROM orders
-                 WHERE id = :oid
-                 LIMIT 1
+                SELECT
+                  o.platform,
+                  o.shop_id,
+                  o.ext_order_no,
+                  o.trace_id,
+                  COALESCE(of.actual_warehouse_id, of.planned_warehouse_id) AS warehouse_id
+                FROM orders o
+                LEFT JOIN order_fulfillment of
+                  ON of.order_id = o.id
+                WHERE o.id = :oid
+                LIMIT 1
                 """
             ),
             {"oid": int(order_id)},

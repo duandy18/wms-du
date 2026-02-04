@@ -6,6 +6,11 @@
 - 按 (platform, shop_id, route_mode, warehouse_id) 聚合
 - routed_orders: warehouse_id 非空的订单数
 - failed_orders: warehouse_id 为空的订单数
+
+Phase 5+ 事实边界：
+- orders 不再有 warehouse_id
+- 路由/履约仓事实统一落在 order_fulfillment（planned/actual）
+- 本测试用 actual_warehouse_id 作为“成功路由后的仓”，NULL 表示失败
 """
 
 from datetime import datetime, timezone
@@ -15,9 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def _insert_store(
-    session: AsyncSession, *, platform: str, shop_id: str, route_mode: str
-) -> None:
+async def _insert_store(session: AsyncSession, *, platform: str, shop_id: str, route_mode: str) -> None:
     await session.execute(
         sa.text(
             """
@@ -45,7 +48,12 @@ async def _insert_order(
     created_at: datetime,
     warehouse_id: int | None,
 ) -> None:
-    await session.execute(
+    """
+    Phase 5+：
+    - orders 只插订单头（不含 warehouse_id）
+    - order_fulfillment.actual_warehouse_id 表示路由成功后的仓（NULL 表示失败）
+    """
+    row = await session.execute(
         sa.text(
             """
             INSERT INTO orders (
@@ -58,33 +66,56 @@ async def _insert_order(
                 order_amount,
                 pay_amount,
                 created_at,
-                updated_at,
-                warehouse_id
+                updated_at
             )
             VALUES (
                 :p, :s, :o,
                 'CREATED',
                 'buyer', '13800000000',
                 '10', '10',
-                :at, :at,
-                :wid
+                :at, :at
             )
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET updated_at = EXCLUDED.updated_at
+            RETURNING id
             """
         ),
-        {
-            "p": platform,
-            "s": shop_id,
-            "o": ext_order_no,
-            "at": created_at,
-            "wid": warehouse_id,
-        },
+        {"p": platform, "s": shop_id, "o": ext_order_no, "at": created_at},
+    )
+    order_id = int(row.scalar_one())
+
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              NULL,
+              :awid,
+              'READY_TO_FULFILL',
+              NULL,
+              :at
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status  = EXCLUDED.fulfillment_status,
+                   blocked_reasons     = NULL,
+                   updated_at          = EXCLUDED.updated_at
+            """
+        ),
+        {"oid": int(order_id), "awid": (int(warehouse_id) if warehouse_id is not None else None), "at": created_at},
     )
 
 
 @pytest.mark.asyncio
-async def test_vw_routing_metrics_daily_basic(
-    db_session_like_pg: AsyncSession,
-) -> None:
+async def test_vw_routing_metrics_daily_basic(db_session_like_pg: AsyncSession) -> None:
     """
     构造以下场景：
 

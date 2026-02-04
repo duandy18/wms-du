@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.api.routers import orders_availability_routes, orders_summary_routes
+from app.api.routers import orders_view_facts_routes
 from app.core.audit import new_trace
 from app.services.order_service import OrderService
 from app.services.store_service import StoreService
@@ -66,10 +67,13 @@ class OrderCreateIn(BaseModel):
 class OrderFulfillmentOut(BaseModel):
     """
     Phase 5.2：履约事实快照（产品化输出）
-    - service_warehouse_id：服务归属仓（系统事实，不可变）
-    - warehouse_id：执行出库仓（AUTO 或 MANUAL 写入）
+
+    兼容字段名（对外）：
+    - service_warehouse_id：服务归属仓（planned_warehouse_id）
+    - warehouse_id：执行出库仓（actual_warehouse_id）
     - fulfillment_status：履约状态（SERVICE_ASSIGNED / READY_TO_FULFILL / MANUALLY_ASSIGNED / BLOCKED）
-    - route_status / ingest_state / auto_assign_status：用于解释 ingest 结果（可选但推荐）
+
+    ✅ 系统事实来源：order_fulfillment
     """
 
     service_warehouse_id: Optional[int] = None
@@ -92,7 +96,11 @@ class OrderCreateOut(BaseModel):
 
 async def _load_fulfillment_snapshot(session: AsyncSession, *, order_id: int) -> Dict[str, Any]:
     """
-    从 orders 表读取履约事实快照（以 DB 为准）。
+    从 order_fulfillment 表读取履约事实快照（以 DB 为准）。
+
+    兼容输出字段名：
+      - service_warehouse_id := planned_warehouse_id
+      - warehouse_id := actual_warehouse_id
     """
     row = (
         (
@@ -100,11 +108,11 @@ async def _load_fulfillment_snapshot(session: AsyncSession, *, order_id: int) ->
                 text(
                     """
                     SELECT
-                      service_warehouse_id,
-                      warehouse_id,
+                      planned_warehouse_id,
+                      actual_warehouse_id,
                       fulfillment_status
-                    FROM orders
-                    WHERE id = :oid
+                    FROM order_fulfillment
+                    WHERE order_id = :oid
                     LIMIT 1
                     """
                 ),
@@ -118,8 +126,8 @@ async def _load_fulfillment_snapshot(session: AsyncSession, *, order_id: int) ->
         return {"service_warehouse_id": None, "warehouse_id": None, "fulfillment_status": None}
 
     return {
-        "service_warehouse_id": int(row["service_warehouse_id"]) if row.get("service_warehouse_id") is not None else None,
-        "warehouse_id": int(row["warehouse_id"]) if row.get("warehouse_id") is not None else None,
+        "service_warehouse_id": int(row["planned_warehouse_id"]) if row.get("planned_warehouse_id") is not None else None,
+        "warehouse_id": int(row["actual_warehouse_id"]) if row.get("actual_warehouse_id") is not None else None,
         "fulfillment_status": str(row["fulfillment_status"]) if row.get("fulfillment_status") is not None else None,
     }
 
@@ -218,6 +226,9 @@ async def create_order_raw(
 # ✅ Phase 5.2：订单管理列表（正统出口）
 # 注入 /orders/summary，确保 orders 域只有一个 router 作为权威出口
 orders_summary_routes.register(router)
+
+# ✅ 平台订单镜像（view/facts，只读）
+orders_view_facts_routes.register(router)
 
 # ✅ Phase 5.3：订单 × 仓库库存对齐（Explain 层，只读）
 orders_availability_routes.register(router)

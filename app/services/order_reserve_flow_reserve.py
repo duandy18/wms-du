@@ -34,15 +34,15 @@ async def resolve_warehouse_for_order(
         text(
             """
             SELECT
-              warehouse_id,
-              fulfillment_status,
-              blocked_detail,
-              blocked_reasons
-              FROM orders
-             WHERE platform = :p
-               AND shop_id  = :s
-               AND ext_order_no = :o
-             LIMIT 1
+              f.actual_warehouse_id AS warehouse_id,
+              f.fulfillment_status AS fulfillment_status,
+              f.blocked_reasons AS blocked_reasons
+            FROM orders o
+            LEFT JOIN order_fulfillment f ON f.order_id = o.id
+            WHERE o.platform = :p
+              AND o.shop_id  = :s
+              AND o.ext_order_no = :o
+            LIMIT 1
             """
         ),
         {"p": plat, "s": shop_id, "o": ext_order_no},
@@ -56,15 +56,12 @@ async def resolve_warehouse_for_order(
 
     warehouse_id = rec[0]
     fulfillment_status = rec[1]
-    blocked_detail = rec[2]
-    blocked_reasons = rec[3]
+    blocked_reasons = rec[2]
 
     if warehouse_id is None or int(warehouse_id) == 0:
         extra = []
         if fulfillment_status:
             extra.append(f"fulfillment_status={fulfillment_status}")
-        if blocked_detail:
-            extra.append(f"blocked_detail={blocked_detail}")
         if blocked_reasons:
             extra.append(f"blocked_reasons={blocked_reasons}")
         suffix = ("; " + ", ".join(extra)) if extra else ""
@@ -120,7 +117,7 @@ async def reserve_flow(
     - 不做库存裁决
     - 不做库存判断
     - 只做：
-      1) 确保订单仓库已解析
+      1) 确保订单仓库已解析（执行仓 actual_warehouse_id）
       2) 将订单 status 置为 PICKABLE（仓内执行态信号）
       3) 幂等 ensure pick_task + pick_task_lines
       4) 幂等 enqueue pick_list print_job（payload 快照，可回放）

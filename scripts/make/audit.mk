@@ -101,26 +101,23 @@ audit-fulfillment-routec:
 	  exit 1;'
 
 # =================================
-# Phase 5.1 封口：禁止任何隐性写 orders.warehouse_id
-# - 白名单仅允许：manual-assign service（devconsole 写入已被禁止）
+# Phase 5.1 封口（一步到位迁移后）：
+# - 禁止任何写 orders 表的 warehouse_id 列（该列不再承载事实 / 迁移后将被删除）
+# - 执行仓事实唯一写入目标：order_fulfillment.actual_warehouse_id
 # =================================
 .PHONY: audit-no-implicit-warehouse-id
 audit-no-implicit-warehouse-id:
 	@bash -c 'set -euo pipefail; \
-	  echo "[audit-no-implicit-warehouse-id] forbid implicit writes to orders.warehouse_id ..."; \
-	  hits="$$(rg -n "UPDATE orders\\s+SET\\s+warehouse_id|SET\\s+warehouse_id\\s*=" app -S || true)"; \
-	  if [ -z "$$hits" ]; then \
+	  echo "[audit-no-implicit-warehouse-id] forbid ANY writes to orders table warehouse_id column (use order_fulfillment.actual_warehouse_id) ..."; \
+	  hits="$$(rg -n "UPDATE\\s+orders\\b[\\s\\S]*?SET[\\s\\S]*?\\bwarehouse_id\\b" app -S || true)"; \
+	  hits2="$$(rg -n "\\borders\\.warehouse_id\\b\\s*=" app -S || true)"; \
+	  if [ -z "$$hits$$hits2" ]; then \
 	    echo "[audit-no-implicit-warehouse-id] OK (no hits)"; exit 0; \
 	  fi; \
-	  allow_re="app/services/order_fulfillment_manual_assign\\.py"; \
-	  bad="$$(printf "%s\n" "$$hits" | rg -v "$$allow_re" || true)"; \
-	  if [ -n "$$bad" ]; then \
-	    echo "$$bad"; \
-	    echo "[audit-no-implicit-warehouse-id] FAIL: only manual-assign service may write orders.warehouse_id"; \
-	    exit 1; \
-	  fi; \
-	  echo "[audit-no-implicit-warehouse-id] OK (hits only in whitelist)"; \
-	'
+	  if [ -n "$$hits" ]; then echo "$$hits"; fi; \
+	  if [ -n "$$hits2" ]; then echo "$$hits2"; fi; \
+	  echo "[audit-no-implicit-warehouse-id] FAIL: orders table warehouse_id column must not be written; write order_fulfillment.actual_warehouse_id instead"; \
+	  exit 1;'
 
 # =================================
 # Phase 2 守门员：运价区间必须兜底覆盖（避免 no matching bracket 线上翻车）

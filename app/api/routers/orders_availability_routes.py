@@ -71,9 +71,15 @@ async def _load_order_head(session: AsyncSession, *, order_id: int) -> dict:
             await session.execute(
                 text(
                     """
-                    SELECT id, platform, shop_id, service_warehouse_id, warehouse_id
-                    FROM orders
-                    WHERE id = :oid
+                    SELECT
+                      o.id,
+                      o.platform,
+                      o.shop_id,
+                      f.planned_warehouse_id AS service_warehouse_id,
+                      f.actual_warehouse_id  AS warehouse_id
+                    FROM orders o
+                    LEFT JOIN order_fulfillment f ON f.order_id = o.id
+                    WHERE o.id = :oid
                     LIMIT 1
                     """
                 ),

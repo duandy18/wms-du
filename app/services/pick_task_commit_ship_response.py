@@ -30,6 +30,10 @@ def build_ok_payload(
     temp lines:
       - 临时事实行（order_id=None / note=TEMP_FACT）用于未来异常流程的护栏
       - 前端可直接提示“存在非订单行事实”
+
+    next_actions:
+      - 成功路径也给出可行动提示（与 Problem 的 next_actions 同源风格）
+      - 前端无需拼路由/无需猜下一步，只需渲染这些动作
     """
     return {
         "status": "OK",
@@ -49,4 +53,19 @@ def build_ok_payload(
             "temp_lines_n": int(temp_lines_n),
             "lines": [asdict(x) for x in diff_summary.lines],
         },
+        "next_actions": [
+            {
+                "action": "view_outbound",
+                "label": "查看出库记录",
+                "meta": {
+                    "platform": str(platform),
+                    "shop_id": str(shop_id),
+                    "ref": str(ref),
+                    "trace_id": str(trace_id),
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                },
+            },
+            {"action": "back_to_list", "label": "返回任务列表"},
+        ],
     }

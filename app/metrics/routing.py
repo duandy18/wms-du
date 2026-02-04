@@ -88,7 +88,11 @@ def record_request(platform: str, shop_id: str, route_mode: str) -> None:
 
 def record_decision(decision: RoutingDecision) -> None:
     """
-    在路由决策完成、写入 orders.warehouse_id 之后调用。
+    在路由决策完成、写入 order_fulfillment（planned/actual）之后调用。
+
+    说明：
+    - 一步到位迁移后，orders 不再承载执行仓/服务仓事实；
+      相关快照统一写入 order_fulfillment.planned_warehouse_id / actual_warehouse_id。
     """
     platform = decision.platform
     shop_id = decision.shop_id

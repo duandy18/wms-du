@@ -5,12 +5,100 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+async def _upsert_order_and_fulfillment(
+    session: AsyncSession,
+    *,
+    platform: str,
+    shop_id: str,
+    ext_order_no: str,
+    trace_id: str,
+    wh_id: int,
+    status: str = "CREATED",
+    fulfillment_status: str = "READY_TO_FULFILL",
+) -> int:
+    """
+    Phase 5+ 事实边界：
+    - orders：只承载订单头（不再有 warehouse_id）
+    - order_fulfillment：承载执行仓/履约快照（这里写 actual_warehouse_id）
+    """
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO orders (
+                platform,
+                shop_id,
+                ext_order_no,
+                status,
+                trace_id,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :platform,
+                :shop_id,
+                :ext_order_no,
+                :status,
+                :trace_id,
+                now(),
+                now()
+            )
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET status = EXCLUDED.status,
+                  trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
+                  updated_at = now()
+            RETURNING id
+            """
+        ),
+        {
+            "platform": platform,
+            "shop_id": shop_id,
+            "ext_order_no": ext_order_no,
+            "status": status,
+            "trace_id": trace_id,
+        },
+    )
+    order_id = int(row.scalar_one())
+    assert order_id > 0
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              NULL,
+              :awid,
+              :fs,
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status  = EXCLUDED.fulfillment_status,
+                   blocked_reasons     = NULL,
+                   updated_at          = now()
+            """
+        ),
+        {"oid": int(order_id), "awid": int(wh_id), "fs": str(fulfillment_status)},
+    )
+
+    return int(order_id)
+
+
 async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     """
     构造一个“正常履约 + 退货”的生命周期场景（不依赖任何旧预占相关表）：
 
     - trace_id = 'LIFE-UT-1'
-    - orders: 一条
+    - orders: 一条（Phase5+：不含 warehouse_id）
+    - order_fulfillment: 一条（写 actual_warehouse_id）
     - outbound_commits_v2: 一条 COMMITTED（如已有记录则跳过）
     - audit_events: 一条 flow=OUTBOUND（兜底）
     - stock_ledger:
@@ -37,31 +125,17 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
     )
 
-    # orders
-    row = await session.execute(
-        text(
-            """
-            INSERT INTO orders (
-                platform, shop_id, ext_order_no,
-                warehouse_id, status, trace_id, created_at, updated_at
-            )
-            VALUES (
-                :platform, :shop_id, :ext_order_no,
-                :wh_id, 'CREATED', :trace_id, now(), now()
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "platform": platform,
-            "shop_id": shop_id,
-            "ext_order_no": ext_order_no,
-            "wh_id": wh_id,
-            "trace_id": trace_id,
-        },
+    # orders + order_fulfillment（Phase5+）
+    await _upsert_order_and_fulfillment(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ext_order_no=ext_order_no,
+        trace_id=trace_id,
+        wh_id=wh_id,
+        status="CREATED",
+        fulfillment_status="READY_TO_FULFILL",
     )
-    order_id = int(row.scalar_one())
-    assert order_id > 0
 
     # outbound_commits_v2
     await session.execute(
@@ -172,26 +246,16 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
         {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
     )
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO orders (
-                platform, shop_id, ext_order_no,
-                warehouse_id, status, trace_id, created_at, updated_at
-            )
-            VALUES (
-                :platform, :shop_id, :ext_order_no,
-                :wh_id, 'CREATED', :trace_id, now(), now()
-            )
-            """
-        ),
-        {
-            "platform": platform,
-            "shop_id": shop_id,
-            "ext_order_no": ext_order_no,
-            "wh_id": wh_id,
-            "trace_id": trace_id,
-        },
+    # orders + order_fulfillment（Phase5+）
+    await _upsert_order_and_fulfillment(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ext_order_no=ext_order_no,
+        trace_id=trace_id,
+        wh_id=wh_id,
+        status="CREATED",
+        fulfillment_status="READY_TO_FULFILL",
     )
 
     await session.execute(
@@ -235,26 +299,16 @@ async def seed_created_only_case(session: AsyncSession) -> str:
         {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
     )
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO orders (
-                platform, shop_id, ext_order_no,
-                warehouse_id, status, trace_id, created_at, updated_at
-            )
-            VALUES (
-                :platform, :shop_id, :ext_order_no,
-                :wh_id, 'CREATED', :trace_id, now(), now()
-            )
-            """
-        ),
-        {
-            "platform": platform,
-            "shop_id": shop_id,
-            "ext_order_no": ext_order_no,
-            "wh_id": wh_id,
-            "trace_id": trace_id,
-        },
+    # orders + order_fulfillment（Phase5+）
+    await _upsert_order_and_fulfillment(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ext_order_no=ext_order_no,
+        trace_id=trace_id,
+        wh_id=wh_id,
+        status="CREATED",
+        fulfillment_status="READY_TO_FULFILL",
     )
 
     await session.commit()

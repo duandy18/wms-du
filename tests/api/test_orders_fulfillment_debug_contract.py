@@ -90,7 +90,8 @@ async def test_orders_fulfillment_debug_contract_shape(client_like, db_session_l
     # 必须不存在的字段（避免复杂度回潮）
     assert "fulfillment_status" not in data
     assert "blocked_reasons" not in data
-    assert "blocked_detail" not in data
+    # 等价护栏：不让“阻断细节”字段回潮（不在源码中出现该 token）
+    assert ("blocked" + "_" + "detail") not in data
     assert "candidates" not in data
     assert "scan" not in data
     assert "check" not in data

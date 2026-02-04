@@ -19,32 +19,40 @@ class ManualAssignResult:
     fulfillment_status: str
 
 
-async def _get_order_id_and_current_wh(
+async def _get_order_id_and_current_actual_wh(
     session: AsyncSession,
     *,
     platform: str,
     shop_id: str,
     ext_order_no: str,
 ) -> Tuple[int, Optional[int]]:
+    """
+    一步到位迁移后：orders 不再包含 warehouse_id 等履约列。
+    当前“实际仓”从 order_fulfillment.actual_warehouse_id 读取。
+    """
     row = await session.execute(
         text(
             """
-            SELECT id, warehouse_id
-              FROM orders
-             WHERE platform = :p
-               AND shop_id  = :s
-               AND ext_order_no = :o
-             LIMIT 1
+            SELECT
+              o.id AS order_id,
+              f.actual_warehouse_id AS actual_warehouse_id
+            FROM orders o
+            LEFT JOIN order_fulfillment f ON f.order_id = o.id
+            WHERE o.platform = :p
+              AND o.shop_id  = :s
+              AND o.ext_order_no = :o
+            LIMIT 1
             """
         ),
         {"p": platform, "s": shop_id, "o": ext_order_no},
     )
-    rec = row.first()
+    rec = row.mappings().first()
     if rec is None:
         raise ValueError(f"order not found: platform={platform}, shop_id={shop_id}, ext_order_no={ext_order_no}")
-    oid = int(rec[0])
-    wid = rec[1]
-    return oid, (int(wid) if wid else None)
+
+    oid = int(rec["order_id"])
+    wid = rec.get("actual_warehouse_id")
+    return oid, (int(wid) if wid is not None else None)
 
 
 async def _load_order_lines_sum(
@@ -119,14 +127,16 @@ async def manual_assign_fulfillment_warehouse(
     operator_id: Optional[int] = None,
 ) -> ManualAssignResult:
     """
-    Phase 5.1：人工指定执行仓（唯一允许写 orders.warehouse_id 的主线入口）
+    一步到位迁移后（最小事实）：
+    - 实际仓写入 order_fulfillment.actual_warehouse_id
+    - 计划仓（planned）不在这里改（仍由 Route C/策略写入 planned_warehouse_id）
+    - 履约状态写入 order_fulfillment.fulfillment_status
 
-    写入：
-      - orders.warehouse_id = warehouse_id
-      - orders.fulfillment_warehouse_id = warehouse_id
-      - orders.fulfillment_status = 'MANUALLY_ASSIGNED'
-      - 清空 blocked 字段（如果之前是 BLOCKED）
-      - 兼容字段：overridden_by / overridden_at / override_reason（若表存在则写，不强依赖）
+    写入（最小事实）：
+      - order_fulfillment.actual_warehouse_id = warehouse_id
+      - order_fulfillment.fulfillment_status = 'MANUALLY_ASSIGNED'
+      - 清空 blocked_reasons（如果之前是 BLOCKED）
+      - 不保留 override_*（审计信息走 AuditEventWriter/event_log）
     审计：
       - OUTBOUND / MANUAL_WAREHOUSE_ASSIGNED
     """
@@ -139,33 +149,45 @@ async def manual_assign_fulfillment_warehouse(
     if not rsn:
         raise ValueError("manual-assign blocked: reason is required")
 
-    order_id, from_wh = await _get_order_id_and_current_wh(session, platform=plat, shop_id=sid, ext_order_no=ext_order_no)
+    order_id, from_wh = await _get_order_id_and_current_actual_wh(
+        session, platform=plat, shop_id=sid, ext_order_no=ext_order_no
+    )
     lines = await _load_order_lines_sum(session, order_id=order_id)
 
     # 事实层校验：目标仓必须整单可履约
     await _check_can_fulfill_whole_order(session, platform=plat, shop_id=sid, warehouse_id=wid, lines=lines)
 
-    # 写 orders：只在这里写 warehouse_id（强约束）
+    # 写 order_fulfillment：upsert（最小事实）
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET warehouse_id = :wid,
-                   fulfillment_warehouse_id = :wid,
-                   fulfillment_status = 'MANUALLY_ASSIGNED',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL,
-                   overridden_by = :by,
-                   overridden_at = now(),
-                   override_reason = :reason
-             WHERE id = :oid
+            INSERT INTO order_fulfillment(
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                NULL,
+                :awid,
+                'MANUALLY_ASSIGNED',
+                NULL,
+                now()
+            )
+            ON CONFLICT (order_id)
+            DO UPDATE SET
+                actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+                fulfillment_status = EXCLUDED.fulfillment_status,
+                blocked_reasons = NULL,
+                updated_at = now()
             """
         ),
         {
-            "wid": int(wid),
-            "by": int(operator_id) if operator_id is not None else None,
-            "reason": rsn,
             "oid": int(order_id),
+            "awid": int(wid),
         },
     )
 

@@ -44,11 +44,16 @@ def register(router: APIRouter) -> None:
         user: Any = Depends(get_current_user),
     ):
         """
-        Phase 5.1：人工指定执行仓（唯一合法写 warehouse_id 的路径）
+        Phase 5.1：人工指定执行仓（执行期唯一合法写入路径）
 
-        - service 层写 orders.warehouse_id / fulfillment_warehouse_id
+        ✅ 新世界观（一步到位迁移后）：
+        - 实际出库仓写入 order_fulfillment.actual_warehouse_id（执行仓事实）
+        - planned/service 归属仓仍由 routing 写入 order_fulfillment.planned_warehouse_id
         - 写 fulfillment_status=MANUALLY_ASSIGNED
         - 写审计事件：MANUAL_WAREHOUSE_ASSIGNED
+
+        ❌ 禁止回潮：
+        - 不允许写 orders.warehouse_id（该列迁移后将被删除/不再承载事实）
         """
         plat = platform.upper()
         order_ref, trace_id = await get_order_ref_and_trace_id(

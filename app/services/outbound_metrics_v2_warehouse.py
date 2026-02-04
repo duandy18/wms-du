@@ -36,7 +36,7 @@ async def load_by_warehouse(
               AND (l.occurred_at AT TIME ZONE 'utc')::date = :day
             GROUP BY l.warehouse_id, l.ref
         ),
-        orders AS (
+        order_refs AS (
             SELECT
                 p.warehouse_id,
                 p.ref,
@@ -48,16 +48,16 @@ async def load_by_warehouse(
             GROUP BY p.warehouse_id, p.ref
         )
         SELECT
-            o.warehouse_id,
+            r.warehouse_id,
             count(*) AS total_orders,
-            count(*) FILTER (WHERE o.shipped) AS success_orders,
+            count(*) FILTER (WHERE r.shipped) AS success_orders,
             sum(p.pick_qty) AS pick_qty
-        FROM orders o
+        FROM order_refs r
         JOIN picks p
-          ON p.warehouse_id = o.warehouse_id
-         AND p.ref = o.ref
-        GROUP BY o.warehouse_id
-        ORDER BY o.warehouse_id
+          ON p.warehouse_id = r.warehouse_id
+         AND p.ref = r.ref
+        GROUP BY r.warehouse_id
+        ORDER BY r.warehouse_id
         """
     )
     rows = (await session.execute(sql, {"platform": platform, "day": day})).fetchall()

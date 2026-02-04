@@ -24,10 +24,15 @@ async def auto_route_warehouse_if_possible(
     """
     ✅ Route C（收敛到“简单世界观”）
 
-    只做“服务归属（service warehouse）”，不做库存判断、不做自动改派、不做候选扫描：
-    - province 缺失 → FULFILLMENT_BLOCKED（PROVINCE_MISSING_OR_INVALID）
-    - 命中 service warehouse → SERVICE_ASSIGNED（写 orders.service_warehouse_id）
-    - 命不中 → FULFILLMENT_BLOCKED（NO_SERVICE_PROVINCE / NO_SERVICE_WAREHOUSE）
+    只做“服务归属（service warehouse）”，不做库存判断、不做自动改派、不做候选扫描。
+
+    写入目标（新主线）：
+      - 命中 service warehouse → SERVICE_ASSIGNED：写 order_fulfillment.planned_warehouse_id
+      - 命不中/省份缺失 → FULFILLMENT_BLOCKED：写 order_fulfillment.fulfillment_status + blocked detail
+
+    兼容返回 payload：
+      - service_warehouse_id 仍保留，用作 planned_warehouse_id 的兼容别名（便于旧调用方/调试工具读取）。
+        但系统事实以 order_fulfillment 为准，orders 表不承载仓库归属。
     """
     if not items:
         return None

@@ -12,6 +12,15 @@ from app.services.pick_task_loaders import load_task
 UTC = timezone.utc
 
 
+# ✅ 结构化错误：服务层只负责“裁决与证据”，不负责 HTTP 形态
+class PickTaskScanError(ValueError):
+    def __init__(self, *, error_code: str, message: str, details: Optional[list] = None):
+        super().__init__(message)
+        self.error_code = str(error_code)
+        self.message = str(message)
+        self.details = details or []
+
+
 def _calc_line_status(*, req_qty: int, picked_qty: int) -> str:
     """
     事实驱动状态（不依赖 trigger）：
@@ -30,6 +39,11 @@ def _calc_line_status(*, req_qty: int, picked_qty: int) -> str:
     return "DONE"
 
 
+def _can_accept_scan(task_status: str) -> bool:
+    # ✅ 兼容历史/脏数据：NEW 视为可扫描（等价 READY）
+    return str(task_status) in ("NEW", "READY", "ASSIGNED", "PICKING")
+
+
 async def record_scan(
     session: AsyncSession,
     *,
@@ -46,14 +60,28 @@ async def record_scan(
     - task.status: NEW/READY/ASSIGNED -> PICKING（发生任何 picked_qty>0）
     - line.status: OPEN / PARTIAL / DONE
     """
-    if qty == 0:
+    # 兜底：路由层一般已用 schema 限制 qty>0，但这里仍保留防御式护栏
+    if int(qty) == 0:
         return await load_task(session, task_id)
 
     task = await load_task(session, task_id, for_update=True)
 
-    # ✅ 兼容历史/脏数据：NEW 视为可扫描（等价 READY）
-    if task.status not in ("NEW", "READY", "ASSIGNED", "PICKING"):
-        raise ValueError(f"PickTask {task.id} status={task.status} cannot accept pick scan.")
+    if not _can_accept_scan(task.status):
+        # ✅ 结构化拒绝：前端无需猜状态含义
+        raise PickTaskScanError(
+            error_code="pick_task_scan_reject",
+            message="当前任务状态不允许扫码拣货。",
+            details=[
+                {
+                    "type": "guard",
+                    "guard": "scan",
+                    "task_id": int(task.id),
+                    "status": str(task.status),
+                    "allowed": ["NEW", "READY", "ASSIGNED", "PICKING"],
+                    "reason": "status_not_allowed",
+                }
+            ],
+        )
 
     norm_batch = (batch_code or "").strip() or None
     target: Optional[PickTaskLine] = None

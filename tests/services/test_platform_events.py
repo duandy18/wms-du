@@ -20,16 +20,17 @@ async def _ensure_order_for_event(
     trace_id: str,
 ) -> str:
     """
-    为即将处理的平台事件插入一条最小化订单头（带 warehouse_id + trace_id），
-    并返回标准化的订单 ref：ORD:{PLAT}:{shop_id}:{ext_order_no}。
+    为即将处理的平台事件插入一条最小化订单头（带 trace_id），并写入执行仓事实，
+    返回标准化订单 ref：ORD:{PLAT}:{shop_id}:{ext_order_no}。
 
-    说明：
-      - 当前 Golden Flow 要求 OrderService.reserve 只接受 ORD:... 形式的 ref，
-        并依赖 orders.warehouse_id 来解析仓库；
-      - 实际平台适配层应负责把平台原始 order_sn 转成 ORD ref；
-        本测试直接模拟“适配层已经完成转换”的场景。
+    新世界观（一步到位迁移后）：
+      - 订单头在 orders
+      - 执行仓事实/履约快照在 order_fulfillment
+      - blocked 只保留 blocked_reasons（不保留 detail）
     """
     plat = platform.upper()
+
+    # 1) orders：只写订单头（不写 warehouse_id）
     await session.execute(
         text(
             """
@@ -37,7 +38,6 @@ async def _ensure_order_for_event(
                 platform,
                 shop_id,
                 ext_order_no,
-                warehouse_id,
                 trace_id,
                 created_at
             )
@@ -45,7 +45,6 @@ async def _ensure_order_for_event(
                 :p,
                 :s,
                 :o,
-                :w,
                 :tid,
                 now()
             )
@@ -56,10 +55,58 @@ async def _ensure_order_for_event(
             "p": plat,
             "s": shop_id,
             "o": ext_order_no,
-            "w": warehouse_id,
             "tid": trace_id,
         },
     )
+
+    # 2) 取 order_id，写 order_fulfillment（执行仓事实）
+    row = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM orders
+             WHERE platform = :p
+               AND shop_id = :s
+               AND ext_order_no = :o
+             LIMIT 1
+            """
+        ),
+        {"p": plat, "s": shop_id, "o": ext_order_no},
+    )
+    order_id = row.scalar_one_or_none()
+    if order_id is None:
+        raise RuntimeError("failed to ensure order head for platform event test")
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_fulfillment (
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                :wid,
+                :wid,
+                'READY_TO_FULFILL',
+                NULL,
+                now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
+            """
+        ),
+        {"oid": int(order_id), "wid": int(warehouse_id)},
+    )
+
     return f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
 
@@ -73,7 +120,7 @@ async def test_platform_event_basic_flow(session: AsyncSession):
       - 事件中的 order_sn 使用标准订单 ref（ORD:PLAT:shop:ext_order_no）；
       - handle_event_batch 内部会：
           * 解析事件；
-          * 调用 OrderService.reserve（Golden Flow）；
+          * 调用 Golden Flow（reserve 等）；
           * 写入 event_log。
 
     本测试只关心：
@@ -86,7 +133,7 @@ async def test_platform_event_basic_flow(session: AsyncSession):
     trace_id = "TRACE-PLATFORM-O1"
     warehouse_id = 1
 
-    # 为该事件准备一条订单头（带 warehouse_id），并得到标准订单 ref
+    # 为该事件准备订单头 + 履约事实，并得到标准订单 ref
     order_ref = await _ensure_order_for_event(
         session,
         platform=platform,
