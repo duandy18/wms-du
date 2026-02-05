@@ -243,6 +243,9 @@ from app.api.routers.geo_cn import router as geo_router
 # ✅ 明确挂载：fulfillment-debug（v4-min）
 from app.api.routers.orders_fulfillment_debug_routes import router as orders_fulfillment_debug_router
 
+# ✅ 新增：商铺商品组合（FSKU / 平台绑定 / 镜像线索）
+from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
+
 # ---------------------------------------------------------------------------
 # scan 路由（已拆分：scan_routes_*）
 # ---------------------------------------------------------------------------
@@ -298,6 +301,7 @@ app.include_router(return_tasks_router)
 app.include_router(pick_tasks_router)
 app.include_router(print_jobs_router)
 app.include_router(stores_router)
+app.include_router(shop_product_bundles_router)  # ✅ 新增：/fskus /platform-sku-bindings /platform-skus/mirror
 app.include_router(warehouses_router)
 app.include_router(platform_shops_router)
 app.include_router(pdd_auth_router)
