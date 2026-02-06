@@ -12,6 +12,7 @@ from app.api.schemas.fsku import (
     FskuCreateIn,
     FskuDetailOut,
     FskuListOut,
+    FskuNameUpdateIn,
 )
 from app.db.deps import get_db
 from app.services.fsku_service import FskuService
@@ -89,6 +90,49 @@ def register(router: APIRouter) -> None:
                 ),
             )
         return out
+
+    @r.patch("/{fsku_id}", response_model=FskuDetailOut)
+    def patch_fsku(
+        fsku_id: int,
+        payload: FskuNameUpdateIn,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+        svc: FskuService = Depends(_svc),
+    ) -> FskuDetailOut:
+        check_perm(db, current_user, ["config.store.write"])
+        try:
+            return svc.update_name(fsku_id=fsku_id, name=payload.name)
+        except FskuService.NotFound as e:
+            raise HTTPException(
+                status_code=404,
+                detail=make_problem(
+                    status_code=404,
+                    error_code="not_found",
+                    message=str(e),
+                    context={"fsku_id": fsku_id},
+                ),
+            )
+        except FskuService.Conflict as e:
+            raise HTTPException(
+                status_code=409,
+                detail=make_problem(
+                    status_code=409,
+                    error_code="state_conflict",
+                    message=str(e),
+                    context={"fsku_id": fsku_id},
+                ),
+            )
+        except FskuService.BadInput as e:
+            raise HTTPException(
+                status_code=422,
+                detail=make_problem(
+                    status_code=422,
+                    error_code="request_validation_error",
+                    message="请求参数不合法",
+                    context={"fsku_id": fsku_id},
+                    details=e.details,
+                ),
+            )
 
     @r.get("/{fsku_id}/components", response_model=FskuDetailOut)
     def components(
@@ -195,6 +239,42 @@ def register(router: APIRouter) -> None:
         check_perm(db, current_user, ["config.store.write"])
         try:
             return svc.retire(fsku_id)
+        except FskuService.NotFound as e:
+            raise HTTPException(
+                status_code=404,
+                detail=make_problem(
+                    status_code=404,
+                    error_code="not_found",
+                    message=str(e),
+                    context={"fsku_id": fsku_id},
+                ),
+            )
+        except FskuService.Conflict as e:
+            raise HTTPException(
+                status_code=409,
+                detail=make_problem(
+                    status_code=409,
+                    error_code="state_conflict",
+                    message=str(e),
+                    context={"fsku_id": fsku_id},
+                ),
+            )
+
+    @r.post("/{fsku_id}/unretire", response_model=FskuDetailOut)
+    def unretire(
+        fsku_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+        svc: FskuService = Depends(_svc),
+    ) -> FskuDetailOut:
+        """
+        ✅ 取消归档（恢复）
+        - 仅允许 status=retired 的 FSKU 取消归档
+        - 取消后 status=published；retired_at 清空；published_at 保持历史值
+        """
+        check_perm(db, current_user, ["config.store.write"])
+        try:
+            return svc.unretire(fsku_id)
         except FskuService.NotFound as e:
             raise HTTPException(
                 status_code=404,

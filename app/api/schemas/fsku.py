@@ -21,6 +21,11 @@ class FskuCreateIn(BaseModel):
     shape: FskuShape = Field("bundle")
 
 
+class FskuNameUpdateIn(BaseModel):
+    # ✅ 运营可读名：允许修改（draft/published 可改；retired 只读由 service 护栏）
+    name: str = Field(..., min_length=1, max_length=200)
+
+
 # Phase A：role 扩展为 primary/gift（只表达语义，不引入履约裁决）
 FskuComponentRole = Literal["primary", "gift"]
 
