@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +24,27 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+FskuShape = Literal["single", "bundle"]
+
+
+def _normalize_shape(v: str | None) -> FskuShape:
+    if v is None:
+        return "bundle"
+    s = v.strip()
+    if not s:
+        return "bundle"
+    if s not in ("single", "bundle"):
+        raise ValueError("shape must be 'single' or 'bundle'")
+    return s  # type: ignore[return-value]
+
+
+def _normalize_code(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = v.strip()
+    return s or None
+
+
 class FskuService:
     class NotFound(Exception):
         pass
@@ -38,38 +59,95 @@ class FskuService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_draft(self, *, name: str, unit_label: str | None) -> FskuDetailOut:
+    def create_draft(self, *, name: str, code: str | None, shape: str | None) -> FskuDetailOut:
         now = _utc_now()
+        shp = _normalize_shape(shape)
+        cd = _normalize_code(code)
+
         obj = Fsku(
             name=name.strip(),
-            unit_label=(unit_label.strip() if unit_label else None),
+            code="__PENDING__",  # 临时占位，flush 后生成最终 code
+            shape=shp,
             status="draft",
             created_at=now,
             updated_at=now,
         )
         self.db.add(obj)
-        self.db.commit()
+        self.db.flush()  # 拿到 obj.id
+
+        # ✅ code 规则：用户传入则用；否则生成 FSKU-{id}
+        obj.code = cd or f"FSKU-{obj.id}"
+
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise self.Conflict("FSKU code 冲突（必须全局唯一）")
         self.db.refresh(obj)
         return self._to_detail(obj, [])
 
     def list_fskus(self, *, query: str | None, status: str | None, limit: int, offset: int) -> FskuListOut:
-        stmt = select(Fsku)
+        base = select(Fsku.id)
         if query:
             q = f"%{query.strip()}%"
-            stmt = stmt.where(Fsku.name.ilike(q))
+            base = base.where(Fsku.name.ilike(q) | Fsku.code.ilike(q))
         if status:
-            stmt = stmt.where(Fsku.status == status)
+            base = base.where(Fsku.status == status)
 
-        total = int(self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-        rows = self.db.scalars(stmt.order_by(Fsku.updated_at.desc()).limit(limit).offset(offset)).all()
+        total = int(self.db.scalar(select(func.count()).select_from(base.subquery())) or 0)
+
+        sql = """
+        SELECT
+          f.id,
+          f.code,
+          f.name,
+          f.shape,
+          f.status,
+          f.updated_at,
+          f.published_at,
+          f.retired_at,
+          COALESCE(
+            STRING_AGG(
+              (i.sku || '×' || (c.qty::int)::text || '(' || c.role || ')'),
+              ' + '
+              ORDER BY c.role, i.sku
+            ),
+            ''
+          ) AS components_summary
+        FROM fskus f
+        LEFT JOIN fsku_components c ON c.fsku_id = f.id
+        LEFT JOIN items i ON i.id = c.item_id
+        WHERE 1=1
+        """
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if query:
+            sql += " AND (f.name ILIKE :q OR f.code ILIKE :q) "
+            params["q"] = f"%{query.strip()}%"
+
+        if status:
+            sql += " AND f.status = :status "
+            params["status"] = status
+
+        sql += """
+        GROUP BY f.id
+        ORDER BY f.updated_at DESC
+        LIMIT :limit OFFSET :offset
+        """
+
+        rows = self.db.execute(text(sql), params).mappings().all()
 
         items = [
             FskuListItem(
-                id=r.id,
-                name=r.name,
-                unit_label=r.unit_label,
-                status=r.status,
-                updated_at=r.updated_at,
+                id=int(r["id"]),
+                code=str(r["code"]),
+                name=str(r["name"]),
+                shape=str(r["shape"]),
+                status=str(r["status"]),
+                updated_at=r["updated_at"],
+                published_at=r["published_at"],
+                retired_at=r["retired_at"],
+                components_summary=str(r["components_summary"] or ""),
             )
             for r in rows
         ]
@@ -93,7 +171,6 @@ class FskuService:
         details: list[dict[str, Any]] = []
         seen: set[tuple[int, str]] = set()
 
-        # ✅ 结构约束 1：不允许重复的 (item_id, role)
         for i, c in enumerate(components):
             key = (c.item_id, str(c.role))
             if key in seen:
@@ -103,12 +180,9 @@ class FskuService:
         if details:
             raise self.BadInput(details=details)
 
-        # ✅ 结构约束 2：必须至少 1 条 primary（主销商品）
         if not any(str(c.role) == "primary" for c in components):
             raise self.BadInput(details=[{"type": "validation", "path": "components", "reason": "必须至少包含 1 条 role=primary（主销商品）"}])
 
-        # ✅ 明确校验 item_id 存在（避免 FK 报错变 500）
-        # 不引入 Item ORM，直接查 items 表存在性
         for i, c in enumerate(components):
             ok = self.db.execute(text("select 1 from items where id=:id"), {"id": c.item_id}).first()
             if ok is None:
@@ -118,7 +192,6 @@ class FskuService:
 
         now = _utc_now()
 
-        # 全量替换：先删再插
         self.db.execute(delete(FskuComponent).where(FskuComponent.fsku_id == fsku_id))
 
         for c in components:
@@ -160,7 +233,6 @@ class FskuService:
         if total <= 0:
             raise self.Conflict("发布前必须至少配置 1 个 component")
 
-        # ✅ 发布前置：必须至少 1 条 primary（主销商品）
         primary_n = int(
             self.db.scalar(
                 select(func.count())
@@ -208,8 +280,9 @@ class FskuService:
         out_components = [FskuComponentOut(item_id=c.item_id, qty=int(c.qty), role=c.role) for c in components]
         return FskuDetailOut(
             id=f.id,
+            code=f.code,
             name=f.name,
-            unit_label=f.unit_label,
+            shape=f.shape,
             status=f.status,
             published_at=f.published_at,
             retired_at=f.retired_at,

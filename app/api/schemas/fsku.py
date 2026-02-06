@@ -7,9 +7,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+FskuShape = Literal["single", "bundle"]
+
+
 class FskuCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    unit_label: str | None = Field(None, max_length=50)
+
+    # ✅ FSKU 编码：像 items.sku 一样重要
+    # 允许不传：后端会生成 FSKU-{id}
+    code: str | None = Field(None, min_length=1, max_length=64)
+
+    # ✅ 商品形态（与 DB ck_fskus_shape 对齐）
+    shape: FskuShape = Field("bundle")
 
 
 # Phase A：role 扩展为 primary/gift（只表达语义，不引入履约裁决）
@@ -36,8 +45,9 @@ class FskuComponentOut(BaseModel):
 
 class FskuDetailOut(BaseModel):
     id: int
+    code: str
     name: str
-    unit_label: str | None
+    shape: FskuShape
     status: str
     published_at: datetime | None
     retired_at: datetime | None
@@ -48,10 +58,18 @@ class FskuDetailOut(BaseModel):
 
 class FskuListItem(BaseModel):
     id: int
+    code: str
     name: str
-    unit_label: str | None
+    shape: FskuShape
     status: str
     updated_at: datetime
+
+    # ✅ 归档/发布信息（列表直接展示用）
+    published_at: datetime | None
+    retired_at: datetime | None
+
+    # ✅ 列表用：组合内容摘要（由后端聚合出来）
+    components_summary: str
 
 
 class FskuListOut(BaseModel):
