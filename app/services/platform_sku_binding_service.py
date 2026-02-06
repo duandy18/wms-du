@@ -14,6 +14,7 @@ from app.api.schemas.platform_sku_binding import (
     BindingRow,
 )
 from app.models.fsku import Fsku
+from app.models.item import Item
 from app.models.platform_sku_binding import PlatformSkuBinding
 
 
@@ -72,14 +73,27 @@ class PlatformSkuBindingService:
         platform: str,
         shop_id: int,
         platform_sku_id: str,
-        fsku_id: int,
+        item_id: int | None,
+        fsku_id: int | None,
         reason: str | None,
     ) -> BindingCurrentOut:
-        fsku = self.db.get(Fsku, fsku_id)
-        if fsku is None:
-            raise self.NotFound("FSKU 不存在")
-        if fsku.status != "published":
-            raise self.Conflict("仅允许绑定到已发布的 FSKU")
+        # XOR：必须且只能选一个
+        has_item = item_id is not None
+        has_fsku = fsku_id is not None
+        if has_item == has_fsku:
+            raise self.Conflict("item_id 与 fsku_id 必须二选一（且只能选一个）")
+
+        # 校验目标存在性
+        if has_item:
+            item = self.db.get(Item, item_id)
+            if item is None:
+                raise self.NotFound("Item 不存在")
+        else:
+            fsku = self.db.get(Fsku, fsku_id)
+            if fsku is None:
+                raise self.NotFound("FSKU 不存在")
+            if fsku.status != "published":
+                raise self.Conflict("仅允许绑定到已发布的 FSKU")
 
         now = _utc_now()
 
@@ -95,10 +109,12 @@ class PlatformSkuBindingService:
             .values(effective_to=now)
         )
 
+        # 插入新 current（历史不可篡改：不 update 旧行目标）
         new_row = PlatformSkuBinding(
             platform=platform,
             shop_id=shop_id,
             platform_sku_id=platform_sku_id,
+            item_id=item_id,
             fsku_id=fsku_id,
             effective_from=now,
             effective_to=None,
@@ -116,7 +132,37 @@ class PlatformSkuBindingService:
         self.db.refresh(new_row)
         return BindingCurrentOut(current=self._to_row(new_row))
 
-    def migrate(self, *, binding_id: int, to_fsku_id: int, reason: str | None) -> BindingMigrateOut:
+    def unbind(self, *, platform: str, shop_id: int, platform_sku_id: str, reason: str | None) -> None:
+        # 解除绑定：只关闭 current，不插入新行
+        now = _utc_now()
+
+        cur = self.db.scalars(
+            select(PlatformSkuBinding)
+            .where(
+                PlatformSkuBinding.platform == platform,
+                PlatformSkuBinding.shop_id == shop_id,
+                PlatformSkuBinding.platform_sku_id == platform_sku_id,
+                PlatformSkuBinding.effective_to.is_(None),
+            )
+            .order_by(PlatformSkuBinding.effective_from.desc())
+        ).first()
+
+        if cur is None:
+            raise self.NotFound("当前无生效绑定，无法解除")
+
+        cur.effective_to = now
+        if reason is not None:
+            cur.reason = reason
+
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise self.Conflict("解除绑定写入冲突，请重试")
+
+    def migrate(
+        self, *, binding_id: int, to_item_id: int | None, to_fsku_id: int | None, reason: str | None
+    ) -> BindingMigrateOut:
         row = self.db.get(PlatformSkuBinding, binding_id)
         if row is None:
             raise self.NotFound("Binding 不存在")
@@ -125,13 +171,17 @@ class PlatformSkuBindingService:
         if cur is None:
             raise self.Conflict("当前无生效绑定，无法迁移")
 
-        if cur.current.fsku_id == to_fsku_id:
+        # 目标一致：直接返回
+        if to_item_id is not None and cur.current.item_id == to_item_id:
+            return BindingMigrateOut(current=cur.current)
+        if to_fsku_id is not None and cur.current.fsku_id == to_fsku_id:
             return BindingMigrateOut(current=cur.current)
 
         out = self.bind(
             platform=row.platform,
             shop_id=row.shop_id,
             platform_sku_id=row.platform_sku_id,
+            item_id=to_item_id,
             fsku_id=to_fsku_id,
             reason=reason,
         )
@@ -143,6 +193,7 @@ class PlatformSkuBindingService:
             platform=r.platform,
             shop_id=r.shop_id,
             platform_sku_id=r.platform_sku_id,
+            item_id=r.item_id,
             fsku_id=r.fsku_id,
             effective_from=r.effective_from,
             effective_to=r.effective_to,

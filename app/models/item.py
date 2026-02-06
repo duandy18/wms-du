@@ -91,7 +91,7 @@ class Item(Base):
 
     supplier_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        ForeignKey("suppliers.id", name="fk_items_supplier", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )

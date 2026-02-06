@@ -68,6 +68,32 @@ def register(router: APIRouter) -> None:
             )
         return out
 
+    # ✅ 新增：读 components（允许读，写仍由 POST + 冻结规则控制）
+    #
+    # 设计说明：
+    # - 前端需要“可读”来恢复页面状态、验证冻结规则、避免写得进读不出
+    # - 返回 FskuDetailOut，与 POST /components 的返回保持一致（合同刚性）
+    @r.get("/{fsku_id}/components", response_model=FskuDetailOut)
+    def components(
+        fsku_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+        svc: FskuService = Depends(_svc),
+    ) -> FskuDetailOut:
+        check_perm(db, current_user, ["config.store.write"])
+        out = svc.get_detail(fsku_id)
+        if out is None:
+            raise HTTPException(
+                status_code=404,
+                detail=make_problem(
+                    status_code=404,
+                    error_code="not_found",
+                    message="FSKU 不存在",
+                    context={"fsku_id": fsku_id},
+                ),
+            )
+        return out
+
     @r.post("/{fsku_id}/components", response_model=FskuDetailOut)
     def replace_components(
         fsku_id: int,
