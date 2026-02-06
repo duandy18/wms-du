@@ -68,7 +68,6 @@ def _problem_from_http_exc(req: Request, exc: HTTPException) -> Dict[str, Any]:
         out = dict(d)
         out.setdefault("http_status", status_code)
         out.setdefault("trace_id", trace_id)
-        # context 可能是 dict；尽量合并，不覆盖业务层提供的上下文
         if isinstance(out.get("context"), dict):
             merged = dict(ctx)
             merged.update(out["context"])
@@ -138,14 +137,6 @@ async def _unhandled_exc(req: Request, exc: Exception):
 
 @app.exception_handler(RequestValidationError)
 async def _validation_exc(req: Request, exc: RequestValidationError):
-    """
-    ✅ 重要：RequestValidationError.errors() 可能包含 ctx.error（例如 ValueError 对象），
-    直接塞进 JSONResponse 会导致 “not JSON serializable” -> 500。
-
-    合同：
-    - 对外只返回可 JSON 化字段：type/loc/msg/input
-    - 丢弃 ctx，避免泄露内部对象与不稳定结构
-    """
     raw = exc.errors()
     details: List[Dict[str, Any]] = []
     for i, e in enumerate(raw):
@@ -176,6 +167,9 @@ async def _http_exc(req: Request, exc: HTTPException):
     return JSONResponse(status_code=int(exc.status_code), content=content)
 
 
+# ---------------------------------------------------------------------------
+# routers imports
+# ---------------------------------------------------------------------------
 from app.api.routers.autoheal_execute import router as autoheal_execute_router
 from app.api.routers.count import router as count_router
 from app.api.routers.debug_trace import router as debug_trace_router
@@ -212,15 +206,11 @@ from app.api.routers.return_tasks import router as return_tasks_router
 from app.api.routers.roles import router as roles_router
 
 from app.api.routers.shipping_providers import router as shipping_providers_router
-from app.api.routers.shipping_provider_contacts import (
-    router as shipping_provider_contacts_router,
-)
+from app.api.routers.shipping_provider_contacts import router as shipping_provider_contacts_router
 from app.api.routers.shipping_provider_pricing_schemes.router import (
     router as shipping_provider_pricing_schemes_router,
 )
-from app.api.routers.shipping_quote import (
-    router as shipping_quote_router,
-)  # ✅ 新增：算价引擎 Phase 0
+from app.api.routers.shipping_quote import router as shipping_quote_router
 from app.api.routers.shipping_records import router as shipping_records_router
 from app.api.routers.shipping_reports import router as shipping_reports_router
 from app.api.routers.snapshot import router as snapshot_router
@@ -231,35 +221,32 @@ from app.api.routers.stock_ledger import router as stock_ledger_router
 from app.api.routers.internal_outbound import router as internal_outbound_router
 
 from app.api.routers.stores import router as stores_router
+from app.api.routers.stores_platform_skus import router as stores_platform_skus_router  # ✅ 新增
 from app.api.routers.suppliers import router as suppliers_router
 from app.api.routers.supplier_contacts import router as supplier_contacts_router
 
 from app.api.routers.user import router as user_router
 from app.api.routers.warehouses import router as warehouses_router
 
-# ✅ geo：省市字典（全量数据编译产物 + 查询接口）
 from app.api.routers.geo_cn import router as geo_router
 
-# ✅ 明确挂载：fulfillment-debug（v4-min）
-from app.api.routers.orders_fulfillment_debug_routes import router as orders_fulfillment_debug_router
+from app.api.routers.orders_fulfillment_debug_routes import (
+    router as orders_fulfillment_debug_router,
+)
 
-# ✅ 新增：商铺商品组合（FSKU / 平台绑定 / 镜像线索）
 from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
 
 # ---------------------------------------------------------------------------
-# scan 路由（已拆分：scan_routes_*）
+# scan routes
 # ---------------------------------------------------------------------------
-from app.api.routers import (
-    scan_routes_count_commit,
-    scan_routes_entrypoint,
-)
+from app.api.routers import scan_routes_count_commit, scan_routes_entrypoint
 
 scan_router = APIRouter(tags=["scan"])
 scan_routes_entrypoint.register(scan_router)
 scan_routes_count_commit.register(scan_router)
 
 # ---------------------------------------------------------------------------
-# orders_fulfillment_v2 路由（已拆分：orders_fulfillment_v2_routes_*）
+# orders_fulfillment_v2 routes
 # ---------------------------------------------------------------------------
 from app.api.routers import (
     orders_fulfillment_v2_routes_1_reserve,
@@ -275,17 +262,15 @@ orders_fulfillment_v2_routes_3_ship.register(orders_fulfillment_v2_router)
 orders_fulfillment_v2_routes_4_ship_with_waybill.register(orders_fulfillment_v2_router)
 
 # ===========================
-#          挂载路由
+# mount routers
 # ===========================
 app.include_router(scan_router)
 app.include_router(count_router)
 app.include_router(pick_router)
 
-# orders 主路由
 app.include_router(orders_router)
 app.include_router(orders_fulfillment_v2_router)
 
-# ✅ v4-min explain：显式挂载，避免旧实现漂移
 app.include_router(orders_fulfillment_debug_router)
 
 app.include_router(outbound_router)
@@ -300,8 +285,11 @@ app.include_router(inbound_receipts_router)
 app.include_router(return_tasks_router)
 app.include_router(pick_tasks_router)
 app.include_router(print_jobs_router)
+
 app.include_router(stores_router)
-app.include_router(shop_product_bundles_router)  # ✅ 新增：/fskus /platform-sku-bindings /platform-skus/mirror
+app.include_router(stores_platform_skus_router)  # ✅ 新增：/stores/{id}/platform-skus
+app.include_router(shop_product_bundles_router)
+
 app.include_router(warehouses_router)
 app.include_router(platform_shops_router)
 app.include_router(pdd_auth_router)
@@ -311,13 +299,12 @@ app.include_router(item_barcodes_router)
 app.include_router(suppliers_router)
 app.include_router(supplier_contacts_router)
 
-# 物流/快递（主数据 + 联系人 + 运价 + 算价）
 app.include_router(shipping_providers_router)
 app.include_router(shipping_provider_contacts_router)
 app.include_router(shipping_provider_pricing_schemes_router)
-app.include_router(geo_router)  # ✅ /geo/provinces /geo/provinces/{province_code}/cities
+app.include_router(geo_router)
 app.include_router(pricing_integrity_ops_router)
-app.include_router(shipping_quote_router)  # ✅ 新增：/shipping-quote/calc
+app.include_router(shipping_quote_router)
 app.include_router(shipping_reports_router)
 app.include_router(shipping_records_router)
 
