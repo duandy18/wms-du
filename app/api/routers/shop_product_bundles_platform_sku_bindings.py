@@ -13,6 +13,7 @@ from app.api.schemas.platform_sku_binding import (
     BindingHistoryOut,
     BindingMigrateIn,
     BindingMigrateOut,
+    BindingUnbindIn,
 )
 from app.db.deps import get_db
 from app.services.platform_sku_binding_service import PlatformSkuBindingService
@@ -30,11 +31,10 @@ def register(router: APIRouter) -> None:
         platform: str = Query(...),
         shop_id: int = Query(..., ge=1),
         platform_sku_id: str = Query(...),
-        db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
         svc: PlatformSkuBindingService = Depends(_svc),
     ) -> BindingCurrentOut:
-        check_perm(db, current_user, ["config.store.write"])
+        check_perm(svc.db, current_user, ["config.store.write"])
         out = svc.get_current(platform=platform, shop_id=shop_id, platform_sku_id=platform_sku_id)
         if out is None:
             raise HTTPException(
@@ -55,11 +55,10 @@ def register(router: APIRouter) -> None:
         platform_sku_id: str = Query(...),
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
-        db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
         svc: PlatformSkuBindingService = Depends(_svc),
     ) -> BindingHistoryOut:
-        check_perm(db, current_user, ["config.store.write"])
+        check_perm(svc.db, current_user, ["config.store.write"])
         return svc.get_history(
             platform=platform,
             shop_id=shop_id,
@@ -71,16 +70,16 @@ def register(router: APIRouter) -> None:
     @r.post("", response_model=BindingCurrentOut, status_code=status.HTTP_201_CREATED)
     def bind(
         payload: BindingCreateIn,
-        db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
         svc: PlatformSkuBindingService = Depends(_svc),
     ) -> BindingCurrentOut:
-        check_perm(db, current_user, ["config.store.write"])
+        check_perm(svc.db, current_user, ["config.store.write"])
         try:
             return svc.bind(
                 platform=payload.platform,
                 shop_id=payload.shop_id,
                 platform_sku_id=payload.platform_sku_id,
+                item_id=payload.item_id,
                 fsku_id=payload.fsku_id,
                 reason=payload.reason,
             )
@@ -103,17 +102,60 @@ def register(router: APIRouter) -> None:
                 ),
             )
 
+    @r.post("/unbind", status_code=status.HTTP_204_NO_CONTENT)
+    def unbind(
+        payload: BindingUnbindIn,
+        current_user=Depends(get_current_user),
+        svc: PlatformSkuBindingService = Depends(_svc),
+    ) -> None:
+        check_perm(svc.db, current_user, ["config.store.write"])
+        try:
+            svc.unbind(
+                platform=payload.platform,
+                shop_id=payload.shop_id,
+                platform_sku_id=payload.platform_sku_id,
+                reason=payload.reason,
+            )
+        except PlatformSkuBindingService.NotFound as e:
+            raise HTTPException(
+                status_code=404,
+                detail=make_problem(
+                    status_code=404,
+                    error_code="not_found",
+                    message=str(e),
+                    context={
+                        "platform": payload.platform,
+                        "shop_id": payload.shop_id,
+                        "platform_sku_id": payload.platform_sku_id,
+                    },
+                ),
+            )
+        except PlatformSkuBindingService.Conflict as e:
+            raise HTTPException(
+                status_code=409,
+                detail=make_problem(
+                    status_code=409,
+                    error_code="state_conflict",
+                    message=str(e),
+                ),
+            )
+
     @r.post("/{binding_id}/migrate", response_model=BindingMigrateOut)
     def migrate(
         binding_id: int,
         payload: BindingMigrateIn,
-        db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
         svc: PlatformSkuBindingService = Depends(_svc),
     ) -> BindingMigrateOut:
-        check_perm(db, current_user, ["config.store.write"])
+        # migrate 本质是“换绑”，内部最终走 bind（关旧 + 插新）
+        check_perm(svc.db, current_user, ["config.store.write"])
         try:
-            return svc.migrate(binding_id=binding_id, to_fsku_id=payload.to_fsku_id, reason=payload.reason)
+            return svc.migrate(
+                binding_id=binding_id,
+                to_item_id=payload.to_item_id,
+                to_fsku_id=payload.to_fsku_id,
+                reason=payload.reason,
+            )
         except PlatformSkuBindingService.NotFound as e:
             raise HTTPException(
                 status_code=404,
