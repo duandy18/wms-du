@@ -93,14 +93,19 @@ class FskuService:
         details: list[dict[str, Any]] = []
         seen: set[tuple[int, str]] = set()
 
+        # ✅ 结构约束 1：不允许重复的 (item_id, role)
         for i, c in enumerate(components):
-            key = (c.item_id, c.role)
+            key = (c.item_id, str(c.role))
             if key in seen:
                 details.append({"type": "validation", "path": f"components[{i}]", "reason": "重复的 item_id + role"})
             seen.add(key)
 
         if details:
             raise self.BadInput(details=details)
+
+        # ✅ 结构约束 2：必须至少 1 条 primary（主销商品）
+        if not any(str(c.role) == "primary" for c in components):
+            raise self.BadInput(details=[{"type": "validation", "path": "components", "reason": "必须至少包含 1 条 role=primary（主销商品）"}])
 
         # ✅ 明确校验 item_id 存在（避免 FK 报错变 500）
         # 不引入 Item ORM，直接查 items 表存在性
@@ -122,7 +127,7 @@ class FskuService:
                     fsku_id=fsku_id,
                     item_id=c.item_id,
                     qty=Decimal(str(c.qty)),
-                    role=c.role,
+                    role=str(c.role),
                     created_at=now,
                     updated_at=now,
                 )
@@ -149,11 +154,23 @@ class FskuService:
         if obj.status != "draft":
             raise self.Conflict("仅草稿态允许发布")
 
-        n = int(
+        total = int(
             self.db.scalar(select(func.count()).select_from(FskuComponent).where(FskuComponent.fsku_id == fsku_id)) or 0
         )
-        if n <= 0:
+        if total <= 0:
             raise self.Conflict("发布前必须至少配置 1 个 component")
+
+        # ✅ 发布前置：必须至少 1 条 primary（主销商品）
+        primary_n = int(
+            self.db.scalar(
+                select(func.count())
+                .select_from(FskuComponent)
+                .where(FskuComponent.fsku_id == fsku_id, FskuComponent.role == "primary")
+            )
+            or 0
+        )
+        if primary_n <= 0:
+            raise self.Conflict("发布前必须至少包含 1 条 role=primary（主销商品）")
 
         now = _utc_now()
         obj.status = "published"
@@ -188,7 +205,7 @@ class FskuService:
         return self._to_detail(obj, comps)
 
     def _to_detail(self, f: Fsku, components: list[FskuComponent]) -> FskuDetailOut:
-        out_components = [FskuComponentOut(item_id=c.item_id, qty=float(c.qty), role=c.role) for c in components]
+        out_components = [FskuComponentOut(item_id=c.item_id, qty=int(c.qty), role=c.role) for c in components]
         return FskuDetailOut(
             id=f.id,
             name=f.name,

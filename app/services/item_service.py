@@ -1,37 +1,36 @@
 # app/services/item_service.py
 from __future__ import annotations
 
+import os
 from typing import List, Optional
 
-from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
+from app.services.item_repo import get_item_by_id as repo_get_item_by_id
+from app.services.item_repo import get_item_by_sku as repo_get_item_by_sku
+from app.services.item_repo import get_items as repo_get_items
+from app.services.item_rules import decorate_rules
+from app.services.item_sku import next_sku
 
-NOEXP_BATCH_CODE = "NOEXP"
 
-SKU_SEQ_NAME = "items_sku_seq"
-SKU_PREFIX = "AKT-"
-SKU_PAD_WIDTH = 6
-
-
-def _decorate_rules(obj: Item) -> Item:
-    has_sl = bool(getattr(obj, "has_shelf_life", False))
-    setattr(obj, "requires_batch", True if has_sl else False)
-    setattr(obj, "requires_dates", True if has_sl else False)
-    setattr(obj, "default_batch_code", None if has_sl else NOEXP_BATCH_CODE)
-    return obj
+def _allow_create_item_by_id() -> bool:
+    """
+    “例外通道”总开关（默认关闭）：
+    - 仅用于历史兼容/修复/运维脚本
+    - 生产环境默认不应开启
+    """
+    return os.getenv("WMS_ALLOW_CREATE_ITEM_BY_ID", "").strip() == "1"
 
 
 class ItemService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    # 兼容 router：/items/sku/next
     def next_sku(self) -> str:
-        n = self.db.execute(text(f"SELECT nextval('{SKU_SEQ_NAME}')")).scalar_one()
-        num = str(int(n)).zfill(SKU_PAD_WIDTH)
-        return f"{SKU_PREFIX}{num}"
+        return next_sku(self.db)
 
     def create_item(
         self,
@@ -88,7 +87,7 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return _decorate_rules(obj)
+        return decorate_rules(obj)
 
     def create_item_by_id(
         self,
@@ -108,14 +107,27 @@ class ItemService:
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
     ) -> Item:
+        """
+        🚫 例外通道（默认关闭）：
+        - 历史兼容/修复：允许显式 id/sku
+        - 默认必须禁止，避免被误用为“改码工具”
+        - 仅当设置环境变量 WMS_ALLOW_CREATE_ITEM_BY_ID=1 时才允许调用
+        """
+        if not _allow_create_item_by_id():
+            raise ValueError("create_item_by_id disabled: set WMS_ALLOW_CREATE_ITEM_BY_ID=1 to enable for maintenance")
+
         if not id or id <= 0:
             raise ValueError("id 必须为正整数")
 
+        # ✅ 若已存在：只返回，不覆盖、不改码
         exists = self.db.get(Item, id)
         if exists is not None:
-            return _decorate_rules(exists)
+            return decorate_rules(exists)
 
         sku_val = (sku or str(id)).strip()
+        if not sku_val:
+            raise ValueError("sku is required for create_item_by_id (maintenance path)")
+
         name_val = (name or f"ITEM-{id}").strip()
         spec_val = spec.strip() if isinstance(spec, str) else None
         unit_val = (uom or "PCS").strip().upper() or "PCS"
@@ -148,15 +160,13 @@ class ItemService:
             raw = str(getattr(e, "orig", e)).lower()
             if "items_pkey" in raw:
                 raise ValueError(f"Item id {id} already exists") from e
-            if "items_sku_key" in raw:
+            if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
                 raise ValueError("SKU duplicate") from e
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return _decorate_rules(obj)
+        return decorate_rules(obj)
 
-    # ✅ 支持 supplier_id / enabled / q / limit 过滤（主数据选择用）
-    # - 不传参数：等价于旧行为（返回全量）
     def get_items(
         self,
         *,
@@ -165,78 +175,20 @@ class ItemService:
         q: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Item]:
-        stmt = select(Item)
+        rows = repo_get_items(self.db, supplier_id=supplier_id, enabled=enabled, q=q, limit=limit)
+        return [decorate_rules(r) for r in rows]
 
-        if supplier_id is not None:
-            stmt = stmt.where(Item.supplier_id == supplier_id)
-
-        if enabled is not None:
-            stmt = stmt.where(Item.enabled == enabled)
-
-        q_raw = (q or "").strip()
-        if q_raw:
-            q_like = f"%{q_raw.lower()}%"
-
-            conds = [
-                func.lower(Item.sku).like(q_like),
-                func.lower(Item.name).like(q_like),
-                cast(Item.id, String).like(q_like),
-            ]
-
-            # barcode：只从真实表列读取，避免拿到 Python @property
-            barcode_col = None
-            try:
-                barcode_col = Item.__table__.c.get("barcode")  # type: ignore[attr-defined]
-            except Exception:
-                barcode_col = None
-
-            if barcode_col is not None:
-                conds.append(func.lower(barcode_col).like(q_like))
-
-            # 纯数字时，额外加 id 等值匹配（更精准）
-            if q_raw.isdigit():
-                try:
-                    conds.append(Item.id == int(q_raw))
-                except Exception:
-                    pass
-
-            stmt = stmt.where(or_(*conds))
-
-        # limit：默认 50（当 q 存在时）；最大由路由层限制
-        lim: Optional[int] = None
-        if limit is not None:
-            try:
-                x = int(limit)
-                if x > 0:
-                    lim = x
-            except Exception:
-                lim = None
-        elif q_raw:
-            lim = 50
-
-        stmt = stmt.order_by(Item.id.asc())
-        if lim is not None:
-            stmt = stmt.limit(lim)
-
-        rows = self.db.execute(stmt).scalars().all()
-        return [_decorate_rules(r) for r in rows]
-
-    # 兼容旧接口：保留原方法名（供其它模块调用）
+    # 兼容旧接口：保留原方法名
     def get_all_items(self) -> List[Item]:
         return self.get_items()
 
     def get_item_by_id(self, id: int) -> Optional[Item]:
-        if not id or id <= 0:
-            return None
-        obj = self.db.get(Item, id)
-        return _decorate_rules(obj) if obj else None
+        obj = repo_get_item_by_id(self.db, id)
+        return decorate_rules(obj) if obj else None
 
     def get_item_by_sku(self, sku: str) -> Optional[Item]:
-        sku = (sku or "").strip()
-        if not sku:
-            return None
-        obj = self.db.execute(select(Item).where(Item.sku == sku)).scalar_one_or_none()
-        return _decorate_rules(obj) if obj else None
+        obj = repo_get_item_by_sku(self.db, sku)
+        return decorate_rules(obj) if obj else None
 
     def update_item(
         self,
@@ -251,7 +203,6 @@ class ItemService:
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
-        # ✅ 新增：brand/category（并支持显式置空）
         brand: Optional[str] = None,
         category: Optional[str] = None,
         brand_set: bool = False,
@@ -303,7 +254,6 @@ class ItemService:
             obj.weight_kg = weight_kg
             changed = True
 
-        # ✅ brand/category：字段出现在 payload 就更新（哪怕是 None => 清空）
         if brand_set:
             obj.brand = brand.strip() if isinstance(brand, str) and brand.strip() else None
             changed = True
@@ -313,7 +263,7 @@ class ItemService:
             changed = True
 
         if not changed:
-            return _decorate_rules(obj)
+            return decorate_rules(obj)
 
         try:
             self.db.commit()
@@ -322,4 +272,4 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return _decorate_rules(obj)
+        return decorate_rules(obj)
