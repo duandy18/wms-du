@@ -14,8 +14,14 @@ class Fsku(Base):
     __tablename__ = "fskus"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # ✅ 业务编码（全局唯一）
+    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    unit_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # ✅ 事实字段：商品形态（single/bundle）
+    shape: Mapped[str] = mapped_column(String(20), nullable=False, server_default="bundle")
 
     # draft | published | retired
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)

@@ -32,8 +32,8 @@ async def _pick_any_item_id(client, headers: Dict[str, str]) -> int:
     return int(data[0]["id"])
 
 
-async def _create_draft_fsku(client, headers: Dict[str, str], name: str, unit_label: str = "套") -> Dict[str, Any]:
-    r = await client.post("/fskus", json={"name": name, "unit_label": unit_label}, headers=headers)
+async def _create_draft_fsku(client, headers: Dict[str, str], name: str, shape: str = "bundle") -> Dict[str, Any]:
+    r = await client.post("/fskus", json={"name": name, "shape": shape}, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()
 
