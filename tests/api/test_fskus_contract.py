@@ -137,3 +137,84 @@ async def test_fsku_archive_lifecycle(client):
     hit = next(x for x in items if x["id"] == f["id"])
     assert hit["status"] == "retired"
     assert hit["retired_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_fsku_unretire_lifecycle(client):
+    """
+    取消归档（unretire）行为：
+    - 仅允许 retired -> published
+    - retired_at 必须清空
+    - published_at 必须保留历史值（不应被清空）
+    - 列表中必须可见
+    """
+    headers = await _auth_headers(client)
+    item_id = await _pick_any_item_id(client, headers)
+
+    f = await _create_draft_fsku(client, headers, name="FSKU-UNRETIRE-TEST")
+
+    await _replace_components(
+        client,
+        headers,
+        fsku_id=f["id"],
+        components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
+    )
+
+    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    assert r_pub.status_code == 200, r_pub.text
+    pub = r_pub.json()
+    assert pub["status"] == "published"
+    assert pub["published_at"] is not None
+
+    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    assert r_ret.status_code == 200, r_ret.text
+    ret = r_ret.json()
+    assert ret["status"] == "retired"
+    assert ret["retired_at"] is not None
+    assert ret["published_at"] is not None
+
+    r_un = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    assert r_un.status_code == 200, r_un.text
+    un = r_un.json()
+    assert un["status"] == "published"
+    assert un["retired_at"] is None
+    assert un["published_at"] is not None
+
+    # 列表中必须能看到恢复结果
+    r_list = await client.get("/fskus", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    items = r_list.json()["items"]
+    hit = next(x for x in items if x["id"] == f["id"])
+    assert hit["status"] == "published"
+    assert hit["retired_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_fsku_unretire_guard_requires_retired(client):
+    """
+    护栏：只有 status=retired 才允许 unretire
+    - draft -> 409 + Problem
+    - published -> 409 + Problem
+    """
+    headers = await _auth_headers(client)
+    item_id = await _pick_any_item_id(client, headers)
+
+    f = await _create_draft_fsku(client, headers, name="FSKU-UNRETIRE-GUARD")
+
+    r_un_draft = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    assert r_un_draft.status_code == 409, r_un_draft.text
+    _assert_problem_shape(r_un_draft.json())
+
+    await _replace_components(
+        client,
+        headers,
+        fsku_id=f["id"],
+        components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
+    )
+
+    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    assert r_pub.status_code == 200, r_pub.text
+
+    r_un_pub = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    assert r_un_pub.status_code == 409, r_un_pub.text
+    _assert_problem_shape(r_un_pub.json())

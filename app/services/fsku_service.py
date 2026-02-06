@@ -160,6 +160,34 @@ class FskuService:
         comps = self.db.scalars(select(FskuComponent).where(FskuComponent.fsku_id == fsku_id)).all()
         return self._to_detail(obj, comps)
 
+    def update_name(self, *, fsku_id: int, name: str) -> FskuDetailOut:
+        obj = self.db.get(Fsku, fsku_id)
+        if obj is None:
+            raise self.NotFound("FSKU 不存在")
+
+        # ✅ 更保守：retired 只读（运营避免改历史）
+        if obj.status == "retired":
+            raise self.Conflict("FSKU 已退休，名称不可修改")
+
+        nm = name.strip()
+        if not nm:
+            raise self.BadInput(details=[{"type": "validation", "path": "name", "reason": "name 不能为空"}])
+
+        now = _utc_now()
+        obj.name = nm
+        obj.updated_at = now
+        self.db.add(obj)
+
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise self.Conflict("更新失败（状态冲突）")
+
+        self.db.refresh(obj)
+        comps = self.db.scalars(select(FskuComponent).where(FskuComponent.fsku_id == fsku_id)).all()
+        return self._to_detail(obj, comps)
+
     def replace_components_draft(self, *, fsku_id: int, components: list[FskuComponentIn]) -> FskuDetailOut:
         obj = self.db.get(Fsku, fsku_id)
         if obj is None:
@@ -267,6 +295,26 @@ class FskuService:
         now = _utc_now()
         obj.status = "retired"
         obj.retired_at = now
+        obj.updated_at = now
+
+        self.db.add(obj)
+        self.db.commit()
+        self.db.refresh(obj)
+
+        comps = self.db.scalars(select(FskuComponent).where(FskuComponent.fsku_id == fsku_id)).all()
+        return self._to_detail(obj, comps)
+
+    def unretire(self, fsku_id: int) -> FskuDetailOut:
+        obj = self.db.get(Fsku, fsku_id)
+        if obj is None:
+            raise self.NotFound("FSKU 不存在")
+
+        if obj.status != "retired":
+            raise self.Conflict("仅已归档（retired）的 FSKU 允许取消归档")
+
+        now = _utc_now()
+        obj.status = "published"
+        obj.retired_at = None
         obj.updated_at = now
 
         self.db.add(obj)
