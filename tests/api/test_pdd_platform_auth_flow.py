@@ -6,13 +6,17 @@ PDD 平台授权链路（模拟版本）集成测试：
 - POST /platform-shops/credentials  手工录入平台凭据 -> 写入 store_tokens
 - GET  /platform-shops/{platform}/{shop_id}  查询授权状态（从 store_tokens 读）
 - PddAdapter.build_fetch_preview  能看到 has_token=True，证明 StoreTokenService 生效
+- build_fetch_preview 走 PSKU 单入口：platform_sku_ids -> ext_sku_ids（来源于 mirror.raw_payload）
 """
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.pdd import PddAdapter
@@ -70,8 +74,10 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     2) 通过 GET /platform-shops/{platform}/{shop_id} 查询授权状态，
        确认已经在 store_tokens 里有记录，且 source=MANUAL。
 
-    3) 使用 PddAdapter.build_fetch_preview，确认 has_token=True，
-       证明 StoreTokenService -> PddAdapter 这条链路打通。
+    3) 写入 platform_sku_mirror（PSKU mirror-first），提供 raw_payload 中的 pdd_sku_id（ext id）。
+
+    4) 使用 PddAdapter.build_fetch_preview（PSKU 单入口），确认 has_token=True，
+       且 ext_sku_ids 来自 mirror.raw_payload。
     """
 
     # ---- 1) 手工录入一条“假 PDD 店铺”的凭据 ----
@@ -112,14 +118,12 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     assert data2["source"] == "MANUAL"
 
     # ---- 2.1) 验证底层确实写入了 store_tokens / stores ----
-    # 查 stores
     res_store = await db_session.execute(select(Store).where(Store.id == store_id))
     store_row = res_store.scalar_one_or_none()
     assert store_row is not None
     assert store_row.platform == platform  # 大写 PDD
     assert store_row.shop_id == shop_id
 
-    # 查 store_tokens
     res_token = await db_session.execute(
         select(StoreToken).where(
             StoreToken.store_id == store_id,
@@ -131,18 +135,74 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     assert token_row.access_token == fake_token
     assert token_row.refresh_token == "MANUAL"
 
-    # ---- 3) 用 PddAdapter.build_fetch_preview 验证 has_token=True ----
+    # ---- 3) 写入 mirror：提供 raw_payload 中的 pdd_sku_id（ext id） ----
+    # 约定：shop_id（mirror）== store_id（内部 store id）
+    # platform_sku_id 是平台 SKU 标识（PSKU 入口）
+    platform_sku_ids = ["PSKU-101", "PSKU-102", "PSKU-103"]
+    ext_ids = ["101", "102", "103"]
+
+    now = datetime.now(timezone.utc)
+    for psid, ext in zip(platform_sku_ids, ext_ids, strict=True):
+        raw = json.dumps({"pdd_sku_id": ext}, ensure_ascii=False)
+        await db_session.execute(
+            text(
+                """
+                insert into platform_sku_mirror(
+                  platform, shop_id, platform_sku_id,
+                  sku_name, spec, raw_payload, source, observed_at,
+                  created_at, updated_at
+                ) values (
+                  :platform, :shop_id, :platform_sku_id,
+                  :sku_name, :spec, (:raw_payload)::jsonb, :source, :observed_at,
+                  now(), now()
+                )
+                on conflict (platform, shop_id, platform_sku_id)
+                do update set
+                  raw_payload=excluded.raw_payload,
+                  source=excluded.source,
+                  observed_at=excluded.observed_at,
+                  updated_at=now();
+                """
+            ),
+            {
+                "platform": "PDD",
+                "shop_id": int(store_id),
+                "platform_sku_id": psid,
+                "sku_name": None,
+                "spec": None,
+                "raw_payload": raw,
+                "source": "unit_test",
+                "observed_at": now,
+            },
+        )
+    await db_session.commit()
+
+    # ---- 4) 用 PddAdapter.build_fetch_preview 验证 has_token=True（PSKU 单入口） ----
     adapter = PddAdapter()
     preview = await adapter.build_fetch_preview(
         db_session,
         store_id=store_id,
-        item_ids=[101, 102, 103],
+        platform_sku_ids=platform_sku_ids,
+        platform="PDD",
     )
 
-    # 预览结构校验
     assert preview["store_id"] == store_id
-    assert preview["creds_ready"] in (True, False)  # 现在 app_key/app_secret 未必配好
-    assert preview["has_token"] is True  # 这是我们最关心的：已经吃到 token 了
-    assert preview["ext_sku_ids"] == ["101", "102", "103"]
+    assert preview["creds_ready"] in (True, False)
+    assert preview["has_token"] is True
+    assert preview["platform"] == "PDD"
+    assert preview["platform_sku_ids"] == platform_sku_ids
+    assert preview["ext_sku_ids"] == ext_ids
     assert isinstance(preview["signature"], str)
     assert preview["signature"] == "pdd-signature-placeholder"
+
+    # Cleanup（尽量不污染后续测试）
+    await db_session.execute(
+        text(
+            """
+            delete from platform_sku_mirror
+             where platform=:platform and shop_id=:shop_id and platform_sku_id = any(:ids)
+            """
+        ),
+        {"platform": "PDD", "shop_id": int(store_id), "ids": list(platform_sku_ids)},
+    )
+    await db_session.commit()

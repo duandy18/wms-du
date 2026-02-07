@@ -101,34 +101,6 @@ class StorePlatformAuthOut(BaseModel):
     data: Dict[str, Any]
 
 
-# ================================
-# 店铺 SKU（store_items）
-# ================================
-
-class StoreItemRow(BaseModel):
-    item_id: int = Field(..., ge=1)
-    item_name: Optional[str] = None
-    platform_sku: Optional[str] = None  # 预留：将来对接平台 SKU
-
-
-class StoreItemsListOut(BaseModel):
-    ok: bool = True
-    data: List[StoreItemRow]
-
-
-class StoreItemAddIn(BaseModel):
-    item_id: int = Field(..., ge=1)
-
-
-class StoreItemAddOut(BaseModel):
-    ok: bool = True
-    data: Dict[str, Any]
-
-
-class StoreItemDeleteOut(BaseModel):
-    ok: bool = True
-    data: Dict[str, Any]
-
 
 # ================================
 # 省级路由表（Province Routing）

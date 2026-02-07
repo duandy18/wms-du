@@ -35,57 +35,32 @@ async def _create_published_fsku_id(client, headers: Dict[str, str], *, name: st
 
 
 @pytest.mark.asyncio
-async def test_platform_sku_bindings_xor_validation_422(client):
-    """
-    合同：item_id 与 fsku_id 必须二选一（且只能选一个）。
-    同时提供时应 422（Problem shape）。
-    """
-    headers = await _auth_headers(client)
-
-    item_id = await _pick_any_item_id(client, headers=headers)
-    fsku_id = await _create_published_fsku_id(client, headers=headers, name="FSKU-BIND-XOR-TEST")
-
-    payload = {
-        "platform": "pdd",
-        "shop_id": 1,
-        "platform_sku_id": "PDD-SKU-XOR-TEST",
-        "item_id": item_id,
-        "fsku_id": fsku_id,
-        "reason": "xor test",
-    }
-
-    r = await client.post("/platform-sku-bindings", json=payload, headers=headers)
-    assert r.status_code == 422, r.text
-
-    p = r.json()
-    _assert_problem_shape(p)
-    assert p["http_status"] == 422
-
-
-@pytest.mark.asyncio
 async def test_platform_sku_bindings_unbind_closes_current(client):
     """
     合同：unbind 只关闭 current（effective_to 填值），不插入新行。
     - 解绑前：current 200
     - 解绑后：current 404（Problem shape）
     - history.total >= 1
+
+    ✅ 单入口收敛：绑定必须指向 published FSKU（单品也用 single-FSKU 表达）。
     """
     headers = await _auth_headers(client)
 
-    item_id = await _pick_any_item_id(client, headers=headers)
     platform = "pdd"
     shop_id = 1
     platform_sku_id = "PDD-SKU-UNBIND-TEST"
 
-    # 先绑定到 Item（单品场景）
+    fsku_id = await _create_published_fsku_id(client, headers=headers, name="FSKU-BIND-UNBIND-TEST")
+
+    # 先绑定到 FSKU（单入口）
     r_bind = await client.post(
         "/platform-sku-bindings",
         json={
             "platform": platform,
             "shop_id": shop_id,
             "platform_sku_id": platform_sku_id,
-            "item_id": item_id,
-            "reason": "bind item for unbind test",
+            "fsku_id": fsku_id,
+            "reason": "bind fsku for unbind test",
         },
         headers=headers,
     )
@@ -95,8 +70,9 @@ async def test_platform_sku_bindings_unbind_closes_current(client):
     assert data_bind["current"]["platform"] == platform
     assert data_bind["current"]["shop_id"] == shop_id
     assert data_bind["current"]["platform_sku_id"] == platform_sku_id
-    assert data_bind["current"]["item_id"] == item_id
-    assert data_bind["current"]["fsku_id"] is None
+    assert data_bind["current"]["fsku_id"] == fsku_id
+    # legacy 字段允许存在，但当前绑定不应再出现 item_id
+    assert data_bind["current"]["item_id"] is None
     assert data_bind["current"]["effective_to"] is None
 
     # current 应可读

@@ -79,7 +79,6 @@ def register(router: APIRouter) -> None:
                 platform=payload.platform,
                 shop_id=payload.shop_id,
                 platform_sku_id=payload.platform_sku_id,
-                item_id=payload.item_id,
                 fsku_id=payload.fsku_id,
                 reason=payload.reason,
             )
@@ -152,7 +151,6 @@ def register(router: APIRouter) -> None:
         try:
             return svc.migrate(
                 binding_id=binding_id,
-                to_item_id=payload.to_item_id,
                 to_fsku_id=payload.to_fsku_id,
                 reason=payload.reason,
             )

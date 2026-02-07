@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class BindingCreateIn(BaseModel):
@@ -11,19 +11,11 @@ class BindingCreateIn(BaseModel):
     shop_id: int = Field(..., ge=1)
     platform_sku_id: str = Field(..., min_length=1, max_length=200)
 
-    # 目标二选一：单品用 item_id；组合用 fsku_id
-    item_id: int | None = Field(None, ge=1)
-    fsku_id: int | None = Field(None, ge=1)
+    # ✅ 单入口收敛：仅允许绑定到 FSKU
+    # 单品也必须用 single-FSKU 承载（由 FSKU.components 指向 item）
+    fsku_id: int = Field(..., ge=1)
 
     reason: str | None = Field(None, max_length=200)
-
-    @model_validator(mode="after")
-    def _xor_target(self) -> "BindingCreateIn":
-        has_item = self.item_id is not None
-        has_fsku = self.fsku_id is not None
-        if has_item == has_fsku:
-            raise ValueError("item_id 与 fsku_id 必须二选一（且只能选一个）")
-        return self
 
 
 class BindingUnbindIn(BaseModel):
@@ -39,6 +31,7 @@ class BindingRow(BaseModel):
     shop_id: int
     platform_sku_id: str
 
+    # 历史兼容：旧数据可能存在 item_id（legacy），读历史时仍可返回
     item_id: int | None
     fsku_id: int | None
 
@@ -59,18 +52,9 @@ class BindingHistoryOut(BaseModel):
 
 
 class BindingMigrateIn(BaseModel):
-    # 迁移目标二选一
-    to_item_id: int | None = Field(None, ge=1)
-    to_fsku_id: int | None = Field(None, ge=1)
+    # ✅ 单入口收敛：仅允许迁移到 FSKU
+    to_fsku_id: int = Field(..., ge=1)
     reason: str | None = Field(None, max_length=200)
-
-    @model_validator(mode="after")
-    def _xor_target(self) -> "BindingMigrateIn":
-        has_item = self.to_item_id is not None
-        has_fsku = self.to_fsku_id is not None
-        if has_item == has_fsku:
-            raise ValueError("to_item_id 与 to_fsku_id 必须二选一（且只能选一个）")
-        return self
 
 
 class BindingMigrateOut(BaseModel):

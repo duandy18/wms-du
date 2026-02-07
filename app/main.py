@@ -221,7 +221,6 @@ from app.api.routers.stock_ledger import router as stock_ledger_router
 from app.api.routers.internal_outbound import router as internal_outbound_router
 
 from app.api.routers.stores import router as stores_router
-from app.api.routers.stores_platform_skus import router as stores_platform_skus_router  # ✅ 新增
 from app.api.routers.suppliers import router as suppliers_router
 from app.api.routers.supplier_contacts import router as supplier_contacts_router
 
@@ -287,7 +286,6 @@ app.include_router(pick_tasks_router)
 app.include_router(print_jobs_router)
 
 app.include_router(stores_router)
-app.include_router(stores_platform_skus_router)  # ✅ 新增：/stores/{id}/platform-skus
 app.include_router(shop_product_bundles_router)
 
 app.include_router(warehouses_router)

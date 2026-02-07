@@ -8,7 +8,6 @@ from app.api.routers import stores_routes_bindings
 from app.api.routers import stores_routes_crud
 from app.api.routers import stores_routes_platform_auth
 from app.api.routers import stores_routes_routing  # ✅ 新增：省级路由表 + health
-from app.api.routers import stores_routes_items  # ✅ 新增：store_items（店铺卖哪些 SKU）
 
 # 兼容导出：合同测试/旧 import 可能直接从 stores 模块 import schema/类型
 from app.api.routers.stores_helpers import (
@@ -37,12 +36,6 @@ from app.api.routers.stores_schemas import (
     ProvinceRouteListOut,
     ProvinceRouteWriteOut,
     RoutingHealthOut,
-    # store_items
-    StoreItemRow,
-    StoreItemsListOut,
-    StoreItemAddIn,
-    StoreItemAddOut,
-    StoreItemDeleteOut,
 )
 
 router = APIRouter(tags=["stores"])
@@ -53,7 +46,6 @@ def _register_all_routes() -> None:
     stores_routes_bindings.register(router)
     stores_routes_platform_auth.register(router)
     stores_routes_routing.register(router)  # ✅
-    stores_routes_items.register(router)    # ✅
 
 
 _register_all_routes()
@@ -81,12 +73,6 @@ __all__ = [
     "ProvinceRouteListOut",
     "ProvinceRouteWriteOut",
     "RoutingHealthOut",
-    # store_items
-    "StoreItemRow",
-    "StoreItemsListOut",
-    "StoreItemAddIn",
-    "StoreItemAddOut",
-    "StoreItemDeleteOut",
     "_check_perm",
     "_ensure_store_exists",
     "_ensure_warehouse_exists",

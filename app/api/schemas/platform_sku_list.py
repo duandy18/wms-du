@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 class PlatformSkuBindingSummary(BaseModel):
     status: Literal["bound", "unbound"]
-    target_type: Optional[Literal["item", "fsku"]] = None
-    item_id: Optional[int] = None
+    # ✅ 单入口：只允许绑定到 fsku
+    target_type: Optional[Literal["fsku"]] = None
     fsku_id: Optional[int] = None
     effective_from: Optional[datetime] = None
 

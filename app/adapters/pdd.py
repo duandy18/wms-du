@@ -1,14 +1,14 @@
 # app/adapters/pdd.py
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import ChannelAdapter
-from app.models.store import StoreItem
 from app.services.store_token_service import (
     StoreTokenExpired,
     StoreTokenNotFound,
@@ -41,33 +41,22 @@ class PddAdapter(ChannelAdapter):
     拼多多适配器（骨架版）
 
     当前职责：
-    - 提供一个“预览拉库存请求参数”的工具（按 item_ids → ext_sku_ids 映射）；
+    - 预览拉库存请求参数（platform_sku_ids → ext_sku_ids）；
     - 预埋店铺级 token 的加载方法（load_token），为后续接真实 API 做准备；
-    - fetch/push 仍为占位，实现后续可无缝替换为 SDK/API。
+    - fetch/push 仍为占位。
+
+    ✅ 强制收敛：
+    - build_fetch_preview **只允许** platform_sku_ids（PSKU 入口）；
+    - ext_sku_ids **只来源于** platform_sku_mirror.raw_payload；
+    - 禁止 item_ids（避免把库存域/商品域入口重新塞回平台域）。
     """
 
-    # ---------- 应用级凭据 ----------
     async def load_credentials(self, session: AsyncSession, *, store_id: int) -> PddCredentials:
-        """
-        目前不从数据库读取任何 app_key 信息，仅返回空凭据。
-
-        未来如果你决定在某处存放 PDD AppKey/AppSecret，
-        可以在这里接入真实配置，例如：
-        - 从专门的 app_config 表读取；
-        - 从环境变量 / Vault 中读取。
-        """
-        _ = session  # 当前未使用，仅占位以保留签名
+        _ = session
+        _ = store_id
         return PddCredentials()
 
-    # ---------- 店铺级 token（预埋：从 OAuth / 手工凭据中取） ----------
     async def load_token(self, session: AsyncSession, *, store_id: int) -> Optional[str]:
-        """
-        加载“店铺级”的访问 token（优先 OAuth token，兜底手工 store_tokens），
-        方便后续真正调用 PDD 接口时使用。
-
-        现在这个方法暂时不在预览里使用，只是预埋好，
-        等你开始接真 API 的时候直接用。
-        """
         svc = StoreTokenService(session)
         try:
             rec = await svc.get_token_for_store(store_id=store_id, platform="pdd")
@@ -75,86 +64,115 @@ class PddAdapter(ChannelAdapter):
             return None
         return rec.access_token
 
-    # ---------- 预览：构造拉库存入参（含 ext_sku 映射与签名占位） ----------
+    @staticmethod
+    def _extract_ext_sku_id_from_raw(raw_payload: Any, *, fallback: str) -> str:
+        if raw_payload is None:
+            return fallback
+
+        obj: Any = raw_payload
+        if isinstance(raw_payload, str):
+            try:
+                obj = json.loads(raw_payload)
+            except Exception:
+                return fallback
+
+        if not isinstance(obj, dict):
+            return fallback
+
+        candidates = [
+            "pdd_sku_id",
+            "pddSkuId",
+            "sku_id",
+            "skuId",
+            "outer_id",
+            "outerId",
+            "spec_id",
+            "specId",
+            "id",
+        ]
+        for k in candidates:
+            v = obj.get(k)
+            if v is None:
+                continue
+            if isinstance(v, (int, float)):
+                return str(int(v))
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+        return fallback
+
     async def build_fetch_preview(
-        self, session: AsyncSession, *, store_id: int, item_ids: Sequence[int]
+        self,
+        session: AsyncSession,
+        *,
+        store_id: int,
+        platform_sku_ids: Sequence[str],
+        platform: str = "PDD",
     ) -> Dict[str, Any]:
         """
-        返回“将要请求 PDD 拉库存”的预览（不真正调用平台）：
+        返回“将要请求 PDD 拉库存”的预览（不真正调用平台）。
 
-        返回结构示例：
-        {
-          "creds_ready": true/false,          # 应用级凭据是否齐全（目前恒 False）
-          "has_token": true/false,            # 店铺级 token 是否已存在（OAuth/手工）
-          "store_id": 1,
-          "ext_sku_ids": ["...","..."],       # 与 item_ids 同顺序
-          "signature": "pdd-signature-placeholder",
-        }
+        输入：
+        - platform_sku_ids：平台 SKU 标识（PSKU 的 platform_sku_id）
+        - store_id：内部店铺 ID（当前约定 shop_id == store_id）
+        - platform：默认 PDD
+
+        输出：
+        - ext_sku_ids：平台接口需要的 SKU 标识（来自 mirror.raw_payload；找不到则回落为 platform_sku_id）
         """
         creds = await self.load_credentials(session, store_id=store_id)
         token = await self.load_token(session, store_id=store_id)
 
-        # 一次性取出并缓存：避免重复 .all() 导致结果耗尽 / 误判未绑定
-        result = await session.execute(
-            select(StoreItem.item_id, StoreItem.pdd_sku_id).where(
-                StoreItem.store_id == store_id,
-                StoreItem.item_id.in_(list(map(int, item_ids))),
+        ids = [str(x) for x in platform_sku_ids]
+        ext_by_id: dict[str, str] = {pid: pid for pid in ids}
+
+        if ids:
+            sql = text(
+                """
+                SELECT platform_sku_id, raw_payload
+                  FROM platform_sku_mirror
+                 WHERE platform = :platform
+                   AND shop_id = :shop_id
+                   AND platform_sku_id = ANY(:ids)
+                """
             )
-        )
-        rows = result.all()
-        mapping = {int(i): (sku or str(int(i))) for i, sku in rows}
+            rows = (
+                await session.execute(
+                    sql,
+                    {"platform": str(platform), "shop_id": int(store_id), "ids": list(ids)},
+                )
+            ).mappings().all()
 
-        # 按 item_ids 顺序映射；未绑定回落为 item_id 字符串
-        ext = [mapping.get(int(iid), str(int(iid))) for iid in item_ids]
+            for r in rows:
+                pid = str(r.get("platform_sku_id") or "")
+                if not pid:
+                    continue
+                raw = r.get("raw_payload")
+                ext_by_id[pid] = self._extract_ext_sku_id_from_raw(raw, fallback=pid)
 
-        payload = {"store_id": store_id, "ext_sku_ids": ext}
+        ext = [ext_by_id.get(pid, pid) for pid in ids]
+
+        payload = {"store_id": store_id, "platform": str(platform), "platform_sku_ids": ids, "ext_sku_ids": ext}
         sig = self.sign(payload)
+
         return {
             "creds_ready": creds.ready,
             "has_token": bool(token),
             "store_id": store_id,
+            "platform": str(platform),
+            "platform_sku_ids": ids,
             "ext_sku_ids": ext,
             "signature": sig,
         }
 
-    # ---------- 拉库存（占位实现；后续接 SDK） ----------
     async def fetch_inventory(self, *, store_id: int, item_ids: Sequence[int]) -> Dict[int, int]:
-        """
-        占位实现：真正接入时应该做的事情是：
-
-        - 用 build_fetch_preview 中的逻辑构造 ext_sku_ids；
-        - 调用 load_token() 拿到 access_token；
-        - 按 PDD POP 文档拼接参数 + 签名；
-        - 调用 PDD 库存查询接口，解析结果为 {item_id: qty}。
-
-        当前占位实现始终返回 0，确保不会误导你。
-        """
+        _ = store_id
         return {int(i): 0 for i in item_ids}
 
-    # ---------- 推库存（占位实现；后续接 SDK） ----------
     async def push_inventory(self, *, store_id: int, items: Sequence[dict]) -> Dict[str, Any]:
-        """
-        占位实现：真正接入时应该做的事情是：
-
-        - items: [{item_id, qty}, ...] 或带 ext_sku_id 的结构；
-        - 通过 load_token() 拿 access_token；
-        - 拼签名，调用 PDD 批量推库存 API。
-
-        现在只回显 preview，防止被误当成“已经连上平台”。
-        """
+        _ = store_id
         return {"ok": False, "reason": "PDD push not wired yet", "preview": list(items)}
 
-    # ---------- 签名占位 ----------
     def sign(self, payload: dict) -> str:
-        """
-        签名占位：
-
-        真实实现通常是：
-        - 所有参数（含 app_key、timestamp 等）按字典序拼接；
-        - 在前后加上 app_secret；
-        - 做一次 MD5/SM3 等，得到签名字符串。
-
-        这里先返回固定占位值，便于前端 / 调试页面看到结构是否正确。
-        """
-        _ = payload  # 当前未使用，仅占位
+        _ = payload
         return "pdd-signature-placeholder"
