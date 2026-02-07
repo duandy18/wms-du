@@ -14,7 +14,6 @@ from app.api.schemas.platform_sku_binding import (
     BindingRow,
 )
 from app.models.fsku import Fsku
-from app.models.item import Item
 from app.models.platform_sku_binding import PlatformSkuBinding
 
 
@@ -73,27 +72,15 @@ class PlatformSkuBindingService:
         platform: str,
         shop_id: int,
         platform_sku_id: str,
-        item_id: int | None,
-        fsku_id: int | None,
+        fsku_id: int,
         reason: str | None,
     ) -> BindingCurrentOut:
-        # XOR：必须且只能选一个
-        has_item = item_id is not None
-        has_fsku = fsku_id is not None
-        if has_item == has_fsku:
-            raise self.Conflict("item_id 与 fsku_id 必须二选一（且只能选一个）")
-
-        # 校验目标存在性
-        if has_item:
-            item = self.db.get(Item, item_id)
-            if item is None:
-                raise self.NotFound("Item 不存在")
-        else:
-            fsku = self.db.get(Fsku, fsku_id)
-            if fsku is None:
-                raise self.NotFound("FSKU 不存在")
-            if fsku.status != "published":
-                raise self.Conflict("仅允许绑定到已发布的 FSKU")
+        # ✅ 单入口：仅允许绑定 FSKU
+        fsku = self.db.get(Fsku, fsku_id)
+        if fsku is None:
+            raise self.NotFound("FSKU 不存在")
+        if fsku.status != "published":
+            raise self.Conflict("仅允许绑定到已发布的 FSKU")
 
         now = _utc_now()
 
@@ -114,7 +101,7 @@ class PlatformSkuBindingService:
             platform=platform,
             shop_id=shop_id,
             platform_sku_id=platform_sku_id,
-            item_id=item_id,
+            item_id=None,  # ✅ 强制单入口
             fsku_id=fsku_id,
             effective_from=now,
             effective_to=None,
@@ -160,9 +147,7 @@ class PlatformSkuBindingService:
             self.db.rollback()
             raise self.Conflict("解除绑定写入冲突，请重试")
 
-    def migrate(
-        self, *, binding_id: int, to_item_id: int | None, to_fsku_id: int | None, reason: str | None
-    ) -> BindingMigrateOut:
+    def migrate(self, *, binding_id: int, to_fsku_id: int, reason: str | None) -> BindingMigrateOut:
         row = self.db.get(PlatformSkuBinding, binding_id)
         if row is None:
             raise self.NotFound("Binding 不存在")
@@ -172,16 +157,13 @@ class PlatformSkuBindingService:
             raise self.Conflict("当前无生效绑定，无法迁移")
 
         # 目标一致：直接返回
-        if to_item_id is not None and cur.current.item_id == to_item_id:
-            return BindingMigrateOut(current=cur.current)
-        if to_fsku_id is not None and cur.current.fsku_id == to_fsku_id:
+        if cur.current.fsku_id == to_fsku_id:
             return BindingMigrateOut(current=cur.current)
 
         out = self.bind(
             platform=row.platform,
             shop_id=row.shop_id,
             platform_sku_id=row.platform_sku_id,
-            item_id=to_item_id,
             fsku_id=to_fsku_id,
             reason=reason,
         )
@@ -193,7 +175,7 @@ class PlatformSkuBindingService:
             platform=r.platform,
             shop_id=r.shop_id,
             platform_sku_id=r.platform_sku_id,
-            item_id=r.item_id,
+            item_id=r.item_id,  # legacy 读历史允许存在
             fsku_id=r.fsku_id,
             effective_from=r.effective_from,
             effective_to=r.effective_to,

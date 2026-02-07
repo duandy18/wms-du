@@ -77,13 +77,6 @@ class Store(Base):
         overlaps="warehouses,stores,warehouse",
     )
 
-    items: Mapped[List["StoreItem"]] = relationship(
-        "StoreItem",
-        back_populates="store",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        lazy="selectin",
-    )
 
     inventories: Mapped[List["ChannelInventory"]] = relationship(
         "ChannelInventory",
@@ -155,36 +148,6 @@ class StoreWarehouse(Base):
             f"warehouse_id={self.warehouse_id} "
             f"default={self.is_default} top={self.is_top} prio={self.priority}>"
         )
-
-
-class StoreItem(Base):
-    __tablename__ = "store_items"
-    __table_args__ = (
-        UniqueConstraint("store_id", "pdd_sku_id", name="uq_store_items_store_pddsku"),
-        UniqueConstraint("store_id", "item_id", name="uq_store_items_store_item"),
-        Index("ix_store_items_store_item", "store_id", "item_id"),
-        {"info": {"skip_autogen": True}},
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    store_id: Mapped[int] = mapped_column(
-        ForeignKey("stores.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-    item_id: Mapped[int] = mapped_column(
-        ForeignKey("items.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-
-    pdd_sku_id: Mapped[Optional[str]] = mapped_column(String(64))
-    outer_id: Mapped[Optional[str]] = mapped_column(String(128))
-
-    store: Mapped["Store"] = relationship("Store", back_populates="items")
-
-    def __repr__(self) -> str:
-        return f"<StoreItem id={self.id} store_id={self.store_id} item_id={self.item_id}>"
 
 
 class ChannelInventory(Base):

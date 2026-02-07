@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -35,7 +36,38 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ) -> PlatformSkuMirrorOut:
         check_perm(db, current_user, ["config.store.write"])
-        # ✅ 合同：只读线索；MVP 允许先返回空 lines，不阻塞“绑定/迁移/回溯”闭环
-        return PlatformSkuMirrorOut(platform=platform, shop_id=shop_id, platform_sku_id=platform_sku_id, lines=[])
+
+        # ✅ 合同：mirror-first 读模型；只读线索，不做裁决/绑定。
+        # 最小实现：若存在 mirror 行，则把 sku_name/spec 映射到 lines 的第一行。
+        row = (
+            db.execute(
+                text(
+                    """
+                    SELECT sku_name, spec
+                      FROM platform_sku_mirror
+                     WHERE platform = :platform
+                       AND shop_id = :shop_id
+                       AND platform_sku_id = :platform_sku_id
+                     LIMIT 1
+                    """
+                ),
+                {
+                    "platform": str(platform),
+                    "shop_id": int(shop_id),
+                    "platform_sku_id": str(platform_sku_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+        lines: list[PlatformSkuMirrorLine] = []
+        if row:
+            sku_name = row.get("sku_name") or ""
+            spec = row.get("spec")
+            if sku_name:
+                lines.append(PlatformSkuMirrorLine(item_name=str(sku_name), spec=str(spec) if spec is not None else None))
+
+        return PlatformSkuMirrorOut(platform=platform, shop_id=shop_id, platform_sku_id=platform_sku_id, lines=lines)
 
     router.include_router(r)

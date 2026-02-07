@@ -14,11 +14,11 @@ from tests.api._helpers_shipping_quote import login
 
 def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> None:
     """
-    合同：/stores/{store_id}/platform-skus 在 mirror 有数据时，必须优先返回 mirror 的 sku_name。
+    合同：/platform-skus/mirror 在 mirror 有数据时，必须返回 mirror 的 sku_name（作为只读线索）。
 
     注意：
     - 不依赖 binding/fsku/item 的存在，避免把“读模型优先级合同”绑到其它域对象上。
-    - 只要求 store_id=1（你的本地调试已证明可用）。
+    - 只要求 platform=PDD, shop_id=1（你的本地调试已证明可用）。
     """
     client = TestClient(app)
     token = login(client)
@@ -67,25 +67,21 @@ def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> No
 
     # Act
     resp = client.get(
-        "/stores/1/platform-skus?with_binding=1&limit=50&offset=0",
+        "/platform-skus/mirror?platform=PDD&shop_id=1&platform_sku_id=SKU-UT-MIRROR-001",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
 
-    # Assert: 找到我们插入的那条 key，sku_name 必须来自 mirror
-    hit = None
-    for it in data.get("items", []):
-        if (
-            it.get("platform") == "PDD"
-            and it.get("shop_id") == 1
-            and it.get("platform_sku_id") == "SKU-UT-MIRROR-001"
-        ):
-            hit = it
-            break
+    # Assert: lines[0].item_name 必须来自 mirror.sku_name
+    assert data.get("platform") == "PDD"
+    assert data.get("shop_id") == 1
+    assert data.get("platform_sku_id") == "SKU-UT-MIRROR-001"
 
-    assert hit is not None, f"mirror row not returned: items={data.get('items')}"
-    assert hit["sku_name"] == "UT_MIRROR_NAME"
+    lines = data.get("lines") or []
+    assert len(lines) >= 1, f"mirror row not returned: lines={lines}"
+    assert lines[0].get("item_name") == "UT_MIRROR_NAME"
+    assert lines[0].get("spec") == "UT_SPEC"
 
     # Cleanup（尽量不污染后续测试）
     db2 = SessionLocal()

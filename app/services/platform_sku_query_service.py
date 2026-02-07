@@ -22,6 +22,9 @@ class PlatformSkuQueryService:
       2) platform_sku_bindings distinct key（fallback，保证页面不空）
 
     - 映射来源：current binding（effective_to IS NULL）
+
+    ✅ 收敛：PSKU 只允许绑定到 FSKU（单品也必须通过 single-FSKU 表达）
+    - 历史遗留的 item_id 绑定（legacy）在列表中按 unbound 处理，驱动迁移。
     """
 
     def __init__(self, db: Session):
@@ -77,7 +80,7 @@ class PlatformSkuQueryService:
                 base.order_by(PlatformSkuBinding.platform_sku_id).limit(limit).offset(offset)
             ).all()
 
-            bindings = {}
+            bindings: dict[tuple[str, int, str], PlatformSkuBinding] = {}
             if with_binding:
                 b_rows = self.db.scalars(
                     select(PlatformSkuBinding).where(
@@ -92,15 +95,9 @@ class PlatformSkuQueryService:
             for platform, shop_id, platform_sku_id in rows:
                 b = bindings.get((platform, shop_id, platform_sku_id))
 
-                if b is None:
+                # ✅ 只承认 fsku_id；item_id legacy 当作 unbound
+                if b is None or b.fsku_id is None:
                     binding = PlatformSkuBindingSummary(status="unbound")
-                elif b.item_id is not None:
-                    binding = PlatformSkuBindingSummary(
-                        status="bound",
-                        target_type="item",
-                        item_id=b.item_id,
-                        effective_from=b.effective_from,
-                    )
                 else:
                     binding = PlatformSkuBindingSummary(
                         status="bound",
@@ -124,7 +121,7 @@ class PlatformSkuQueryService:
         # -------------------------
         # 3) mirror 有数据：补 current binding
         # -------------------------
-        bindings = {}
+        bindings: dict[tuple[str, int, str], PlatformSkuBinding] = {}
         if with_binding:
             b_rows = self.db.scalars(
                 select(PlatformSkuBinding).where(
@@ -139,15 +136,9 @@ class PlatformSkuQueryService:
         for m in mirror_rows:
             b = bindings.get((m.platform, m.shop_id, m.platform_sku_id))
 
-            if b is None:
+            # ✅ 只承认 fsku_id；item_id legacy 当作 unbound
+            if b is None or b.fsku_id is None:
                 binding = PlatformSkuBindingSummary(status="unbound")
-            elif b.item_id is not None:
-                binding = PlatformSkuBindingSummary(
-                    status="bound",
-                    target_type="item",
-                    item_id=b.item_id,
-                    effective_from=b.effective_from,
-                )
             else:
                 binding = PlatformSkuBindingSummary(
                     status="bound",
@@ -156,14 +147,12 @@ class PlatformSkuQueryService:
                     effective_from=b.effective_from,
                 )
 
-            display_name = m.sku_name
-
             items.append(
                 PlatformSkuListItem(
                     platform=m.platform,
                     shop_id=int(m.shop_id),
                     platform_sku_id=m.platform_sku_id,
-                    sku_name=display_name,
+                    sku_name=m.sku_name,
                     binding=binding,
                 )
             )
