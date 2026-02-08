@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .normalize import normalize_province_from_address
+from .order_address_repo import load_order_address
 from .route_c_service_hit import resolve_service_hit
 from .route_c_state import mark_fulfillment_blocked, mark_service_assigned
 
@@ -33,13 +34,22 @@ async def auto_route_warehouse_if_possible(
     兼容返回 payload：
       - service_warehouse_id 仍保留，用作 planned_warehouse_id 的兼容别名（便于旧调用方/调试工具读取）。
         但系统事实以 order_fulfillment 为准，orders 表不承载仓库归属。
+
+    ✅ Phase 2（事实源收敛）：
+      - 若调用方未传 address（或传空），则从 order_address 表读取快照兜底；
+      - 这样 route_c 的 province 判定与 UI/审计的 order_address 保持一致，避免“看起来有省但仍 blocked”。
     """
     if not items:
         return None
 
     plat_norm = (platform or "").upper().strip()
 
-    prov = normalize_province_from_address(address)
+    # ✅ 单一事实源收敛：若调用方没传 address，则从 order_address 表读取快照兜底
+    addr2 = address
+    if not addr2:
+        addr2 = await load_order_address(session, order_id=int(order_id))
+
+    prov = normalize_province_from_address(addr2)
     if not prov:
         return await mark_fulfillment_blocked(
             session,
@@ -57,7 +67,7 @@ async def auto_route_warehouse_if_possible(
             auto_commit=False,
         )
 
-    hit = await resolve_service_hit(session, province=prov, address=address)
+    hit = await resolve_service_hit(session, province=prov, address=addr2)
     swid = hit.service_warehouse_id
 
     if not swid:
