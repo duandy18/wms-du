@@ -17,7 +17,10 @@ class PlatformSkuMirror(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
-    shop_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    # ✅ 内部店铺主键：stores.id（DB 当前是 bigint，这里保持一致）
+    store_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
     platform_sku_id: Mapped[str] = mapped_column(String(200), nullable=False)
 
     sku_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,5 +34,5 @@ class PlatformSkuMirror(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("platform", "shop_id", "platform_sku_id", name="ux_platform_sku_mirror_key"),
+        UniqueConstraint("platform", "store_id", "platform_sku_id", name="ux_platform_sku_mirror_key"),
     )

@@ -4,6 +4,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 # 路由注册（拆分后的实现）
+from app.api.routers import stores_platform_skus
+from app.api.routers import stores_platform_sku_mirror_sync  # ✅ 新增：sync-mirror（平台拉取 → mirror）
+from app.api.routers import stores_platform_sku_mirror_upsert  # ✅ 你之前新增：mirror-upsert（外部写入）
 from app.api.routers import stores_routes_bindings
 from app.api.routers import stores_routes_crud
 from app.api.routers import stores_routes_platform_auth
@@ -46,6 +49,15 @@ def _register_all_routes() -> None:
     stores_routes_bindings.register(router)
     stores_routes_platform_auth.register(router)
     stores_routes_routing.register(router)  # ✅
+
+    # ✅ store 视角：platform-skus（mirror ∪ bindings）
+    stores_platform_skus.register(router)
+
+    # ✅ mirror 写入口：仅写 platform_sku_mirror，不做任何 binding 推导
+    stores_platform_sku_mirror_upsert.register(router)
+
+    # ✅ sync-mirror：平台拉取（adapter）→ mirror
+    stores_platform_sku_mirror_sync.register(router)
 
 
 _register_all_routes()

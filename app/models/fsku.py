@@ -15,8 +15,10 @@ class Fsku(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # ✅ 业务编码（全局唯一）
-    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # ✅ 业务编码（全局唯一）：
+    # DB 里是唯一索引（ux_fskus_code），这里用 Index(unique=True) 与之对齐，
+    # 避免 alembic-check 误判需要新增 unique constraint。
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -57,5 +59,9 @@ class FskuComponent(Base):
     fsku: Mapped["Fsku"] = relationship(back_populates="components")
 
 
+# 组件索引（你已有）
 Index("ix_fsku_components_fsku_id", FskuComponent.fsku_id)
 Index("ix_fsku_components_item_id", FskuComponent.item_id)
+
+# ✅ 对齐 DB：唯一索引 ux_fskus_code
+Index("ux_fskus_code", Fsku.code, unique=True)

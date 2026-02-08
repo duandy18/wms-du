@@ -16,7 +16,10 @@ class PlatformSkuBinding(Base):
 
     # 平台侧唯一键（S1）
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
-    shop_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # ✅ 内部店铺主键：stores.id（语义收敛）
+    store_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
     platform_sku_id: Mapped[str] = mapped_column(String(200), nullable=False)
 
     # 绑定目标（二选一，由 DB 的 CHECK 约束保证 XOR）
@@ -42,19 +45,19 @@ class PlatformSkuBinding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-# 查询索引（非唯一）
+# 查询索引（非唯一）— 注意：名字保持不变，但列必须是 store_id
 Index(
     "ix_platform_sku_bindings_key",
     PlatformSkuBinding.platform,
-    PlatformSkuBinding.shop_id,
+    PlatformSkuBinding.store_id,
     PlatformSkuBinding.platform_sku_id,
 )
 
-# ✅ current 唯一（同一个 platform + shop + sku，在任意时刻只能有一条生效记录）
+# ✅ current 唯一（同一个 platform + store + sku，在任意时刻只能有一条生效记录）
 Index(
     "ux_platform_sku_bindings_current",
     PlatformSkuBinding.platform,
-    PlatformSkuBinding.shop_id,
+    PlatformSkuBinding.store_id,
     PlatformSkuBinding.platform_sku_id,
     unique=True,
     postgresql_where=PlatformSkuBinding.effective_to.is_(None),

@@ -39,6 +39,9 @@ def register(router: APIRouter) -> None:
 
         # ✅ 合同：mirror-first 读模型；只读线索，不做裁决/绑定。
         # 最小实现：若存在 mirror 行，则把 sku_name/spec 映射到 lines 的第一行。
+        #
+        # DB 事实：platform_sku_mirror 使用 store_id（stores.id）作为外键口径；
+        # 对外合同仍沿用 shop_id（历史误名），其语义在此处等价为 store_id。
         row = (
             db.execute(
                 text(
@@ -46,14 +49,14 @@ def register(router: APIRouter) -> None:
                     SELECT sku_name, spec
                       FROM platform_sku_mirror
                      WHERE platform = :platform
-                       AND shop_id = :shop_id
+                       AND store_id = :store_id
                        AND platform_sku_id = :platform_sku_id
                      LIMIT 1
                     """
                 ),
                 {
                     "platform": str(platform),
-                    "shop_id": int(shop_id),
+                    "store_id": int(shop_id),
                     "platform_sku_id": str(platform_sku_id),
                 },
             )

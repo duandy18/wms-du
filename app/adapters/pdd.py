@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Sequence
 
 from sqlalchemy import text
@@ -49,6 +50,10 @@ class PddAdapter(ChannelAdapter):
     - build_fetch_preview **只允许** platform_sku_ids（PSKU 入口）；
     - ext_sku_ids **只来源于** platform_sku_mirror.raw_payload；
     - 禁止 item_ids（避免把库存域/商品域入口重新塞回平台域）。
+
+    ✅ Phase-2（本次新增，先占位）：
+    - fetch_sku_mirrors：从平台“拉取 SKU 镜像”的适配器接口形状
+      *当前返回 mock payload，不调用真实 PDD API*
     """
 
     async def load_credentials(self, session: AsyncSession, *, store_id: int) -> PddCredentials:
@@ -112,13 +117,9 @@ class PddAdapter(ChannelAdapter):
         """
         返回“将要请求 PDD 拉库存”的预览（不真正调用平台）。
 
-        输入：
-        - platform_sku_ids：平台 SKU 标识（PSKU 的 platform_sku_id）
-        - store_id：内部店铺 ID（当前约定 shop_id == store_id）
-        - platform：默认 PDD
-
-        输出：
-        - ext_sku_ids：平台接口需要的 SKU 标识（来自 mirror.raw_payload；找不到则回落为 platform_sku_id）
+        约束：
+        - 平台域对外概念是 shop（字符串），但这里已经处于系统内部（store_id）。
+        - platform_sku_mirror 表的外键口径为 store_id（stores.id）。
         """
         creds = await self.load_credentials(session, store_id=store_id)
         token = await self.load_token(session, store_id=store_id)
@@ -132,14 +133,14 @@ class PddAdapter(ChannelAdapter):
                 SELECT platform_sku_id, raw_payload
                   FROM platform_sku_mirror
                  WHERE platform = :platform
-                   AND shop_id = :shop_id
+                   AND store_id = :store_id
                    AND platform_sku_id = ANY(:ids)
                 """
             )
             rows = (
                 await session.execute(
                     sql,
-                    {"platform": str(platform), "shop_id": int(store_id), "ids": list(ids)},
+                    {"platform": str(platform), "store_id": int(store_id), "ids": list(ids)},
                 )
             ).mappings().all()
 
@@ -164,6 +165,45 @@ class PddAdapter(ChannelAdapter):
             "ext_sku_ids": ext,
             "signature": sig,
         }
+
+    async def fetch_sku_mirrors(
+        self,
+        *,
+        store_id: int,
+        platform_sku_ids: Sequence[str],
+    ) -> list[dict[str, Any]]:
+        """
+        ✅ Phase-2：平台 SKU 镜像拉取（当前先占位，不调用真实 PDD API）
+        """
+        _ = store_id
+        now = datetime.now(timezone.utc)
+
+        out: list[dict[str, Any]] = []
+        for pid in platform_sku_ids:
+            spid = str(pid).strip()
+            if not spid:
+                continue
+
+            # 让 PlatformSkuMirrorService 能从 raw_payload 抽取线索：
+            # - title / variant_name
+            out.append(
+                {
+                    "platform_sku_id": spid,
+                    "sku_name": None,
+                    "spec": None,
+                    "raw_payload": {
+                        "title": f"PDD商品-{spid}",
+                        "variant_name": "mock-颜色:黑 尺码:L",
+                        "platform": "pdd",
+                        "platform_sku_id": spid,
+                        "mock": True,
+                    },
+                    "observed_at": now,
+                    "source": "pdd-mock",
+                }
+            )
+
+        return out
 
     async def fetch_inventory(self, *, store_id: int, item_ids: Sequence[int]) -> Dict[int, int]:
         _ = store_id
