@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.platform_order_resolve_service import norm_platform
 from app.api.routers.platform_orders_ingest_schemas import PlatformOrderIngestIn
+from app.services.order_ingest_routing.normalize import normalize_province_name
 
 
 async def load_shop_id_by_store_id(session: AsyncSession, *, store_id: int, platform: str) -> str:
@@ -47,11 +48,18 @@ def build_address(payload: PlatformOrderIngestIn) -> Optional[Dict[str, str]]:
     最小策略：
     - 若完全没给任何地址字段 => None（保持兼容）
     - 若给了任意地址字段，但 province 为空 => 抛 ValueError（上层转 422）
+
+    Phase 2（省份 normalize）：
+    - 允许常见非标准写法（如“河北”“ 河北 ”“内蒙”）规范化为标准省级行政区全称；
+    - 无法识别则视为不合法（抛 ValueError），避免落脏数据污染履约路由。
     """
+    prov_norm = normalize_province_name(payload.province)
+
     raw = {
         "receiver_name": (payload.receiver_name or "").strip(),
         "receiver_phone": (payload.receiver_phone or "").strip(),
-        "province": (payload.province or "").strip(),
+        # ✅ province 以 normalize 后的标准全称写入（用于审计/解释/UI 展示 + 履约路由一致性）
+        "province": (prov_norm or ""),
         "city": (payload.city or "").strip(),
         "district": (payload.district or "").strip(),
         "detail": (payload.detail or "").strip(),
@@ -63,7 +71,8 @@ def build_address(payload: PlatformOrderIngestIn) -> Optional[Dict[str, str]]:
         return None
 
     if not raw["province"]:
-        raise ValueError("province 不能为空（履约路由至少需要省份）")
+        # 省份缺失或不合法（如“Hebei”等无法识别）
+        raise ValueError("province 不能为空且必须是可识别的省级行政区（如：河北省）")
 
     return {k: v for k, v in raw.items() if v}
 

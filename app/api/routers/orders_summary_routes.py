@@ -28,6 +28,9 @@ class OrderSummaryOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
+    # ✅ store_id（stores.id）：用于内部治理/解析卡 replay 入参（前端不得推导）
+    store_id: Optional[int] = None
+
     # 执行仓（实际出库）
     warehouse_id: Optional[int] = None
     # 服务仓（系统裁决、服务归属）
@@ -71,9 +74,21 @@ def _derive_assign_mode(
         if int(warehouse_id) == int(service_warehouse_id):
             return "AUTO_FROM_SERVICE"
         return "OTHER"
+
+    # ✅ 有 planned（服务仓）但没有 actual（执行仓）：已分配服务仓，待指定执行仓
+    if warehouse_id is None and service_warehouse_id is not None:
+        return "SERVICE_ASSIGNED"
+
     if warehouse_id is None:
         return "UNASSIGNED"
     return "OTHER"
+
+
+def _norm_optional_str(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
 
 
 async def _list_orders_summary_rows(
@@ -82,6 +97,7 @@ async def _list_orders_summary_rows(
     platform: Optional[str],
     shop_id: Optional[str],
     status: Optional[str],
+    fulfillment_status: Optional[str],
     time_from: Optional[datetime],
     time_to: Optional[datetime],
     limit: int,
@@ -92,22 +108,33 @@ async def _list_orders_summary_rows(
     - 履约/仓库快照在 order_fulfillment
     因此这里从 orders LEFT JOIN order_fulfillment 取 planned/actual/status。
 
-    注意：这里的 status 查询参数按“履约状态 fulfillment_status”解释（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
+    参数语义（不兼容硬改）：
+    - status：过滤 orders.status（CREATED / PICKABLE / ...）
+    - fulfillment_status：过滤 order_fulfillment.fulfillment_status（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
     """
     clauses: List[str] = []
     params: Dict[str, Any] = {"limit": limit}
 
-    if platform:
-        clauses.append("o.platform = :p")
-        params["p"] = platform.upper()
-    if shop_id:
-        clauses.append("o.shop_id = :s")
-        params["s"] = shop_id
+    p = _norm_optional_str(platform)
+    s = _norm_optional_str(shop_id)
+    st = _norm_optional_str(status)
+    fst = _norm_optional_str(fulfillment_status)
 
-    # ✅ 迁移后：status 以 order_fulfillment.fulfillment_status 为准（不再依赖 orders.status）
-    if status:
+    if p:
+        clauses.append("o.platform = :p")
+        params["p"] = p.upper()
+
+    if s:
+        clauses.append("o.shop_id = :s")
+        params["s"] = s
+
+    if st:
+        clauses.append("o.status = :st")
+        params["st"] = st.strip().upper()
+
+    if fst:
         clauses.append("f.fulfillment_status = :fst")
-        params["fst"] = status
+        params["fst"] = fst.strip().upper()
 
     if time_from:
         clauses.append("o.created_at >= :from_ts")
@@ -133,12 +160,16 @@ async def _list_orders_summary_rows(
                         o.status,
                         o.created_at,
                         o.updated_at,
+                        s.id AS store_id,
                         f.actual_warehouse_id AS warehouse_id,
                         f.planned_warehouse_id AS service_warehouse_id,
                         f.fulfillment_status,
                         o.order_amount,
                         o.pay_amount
                       FROM orders o
+                      LEFT JOIN stores s
+                        ON s.platform = o.platform
+                       AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
                       LEFT JOIN order_fulfillment f ON f.order_id = o.id
                       {where_sql}
                      ORDER BY o.created_at DESC, o.id DESC
@@ -192,7 +223,10 @@ def register(router) -> None:
         session: AsyncSession = Depends(get_session),
         platform: Optional[str] = Query(None),
         shop_id: Optional[str] = Query(None),
-        status: Optional[str] = Query(None, description="履约状态：SERVICE_ASSIGNED / READY_TO_FULFILL / ..."),
+        status: Optional[str] = Query(None, description="订单头状态（orders.status）：CREATED / PICKABLE / ..."),
+        fulfillment_status: Optional[str] = Query(
+            None, description="履约状态（order_fulfillment.fulfillment_status）：SERVICE_ASSIGNED / READY_TO_FULFILL / ..."
+        ),
         time_from: Optional[datetime] = Query(None),
         time_to: Optional[datetime] = Query(None),
         limit: int = Query(100),
@@ -202,6 +236,7 @@ def register(router) -> None:
             platform=platform,
             shop_id=shop_id,
             status=status,
+            fulfillment_status=fulfillment_status,
             time_from=time_from,
             time_to=time_to,
             limit=limit,
@@ -214,6 +249,7 @@ def register(router) -> None:
             fs = str(r.get("fulfillment_status") or "").strip().upper()
             whid = r.get("warehouse_id")
             swid = r.get("service_warehouse_id")
+            sid = r.get("store_id")
 
             # ✅ 可操作事实：SERVICE_ASSIGNED 且已有 planned 且 actual 为空
             can_manual = (fs == "SERVICE_ASSIGNED") and (swid is not None) and (whid is None)
@@ -227,6 +263,7 @@ def register(router) -> None:
                     status=r.get("status"),
                     created_at=r["created_at"],
                     updated_at=r.get("updated_at"),
+                    store_id=int(sid) if sid is not None else None,
                     warehouse_id=int(whid) if whid is not None else None,
                     service_warehouse_id=int(swid) if swid is not None else None,
                     fulfillment_status=r.get("fulfillment_status"),
