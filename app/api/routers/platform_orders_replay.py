@@ -18,6 +18,9 @@ from app.services.platform_order_resolve_service import (
     resolve_platform_lines_to_items,
 )
 
+# ✅ 复用 ingest 的履约快照读取逻辑（保持合同一致）
+from app.api.routers.platform_orders_ingest_helpers import load_order_fulfillment_brief
+
 router = APIRouter(tags=["platform-orders"])
 
 
@@ -50,6 +53,10 @@ class PlatformOrderReplayOut(BaseModel):
     facts_n: int = 0
     resolved: List[Dict[str, Any]] = Field(default_factory=list)
     unresolved: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # ✅ 与 ingest 合同对齐：直接透出履约状态与阻塞原因
+    fulfillment_status: Optional[str] = None
+    blocked_reasons: Optional[List[str]] = None
 
 
 async def _load_shop_id_by_store_id(session: AsyncSession, *, store_id: int) -> str:
@@ -194,6 +201,8 @@ async def replay_platform_order(
             facts_n=0,
             resolved=[],
             unresolved=[{"reason": "FACTS_NOT_FOUND", "hint": "未找到该订单的事实行（platform/store_id/ext_order_no）"}],
+            fulfillment_status=None,
+            blocked_reasons=None,
         )
 
     resolved_lines, unresolved, item_qty_map = await resolve_platform_lines_to_items(
@@ -214,6 +223,8 @@ async def replay_platform_order(
             facts_n=len(fact_lines),
             resolved=[r.__dict__ for r in resolved_lines],
             unresolved=unresolved,
+            fulfillment_status=None,
+            blocked_reasons=None,
         )
 
     item_ids = sorted(item_qty_map.keys())
@@ -246,6 +257,11 @@ async def replay_platform_order(
     oid = int(r.get("id") or 0) if r.get("id") is not None else None
     ref = str(r.get("ref") or f"ORD:{plat}:{shop_id}:{ext}")
 
+    fulfillment_status = None
+    blocked_reasons = None
+    if oid is not None:
+        fulfillment_status, blocked_reasons = await load_order_fulfillment_brief(session, order_id=oid)
+
     return PlatformOrderReplayOut(
         status=str(r.get("status") or "OK"),
         id=oid,
@@ -256,4 +272,6 @@ async def replay_platform_order(
         facts_n=len(fact_lines),
         resolved=[r.__dict__ for r in resolved_lines],
         unresolved=unresolved,
+        fulfillment_status=fulfillment_status,
+        blocked_reasons=blocked_reasons,
     )
