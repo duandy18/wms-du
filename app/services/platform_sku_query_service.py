@@ -17,14 +17,23 @@ class PlatformSkuQueryService:
     """
     PSKU 聚合只读查询（Store 视角）：
 
-    - PSKU 来源（优先级）：
+    - PSKU 来源（优先级 / 合并策略）：
       1) platform_sku_mirror（平台事实，包含 sku_name/spec 等线索）
-      2) platform_sku_bindings distinct key（fallback，保证页面不空）
+      2) platform_sku_bindings distinct key（fallback/治理锚点：保证页面不空）
+
+    ✅ 关键：不再是 “mirror 有数据就忽略 bindings”。
+       列表永远是 mirror ∪ bindings(distinct key)，并按 mirror-first 输出。
 
     - 映射来源：current binding（effective_to IS NULL）
-
-    ✅ 收敛：PSKU 只允许绑定到 FSKU（单品也必须通过 single-FSKU 表达）
+    - 单入口收敛：PSKU 只允许绑定到 FSKU（单品也必须通过 single-FSKU 表达）
     - 历史遗留的 item_id 绑定（legacy）在列表中按 unbound 处理，驱动迁移。
+
+    ✅ 列表增强：
+    - 对 bound 项带出 binding_id（用于 migrate）
+
+    ✅ 合同升级：
+    - 输出新增 store_id（stores.id）
+    - 兼容保留 shop_id 字段名（语义等同 store_id）
     """
 
     def __init__(self, db: Session):
@@ -39,10 +48,13 @@ class PlatformSkuQueryService:
         offset: int,
         q: str | None,
     ) -> PlatformSkuListOut:
-        # -------------------------
-        # 1) mirror 优先（平台事实）
-        # -------------------------
-        mirror_base = select(PlatformSkuMirror).where(PlatformSkuMirror.shop_id == store_id)
+        # ------------------------------------------------------------
+        # 1) mirror 查询（平台事实）
+        #    说明：分页语义采用 mirror-first：
+        #    - 先消耗 mirror 序列（按 platform_sku_id 排序）
+        #    - 若 page 还有空间，再用 bindings-only 补齐
+        # ------------------------------------------------------------
+        mirror_base = select(PlatformSkuMirror).where(PlatformSkuMirror.store_id == store_id)
 
         if q:
             like = f"%{q}%"
@@ -53,108 +65,138 @@ class PlatformSkuQueryService:
             )
 
         mirror_total = int(self.db.scalar(select(func.count()).select_from(mirror_base.subquery())) or 0)
-        mirror_rows = self.db.scalars(
-            mirror_base.order_by(PlatformSkuMirror.platform_sku_id).limit(limit).offset(offset)
-        ).all()
 
-        # -------------------------
-        # 2) mirror 为空 -> fallback
-        # -------------------------
-        if mirror_total == 0:
-            base = (
-                select(
-                    PlatformSkuBinding.platform,
-                    PlatformSkuBinding.shop_id,
-                    PlatformSkuBinding.platform_sku_id,
-                )
-                .where(PlatformSkuBinding.shop_id == store_id)
-                .distinct()
-            )
+        # mirror 在合并序列中的 offset/limit
+        mirror_offset = offset if offset < mirror_total else mirror_total
+        mirror_limit = limit if offset < mirror_total else 0
+        if offset < mirror_total:
+            mirror_limit = min(limit, mirror_total - offset)
 
-            if q:
-                base = base.where(PlatformSkuBinding.platform_sku_id.ilike(f"%{q}%"))
-
-            total = int(self.db.scalar(select(func.count()).select_from(base.subquery())) or 0)
-
-            rows = self.db.execute(
-                base.order_by(PlatformSkuBinding.platform_sku_id).limit(limit).offset(offset)
+        mirror_rows = []
+        if mirror_limit > 0:
+            mirror_rows = self.db.scalars(
+                mirror_base.order_by(PlatformSkuMirror.platform_sku_id)
+                .limit(mirror_limit)
+                .offset(mirror_offset)
             ).all()
 
-            bindings: dict[tuple[str, int, str], PlatformSkuBinding] = {}
-            if with_binding:
-                b_rows = self.db.scalars(
-                    select(PlatformSkuBinding).where(
-                        PlatformSkuBinding.shop_id == store_id,
-                        PlatformSkuBinding.effective_to.is_(None),
-                    )
-                ).all()
-                for b in b_rows:
-                    bindings[(b.platform, b.shop_id, b.platform_sku_id)] = b
+        mirror_keys_in_page = {(m.platform, int(m.store_id), m.platform_sku_id) for m in mirror_rows}
 
-            items: list[PlatformSkuListItem] = []
-            for platform, shop_id, platform_sku_id in rows:
-                b = bindings.get((platform, shop_id, platform_sku_id))
+        # ------------------------------------------------------------
+        # 2) bindings-only keys（治理锚点）
+        #    bindings-only = 在 bindings distinct key 里，但 mirror 不存在的 key
+        #    注意：offset/limit 的后半段从 (offset - mirror_total) 开始
+        # ------------------------------------------------------------
+        bindings_only_base = (
+            select(
+                PlatformSkuBinding.platform,
+                PlatformSkuBinding.store_id,
+                PlatformSkuBinding.platform_sku_id,
+            )
+            .where(PlatformSkuBinding.store_id == store_id)
+            .distinct()
+        )
 
-                # ✅ 只承认 fsku_id；item_id legacy 当作 unbound
-                if b is None or b.fsku_id is None:
-                    binding = PlatformSkuBindingSummary(status="unbound")
-                else:
-                    binding = PlatformSkuBindingSummary(
-                        status="bound",
-                        target_type="fsku",
-                        fsku_id=b.fsku_id,
-                        effective_from=b.effective_from,
-                    )
+        if q:
+            bindings_only_base = bindings_only_base.where(PlatformSkuBinding.platform_sku_id.ilike(f"%{q}%"))
 
-                items.append(
-                    PlatformSkuListItem(
-                        platform=platform,
-                        shop_id=shop_id,
-                        platform_sku_id=platform_sku_id,
-                        sku_name=None,
-                        binding=binding,
-                    )
-                )
+        # 排除 mirror 已存在的 key（同 store_id 下相同三元组）
+        # 用 NOT EXISTS 避免拉全量 key 到内存
+        mirror_exists = (
+            select(1)
+            .select_from(PlatformSkuMirror)
+            .where(
+                PlatformSkuMirror.store_id == PlatformSkuBinding.store_id,
+                PlatformSkuMirror.platform == PlatformSkuBinding.platform,
+                PlatformSkuMirror.platform_sku_id == PlatformSkuBinding.platform_sku_id,
+            )
+            .limit(1)
+        )
+        bindings_only_base = bindings_only_base.where(~mirror_exists.exists())
 
-            return PlatformSkuListOut(items=items, total=total, limit=limit, offset=offset)
+        bindings_only_total = int(self.db.scalar(select(func.count()).select_from(bindings_only_base.subquery())) or 0)
 
-        # -------------------------
-        # 3) mirror 有数据：补 current binding
-        # -------------------------
+        # bindings-only 在合并序列中的 offset/limit
+        bindings_only_offset = 0
+        bindings_only_limit = 0
+        if offset >= mirror_total:
+            bindings_only_offset = offset - mirror_total
+            bindings_only_limit = limit
+        else:
+            bindings_only_offset = 0
+            bindings_only_limit = max(0, limit - len(mirror_rows))
+
+        bindings_only_rows = []
+        if bindings_only_limit > 0 and (bindings_only_total > 0):
+            bindings_only_rows = self.db.execute(
+                bindings_only_base.order_by(PlatformSkuBinding.platform_sku_id)
+                .limit(bindings_only_limit)
+                .offset(bindings_only_offset)
+            ).all()
+
+        # ------------------------------------------------------------
+        # 3) current bindings 映射（effective_to IS NULL）
+        # ------------------------------------------------------------
         bindings: dict[tuple[str, int, str], PlatformSkuBinding] = {}
         if with_binding:
             b_rows = self.db.scalars(
                 select(PlatformSkuBinding).where(
-                    PlatformSkuBinding.shop_id == store_id,
+                    PlatformSkuBinding.store_id == store_id,
                     PlatformSkuBinding.effective_to.is_(None),
                 )
             ).all()
             for b in b_rows:
-                bindings[(b.platform, b.shop_id, b.platform_sku_id)] = b
+                bindings[(b.platform, b.store_id, b.platform_sku_id)] = b
 
-        items: list[PlatformSkuListItem] = []
-        for m in mirror_rows:
-            b = bindings.get((m.platform, m.shop_id, m.platform_sku_id))
-
-            # ✅ 只承认 fsku_id；item_id legacy 当作 unbound
+        def _binding_summary(b: PlatformSkuBinding | None) -> PlatformSkuBindingSummary:
             if b is None or b.fsku_id is None:
-                binding = PlatformSkuBindingSummary(status="unbound")
-            else:
-                binding = PlatformSkuBindingSummary(
-                    status="bound",
-                    target_type="fsku",
-                    fsku_id=b.fsku_id,
-                    effective_from=b.effective_from,
-                )
+                return PlatformSkuBindingSummary(status="unbound")
+            return PlatformSkuBindingSummary(
+                status="bound",
+                binding_id=b.id,
+                target_type="fsku",
+                fsku_id=b.fsku_id,
+                effective_from=b.effective_from,
+            )
 
+        # ------------------------------------------------------------
+        # 4) 组装 items：mirror-first + bindings-only
+        # ------------------------------------------------------------
+        items: list[PlatformSkuListItem] = []
+
+        for m in mirror_rows:
+            k = (m.platform, int(m.store_id), m.platform_sku_id)
+            b = bindings.get(k)
+            sid = int(m.store_id)
             items.append(
                 PlatformSkuListItem(
                     platform=m.platform,
-                    shop_id=int(m.shop_id),
+                    store_id=sid,
+                    shop_id=sid,  # 兼容字段：语义等同 store_id
                     platform_sku_id=m.platform_sku_id,
                     sku_name=m.sku_name,
-                    binding=binding,
+                    binding=_binding_summary(b),
                 )
             )
 
-        return PlatformSkuListOut(items=items, total=mirror_total, limit=limit, offset=offset)
+        for platform, store_id2, platform_sku_id in bindings_only_rows:
+            k = (platform, int(store_id2), platform_sku_id)
+
+            if k in mirror_keys_in_page:
+                continue
+
+            b = bindings.get(k)
+            sid2 = int(store_id2)
+            items.append(
+                PlatformSkuListItem(
+                    platform=platform,
+                    store_id=sid2,
+                    shop_id=sid2,  # 兼容字段：语义等同 store_id
+                    platform_sku_id=platform_sku_id,
+                    sku_name=None,
+                    binding=_binding_summary(b),
+                )
+            )
+
+        total = mirror_total + bindings_only_total
+        return PlatformSkuListOut(items=items, total=total, limit=limit, offset=offset)

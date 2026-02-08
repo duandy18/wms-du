@@ -14,33 +14,28 @@ from tests.api._helpers_shipping_quote import login
 
 def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> None:
     """
-    合同：/platform-skus/mirror 在 mirror 有数据时，必须返回 mirror 的 sku_name（作为只读线索）。
-
-    注意：
-    - 不依赖 binding/fsku/item 的存在，避免把“读模型优先级合同”绑到其它域对象上。
-    - 只要求 platform=PDD, shop_id=1（你的本地调试已证明可用）。
+    合同：/platform-skus/mirror 在 mirror 有数据时，必须返回 mirror 的 sku_name。
     """
     client = TestClient(app)
     token = login(client)
 
     payload = {"ut": True}
 
-    # Arrange: 写入 mirror（用 sync SessionLocal，确保与 API 同库）
     db = SessionLocal()
     try:
         db.execute(
             text(
                 """
                 insert into platform_sku_mirror(
-                  platform, shop_id, platform_sku_id,
+                  platform, store_id, platform_sku_id,
                   sku_name, spec, raw_payload, source, observed_at,
                   created_at, updated_at
                 ) values (
-                  :platform, :shop_id, :platform_sku_id,
+                  :platform, :store_id, :platform_sku_id,
                   :sku_name, :spec, (:raw_payload)::jsonb, :source, :observed_at,
                   now(), now()
                 )
-                on conflict (platform, shop_id, platform_sku_id)
+                on conflict (platform, store_id, platform_sku_id)
                 do update set
                   sku_name=excluded.sku_name,
                   spec=excluded.spec,
@@ -52,7 +47,7 @@ def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> No
             ),
             {
                 "platform": "PDD",
-                "shop_id": 1,
+                "store_id": 1,
                 "platform_sku_id": "SKU-UT-MIRROR-001",
                 "sku_name": "UT_MIRROR_NAME",
                 "spec": "UT_SPEC",
@@ -65,7 +60,6 @@ def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> No
     finally:
         db.close()
 
-    # Act
     resp = client.get(
         "/platform-skus/mirror?platform=PDD&shop_id=1&platform_sku_id=SKU-UT-MIRROR-001",
         headers={"Authorization": f"Bearer {token}"},
@@ -73,27 +67,25 @@ def test_platform_sku_list_prefers_mirror_when_present(_db_clean_and_seed) -> No
     assert resp.status_code == 200, resp.text
     data = resp.json()
 
-    # Assert: lines[0].item_name 必须来自 mirror.sku_name
     assert data.get("platform") == "PDD"
     assert data.get("shop_id") == 1
     assert data.get("platform_sku_id") == "SKU-UT-MIRROR-001"
 
     lines = data.get("lines") or []
-    assert len(lines) >= 1, f"mirror row not returned: lines={lines}"
+    assert len(lines) >= 1
     assert lines[0].get("item_name") == "UT_MIRROR_NAME"
     assert lines[0].get("spec") == "UT_SPEC"
 
-    # Cleanup（尽量不污染后续测试）
     db2 = SessionLocal()
     try:
         db2.execute(
             text(
                 """
                 delete from platform_sku_mirror
-                where platform=:platform and shop_id=:shop_id and platform_sku_id=:platform_sku_id
+                 where platform=:platform and store_id=:store_id and platform_sku_id=:platform_sku_id
                 """
             ),
-            {"platform": "PDD", "shop_id": 1, "platform_sku_id": "SKU-UT-MIRROR-001"},
+            {"platform": "PDD", "store_id": 1, "platform_sku_id": "SKU-UT-MIRROR-001"},
         )
         db2.commit()
     finally:

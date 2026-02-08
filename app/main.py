@@ -196,6 +196,7 @@ from app.api.routers.pdd_auth import router as pdd_auth_router
 from app.api.routers.permissions import router as permissions_router
 from app.api.routers.pick import router as pick_router
 from app.api.routers.pick_tasks import router as pick_tasks_router
+from app.api.routers.platform_orders_ingest import router as platform_orders_ingest_router
 from app.api.routers.print_jobs import router as print_jobs_router
 from app.api.routers.platform_shops import router as platform_shops_router
 from app.api.routers.pricing_integrity_ops import router as pricing_integrity_ops_router
@@ -266,6 +267,8 @@ orders_fulfillment_v2_routes_4_ship_with_waybill.register(orders_fulfillment_v2_
 app.include_router(scan_router)
 app.include_router(count_router)
 app.include_router(pick_router)
+
+app.include_router(platform_orders_ingest_router)
 
 app.include_router(orders_router)
 app.include_router(orders_fulfillment_v2_router)

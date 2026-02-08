@@ -7,6 +7,10 @@ PDD 平台授权链路（模拟版本）集成测试：
 - GET  /platform-shops/{platform}/{shop_id}  查询授权状态（从 store_tokens 读）
 - PddAdapter.build_fetch_preview  能看到 has_token=True，证明 StoreTokenService 生效
 - build_fetch_preview 走 PSKU 单入口：platform_sku_ids -> ext_sku_ids（来源于 mirror.raw_payload）
+
+注意：
+- mirror 表落库键为 (platform, store_id, platform_sku_id)
+- 对外合同仍使用 shop_id（字符串店铺标识）做平台授权查询
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from app.api.deps import get_session
 from app.main import app
 from app.models.store import Store
 from app.models.store_token import StoreToken
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -64,12 +69,11 @@ async def async_client() -> AsyncClient:
 async def test_manual_credentials_write_and_query_and_pdd_preview(
     async_client: AsyncClient,
     db_session: AsyncSession,
-):
+) -> None:
     """
     场景：
 
-    1) 用手工凭据模拟一条 PDD 店铺：
-       POST /platform-shops/credentials
+    1) 用手工凭据模拟一条 PDD 店铺：POST /platform-shops/credentials
 
     2) 通过 GET /platform-shops/{platform}/{shop_id} 查询授权状态，
        确认已经在 store_tokens 里有记录，且 source=MANUAL。
@@ -79,12 +83,11 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     4) 使用 PddAdapter.build_fetch_preview（PSKU 单入口），确认 has_token=True，
        且 ext_sku_ids 来自 mirror.raw_payload。
     """
-
-    # ---- 1) 手工录入一条“假 PDD 店铺”的凭据 ----
     platform = "PDD"
     shop_id = "CUST001_TEST"
     fake_token = "PASS-XYZ-123"
 
+    # ---- 1) 手工录入一条“假 PDD 店铺”的凭据 ----
     resp = await async_client.post(
         "/platform-shops/credentials",
         json={
@@ -117,17 +120,17 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     assert data2["status"] == "ACTIVE"
     assert data2["source"] == "MANUAL"
 
-    # ---- 2.1) 验证底层确实写入了 store_tokens / stores ----
+    # ---- 2.1) 验证底层确实写入了 stores / store_tokens ----
     res_store = await db_session.execute(select(Store).where(Store.id == store_id))
     store_row = res_store.scalar_one_or_none()
     assert store_row is not None
-    assert store_row.platform == platform  # 大写 PDD
+    assert store_row.platform == platform
     assert store_row.shop_id == shop_id
 
     res_token = await db_session.execute(
         select(StoreToken).where(
             StoreToken.store_id == store_id,
-            StoreToken.platform == "pdd",  # 小写 pdd
+            StoreToken.platform == "pdd",
         )
     )
     token_row = res_token.scalar_one_or_none()
@@ -136,27 +139,25 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
     assert token_row.refresh_token == "MANUAL"
 
     # ---- 3) 写入 mirror：提供 raw_payload 中的 pdd_sku_id（ext id） ----
-    # 约定：shop_id（mirror）== store_id（内部 store id）
-    # platform_sku_id 是平台 SKU 标识（PSKU 入口）
     platform_sku_ids = ["PSKU-101", "PSKU-102", "PSKU-103"]
     ext_ids = ["101", "102", "103"]
-
     now = datetime.now(timezone.utc)
+
     for psid, ext in zip(platform_sku_ids, ext_ids, strict=True):
         raw = json.dumps({"pdd_sku_id": ext}, ensure_ascii=False)
         await db_session.execute(
             text(
                 """
                 insert into platform_sku_mirror(
-                  platform, shop_id, platform_sku_id,
+                  platform, store_id, platform_sku_id,
                   sku_name, spec, raw_payload, source, observed_at,
                   created_at, updated_at
                 ) values (
-                  :platform, :shop_id, :platform_sku_id,
+                  :platform, :store_id, :platform_sku_id,
                   :sku_name, :spec, (:raw_payload)::jsonb, :source, :observed_at,
                   now(), now()
                 )
-                on conflict (platform, shop_id, platform_sku_id)
+                on conflict (platform, store_id, platform_sku_id)
                 do update set
                   raw_payload=excluded.raw_payload,
                   source=excluded.source,
@@ -166,7 +167,7 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
             ),
             {
                 "platform": "PDD",
-                "shop_id": int(store_id),
+                "store_id": int(store_id),
                 "platform_sku_id": psid,
                 "sku_name": None,
                 "spec": None,
@@ -200,9 +201,9 @@ async def test_manual_credentials_write_and_query_and_pdd_preview(
         text(
             """
             delete from platform_sku_mirror
-             where platform=:platform and shop_id=:shop_id and platform_sku_id = any(:ids)
+             where platform=:platform and store_id=:store_id and platform_sku_id = any(:ids)
             """
         ),
-        {"platform": "PDD", "shop_id": int(store_id), "ids": list(platform_sku_ids)},
+        {"platform": "PDD", "store_id": int(store_id), "ids": list(platform_sku_ids)},
     )
     await db_session.commit()
