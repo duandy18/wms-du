@@ -23,9 +23,7 @@ class PlatformOrderLineIn(BaseModel):
         },
     )
 
-    platform_sku_id: Optional[str] = Field(
-        None, description="平台 SKU 标识（PSKU，可空；建议填系统生成/约定的编码）"
-    )
+    platform_sku_id: Optional[str] = Field(None, description="平台 SKU 标识（PSKU，可空；建议填系统生成/约定的编码）")
     qty: int = Field(default=1, gt=0, description="数量（>0）")
     title: Optional[str] = Field(None, description="商品标题/名称（可选，用于治理线索展示）")
     spec: Optional[str] = Field(None, description="规格文本（可选，用于治理线索展示）")
@@ -56,14 +54,7 @@ class PlatformOrderIngestIn(BaseModel):
                     "shop_id": "1",
                     "ext_order_no": "E2E-OK-0002",
                     "province": "广东省",
-                    "lines": [
-                        {
-                            "platform_sku_id": "PSKU-OK-1001",
-                            "qty": 1,
-                            "title": "示例商品A",
-                            "spec": "默认",
-                        }
-                    ],
+                    "lines": [{"platform_sku_id": "PSKU-OK-1001", "qty": 1, "title": "示例商品A", "spec": "默认"}],
                 },
                 # ✅ 兼容：内部治理用 store_id；可附带收件信息
                 {
@@ -77,32 +68,19 @@ class PlatformOrderIngestIn(BaseModel):
                     "district": "南山区",
                     "detail": "科技园某路 1 号",
                     "zipcode": "518000",
-                    "lines": [
-                        {
-                            "platform_sku_id": "PSKU-OK-1001",
-                            "qty": 2,
-                            "title": "示例商品A",
-                            "spec": "默认",
-                        }
-                    ],
+                    "lines": [{"platform_sku_id": "PSKU-OK-1001", "qty": 2, "title": "示例商品A", "spec": "默认"}],
                 },
             ]
         },
     )
 
-    platform: constr(min_length=1, max_length=32) = Field(
-        ..., description="平台标识（如 DEMO/PDD/TIKTOK 等）"
-    )
+    platform: constr(min_length=1, max_length=32) = Field(..., description="平台标识（如 DEMO/PDD/TIKTOK 等）")
 
     # ✅ 新合同：内部治理用 store_id（stores.id）
-    store_id: Optional[int] = Field(
-        None, ge=1, description="内部店铺 ID（stores.id，推荐用于内部治理/重放）"
-    )
+    store_id: Optional[int] = Field(None, ge=1, description="内部店铺 ID（stores.id，推荐用于内部治理/重放）")
 
     # ⚠️ 兼容：外部平台店铺标识（字符串）；若给了 store_id，可省略 shop_id
-    shop_id: Optional[constr(min_length=1)] = Field(
-        None, description="外部平台店铺标识（字符串；兼容输入）"
-    )
+    shop_id: Optional[constr(min_length=1)] = Field(None, description="外部平台店铺标识（字符串；兼容输入）")
 
     ext_order_no: constr(min_length=1) = Field(..., description="外部订单号（平台侧）")
     occurred_at: Optional[datetime] = Field(None, description="外部订单发生时间（可选）")
@@ -111,38 +89,17 @@ class PlatformOrderIngestIn(BaseModel):
     buyer_phone: Optional[str] = Field(None, description="买家电话（可选）")
 
     # ✅ 收件信息（用于履约路由；最小可用只要求 province）
-    receiver_name: Optional[str] = Field(
-        None,
-        description="收件人姓名（顶层字段；不要包在 address:{...} 里；可选）",
-    )
-    receiver_phone: Optional[str] = Field(
-        None,
-        description="收件人电话（顶层字段；不要包在 address:{...} 里；可选）",
-    )
-    province: Optional[str] = Field(
-        None,
-        description="收件省份（顶层字段；不要包在 address:{...} 里；最小闭环推荐必填）",
-    )
-    city: Optional[str] = Field(
-        None, description="收件城市（顶层字段；不要包在 address:{...} 里；可选）"
-    )
-    district: Optional[str] = Field(
-        None, description="收件区县（顶层字段；不要包在 address:{...} 里；可选）"
-    )
-    detail: Optional[str] = Field(
-        None, description="收件详细地址（顶层字段；不要包在 address:{...} 里；可选）"
-    )
-    zipcode: Optional[str] = Field(
-        None, description="邮编（顶层字段；不要包在 address:{...} 里；可选）"
-    )
+    receiver_name: Optional[str] = Field(None, description="收件人姓名（顶层字段；不要包在 address:{...} 里；可选）")
+    receiver_phone: Optional[str] = Field(None, description="收件人电话（顶层字段；不要包在 address:{...} 里；可选）")
+    province: Optional[str] = Field(None, description="收件省份（顶层字段；不要包在 address:{...} 里；最小闭环推荐必填）")
+    city: Optional[str] = Field(None, description="收件城市（顶层字段；不要包在 address:{...} 里；可选）")
+    district: Optional[str] = Field(None, description="收件区县（顶层字段；不要包在 address:{...} 里；可选）")
+    detail: Optional[str] = Field(None, description="收件详细地址（顶层字段；不要包在 address:{...} 里；可选）")
+    zipcode: Optional[str] = Field(None, description="邮编（顶层字段；不要包在 address:{...} 里；可选）")
 
-    lines: List[PlatformOrderLineIn] = Field(
-        default_factory=list, description="订单行列表（至少一行）"
-    )
+    lines: List[PlatformOrderLineIn] = Field(default_factory=list, description="订单行列表（至少一行）")
     store_name: Optional[str] = Field(None, description="店铺名称（可选，展示用）")
-    raw_payload: Optional[Dict[str, Any]] = Field(
-        None, description="原始平台 payload（可选；调试/追溯用）"
-    )
+    raw_payload: Optional[Dict[str, Any]] = Field(None, description="原始平台 payload（可选；调试/追溯用）")
 
 
 class PlatformOrderIngestOut(BaseModel):
@@ -159,3 +116,12 @@ class PlatformOrderIngestOut(BaseModel):
     # ✅ 解释增强：直接透出履约状态与阻塞原因，便于 PSKU 页面/治理页解释
     fulfillment_status: Optional[str] = None
     blocked_reasons: Optional[List[str]] = None
+
+    # ✅ Phase X：允许人工继续（标记风险）
+    # 说明：
+    # - allow_manual_continue=true 不代表“自动继续履约”，而是允许运营/仓内走人工流程救急。
+    # - 风险不等于绑定：本接口不会写入 PSKU->FSKU binding。
+    allow_manual_continue: bool = Field(default=False, description="是否允许人工继续（风险已标记，不自动写入 binding）")
+    risk_flags: List[str] = Field(default_factory=list, description="订单级风险标记（聚合自 unresolved 行）")
+    risk_level: Optional[str] = Field(default=None, description="订单级风险等级（LOW/MEDIUM/HIGH）")
+    risk_reason: Optional[str] = Field(default=None, description="订单级风险原因（给 UI 的短句）")

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -24,6 +24,10 @@ from app.services.store_service import StoreService
 def register(router: APIRouter) -> None:
     @router.get("/stores", response_model=StoreListOut)
     async def list_stores(
+        platform: str | None = Query(None, description="平台过滤（如 PDD/TB/DEMO），大小写不敏感"),
+        q: str | None = Query(None, description="模糊搜索：name / shop_id / id"),
+        limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
         session: AsyncSession = Depends(get_session),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
@@ -32,14 +36,40 @@ def register(router: APIRouter) -> None:
         店铺列表（基础信息，不含仓绑定）。
 
         权限：config.store.read
+
+        ✅ 合同：
+        - 支持 platform/q/limit/offset
+        - 返回结构保持：{ ok: true, data: [...] }
         """
         # ✅ 运行时从 stores 模块取 _check_perm，保证测试 monkeypatch 生效
         from app.api.routers import stores as stores_router
 
         stores_router._check_perm(db, current_user, ["config.store.read"])
 
+        where_parts: list[str] = ["1=1"]
+        params: dict[str, Any] = {}
+
+        plat = (platform or "").strip()
+        if plat:
+            where_parts.append("upper(s.platform) = :platform")
+            params["platform"] = plat.upper()
+
+        kw = (q or "").strip()
+        if kw:
+            where_parts.append(
+                "("
+                "s.name ILIKE :q_like "
+                "OR s.shop_id ILIKE :q_like "
+                "OR CAST(s.id AS TEXT) ILIKE :q_like"
+                ")"
+            )
+            params["q_like"] = f"%{kw}%"
+
+        params["limit"] = int(limit)
+        params["offset"] = int(offset)
+
         sql = text(
-            """
+            f"""
             SELECT
               s.id,
               s.platform,
@@ -51,11 +81,13 @@ def register(router: APIRouter) -> None:
               s.contact_name,
               s.contact_phone
             FROM stores AS s
+            WHERE {' AND '.join(where_parts)}
             ORDER BY s.id
+            LIMIT :limit OFFSET :offset
             """
         )
 
-        result = await session.execute(sql)
+        result = await session.execute(sql, params)
         rows = result.mappings().all()
 
         items = [

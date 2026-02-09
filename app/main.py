@@ -221,6 +221,8 @@ from app.api.routers.stock_ledger import router as stock_ledger_router
 
 from app.api.routers.internal_outbound import router as internal_outbound_router
 
+from app.api.routers.meta import router as meta_router
+from app.api.routers.psku_governance import router as psku_governance_router
 from app.api.routers.stores import router as stores_router
 from app.api.routers.suppliers import router as suppliers_router
 from app.api.routers.supplier_contacts import router as supplier_contacts_router
@@ -288,6 +290,8 @@ app.include_router(return_tasks_router)
 app.include_router(pick_tasks_router)
 app.include_router(print_jobs_router)
 
+app.include_router(meta_router)
+app.include_router(psku_governance_router)
 app.include_router(stores_router)
 app.include_router(shop_product_bundles_router)
 

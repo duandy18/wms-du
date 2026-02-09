@@ -19,9 +19,28 @@ class PlatformSkuMirrorLine(BaseModel):
 
 class PlatformSkuMirrorOut(BaseModel):
     platform: str
+
+    # ✅ 新合同：内部治理一律用 store_id（stores.id）
+    store_id: int
+
+    # ⚠️ 兼容字段：历史合同名 shop_id（语义等同于 store_id）
     shop_id: int
+
     platform_sku_id: str
     lines: list[PlatformSkuMirrorLine]
+
+
+def _pick_store_id(*, store_id: int | None, shop_id: int | None) -> int:
+    """
+    ✅ 合同升级（兼容期）：
+    - 新参数：store_id（内部 stores.id）
+    - 旧参数：shop_id（兼容旧字段名，语义等同 stores.id）
+    """
+    if store_id is not None:
+        return int(store_id)
+    if shop_id is not None:
+        return int(shop_id)
+    raise ValueError("store_id is required")
 
 
 def register(router: APIRouter) -> None:
@@ -30,18 +49,17 @@ def register(router: APIRouter) -> None:
     @r.get("/mirror", response_model=PlatformSkuMirrorOut)
     def mirror(
         platform: str = Query(...),
-        shop_id: int = Query(..., ge=1),
+        store_id: int | None = Query(None, ge=1, description="内部店铺ID（stores.id）"),
+        shop_id: int | None = Query(None, ge=1, description="兼容旧参数：语义等同 stores.id"),
         platform_sku_id: str = Query(...),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ) -> PlatformSkuMirrorOut:
         check_perm(db, current_user, ["config.store.write"])
 
+        sid = _pick_store_id(store_id=store_id, shop_id=shop_id)
+
         # ✅ 合同：mirror-first 读模型；只读线索，不做裁决/绑定。
-        # 最小实现：若存在 mirror 行，则把 sku_name/spec 映射到 lines 的第一行。
-        #
-        # DB 事实：platform_sku_mirror 使用 store_id（stores.id）作为外键口径；
-        # 对外合同仍沿用 shop_id（历史误名），其语义在此处等价为 store_id。
         row = (
             db.execute(
                 text(
@@ -56,7 +74,7 @@ def register(router: APIRouter) -> None:
                 ),
                 {
                     "platform": str(platform),
-                    "store_id": int(shop_id),
+                    "store_id": int(sid),
                     "platform_sku_id": str(platform_sku_id),
                 },
             )
@@ -67,10 +85,16 @@ def register(router: APIRouter) -> None:
         lines: list[PlatformSkuMirrorLine] = []
         if row:
             sku_name = row.get("sku_name") or ""
-            spec = row.get("spec")
+            spec2 = row.get("spec")
             if sku_name:
-                lines.append(PlatformSkuMirrorLine(item_name=str(sku_name), spec=str(spec) if spec is not None else None))
+                lines.append(PlatformSkuMirrorLine(item_name=str(sku_name), spec=str(spec2) if spec2 is not None else None))
 
-        return PlatformSkuMirrorOut(platform=platform, shop_id=shop_id, platform_sku_id=platform_sku_id, lines=lines)
+        return PlatformSkuMirrorOut(
+            platform=platform,
+            store_id=int(sid),
+            shop_id=int(sid),
+            platform_sku_id=platform_sku_id,
+            lines=lines,
+        )
 
     router.include_router(r)

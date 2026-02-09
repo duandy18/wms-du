@@ -103,6 +103,20 @@ class PlatformSkuBindingService:
 
         now = _utc_now()
 
+        # ✅ 幂等：若 current 已指向同一 fsku_id，则直接返回，不写历史（避免“假切换”）
+        cur = self.db.scalars(
+            select(PlatformSkuBinding)
+            .where(
+                PlatformSkuBinding.platform == plat,
+                PlatformSkuBinding.store_id == store_id,
+                PlatformSkuBinding.platform_sku_id == psku,
+                PlatformSkuBinding.effective_to.is_(None),
+            )
+            .order_by(PlatformSkuBinding.effective_from.desc())
+        ).first()
+        if cur is not None and cur.fsku_id == fsku_id and cur.item_id is None:
+            return BindingCurrentOut(current=self._to_row(cur))
+
         # 关闭旧 current（如存在）
         self.db.execute(
             update(PlatformSkuBinding)
@@ -132,7 +146,11 @@ class PlatformSkuBindingService:
         try:
             self.db.commit()
         except IntegrityError:
+            # ✅ 并发/重复写：回滚后读取当前状态并返回（把冲突变成“状态已被更新”）
             self.db.rollback()
+            out = self.get_current(platform=plat, store_id=store_id, platform_sku_id=psku)
+            if out is not None:
+                return out
             raise self.Conflict("绑定写入冲突，请重试")
 
         self.db.refresh(new_row)
@@ -201,8 +219,8 @@ class PlatformSkuBindingService:
         return BindingRow(
             id=r.id,
             platform=str(r.platform or "").strip().lower(),
-            store_id=r.store_id,
-            shop_id=r.store_id,
+            store_id=int(r.store_id),
+            shop_id=int(r.store_id),
             platform_sku_id=r.platform_sku_id,
             item_id=r.item_id,  # legacy 读历史允许存在
             fsku_id=r.fsku_id,

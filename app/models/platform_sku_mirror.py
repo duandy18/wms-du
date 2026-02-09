@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,12 @@ class PlatformSkuMirror(Base):
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # ✅ 内部店铺主键：stores.id（DB 当前是 bigint，这里保持一致）
-    store_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # ✅ 与迁移 a0a0e1e9ad09 建立的 FK 对齐（RESTRICT）
+    store_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("stores.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
     platform_sku_id: Mapped[str] = mapped_column(String(200), nullable=False)
 

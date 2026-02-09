@@ -18,7 +18,13 @@ class PlatformSkuBinding(Base):
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # ✅ 内部店铺主键：stores.id（语义收敛）
-    store_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ✅ 以 DB 为准：platform_sku_bindings.store_id 当前为 integer
+    # ✅ 与 DB FK 对齐：store_id -> stores.id（RESTRICT）
+    store_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("stores.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
     platform_sku_id: Mapped[str] = mapped_column(String(200), nullable=False)
 
@@ -45,7 +51,7 @@ class PlatformSkuBinding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-# 查询索引（非唯一）— 注意：名字保持不变，但列必须是 store_id
+# 查询索引（非唯一）— 注意：列必须是 store_id
 Index(
     "ix_platform_sku_bindings_key",
     PlatformSkuBinding.platform,
