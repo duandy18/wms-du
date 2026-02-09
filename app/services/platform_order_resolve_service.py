@@ -43,6 +43,20 @@ def dec_to_int_qty(q: Decimal) -> int:
     raise ValueError(f"component qty must be integer-like, got={str(q)}")
 
 
+# ---------------- Risk (resolve-side facts) ----------------
+def _risk(level: str, flags: List[str], reason: str) -> Dict[str, Any]:
+    # 统一输出形状（避免前端推断）：risk_flags/risk_level/risk_reason
+    return {"risk_flags": list(flags), "risk_level": str(level), "risk_reason": str(reason)}
+
+
+def _risk_high(flag: str, reason: str) -> Dict[str, Any]:
+    return _risk("HIGH", [flag], reason)
+
+
+def _risk_medium(flag: str, reason: str) -> Dict[str, Any]:
+    return _risk("MEDIUM", [flag], reason)
+
+
 @dataclass
 class ResolvedLine:
     platform_sku_id: str
@@ -210,8 +224,11 @@ async def resolve_platform_lines_to_items(
     输入：平台订单行（platform_sku_id + qty）
     输出：
       - resolved_lines：每行命中哪个 fsku、展开成哪些 item
-      - unresolved：缺绑定/组件异常等原因
+      - unresolved：缺绑定/组件异常等原因（包含 risk_* 字段，供“可人工继续（标记风险）”使用）
       - item_qty_map：聚合后的 item_id -> need_qty（可直接喂给 OrderService.ingest）
+
+    注意：
+    - 本函数只做“读侧裁决 + 风险事实输出”，不做任何写侧 binding。
     """
     plat = norm_platform(platform)
 
@@ -221,30 +238,38 @@ async def resolve_platform_lines_to_items(
 
     for ln in lines or []:
         psku = str(ln.get("platform_sku_id") or "").strip()
+        qty = to_int_pos(ln.get("qty"), default=1)
+
         if not psku:
+            # ⚠️ 行缺少 PSKU：无法建立治理锚点，也无法解析；允许人工继续但必须风险标记
             unresolved.append(
-                {"platform_sku_id": "", "qty": 0, "reason": "MISSING_PSKU", "hint": "platform_sku_id 不能为空"}
+                {
+                    "platform_sku_id": "",
+                    "qty": qty,
+                    "reason": "MISSING_PSKU",
+                    "hint": "platform_sku_id 不能为空",
+                    **_risk_high("PSKU_CODE_MISSING", "缺少 PSKU/规格编码：需人工补录或纳入治理后再继续。"),
+                }
             )
             continue
 
-        qty = to_int_pos(ln.get("qty"), default=1)
-
-        fsku_id = await load_current_binding_fsku_id(
-            session, platform=plat, store_id=store_id, platform_sku_id=psku
-        )
+        fsku_id = await load_current_binding_fsku_id(session, platform=plat, store_id=store_id, platform_sku_id=psku)
         if not fsku_id:
+            # ⚠️ 没有 current binding：典型治理入口
             unresolved.append(
                 {
                     "platform_sku_id": psku,
                     "qty": qty,
                     "reason": "MISSING_BINDING",
                     "hint": "请先为该 PSKU 建立当前生效绑定（PSKU->FSKU）。",
+                    **_risk_high("PSKU_BINDING_MISSING", "该 PSKU 尚未建立 current 绑定：允许人工继续，但必须尽快治理。"),
                 }
             )
             continue
 
         comps = await load_fsku_components(session, fsku_id=fsku_id)
         if not comps:
+            # ⚠️ 绑定到了非 published / 或无 components：属于“绑定存在但不可执行”
             unresolved.append(
                 {
                     "platform_sku_id": psku,
@@ -252,6 +277,7 @@ async def resolve_platform_lines_to_items(
                     "fsku_id": fsku_id,
                     "reason": "FSKU_NO_COMPONENTS_OR_NOT_PUBLISHED",
                     "hint": "该 FSKU 未发布或未配置 components。",
+                    **_risk_high("FSKU_NOT_EXECUTABLE", "绑定目标 FSKU 不可执行（未发布或无 components）：允许人工继续，但需修复绑定/发布。"),
                 }
             )
             continue
@@ -265,9 +291,7 @@ async def resolve_platform_lines_to_items(
                 if need <= 0:
                     continue
                 item_qty_map[item_id] = int(item_qty_map.get(item_id, 0)) + need
-                expanded.append(
-                    {"item_id": item_id, "component_qty": cqty, "need_qty": need, "role": c.get("role")}
-                )
+                expanded.append({"item_id": item_id, "component_qty": cqty, "need_qty": need, "role": c.get("role")})
         except Exception as e:
             unresolved.append(
                 {
@@ -276,6 +300,7 @@ async def resolve_platform_lines_to_items(
                     "fsku_id": fsku_id,
                     "reason": "COMPONENT_QTY_INVALID",
                     "hint": str(e),
+                    **_risk_high("FSKU_COMPONENT_INVALID", "FSKU components 数量非法：需修复组件结构后再继续。"),
                 }
             )
             continue
