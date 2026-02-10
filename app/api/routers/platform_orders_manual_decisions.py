@@ -83,7 +83,9 @@ async def list_latest_manual_decisions(
                 SELECT
                     batch_id,
                     platform, store_id, ext_order_no, order_id,
-                    line_key, line_no, platform_sku_id, fact_qty,
+                    line_key, line_no,
+                    filled_code,
+                    fact_qty,
                     item_id, qty, note,
                     manual_reason, risk_flags,
                     created_at
@@ -166,7 +168,7 @@ async def list_latest_manual_decisions(
             {
                 "line_key": r.get("line_key"),
                 "line_no": r.get("line_no"),
-                "platform_sku_id": r.get("platform_sku_id"),
+                "filled_code": r.get("filled_code"),
                 "fact_qty": r.get("fact_qty"),
                 "item_id": r.get("item_id"),
                 "qty": r.get("qty"),

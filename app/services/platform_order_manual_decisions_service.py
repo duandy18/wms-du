@@ -20,7 +20,7 @@ class ManualDecisionRow:
 
     line_key: Optional[str]
     line_no: Optional[int]
-    platform_sku_id: Optional[str]
+    filled_code: Optional[str]
     fact_qty: Optional[int]
 
     item_id: int
@@ -50,7 +50,7 @@ async def insert_manual_decisions_batch(
         INSERT INTO platform_order_manual_decisions(
           batch_id,
           platform, store_id, ext_order_no, order_id,
-          line_key, line_no, platform_sku_id, fact_qty,
+          line_key, line_no, filled_code, fact_qty,
           item_id, qty, note,
           manual_reason, risk_flags,
           created_at
@@ -58,7 +58,7 @@ async def insert_manual_decisions_batch(
         VALUES (
           :batch_id,
           :platform, :store_id, :ext_order_no, :order_id,
-          :line_key, :line_no, :platform_sku_id, :fact_qty,
+          :line_key, :line_no, :filled_code, :fact_qty,
           :item_id, :qty, :note,
           :manual_reason, CAST(:risk_flags AS jsonb),
           :created_at
@@ -80,7 +80,7 @@ async def insert_manual_decisions_batch(
                 "order_id": r.order_id,
                 "line_key": r.line_key,
                 "line_no": r.line_no,
-                "platform_sku_id": r.platform_sku_id,
+                "filled_code": r.filled_code,
                 "fact_qty": r.fact_qty,
                 "item_id": int(r.item_id),
                 "qty": int(r.qty),

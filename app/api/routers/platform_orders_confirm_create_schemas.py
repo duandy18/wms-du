@@ -3,62 +3,159 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, constr
+from pydantic import BaseModel, Field
 
 
-class PlatformOrderManualDecisionIn(BaseModel):
+# ---------------------------------------------------------------------------
+# Phase N+4 · Input Schemas (line locator separation)
+# ---------------------------------------------------------------------------
+
+class PlatformOrderConfirmCreateDecisionIn(BaseModel):
     """
-    人工决策（当单执行）：
-    - 通过 line_key / line_no / platform_sku_id 锚定到事实行
-    - 人工选择仓库商品 item_id（不写 binding）
+    Phase N+4 · 人工决策输入（单行）
+
+    说明：
+    - filled_code 是“填写码”唯一语义字段
+    - line_key 是内部幂等锚点（不推荐外部使用）
+    - locator_kind/locator_value 是对外定位语义（推荐）
+      * FILLED_CODE + filled_code
+      * LINE_NO + str(line_no)
     """
 
-    model_config = ConfigDict(extra="ignore")
+    # internal / legacy (kept for backward compatibility)
+    line_key: Optional[str] = None
+    line_no: Optional[int] = None
 
-    line_key: Optional[str] = Field(None, description="事实行键：PSKU:<psku> 或 NO_PSKU:<line_no>")
-    line_no: Optional[int] = Field(None, ge=1, description="事实行序号（platform_order_lines.line_no）")
-    platform_sku_id: Optional[str] = Field(None, description="平台 SKU（PSKU）")
+    # semantic locator (recommended)
+    locator_kind: Optional[str] = Field(
+        None,
+        description="对外定位类型（推荐）：FILLED_CODE / LINE_NO",
+    )
+    locator_value: Optional[str] = Field(
+        None,
+        description="对外定位值（推荐）：当 FILLED_CODE 时为 filled_code；当 LINE_NO 时为 line_no 文本",
+    )
 
-    item_id: int = Field(..., ge=1, description="仓库商品 item_id（人工确认选货）")
-    qty: int = Field(default=1, ge=1, description="该 item 的数量（>=1）")
-    note: Optional[str] = Field(None, description="人工备注（可选）")
+    filled_code: Optional[str] = Field(
+        None,
+        description="商家后台填写码（推荐；唯一语义字段）",
+    )
+
+    # legacy / internal compat field (explicitly rejected by router/shared if present)
+    platform_sku_id: Optional[str] = Field(
+        None,
+        description="已废弃：出现即报错（请使用 filled_code）",
+    )
+
+    item_id: int
+    qty: int
+    note: Optional[str] = None
 
 
 class PlatformOrderConfirmCreateIn(BaseModel):
     """
-    当单执行：人工确认后生成内部订单（orders）
-    - 平台订单已存在，本接口创建的是内部订单
-    - 不依赖 PSKU 正确性/不依赖 binding
-    - 不写 platform_sku_bindings
+    Phase N+4 · 当单执行（人工确认后创建订单）
+
+    解析语义：
+    - 决策行优先使用 locator（locator_kind/value）
+    - 其次使用 filled_code / line_no
+    - line_key 仅作为旧链路兼容
     """
 
-    model_config = ConfigDict(extra="ignore")
+    platform: str
+    store_id: int
+    ext_order_no: str
 
-    platform: constr(min_length=1, max_length=32)
-    store_id: int = Field(..., ge=1)
-    ext_order_no: constr(min_length=1)
+    reason: Optional[str] = None
 
-    decisions: List[PlatformOrderManualDecisionIn] = Field(default_factory=list, description="人工决策列表（至少一条）")
-    reason: Optional[str] = Field(None, description="人工继续原因（可选）")
+    decisions: List[PlatformOrderConfirmCreateDecisionIn] = Field(
+        default_factory=list,
+        description="人工决策行列表",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Legacy / Internal Schemas（仅供内部链路使用）
+# ---------------------------------------------------------------------------
+
+class PlatformOrderManualDecisionIn(BaseModel):
+    """
+    【deprecated / internal】
+
+    内部使用的人工决策输入结构：
+    - 支持 locator_kind/value（推荐）
+    - 支持 filled_code/line_no（语义定位）
+    - line_key 仅作为旧链路兼容
+    - platform_sku_id 已废弃：出现即报错
+    """
+
+    line_key: Optional[str] = None
+    line_no: Optional[int] = None
+
+    locator_kind: Optional[str] = None
+    locator_value: Optional[str] = None
+
+    filled_code: Optional[str] = None
+    platform_sku_id: Optional[str] = None
+
+    item_id: int
+    qty: int
+    note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Output Schemas
+# ---------------------------------------------------------------------------
+
+class PlatformOrderConfirmCreateDecisionOut(BaseModel):
+    """
+    Phase N+4 · 人工决策明细（输出）
+
+    说明：
+    - filled_code 为唯一语义字段
+    - locator_kind/value 为推荐定位语义（与 line_key 分层）
+    """
+
+    filled_code: Optional[str] = Field(
+        None,
+        description="商家后台填写码（唯一语义字段）",
+    )
+
+    locator_kind: Optional[str] = Field(
+        None,
+        description="对外定位类型（推荐）：FILLED_CODE / LINE_NO",
+    )
+    locator_value: Optional[str] = Field(
+        None,
+        description="对外定位值（推荐）",
+    )
+
+    # internal / legacy (still output for compatibility)
+    line_key: Optional[str] = None
+    line_no: Optional[int] = None
+    item_id: Optional[int] = None
+    qty: Optional[int] = None
+    fact_qty: Optional[int] = None
+    note: Optional[str] = None
 
 
 class PlatformOrderConfirmCreateOut(BaseModel):
     status: str
-    id: Optional[int] = None
+    id: Optional[int]
     ref: str
 
     platform: str
     store_id: int
     ext_order_no: str
 
-    manual_override: bool = True
+    manual_override: bool
     manual_reason: Optional[str] = None
-    manual_batch_id: Optional[str] = Field(
-        None,
-        description="本次人工救火写入治理事实表的 batch_id（用于追溯/排障）",
-    )
-    risk_flags: List[str] = Field(default_factory=list)
+    manual_batch_id: Optional[str] = None
 
-    facts_n: int = 0
+    decisions: List[PlatformOrderConfirmCreateDecisionOut] = Field(default_factory=list)
+
+    risk_flags: List[str] = Field(default_factory=list)
+    facts_n: int
+
     fulfillment_status: Optional[str] = None
     blocked_reasons: Optional[List[str]] = None

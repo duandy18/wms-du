@@ -24,10 +24,13 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     """
     合同测试（最小闭环）：
     - 先 ingest 落 platform_order_lines（即使 UNRESOLVED）
-      * 测试库不保证存在 store_id=915，因此这里用 shop_id 兼容路径触发 ensure_store
     - 再 confirm-and-create 用人工决策生成内部 orders
     - 断言：返回 id/ref/manual_override/risk_flags 等关键字段存在且语义稳定
     - 幂等：重复 confirm-and-create，id 不应变化
+
+    Phase N+4：
+    - line_key 为内部幂等锚点：禁止外部输入
+    - 外部定位使用 locator_kind/locator_value（或 filled_code/line_no）
     """
     token = await _login_token(client)
     headers = _auth_headers(token)
@@ -36,7 +39,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     shop_id = "UT-SHOP-1"
     ext_order_no = "E2E-CONFIRM-0001"
 
-    # 1) 先 ingest 落事实（必然 UNRESOLVED：缺 PSKU / 缺 binding）
+    # 1) 先 ingest 落事实（本用例刻意构造 UNRESOLVED：缺填写码 / 找不到 published FSKU）
     ingest_payload = {
         "platform": platform,
         "shop_id": shop_id,
@@ -44,8 +47,8 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
         "store_name": "UT-SHOP-1",
         "province": "广东省",
         "lines": [
-            {"qty": 1, "title": "无PSKU行", "spec": "颜色:黑"},
-            {"platform_sku_id": "psku:RAW-ONLY", "qty": 1, "title": "有PSKU但未绑", "spec": "颜色:黑"},
+            {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},
+            {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但找不到FSKU", "spec": "颜色:黑"},
         ],
     }
     r1 = await client.post("/platform-orders/ingest", json=ingest_payload, headers=headers)
@@ -65,15 +68,14 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
         "ext_order_no": ext_order_no,
         "reason": "平台订单必须执行：人工按标题确认选货",
         "decisions": [
-            {"line_key": "NO_PSKU:1", "item_id": 1, "qty": 1, "note": "无PSKU行：人工确认为 item_id=1"},
-            {"line_key": "PSKU:psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "该PSKU未绑：先救急"},
+            {"locator_kind": "LINE_NO", "locator_value": "1", "item_id": 1, "qty": 1, "note": "无填写码行：人工确认为 item_id=1"},
+            {"locator_kind": "FILLED_CODE", "locator_value": "psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "填写码无法命中FSKU：先救急"},
         ],
     }
     r2 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
     assert r2.status_code == 200, r2.text
     j2 = r2.json()
 
-    # --- shape: 基本字段 ---
     assert isinstance(j2.get("status"), str) and j2["status"], j2
     assert isinstance(j2.get("id"), int) and j2["id"] > 0, j2
     assert isinstance(j2.get("ref"), str) and j2["ref"], j2
@@ -81,19 +83,17 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     assert j2.get("store_id") == store_id, j2
     assert j2.get("ext_order_no") == ext_order_no, j2
 
-    # --- shape: manual override ---
     assert j2.get("manual_override") is True, j2
     assert "manual_reason" in j2, j2
 
-    # --- shape: risk flags（来自 resolver 的 unresolved 聚合）---
     rf = j2.get("risk_flags")
     assert isinstance(rf, list), j2
-    assert "PSKU_CODE_MISSING" in rf, rf
-    assert "PSKU_BINDING_MISSING" in rf, rf
+    assert "FILLED_CODE_MISSING" in rf, rf
+    assert "FSKU_NOT_FOUND" in rf, rf
 
     first_id = int(j2["id"])
 
-    # 3) 幂等：重复 confirm-and-create，id 不应变化（status 允许 OK/IDEMPOTENT 等）
+    # 3) 幂等：重复 confirm-and-create，id 不应变化
     r3 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
     assert r3.status_code == 200, r3.text
     j3 = r3.json()

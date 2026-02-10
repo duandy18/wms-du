@@ -1,7 +1,6 @@
 # app/api/routers/platform_orders_replay.py
 from __future__ import annotations
 
-
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +72,8 @@ async def replay_platform_order(
             fulfillment_status=None,
             blocked_reasons=None,
         )
+
+    # Phase N+2：不再补齐 filled_code；事实表中缺失将由 resolver 直接给出 MISSING_FILLED_CODE
 
     resolved_lines, unresolved, item_qty_map = await resolve_platform_lines_to_items(
         session,

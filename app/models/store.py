@@ -26,6 +26,7 @@ class Store(Base):
     __tablename__ = "stores"
     __table_args__ = (
         UniqueConstraint("platform", "shop_id", name="uq_stores_platform_shop"),
+        UniqueConstraint("platform", "store_code", name="uq_stores_platform_store_code"),
         Index("ix_stores_platform_active", "platform", "active"),
         Index("ix_stores_shop", "shop_id"),
         {"info": {"skip_autogen": True}},
@@ -36,6 +37,9 @@ class Store(Base):
     platform: Mapped[str] = mapped_column(String(16), nullable=False)
     shop_id: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False, default="NO-STORE")
+
+    # ✅ 对外稳定短码：用于 PSKU code 生成（平台后台填写）
+    store_code: Mapped[str] = mapped_column(String(32), nullable=False)
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -76,7 +80,6 @@ class Store(Base):
         lazy="selectin",
         overlaps="warehouses,stores,warehouse",
     )
-
 
     inventories: Mapped[List["ChannelInventory"]] = relationship(
         "ChannelInventory",

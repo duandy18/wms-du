@@ -40,7 +40,6 @@ MODEL_SPECS = [
 
     # -------- 平台 & 事件流 --------
     ("app.models.platform_shops", "PlatformShop"),
-    ("app.models.platform_sku_mirror", "PlatformSkuMirror"),
     ("app.models.platform_event", "PlatformEvent"),
     ("app.models.event_store", "EventStore"),
     ("app.models.event_log", "EventLog"),
@@ -80,7 +79,7 @@ MODEL_SPECS = [
     ("app.models.shipping_provider_zone_bracket", "ShippingProviderZoneBracket"),
     ("app.models.shipping_provider_surcharge", "ShippingProviderSurcharge"),
 
-    # ✅ Phase 1：仓库 × 快递公司（能力集合 / 事实绑定）
+    # -------- 仓库 × 快递公司 --------
     ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
 ]
 
@@ -121,7 +120,6 @@ __all__ = [
 
     # ---- Events ----
     "PlatformShop",
-    "PlatformSkuMirror",
     "PlatformEvent",
     "EventStore",
     "EventLog",
@@ -161,7 +159,7 @@ __all__ = [
     "ShippingProviderZoneBracket",
     "ShippingProviderSurcharge",
 
-    # ✅ Warehouse × ShippingProvider
+    # ---- Warehouse × ShippingProvider ----
     "WarehouseShippingProvider",
 
     "Batches",

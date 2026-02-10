@@ -7,15 +7,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def line_key_from_inputs(*, platform_sku_id: Optional[str], line_no: Optional[int]) -> Optional[str]:
+def line_key_from_inputs(*, filled_code: Optional[str], line_no: Optional[int]) -> Optional[str]:
     """
-    与 platform_order_fact_service._line_key 对齐：
-    - 有 PSKU：PSKU:{platform_sku_id}
-    - 无 PSKU：NO_PSKU:{line_no}
+    与 app/services/platform_order_fact_service._line_key 对齐（保持幂等键物理格式不变）：
+
+    - 有填写码（filled_code 非空）：PSKU:{filled_code}
+    - 无填写码（filled_code 为空）：NO_PSKU:{line_no}
+
+    注意：PSKU/NO_PSKU 是历史前缀字符串，仅用于构造幂等键格式；
+    不承载“平台 SKU/PSKU”业务语义。重命名前缀字符串需另起带迁移/兼容的 phase。
     """
-    p = (platform_sku_id or "").strip()
-    if p:
-        return f"PSKU:{p}"
+    fc = (filled_code or "").strip()
+    if fc:
+        return f"PSKU:{fc}"
     if line_no is None:
         return None
     return f"NO_PSKU:{int(line_no)}"
@@ -59,7 +63,9 @@ async def load_fact_lines_for_order(
                 SELECT
                     line_no,
                     line_key,
-                    platform_sku_id,
+                    locator_kind,
+                    locator_value,
+                    filled_code,
                     qty,
                     title,
                     spec,
@@ -81,7 +87,9 @@ async def load_fact_lines_for_order(
             {
                 "line_no": int(r.get("line_no") or 0),
                 "line_key": str(r.get("line_key") or ""),
-                "platform_sku_id": (r.get("platform_sku_id") or None),
+                "locator_kind": (r.get("locator_kind") or None),
+                "locator_value": (r.get("locator_value") or None),
+                "filled_code": (r.get("filled_code") or None),
                 "qty": int(r.get("qty") or 1),
                 "title": r.get("title"),
                 "spec": r.get("spec"),
