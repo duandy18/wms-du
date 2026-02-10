@@ -88,6 +88,9 @@ class PlatformOrderLineResult(BaseModel):
     risk_level: Optional[str] = None
     risk_reason: Optional[str] = None
 
+    # ✅ 新增：给前端的“下一步动作”（用于人工救火闭环）
+    next_actions: Optional[List[Dict[str, Any]]] = None
+
 
 class PlatformOrderIngestOut(BaseModel):
     status: str
