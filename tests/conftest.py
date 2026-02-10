@@ -59,6 +59,7 @@ WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
 WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
 
 from app.main import app  # noqa: E402
+from app.api.deps import get_session as app_get_session  # noqa: E402
 from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
 
 
@@ -190,14 +191,27 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
+async def client(session: AsyncSession) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """
+    关键：让同一个 test function 内的多次 HTTP 请求共享同一个 AsyncSession，
+    以保证“写后读”在测试环境里可见（否则每个请求独立取连接，会出现 bind 后 ingest 看不到）。
+    """
+
+    async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        yield session
+
+    app.dependency_overrides[app_get_session] = _override_get_session
+
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://testserver",
-        timeout=httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0),
-    ) as c:
-        yield c
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            timeout=httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0),
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(app_get_session, None)
 
 
 @pytest_asyncio.fixture

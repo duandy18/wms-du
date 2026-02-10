@@ -237,6 +237,9 @@ from app.api.routers.orders_fulfillment_debug_routes import (
 
 from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
 
+# ✅ 新增：merchant_code(current) → published FSKU 绑定路由
+from app.api.routers.merchant_code_bindings import router as merchant_code_bindings_router
+
 # ---------------------------------------------------------------------------
 # scan routes
 # ---------------------------------------------------------------------------
@@ -270,6 +273,7 @@ app.include_router(count_router)
 app.include_router(pick_router)
 
 app.include_router(platform_orders_ingest_router)
+app.include_router(merchant_code_bindings_router)
 
 app.include_router(orders_router)
 app.include_router(orders_fulfillment_v2_router)
