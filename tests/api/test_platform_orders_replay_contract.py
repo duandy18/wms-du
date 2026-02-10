@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -60,6 +60,13 @@ async def _ensure_store(session: AsyncSession, *, platform: str, shop_id: str, n
     return int(row["id"])
 
 
+def _locator_from_fact(*, filled_code: Optional[str], line_no: int) -> Tuple[str, str]:
+    fc = (filled_code or "").strip()
+    if fc:
+        return "FILLED_CODE", fc
+    return "LINE_NO", str(int(line_no))
+
+
 async def _insert_fact_line(
     session: AsyncSession,
     *,
@@ -69,31 +76,36 @@ async def _insert_fact_line(
     ext_order_no: str,
     line_no: int,
     line_key: str,
-    platform_sku_id: Optional[str],
+    filled_code: Optional[str],
     qty: int,
     title: str,
     spec: str,
 ) -> None:
+    locator_kind, locator_value = _locator_from_fact(filled_code=filled_code, line_no=int(line_no))
     await session.execute(
         text(
             """
             INSERT INTO platform_order_lines(
               platform, shop_id, store_id, ext_order_no,
               line_no, line_key,
-              platform_sku_id, qty, title, spec,
+              locator_kind, locator_value,
+              filled_code, qty, title, spec,
               extras, raw_payload,
               created_at, updated_at
             ) VALUES (
               :platform, :shop_id, :store_id, :ext_order_no,
               :line_no, :line_key,
-              :platform_sku_id, :qty, :title, :spec,
+              :locator_kind, :locator_value,
+              :filled_code, :qty, :title, :spec,
               (:extras)::jsonb, (:raw_payload)::jsonb,
               now(), now()
             )
             ON CONFLICT (platform, shop_id, ext_order_no, line_key)
             DO UPDATE SET
               store_id=EXCLUDED.store_id,
-              platform_sku_id=EXCLUDED.platform_sku_id,
+              locator_kind=EXCLUDED.locator_kind,
+              locator_value=EXCLUDED.locator_value,
+              filled_code=EXCLUDED.filled_code,
               qty=EXCLUDED.qty,
               title=EXCLUDED.title,
               spec=EXCLUDED.spec,
@@ -109,7 +121,9 @@ async def _insert_fact_line(
             "ext_order_no": ext_order_no,
             "line_no": int(line_no),
             "line_key": line_key,
-            "platform_sku_id": platform_sku_id,
+            "locator_kind": locator_kind,
+            "locator_value": locator_value,
+            "filled_code": filled_code,
             "qty": int(qty),
             "title": title,
             "spec": spec,
@@ -119,7 +133,7 @@ async def _insert_fact_line(
     )
 
 
-async def _create_published_fsku_with_component(session: AsyncSession, *, item_id: int) -> int:
+async def _create_published_fsku_with_component(session: AsyncSession, *, item_id: int) -> Tuple[int, str]:
     uniq = uuid.uuid4().hex[:10]
     code = f"UT-REPLAY-{uniq}"
     name = f"UT-REPLAY-FSKU-{uniq}"
@@ -152,50 +166,7 @@ async def _create_published_fsku_with_component(session: AsyncSession, *, item_i
         ),
         {"fid": fsku_id, "item_id": int(item_id)},
     )
-    return fsku_id
-
-
-async def _upsert_current_binding(
-    session: AsyncSession,
-    *,
-    platform: str,
-    store_id: int,
-    platform_sku_id: str,
-    fsku_id: int,
-) -> None:
-    await session.execute(
-        text(
-            """
-            UPDATE platform_sku_bindings
-               SET effective_to = now()
-             WHERE platform = :p
-               AND store_id = :sid
-               AND platform_sku_id = :psku
-               AND effective_to IS NULL;
-            """
-        ),
-        {"p": platform, "sid": int(store_id), "psku": platform_sku_id},
-    )
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO platform_sku_bindings(
-              platform, store_id, platform_sku_id,
-              fsku_id, item_id,
-              effective_from, effective_to,
-              reason, created_at
-            )
-            VALUES (
-              :p, :sid, :psku,
-              :fid, NULL,
-              now(), NULL,
-              'UT replay', now()
-            );
-            """
-        ),
-        {"p": platform, "sid": int(store_id), "psku": platform_sku_id, "fid": int(fsku_id)},
-    )
+    return fsku_id, code
 
 
 async def _orders_count(session: AsyncSession, *, platform: str, shop_id: str, ext_order_no: str) -> int:
@@ -221,7 +192,7 @@ async def _orders_count(session: AsyncSession, *, platform: str, shop_id: str, e
 
 
 @pytest.mark.asyncio
-async def test_replay_no_psku_returns_unresolved_and_does_not_create_order(
+async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create_order(
     async_client: AsyncClient,
     db_session: AsyncSession,
     _db_clean_and_seed,
@@ -230,7 +201,7 @@ async def test_replay_no_psku_returns_unresolved_and_does_not_create_order(
     shop_id = "1"
     store_id = await _ensure_store(db_session, platform=platform, shop_id=shop_id, name="DEMO-1")
 
-    ext = f"UT-NO-PSKU-{uuid.uuid4().hex[:8]}"
+    ext = f"UT-MISSING-FILLED-CODE-{uuid.uuid4().hex[:8]}"
 
     await _insert_fact_line(
         db_session,
@@ -240,9 +211,9 @@ async def test_replay_no_psku_returns_unresolved_and_does_not_create_order(
         ext_order_no=ext,
         line_no=1,
         line_key="NO_PSKU:1",
-        platform_sku_id=None,
+        filled_code=None,
         qty=1,
-        title="只有标题没有PSKU",
+        title="只有标题没有填写码",
         spec="颜色:黑",
     )
     await db_session.commit()
@@ -263,14 +234,14 @@ async def test_replay_no_psku_returns_unresolved_and_does_not_create_order(
     assert data["facts_n"] == 1
     assert isinstance(data.get("unresolved") or [], list)
     assert len(data["unresolved"]) >= 1
-    assert data["unresolved"][0].get("reason") == "MISSING_PSKU"
+    assert data["unresolved"][0].get("reason") == "MISSING_FILLED_CODE"
 
     n1 = await _orders_count(db_session, platform=platform, shop_id=shop_id, ext_order_no=ext)
     assert n1 == n0, f"orders should not be created on UNRESOLVED, before={n0}, after={n1}"
 
 
 @pytest.mark.asyncio
-async def test_replay_with_binding_is_idempotent(
+async def test_replay_with_published_fsku_code_is_idempotent(
     async_client: AsyncClient,
     db_session: AsyncSession,
     _db_clean_and_seed,
@@ -279,13 +250,14 @@ async def test_replay_with_binding_is_idempotent(
     shop_id = "1"
     store_id = await _ensure_store(db_session, platform=platform, shop_id=shop_id, name="DEMO-1")
 
-    psku = f"PSKU-UT-REPLAY-{uuid.uuid4().hex[:8]}"
     ext = f"UT-REPLAY-OK-{uuid.uuid4().hex[:8]}"
 
     # published fsku + component(item_id=1)
-    fsku_id = await _create_published_fsku_with_component(db_session, item_id=1)
-    await _upsert_current_binding(db_session, platform=platform, store_id=store_id, platform_sku_id=psku, fsku_id=fsku_id)
+    fsku_id, fsku_code = await _create_published_fsku_with_component(db_session, item_id=1)
+    assert fsku_id > 0
+    assert isinstance(fsku_code, str) and fsku_code
 
+    # 事实行里 filled_code 字段承载“填写码（兼容字段名）”
     await _insert_fact_line(
         db_session,
         platform=platform,
@@ -293,8 +265,8 @@ async def test_replay_with_binding_is_idempotent(
         store_id=store_id,
         ext_order_no=ext,
         line_no=1,
-        line_key=f"PSKU:{psku}",
-        platform_sku_id=psku,
+        line_key=f"PSKU:{fsku_code}",
+        filled_code=fsku_code,
         qty=2,
         title="UT-REPLAY-TITLE",
         spec="UT-SPEC",

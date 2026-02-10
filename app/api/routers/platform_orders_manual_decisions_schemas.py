@@ -2,9 +2,43 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, constr
+
+
+class ManualDecisionLineOut(BaseModel):
+    """
+    人工救火明细行（证据表读侧输出）。
+
+    Phase N+4：line_key（内部幂等锚点）与 locator（对外定位语义）分层。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    # internal / legacy (kept for compatibility)
+    line_key: Optional[str] = None
+    line_no: Optional[int] = None
+
+    # semantic locator (recommended)
+    locator_kind: Optional[str] = Field(
+        default=None,
+        description="对外定位类型（推荐）：FILLED_CODE / LINE_NO",
+    )
+    locator_value: Optional[str] = Field(
+        default=None,
+        description="对外定位值（推荐）",
+    )
+
+    filled_code: Optional[str] = Field(
+        default=None,
+        description="商家后台填写码（对外语义字段）",
+    )
+
+    fact_qty: Optional[int] = None
+    item_id: Optional[int] = None
+    qty: Optional[int] = None
+    note: Optional[str] = None
 
 
 class ManualDecisionOrderOut(BaseModel):
@@ -24,7 +58,7 @@ class ManualDecisionOrderOut(BaseModel):
 
     manual_reason: Optional[str] = None
     risk_flags: List[str] = Field(default_factory=list)
-    manual_decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    manual_decisions: List[ManualDecisionLineOut] = Field(default_factory=list)
 
 
 class ManualDecisionOrdersOut(BaseModel):

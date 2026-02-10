@@ -1,12 +1,9 @@
 # app/adapters/pdd.py
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Sequence
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import ChannelAdapter
@@ -22,10 +19,10 @@ class PddCredentials:
     """
     应用级凭据（AppKey / AppSecret / 回调地址）。
 
-    注意：
-    - 目前仅作为占位结构存在；
-    - 真实的 app_key / app_secret 以后可以从单独的配置表 / 环境变量获取，
-      不再耦合在 Store 模型里。
+    说明：
+    - 当前仅作为结构占位；
+    - 后续可从独立配置表 / 环境变量中加载；
+    - 不再与任何 SKU / PSKU / mirror 语义耦合。
     """
 
     app_key: Optional[str] = None
@@ -39,21 +36,17 @@ class PddCredentials:
 
 class PddAdapter(ChannelAdapter):
     """
-    拼多多适配器（骨架版）
+    拼多多适配器（精简版）
 
-    当前职责：
-    - 预览拉库存请求参数（platform_sku_ids → ext_sku_ids）；
-    - 预埋店铺级 token 的加载方法（load_token），为后续接真实 API 做准备；
-    - fetch/push 仍为占位。
+    当前职责（明确、克制）：
+    - 加载店铺级 token（用于后续真实 API 对接）
+    - 提供库存 fetch / push 的占位接口
+    - 提供 sign 占位
 
-    ✅ 强制收敛：
-    - build_fetch_preview **只允许** platform_sku_ids（PSKU 入口）；
-    - ext_sku_ids **只来源于** platform_sku_mirror.raw_payload；
-    - 禁止 item_ids（避免把库存域/商品域入口重新塞回平台域）。
-
-    ✅ Phase-2（本次新增，先占位）：
-    - fetch_sku_mirrors：从平台“拉取 SKU 镜像”的适配器接口形状
-      *当前返回 mock payload，不调用真实 PDD API*
+    明确不再承担的职责（已下线）：
+    - platform SKU / PSKU
+    - SKU mirror / raw_payload
+    - fetch preview / ext_sku_ids
     """
 
     async def load_credentials(self, session: AsyncSession, *, store_id: int) -> PddCredentials:
@@ -69,149 +62,25 @@ class PddAdapter(ChannelAdapter):
             return None
         return rec.access_token
 
-    @staticmethod
-    def _extract_ext_sku_id_from_raw(raw_payload: Any, *, fallback: str) -> str:
-        if raw_payload is None:
-            return fallback
-
-        obj: Any = raw_payload
-        if isinstance(raw_payload, str):
-            try:
-                obj = json.loads(raw_payload)
-            except Exception:
-                return fallback
-
-        if not isinstance(obj, dict):
-            return fallback
-
-        candidates = [
-            "pdd_sku_id",
-            "pddSkuId",
-            "sku_id",
-            "skuId",
-            "outer_id",
-            "outerId",
-            "spec_id",
-            "specId",
-            "id",
-        ]
-        for k in candidates:
-            v = obj.get(k)
-            if v is None:
-                continue
-            if isinstance(v, (int, float)):
-                return str(int(v))
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-
-        return fallback
-
-    async def build_fetch_preview(
-        self,
-        session: AsyncSession,
-        *,
-        store_id: int,
-        platform_sku_ids: Sequence[str],
-        platform: str = "PDD",
-    ) -> Dict[str, Any]:
-        """
-        返回“将要请求 PDD 拉库存”的预览（不真正调用平台）。
-
-        约束：
-        - 平台域对外概念是 shop（字符串），但这里已经处于系统内部（store_id）。
-        - platform_sku_mirror 表的外键口径为 store_id（stores.id）。
-        """
-        creds = await self.load_credentials(session, store_id=store_id)
-        token = await self.load_token(session, store_id=store_id)
-
-        ids = [str(x) for x in platform_sku_ids]
-        ext_by_id: dict[str, str] = {pid: pid for pid in ids}
-
-        if ids:
-            sql = text(
-                """
-                SELECT platform_sku_id, raw_payload
-                  FROM platform_sku_mirror
-                 WHERE platform = :platform
-                   AND store_id = :store_id
-                   AND platform_sku_id = ANY(:ids)
-                """
-            )
-            rows = (
-                await session.execute(
-                    sql,
-                    {"platform": str(platform), "store_id": int(store_id), "ids": list(ids)},
-                )
-            ).mappings().all()
-
-            for r in rows:
-                pid = str(r.get("platform_sku_id") or "")
-                if not pid:
-                    continue
-                raw = r.get("raw_payload")
-                ext_by_id[pid] = self._extract_ext_sku_id_from_raw(raw, fallback=pid)
-
-        ext = [ext_by_id.get(pid, pid) for pid in ids]
-
-        payload = {"store_id": store_id, "platform": str(platform), "platform_sku_ids": ids, "ext_sku_ids": ext}
-        sig = self.sign(payload)
-
-        return {
-            "creds_ready": creds.ready,
-            "has_token": bool(token),
-            "store_id": store_id,
-            "platform": str(platform),
-            "platform_sku_ids": ids,
-            "ext_sku_ids": ext,
-            "signature": sig,
-        }
-
-    async def fetch_sku_mirrors(
-        self,
-        *,
-        store_id: int,
-        platform_sku_ids: Sequence[str],
-    ) -> list[dict[str, Any]]:
-        """
-        ✅ Phase-2：平台 SKU 镜像拉取（当前先占位，不调用真实 PDD API）
-        """
-        _ = store_id
-        now = datetime.now(timezone.utc)
-
-        out: list[dict[str, Any]] = []
-        for pid in platform_sku_ids:
-            spid = str(pid).strip()
-            if not spid:
-                continue
-
-            # 让 PlatformSkuMirrorService 能从 raw_payload 抽取线索：
-            # - title / variant_name
-            out.append(
-                {
-                    "platform_sku_id": spid,
-                    "sku_name": None,
-                    "spec": None,
-                    "raw_payload": {
-                        "title": f"PDD商品-{spid}",
-                        "variant_name": "mock-颜色:黑 尺码:L",
-                        "platform": "pdd",
-                        "platform_sku_id": spid,
-                        "mock": True,
-                    },
-                    "observed_at": now,
-                    "source": "pdd-mock",
-                }
-            )
-
-        return out
-
     async def fetch_inventory(self, *, store_id: int, item_ids: Sequence[int]) -> Dict[int, int]:
+        """
+        拉取库存（占位）
+
+        说明：
+        - 当前不对接真实 PDD API；
+        - 只返回 item_id → 0 的形态，作为接口占位；
+        - 不涉及任何 SKU / PSKU / mirror 语义。
+        """
         _ = store_id
         return {int(i): 0 for i in item_ids}
 
     async def push_inventory(self, *, store_id: int, items: Sequence[dict]) -> Dict[str, Any]:
+        """
+        推送库存（占位）
+        """
         _ = store_id
-        return {"ok": False, "reason": "PDD push not wired yet", "preview": list(items)}
+        _ = items
+        return {"ok": False, "reason": "PDD push not wired yet"}
 
     def sign(self, payload: dict) -> str:
         _ = payload

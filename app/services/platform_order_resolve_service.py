@@ -35,7 +35,6 @@ def to_dec(v: Any) -> Decimal:
 
 
 def dec_to_int_qty(q: Decimal) -> int:
-    # fsku_components.qty 是 numeric(18,6)，这里强制要求“整数形态”，避免 silent wrong。
     if q <= 0:
         return 0
     if q == q.to_integral_value():
@@ -43,10 +42,13 @@ def dec_to_int_qty(q: Decimal) -> int:
     raise ValueError(f"component qty must be integer-like, got={str(q)}")
 
 
-# ---------------- Risk (resolve-side facts) ----------------
+# ---------------- Risk helpers ----------------
 def _risk(level: str, flags: List[str], reason: str) -> Dict[str, Any]:
-    # 统一输出形状（避免前端推断）：risk_flags/risk_level/risk_reason
-    return {"risk_flags": list(flags), "risk_level": str(level), "risk_reason": str(reason)}
+    return {
+        "risk_flags": list(flags),
+        "risk_level": str(level),
+        "risk_reason": str(reason),
+    }
 
 
 def _risk_high(flag: str, reason: str) -> Dict[str, Any]:
@@ -59,7 +61,7 @@ def _risk_medium(flag: str, reason: str) -> Dict[str, Any]:
 
 @dataclass
 class ResolvedLine:
-    platform_sku_id: str
+    filled_code: str
     qty: int
     fsku_id: int
     expanded_items: List[Dict[str, Any]]
@@ -126,43 +128,6 @@ async def resolve_store_id(
     return int(row2["id"])
 
 
-async def load_current_binding_fsku_id(
-    session: AsyncSession,
-    *,
-    platform: str,
-    store_id: int,
-    platform_sku_id: str,
-) -> int | None:
-    plat = norm_platform(platform)
-    pid = str(platform_sku_id).strip()
-
-    row = (
-        (
-            await session.execute(
-                text(
-                    """
-                    SELECT fsku_id
-                      FROM platform_sku_bindings
-                     WHERE platform = :p
-                       AND store_id = :sid
-                       AND platform_sku_id = :psku
-                       AND effective_to IS NULL
-                     ORDER BY effective_from DESC
-                     LIMIT 1
-                    """
-                ),
-                {"p": plat, "sid": int(store_id), "psku": pid},
-            )
-        )
-        .mappings()
-        .first()
-    )
-    if not row:
-        return None
-    fsku_id = row.get("fsku_id")
-    return int(fsku_id) if fsku_id is not None else None
-
-
 async def load_fsku_components(
     session: AsyncSession,
     *,
@@ -221,63 +186,92 @@ async def resolve_platform_lines_to_items(
     lines: List[Dict[str, Any]],
 ) -> Tuple[List[ResolvedLine], List[Dict[str, Any]], Dict[int, int]]:
     """
-    输入：平台订单行（platform_sku_id + qty）
-    输出：
-      - resolved_lines：每行命中哪个 fsku、展开成哪些 item
-      - unresolved：缺绑定/组件异常等原因（包含 risk_* 字段，供“可人工继续（标记风险）”使用）
-      - item_qty_map：聚合后的 item_id -> need_qty（可直接喂给 OrderService.ingest）
+    Phase N+2 · 解析核心
 
-    注意：
-    - 本函数只做“读侧裁决 + 风险事实输出”，不做任何写侧 binding。
+    输入：
+      - 行级字段：filled_code + qty
+
+    解析路径：
+      filled_code → FSKU.code → published FSKU → fsku_components → items
+
+    说明：
+    - 不存在 PSKU / mirror / binding
+    - 事实表唯一事实字段为 filled_code（字段语义已完成收敛）
     """
-    plat = norm_platform(platform)
+
 
     resolved_lines: List[ResolvedLine] = []
     unresolved: List[Dict[str, Any]] = []
     item_qty_map: Dict[int, int] = {}
 
     for ln in lines or []:
-        psku = str(ln.get("platform_sku_id") or "").strip()
+        filled_code = str(ln.get("filled_code") or "").strip()
         qty = to_int_pos(ln.get("qty"), default=1)
 
-        if not psku:
-            # ⚠️ 行缺少 PSKU：无法建立治理锚点，也无法解析；允许人工继续但必须风险标记
+        if not filled_code:
             unresolved.append(
                 {
-                    "platform_sku_id": "",
+                    "filled_code": "",
                     "qty": qty,
-                    "reason": "MISSING_PSKU",
-                    "hint": "platform_sku_id 不能为空",
-                    **_risk_high("PSKU_CODE_MISSING", "缺少 PSKU/规格编码：需人工补录或纳入治理后再继续。"),
+                    "reason": "MISSING_FILLED_CODE",
+                    "hint": "未提供填写码",
+                    **_risk_high(
+                        "FILLED_CODE_MISSING",
+                        "缺少填写码：无法解析商品；需人工补录或确认",
+                    ),
                 }
             )
             continue
 
-        fsku_id = await load_current_binding_fsku_id(session, platform=plat, store_id=store_id, platform_sku_id=psku)
-        if not fsku_id:
-            # ⚠️ 没有 current binding：典型治理入口
+        row = (
+            (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id
+                          FROM fskus
+                         WHERE code = :code
+                           AND status = 'published'
+                         LIMIT 1
+                        """
+                    ),
+                    {"code": filled_code},
+                )
+            )
+            .mappings()
+            .first()
+        )
+
+        if not row or row.get("id") is None:
             unresolved.append(
                 {
-                    "platform_sku_id": psku,
+                    "filled_code": filled_code,
                     "qty": qty,
-                    "reason": "MISSING_BINDING",
-                    "hint": "请先为该 PSKU 建立当前生效绑定（PSKU->FSKU）。",
-                    **_risk_high("PSKU_BINDING_MISSING", "该 PSKU 尚未建立 current 绑定：允许人工继续，但必须尽快治理。"),
+                    "reason": "FSKU_NOT_FOUND",
+                    "hint": "未找到已发布的 FSKU",
+                    **_risk_high(
+                        "FSKU_NOT_FOUND",
+                        "填写码未命中任何已发布 FSKU；需人工确认",
+                    ),
                 }
             )
             continue
+
+        fsku_id = int(row["id"])
 
         comps = await load_fsku_components(session, fsku_id=fsku_id)
         if not comps:
-            # ⚠️ 绑定到了非 published / 或无 components：属于“绑定存在但不可执行”
             unresolved.append(
                 {
-                    "platform_sku_id": psku,
+                    "filled_code": filled_code,
                     "qty": qty,
                     "fsku_id": fsku_id,
-                    "reason": "FSKU_NO_COMPONENTS_OR_NOT_PUBLISHED",
-                    "hint": "该 FSKU 未发布或未配置 components。",
-                    **_risk_high("FSKU_NOT_EXECUTABLE", "绑定目标 FSKU 不可执行（未发布或无 components）：允许人工继续，但需修复绑定/发布。"),
+                    "reason": "FSKU_NOT_EXECUTABLE",
+                    "hint": "FSKU 未配置组件或未发布",
+                    **_risk_high(
+                        "FSKU_NOT_EXECUTABLE",
+                        "填写码命中的 FSKU 不可执行；需修复组件配置",
+                    ),
                 }
             )
             continue
@@ -291,23 +285,33 @@ async def resolve_platform_lines_to_items(
                 if need <= 0:
                     continue
                 item_qty_map[item_id] = int(item_qty_map.get(item_id, 0)) + need
-                expanded.append({"item_id": item_id, "component_qty": cqty, "need_qty": need, "role": c.get("role")})
+                expanded.append(
+                    {
+                        "item_id": item_id,
+                        "component_qty": cqty,
+                        "need_qty": need,
+                        "role": c.get("role"),
+                    }
+                )
         except Exception as e:
             unresolved.append(
                 {
-                    "platform_sku_id": psku,
+                    "filled_code": filled_code,
                     "qty": qty,
                     "fsku_id": fsku_id,
                     "reason": "COMPONENT_QTY_INVALID",
                     "hint": str(e),
-                    **_risk_high("FSKU_COMPONENT_INVALID", "FSKU components 数量非法：需修复组件结构后再继续。"),
+                    **_risk_high(
+                        "FSKU_COMPONENT_INVALID",
+                        "FSKU 组件数量非法；需修复后再继续",
+                    ),
                 }
             )
             continue
 
         resolved_lines.append(
             ResolvedLine(
-                platform_sku_id=psku,
+                filled_code=filled_code,
                 qty=qty,
                 fsku_id=fsku_id,
                 expanded_items=expanded,

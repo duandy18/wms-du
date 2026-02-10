@@ -26,6 +26,10 @@ async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
     - 先用 shop_id 路径 ingest 落事实（UNRESOLVED）
     - 再 confirm-and-create 生成人工救火 orders（manual_override=true 写入 extras）
     - 再调用 manual-decisions/latest，能查回这笔证据
+
+    Phase N+4：
+    - line_key 为内部幂等锚点：禁止外部输入
+    - 外部定位使用 locator_kind/locator_value（或 filled_code/line_no）
     """
     token = await _login_token(client)
     headers = _auth_headers(token)
@@ -34,7 +38,7 @@ async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
     shop_id = "UT-SHOP-MD-1"
     ext_order_no = "E2E-MD-0001"
 
-    # 1) ingest 落事实
+    # 1) ingest 落事实（刻意构造 UNRESOLVED：缺填写码 / 找不到 published FSKU）
     ingest_payload = {
         "platform": platform,
         "shop_id": shop_id,
@@ -42,8 +46,8 @@ async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
         "store_name": "UT-SHOP-MD-1",
         "province": "广东省",
         "lines": [
-            {"qty": 1, "title": "无PSKU行", "spec": "颜色:黑"},
-            {"platform_sku_id": "psku:RAW-ONLY", "qty": 1, "title": "有PSKU但未绑", "spec": "颜色:黑"},
+            {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},
+            {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但找不到FSKU", "spec": "颜色:黑"},
         ],
     }
     r1 = await client.post("/platform-orders/ingest", json=ingest_payload, headers=headers)
@@ -53,15 +57,15 @@ async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
     store_id = j1.get("store_id")
     assert isinstance(store_id, int) and store_id >= 1, j1
 
-    # 2) confirm-and-create
+    # 2) confirm-and-create（人工救火）
     confirm_payload = {
         "platform": platform,
         "store_id": store_id,
         "ext_order_no": ext_order_no,
         "reason": "救火：人工按标题确认",
         "decisions": [
-            {"line_key": "NO_PSKU:1", "item_id": 1, "qty": 1, "note": "无PSKU行：人工确认为 item_id=1"},
-            {"line_key": "PSKU:psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "该PSKU未绑：先救急"},
+            {"locator_kind": "LINE_NO", "locator_value": "1", "item_id": 1, "qty": 1, "note": "无填写码行：人工确认为 item_id=1"},
+            {"locator_kind": "FILLED_CODE", "locator_value": "psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "填写码无法命中FSKU：先救急"},
         ],
     }
     r2 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
