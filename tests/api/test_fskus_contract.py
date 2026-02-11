@@ -142,11 +142,8 @@ async def test_fsku_archive_lifecycle(client):
 @pytest.mark.asyncio
 async def test_fsku_unretire_lifecycle(client):
     """
-    取消归档（unretire）行为：
-    - 仅允许 retired -> published
-    - retired_at 必须清空
-    - published_at 必须保留历史值（不应被清空）
-    - 列表中必须可见
+    契约封板：FSKU 生命周期单向（draft → published → retired），发布事实不可逆。
+    因此 unretire endpoint 仅兼容保留，但必须永远返回 409（state_conflict）+ Problem shape。
     """
     headers = await _auth_headers(client)
     item_id = await _pick_any_item_id(client, headers)
@@ -174,27 +171,21 @@ async def test_fsku_unretire_lifecycle(client):
     assert ret["published_at"] is not None
 
     r_un = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
-    assert r_un.status_code == 200, r_un.text
-    un = r_un.json()
-    assert un["status"] == "published"
-    assert un["retired_at"] is None
-    assert un["published_at"] is not None
-
-    # 列表中必须能看到恢复结果
-    r_list = await client.get("/fskus", headers=headers)
-    assert r_list.status_code == 200, r_list.text
-    items = r_list.json()["items"]
-    hit = next(x for x in items if x["id"] == f["id"])
-    assert hit["status"] == "published"
-    assert hit["retired_at"] is None
+    assert r_un.status_code == 409, r_un.text
+    body = r_un.json()
+    _assert_problem_shape(body)
+    assert body.get("error_code") == "state_conflict"
+    msg = str(body.get("message") or "")
+    assert ("不支持取消归档" in msg) or ("生命周期单向" in msg)
 
 
 @pytest.mark.asyncio
 async def test_fsku_unretire_guard_requires_retired(client):
     """
-    护栏：只有 status=retired 才允许 unretire
+    契约封板：unretire 永远不允许（兼容保留但必须 409 + Problem）
     - draft -> 409 + Problem
     - published -> 409 + Problem
+    - retired -> 409 + Problem
     """
     headers = await _auth_headers(client)
     item_id = await _pick_any_item_id(client, headers)
@@ -218,3 +209,10 @@ async def test_fsku_unretire_guard_requires_retired(client):
     r_un_pub = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
     assert r_un_pub.status_code == 409, r_un_pub.text
     _assert_problem_shape(r_un_pub.json())
+
+    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    assert r_ret.status_code == 200, r_ret.text
+
+    r_un_ret = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    assert r_un_ret.status_code == 409, r_un_ret.text
+    _assert_problem_shape(r_un_ret.json())

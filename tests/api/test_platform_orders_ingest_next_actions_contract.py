@@ -66,6 +66,7 @@ async def test_platform_orders_ingest_code_not_bound_returns_next_actions(client
     next_actions = u0.get("next_actions") or []
     assert isinstance(next_actions, list) and len(next_actions) >= 1
 
+    # ✅ 1) 既有契约：第一条仍然是 bind_merchant_code（不破坏历史）
     a0 = next_actions[0]
     assert a0.get("action") == "bind_merchant_code"
     assert a0.get("endpoint") == "/platform-orders/manual-decisions/bind-merchant-code"
@@ -76,11 +77,18 @@ async def test_platform_orders_ingest_code_not_bound_returns_next_actions(client
     assert payload.get("filled_code") == filled_code
     assert "fsku_id" in payload  # 允许为 null（人工选择）
 
+    # ✅ 2) 新契约：必须提供“跳转治理页”的可执行动作（闭环）
+    #    不要求绑定到前端 URL，但必须给出定位参数：platform + store_id + merchant_code
+    gov = next((x for x in next_actions if x.get("action") == "go_store_fsku_binding_governance"), None)
+    assert gov is not None, next_actions
+    gov_payload = gov.get("payload") or {}
+    assert gov_payload.get("platform") == "DEMO"
+    assert int(gov_payload.get("store_id") or 0) == store_id
+    assert gov_payload.get("merchant_code") == filled_code
+
 
 @pytest.mark.asyncio
-async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_can_see_it(
-    client, async_session_maker
-):
+async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_can_see_it(client, async_session_maker):
     filled_code = _uniq("MC-UT-BIND")
 
     # 0) 先 ingest 一次，确保 store 存在，并拿到真实 store_id
@@ -150,7 +158,6 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
                      WHERE platform = :p
                        AND shop_id = :shop
                        AND merchant_code = :code
-                       AND effective_to IS NULL
                      LIMIT 1
                     """
                 ),
