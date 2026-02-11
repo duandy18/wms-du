@@ -79,7 +79,6 @@ async def list_latest_manual_decisions(
     plat = norm_platform(platform)
     sid = int(store_id)
 
-    # 1) 拉出最近 batch 列表（按 batch 最新 created_at 排序）
     batch_rows = (
         await session.execute(
             text(
@@ -97,7 +96,6 @@ async def list_latest_manual_decisions(
         )
     ).mappings().all()
 
-    # total = batch 总数
     total_row = (
         await session.execute(
             text(
@@ -117,7 +115,6 @@ async def list_latest_manual_decisions(
     if not batch_ids:
         return ManualDecisionOrdersOut(items=[], total=total, limit=int(limit), offset=int(offset))
 
-    # 2) 拉 batch 明细
     fact_rows = (
         await session.execute(
             text(
@@ -140,7 +137,6 @@ async def list_latest_manual_decisions(
         )
     ).mappings().all()
 
-    # 3) 预取 orders.shop_id（保持输出兼容）
     order_ids: List[int] = []
     for r in fact_rows:
         oid = _as_int(r.get("order_id"))
@@ -168,18 +164,16 @@ async def list_latest_manual_decisions(
                 continue
             order_shop_map[oid] = str(o.get("shop_id") or "")
 
-    # 4) batch -> latest_created_at
     batch_latest_map: Dict[str, Any] = {}
     for br in batch_rows:
         bid = str(br.get("batch_id"))
         batch_latest_map[bid] = br.get("latest_created_at")
 
-    # 5) 组装输出（按 batch 聚合）
     grouped: Dict[str, Dict[str, Any]] = {}
     for r in fact_rows:
         bid = str(r.get("batch_id"))
         if bid not in grouped:
-            oid = _as_int(r.get("order_id"))  # may be None
+            oid = _as_int(r.get("order_id"))
             shop_id = order_shop_map.get(oid, "") if oid is not None else ""
             ext = str(r.get("ext_order_no") or "")
             p = str(r.get("platform") or plat)
@@ -198,14 +192,12 @@ async def list_latest_manual_decisions(
                 "manual_decisions": [],
             }
 
-        # risk_flags：取并集
         rf = r.get("risk_flags")
         if isinstance(rf, list):
             for x in rf:
                 if isinstance(x, str) and x not in grouped[bid]["risk_flags"]:
                     grouped[bid]["risk_flags"].append(x)
 
-        # decision 明细：每行一条
         grouped[bid]["manual_decisions"].append(
             {
                 "line_key": r.get("line_key"),
@@ -218,7 +210,6 @@ async def list_latest_manual_decisions(
             }
         )
 
-    # 6) 保持顺序：按 batch_rows 的顺序输出
     items: List[Dict[str, Any]] = []
     for br in batch_rows:
         bid = str(br.get("batch_id"))
@@ -230,7 +221,7 @@ async def list_latest_manual_decisions(
 
 @router.post(
     "/platform-orders/manual-decisions/bind-merchant-code",
-    summary="人工救火：将 filled_code 写入 merchant_code_fsku_bindings(current) → published FSKU（一次救火，后续自动解析）",
+    summary="人工救火：将 filled_code 绑定/覆盖到 published FSKU（一码一对一）",
 )
 async def manual_bind_merchant_code(
     payload: ManualBindMerchantCodeIn = Body(...),
@@ -263,7 +254,6 @@ async def manual_bind_merchant_code(
             ),
         )
 
-    # 校验 FSKU 必须 published
     fsku_row = (
         await session.execute(
             text(
@@ -310,32 +300,23 @@ async def manual_bind_merchant_code(
     now = _utc_now()
     reason = (payload.reason or "").strip() or "manual bind"
 
-    # 关闭旧 current + 插入新 current（依赖 partial unique index 做最终裁决）
-    await session.execute(
-        text(
-            """
-            UPDATE merchant_code_fsku_bindings
-               SET effective_to = :now
-             WHERE platform = :p
-               AND shop_id = :shop_id
-               AND merchant_code = :code
-               AND effective_to IS NULL
-            """
-        ),
-        {"now": now, "p": plat, "shop_id": shop_id, "code": filled_code},
-    )
-
+    # ✅ 一码一对一：单条 upsert（存在则覆盖 fsku_id/reason/updated_at，不改 created_at）
     await session.execute(
         text(
             """
             INSERT INTO merchant_code_fsku_bindings(
               platform, shop_id, merchant_code,
-              fsku_id, effective_from, effective_to, reason, created_at
+              fsku_id, reason, created_at, updated_at
             )
             VALUES (
               :p, :shop_id, :code,
-              :fsku_id, :now, NULL, :reason, :now
+              :fsku_id, :reason, :now, :now
             )
+            ON CONFLICT (platform, shop_id, merchant_code)
+            DO UPDATE SET
+              fsku_id = EXCLUDED.fsku_id,
+              reason = EXCLUDED.reason,
+              updated_at = EXCLUDED.updated_at
             """
         ),
         {"p": plat, "shop_id": shop_id, "code": filled_code, "fsku_id": int(payload.fsku_id), "now": now, "reason": reason},
@@ -352,7 +333,7 @@ async def manual_bind_merchant_code(
             "merchant_code": filled_code,
             "fsku_id": int(payload.fsku_id),
             "reason": reason,
-            "effective_from": now,
+            "updated_at": now,
         },
         "next_actions": [
             {
