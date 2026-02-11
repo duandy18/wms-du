@@ -39,7 +39,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     shop_id = "UT-SHOP-1"
     ext_order_no = "E2E-CONFIRM-0001"
 
-    # 1) 先 ingest 落事实（本用例刻意构造 UNRESOLVED：缺填写码 / 找不到 published FSKU）
+    # 1) 先 ingest 落事实（本用例刻意构造 UNRESOLVED：缺填写码 / 填写码未绑定且不等于任何 published FSKU.code）
     ingest_payload = {
         "platform": platform,
         "shop_id": shop_id,
@@ -48,7 +48,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
         "province": "广东省",
         "lines": [
             {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},
-            {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但找不到FSKU", "spec": "颜色:黑"},
+            {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但未绑定", "spec": "颜色:黑"},
         ],
     }
     r1 = await client.post("/platform-orders/ingest", json=ingest_payload, headers=headers)
@@ -69,7 +69,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
         "reason": "平台订单必须执行：人工按标题确认选货",
         "decisions": [
             {"locator_kind": "LINE_NO", "locator_value": "1", "item_id": 1, "qty": 1, "note": "无填写码行：人工确认为 item_id=1"},
-            {"locator_kind": "FILLED_CODE", "locator_value": "psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "填写码无法命中FSKU：先救急"},
+            {"locator_kind": "FILLED_CODE", "locator_value": "psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "填写码未绑定：先救急"},
         ],
     }
     r2 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
@@ -89,7 +89,8 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     rf = j2.get("risk_flags")
     assert isinstance(rf, list), j2
     assert "FILLED_CODE_MISSING" in rf, rf
-    assert "FSKU_NOT_FOUND" in rf, rf
+    # current-only 语义下：有填写码但未绑定/不等于 published FSKU.code → CODE_NOT_BOUND
+    assert "CODE_NOT_BOUND" in rf, rf
 
     first_id = int(j2["id"])
 
