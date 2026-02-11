@@ -240,6 +240,9 @@ from app.api.routers.shop_product_bundles import router as shop_product_bundles_
 # ✅ 新增：merchant_code(current) → published FSKU 绑定路由
 from app.api.routers.merchant_code_bindings import router as merchant_code_bindings_router
 
+# ✅ 新增：dev fake orders lab（仅 dev 环境挂载）
+from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
+
 # ---------------------------------------------------------------------------
 # scan routes
 # ---------------------------------------------------------------------------
@@ -343,6 +346,7 @@ if IS_DEV_ENV:
     app.include_router(devconsole_orders_router)
     app.include_router(dev_seed_ledger_router)
     app.include_router(fake_platform_router)
+    app.include_router(dev_fake_orders_router)
 
 
 def _dump_routes_at_start():
