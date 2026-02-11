@@ -74,7 +74,10 @@ class FskuListItem(BaseModel):
     retired_at: datetime | None
 
     # ✅ 列表用：组合内容摘要（由后端聚合出来）
+    # - components_summary: 工程排查用（SKU 版）
+    # - components_summary_name: 运营/治理用（主数据商品名版）
     components_summary: str
+    components_summary_name: str
 
 
 class FskuListOut(BaseModel):
