@@ -101,18 +101,21 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     )
 
     # outbound_commits_v2
+    # 单宇宙回归后：不再写 scope；唯一键为 (platform, shop_id, ref)
+    # 测试环境可能不 TRUNCATE outbound_commits_v2，所以这里必须幂等。
     await session.execute(
         text(
             """
             INSERT INTO outbound_commits_v2 (platform, shop_id, ref, state, created_at, trace_id)
             VALUES (:p, :s, :ref, 'COMMITTED', now(), :tid)
-            ON CONFLICT (platform, shop_id, ref) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
             """
         ),
         {"p": platform, "s": shop_id, "ref": order_ref, "tid": trace_id},
     )
 
     # stock_ledger：SHIPMENT
+    # 单宇宙回归后：stock_ledger 不再含 scope 列
     await session.execute(
         text(
             """

@@ -48,6 +48,11 @@ async def write_outbound_commit_v2(
 ) -> Dict[str, Any]:
     """
     ✅ 并发下稳定真相：UPSERT + RETURNING
+
+    约束事实（单宇宙）：
+    - outbound_commits_v2 的唯一键：uq_outbound_commits_v2_platform_shop_ref (platform, shop_id, ref)
+
+    行为：
     - 插入成功：返回本次 trace_id + created_at
     - 冲突命中：不改 trace_id（保持历史真相），只 bump updated_at，并返回“已存在那条记录”的 trace_id/created_at
     """
@@ -73,7 +78,7 @@ async def write_outbound_commit_v2(
                     now(),
                     :trace_id
                 )
-                ON CONFLICT (platform, shop_id, ref) DO UPDATE
+                ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO UPDATE
                 SET
                     updated_at = now(),
                     trace_id   = outbound_commits_v2.trace_id

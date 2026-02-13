@@ -72,6 +72,7 @@ VALUES
 
 -- ===== stocks =====
 -- 重要：
+-- - 单宇宙回归后，stocks 表不再含 scope 列
 -- - 非批次商品走 NULL 槽位（与 StockService.adjust 的护栏口径一致）
 INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
 VALUES
