@@ -12,7 +12,7 @@ from app.db.base import init_models
 
 init_models()
 
-from app.services.store_service import StoreService  # noqa: E402
+from app.services.store_service import StoreService
 
 SQL_ENSURE_WAREHOUSE = """
 INSERT INTO warehouses(id, name) VALUES (1, 'WH-1')
@@ -31,12 +31,10 @@ VALUES (:id, :sku, :name, 'bag')
 ON CONFLICT (id) DO NOTHING;
 """
 
-# v2+ scope 世界：stocks 唯一槽位由 (scope, item_id, warehouse_id, batch_code_key) 决定
-# 这里初始化“无批次槽位”（batch_code = NULL）
 SQL_ENSURE_STOCK_ROW = """
-INSERT INTO stocks(scope, item_id, warehouse_id, batch_code, qty)
-VALUES ('PROD', :item_id, 1, NULL, 0)
-ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING;
+INSERT INTO stocks(item_id, location_id, qty)
+VALUES (:item_id, :loc, 0)
+ON CONFLICT (item_id, location_id) DO NOTHING;
 """
 
 
@@ -53,7 +51,7 @@ async def _run(store_name: str, item_ids: list[int], db_url: str):
                 text(SQL_ENSURE_ITEM),
                 {"id": iid, "sku": f"SKU-{iid}", "name": f"ITEM-{iid}"},
             )
-            await s.execute(text(SQL_ENSURE_STOCK_ROW), {"item_id": iid})
+            await s.execute(text(SQL_ENSURE_STOCK_ROW), {"item_id": iid, "loc": 1})
         await s.commit()
 
         # 2) 店与映射
@@ -69,7 +67,9 @@ async def _run(store_name: str, item_ids: list[int], db_url: str):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Bootstrap minimal domain: wh/loc/items/stocks/store/bind + shadow refresh")
+    ap = argparse.ArgumentParser(
+        description="Bootstrap minimal domain: wh/loc/items/stocks/store/bind + shadow refresh"
+    )
     ap.add_argument("--store", default="主店A")
     ap.add_argument("--items", default="777,778")
     ap.add_argument("--db", default="postgresql+asyncpg://wms:wms@127.0.0.1:5433/wms")

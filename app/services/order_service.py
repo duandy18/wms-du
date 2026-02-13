@@ -33,7 +33,6 @@ class OrderService:
         shop_id: str,
         payload: Dict[str, Any],
         trace_id: Optional[str] = None,
-        scope: str = "PROD",
     ) -> dict:
         return await OrderIngestService.ingest_raw(
             session,
@@ -41,7 +40,6 @@ class OrderService:
             shop_id=shop_id,
             payload=payload,
             trace_id=trace_id,
-            scope=scope,
         )
 
     @staticmethod
@@ -60,11 +58,9 @@ class OrderService:
         address: Optional[Mapping[str, str]] = None,
         extras: Optional[Mapping[str, Any]] = None,
         trace_id: Optional[str] = None,
-        scope: str = "PROD",
     ) -> dict:
         return await OrderIngestService.ingest(
             session,
-            scope=scope,
             platform=platform,
             shop_id=shop_id,
             ext_order_no=ext_order_no,

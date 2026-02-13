@@ -138,6 +138,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     )
 
     # outbound_commits_v2
+    # 单宇宙回归后：唯一键为 (platform, shop_id, ref)
+    # 测试环境可能不 TRUNCATE outbound_commits_v2，所以这里必须幂等。
     await session.execute(
         text(
             """
@@ -170,12 +172,12 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：SHIPMENT / RETURN_IN（必须带 scope）
+    # stock_ledger：SHIPMENT / RETURN_IN
+    # 单宇宙回归后：stock_ledger 不再含 scope 列
     await session.execute(
         text(
             """
             INSERT INTO stock_ledger (
-                scope,
                 trace_id,
                 warehouse_id,
                 item_id,
@@ -190,7 +192,6 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             )
             VALUES
             (
-                'PROD',
                 :trace_id,
                 :wh_id,
                 :item_id,
@@ -204,7 +205,6 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 0
             ),
             (
-                'PROD',
                 :trace_id,
                 :wh_id,
                 :item_id,

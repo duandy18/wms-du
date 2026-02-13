@@ -30,16 +30,6 @@ from app.api.routers.platform_orders_shared import (  # noqa: WPS433
 )
 
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
-
 class PlatformOrderIngestFlow:
     """
     平台订单接入编排流（唯一真相）：
@@ -120,7 +110,6 @@ class PlatformOrderIngestFlow:
     async def run_from_platform_lines(
         session: AsyncSession,
         *,
-        scope: str = "PROD",
         platform: str,
         shop_id: str,
         store_id: int,
@@ -135,7 +124,6 @@ class PlatformOrderIngestFlow:
         source: str = "platform-orders/ingest",
         extras: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
         plat = norm_platform(platform)
         sid = norm_shop_id(shop_id)
         store_id_int = int(store_id)
@@ -179,7 +167,6 @@ class PlatformOrderIngestFlow:
                 "risk_flags": risk_flags,
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
-                "scope": sc,
             }
 
         item_ids = sorted(item_qty_map.keys())
@@ -192,13 +179,12 @@ class PlatformOrderIngestFlow:
             source=source,
         )
 
-        merged_extras: Dict[str, Any] = {"store_id": store_id_int, "source": source, "scope": sc}
+        merged_extras: Dict[str, Any] = {"store_id": store_id_int, "source": source}
         if extras:
             merged_extras.update(dict(extras))
 
         r = await OrderService.ingest(
             session,
-            scope=sc,
             platform=plat,
             shop_id=sid,
             ext_order_no=ext,
@@ -236,7 +222,6 @@ class PlatformOrderIngestFlow:
             "risk_flags": risk_flags,
             "risk_level": risk_level,
             "risk_reason": risk_reason,
-            "scope": sc,
         }
 
     # -------- Tail flow: from items_payload (replay/confirm-create) -------- #
@@ -245,7 +230,6 @@ class PlatformOrderIngestFlow:
     async def run_tail_from_items_payload(
         session: AsyncSession,
         *,
-        scope: str = "PROD",
         platform: str,
         shop_id: str,
         store_id: Optional[int],
@@ -266,7 +250,6 @@ class PlatformOrderIngestFlow:
         risk_level: Optional[str] = None,
         risk_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
         plat = norm_platform(platform)
         sid = norm_shop_id(shop_id)
         ext = str(ext_order_no or "").strip()
@@ -275,7 +258,7 @@ class PlatformOrderIngestFlow:
 
         store_id_out = int(store_id) if store_id is not None else None
 
-        merged_extras: Dict[str, Any] = {"source": source, "scope": sc}
+        merged_extras: Dict[str, Any] = {"source": source}
         if store_id_out is not None:
             merged_extras["store_id"] = store_id_out
         if extras:
@@ -283,7 +266,6 @@ class PlatformOrderIngestFlow:
 
         r = await OrderService.ingest(
             session,
-            scope=sc,
             platform=plat,
             shop_id=sid,
             ext_order_no=ext,
@@ -309,7 +291,9 @@ class PlatformOrderIngestFlow:
 
         resolved_out = list(resolved or [])
         unresolved_out = list(unresolved or [])
-        allow_manual_continue_out = bool(unresolved_out) if allow_manual_continue is None else bool(allow_manual_continue)
+        allow_manual_continue_out = (
+            bool(unresolved_out) if allow_manual_continue is None else bool(allow_manual_continue)
+        )
 
         return {
             "status": status,
@@ -325,5 +309,4 @@ class PlatformOrderIngestFlow:
             "risk_flags": list(risk_flags or []),
             "risk_level": risk_level,
             "risk_reason": risk_reason,
-            "scope": sc,
         }

@@ -16,8 +16,8 @@ async def test_write_ledger_idempotent(session: AsyncSession):
     await session.execute(
         text(
             """
-        INSERT INTO stocks(scope, item_id, warehouse_id, batch_code, qty)
-        VALUES ('PROD', 3003, 1, 'IDEM', 5)
+        INSERT INTO stocks(item_id, warehouse_id, batch_code, qty)
+        VALUES (3003, 1, 'IDEM', 5)
         ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO UPDATE SET qty = EXCLUDED.qty
     """
         )
@@ -25,7 +25,6 @@ async def test_write_ledger_idempotent(session: AsyncSession):
     # 首次写
     id1 = await write_ledger(
         session,
-        scope="PROD",
         warehouse_id=1,
         item_id=3003,
         batch_code="IDEM",
@@ -40,7 +39,6 @@ async def test_write_ledger_idempotent(session: AsyncSession):
     # 幂等命中
     id2 = await write_ledger(
         session,
-        scope="PROD",
         warehouse_id=1,
         item_id=3003,
         batch_code="IDEM",

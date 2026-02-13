@@ -46,6 +46,9 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     - create_for_order 只认 ledger 出库事实：必须先写 OUTBOUND_SHIP delta<0
     - return commit 用同一个 ref=order_ref，但 ref_line 不是 1（用 ReturnTaskLine.id）
       因此校验必须用“真实落库 reason”，不能猜 MovementType.RETURN 的字符串值。
+
+    重要：
+    - order_ref 必须每次唯一，避免命中历史遗留未 COMMITTED 的 ReturnTask（跨测试污染）。
     """
     utc = timezone.utc
     now = datetime.now(utc)
@@ -59,33 +62,32 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     prod = now.date()
     exp = (prod + timedelta(days=30)) if may_need_expiry else None
 
+    uniq = uuid4().hex[:10]
+    trace_id = f"PH3-UT-TRACE-RET-{uniq}"
+
     # 1) 入库造库存：+10
     await stock.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_id,
         batch_code=batch_code,
         delta=10,
         reason="RECEIPT",
-        ref="UT:PH3:RET:IN",
+        ref=f"UT:PH3:RET:IN:{uniq}",
         ref_line=1,
         occurred_at=now,
         production_date=prod,
         expiry_date=exp,
-        trace_id="PH3-UT-TRACE-RET",
+        trace_id=trace_id,
         meta={"sub_reason": "UT_STOCK_IN"},
     )
 
     # 2) 出库制造出库事实（ReturnTask 依据 ledger 反查 shipped）
-    #    ⚠️ order_ref 必须唯一，避免复用历史未 COMMITTED 的 return_task（picked_qty 会被累加）
-    uniq = uuid4().hex[:10]
     order_ref = f"UT:PH3:RET:ORDER:{uniq}"
     shipped_qty = 4
 
     await stock.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_id,
         batch_code=batch_code,
@@ -94,7 +96,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         ref=order_ref,
         ref_line=1,
         occurred_at=now,
-        trace_id="PH3-UT-TRACE-RET",
+        trace_id=trace_id,
         meta={"sub_reason": "ORDER_SHIP"},
     )
 
@@ -118,7 +120,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     committed = await svc.commit(
         session,
         task_id=int(task.id),
-        trace_id="PH3-UT-TRACE-RET",
+        trace_id=trace_id,
         occurred_at=now,
     )
     assert committed.status == "COMMITTED"
@@ -139,8 +141,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
                 """
                 SELECT reason
                   FROM stock_ledger
-                 WHERE scope='PROD'
-                   AND warehouse_id=:w AND item_id=:i AND batch_code=:c
+                 WHERE warehouse_id=:w AND item_id=:i AND batch_code=:c
                    AND ref=:ref AND ref_line=:rl AND delta>0
                  ORDER BY id DESC
                  LIMIT 1

@@ -7,40 +7,28 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 async def load_existing_outbound_commit_trace_id(
     session: AsyncSession,
     *,
-    scope: str = "PROD",
     platform: str,
     shop_id: str,
     ref: str,
 ) -> Optional[str]:
-    sc = _norm_scope(scope)
     row = (
         await session.execute(
             SA(
                 """
                 SELECT trace_id
                   FROM outbound_commits_v2
-                 WHERE scope    = :scope
-                   AND platform = :platform
+                 WHERE platform = :platform
                    AND shop_id  = :shop_id
                    AND ref      = :ref
                  ORDER BY created_at DESC, updated_at DESC
                  LIMIT 1
                 """
             ),
-            {"scope": sc, "platform": platform, "shop_id": shop_id, "ref": ref},
+            {"platform": platform, "shop_id": shop_id, "ref": ref},
         )
     ).first()
     if not row:
@@ -54,18 +42,16 @@ async def load_existing_outbound_commit_trace_id(
 async def load_existing_outbound_commit_trace_id_or_none(
     session: AsyncSession,
     *,
-    scope: str = "PROD",
     platform: str,
     shop_id: str,
     ref: str,
 ) -> Optional[str]:
-    return await load_existing_outbound_commit_trace_id(session, scope=scope, platform=platform, shop_id=shop_id, ref=ref)
+    return await load_existing_outbound_commit_trace_id(session, platform=platform, shop_id=shop_id, ref=ref)
 
 
 async def load_existing_outbound_commit_meta_or_none(
     session: AsyncSession,
     *,
-    scope: str = "PROD",
     platform: str,
     shop_id: str,
     ref: str,
@@ -75,22 +61,20 @@ async def load_existing_outbound_commit_meta_or_none(
       - trace_id
       - created_at（用于 committed_at）
     """
-    sc = _norm_scope(scope)
     row = (
         await session.execute(
             SA(
                 """
                 SELECT trace_id, created_at
                   FROM outbound_commits_v2
-                 WHERE scope    = :scope
-                   AND platform = :platform
+                 WHERE platform = :platform
                    AND shop_id  = :shop_id
                    AND ref      = :ref
                  ORDER BY created_at DESC, updated_at DESC
                  LIMIT 1
                 """
             ),
-            {"scope": sc, "platform": platform, "shop_id": shop_id, "ref": ref},
+            {"platform": platform, "shop_id": shop_id, "ref": ref},
         )
     ).first()
 

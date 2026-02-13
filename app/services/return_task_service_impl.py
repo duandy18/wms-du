@@ -51,7 +51,6 @@ class ReturnTaskServiceImpl:
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
         # ✅ 用 batch_code_key 聚合 shipped 事实，避免 NULL/"None" 分裂
-        # ✅ Phase 1 scope：默认只认 PROD（避免 DRILL/PROD 串事实）
         res = await session.execute(
             select(
                 StockLedger.item_id,
@@ -61,7 +60,6 @@ class ReturnTaskServiceImpl:
                 StockLedger.delta,
                 StockLedger.reason,
             )
-            .where(StockLedger.scope == "PROD")
             .where(StockLedger.ref == str(order_ref))
             .where(StockLedger.delta < 0)
         )
@@ -250,7 +248,6 @@ class ReturnTaskServiceImpl:
 
             res = await self.stock_svc.adjust(
                 session=session,
-                scope="PROD",
                 item_id=int(ln.item_id),
                 delta=+picked,
                 reason=MovementType.RETURN,

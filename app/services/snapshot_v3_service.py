@@ -2,29 +2,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
-
 class SnapshotV3Service:
     """
     Snapshot v3：台账驱动快照引擎（Stage C.2：以 stock_snapshots.qty 为事实列）。
-
-    ✅ Scope 第一阶段：
-    - 快照必须按 scope 隔离（默认 PROD）
-    - rebuild / compare / cut 都必须显式约束 scope，否则 DRILL 会污染 PROD 口径
     """
 
     @staticmethod
@@ -32,10 +18,7 @@ class SnapshotV3Service:
         session: AsyncSession,
         *,
         at: datetime,
-        scope: str = "PROD",
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
-
         await session.execute(text("DROP TABLE IF EXISTS snapshot_cut_result"))
         await session.execute(
             text(
@@ -47,22 +30,15 @@ class SnapshotV3Service:
                   batch_code,
                   SUM(delta) AS qty
                 FROM stock_ledger
-                WHERE scope = :scope
-                  AND occurred_at <= :at
+                WHERE occurred_at <= :at
                 GROUP BY warehouse_id, item_id, batch_code
                 HAVING SUM(delta) != 0;
                 """
             ),
-            {"scope": sc, "at": at},
+            {"at": at},
         )
         summary = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty FROM snapshot_cut_result"
-                    )
-                )
-            )
+            (await session.execute(text("SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty FROM snapshot_cut_result")))
             .mappings()
             .first()
         )
@@ -73,23 +49,16 @@ class SnapshotV3Service:
         session: AsyncSession,
         *,
         snapshot_date: datetime,
-        scope: str = "PROD",
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
-
         d: date = snapshot_date.date()
         cut_to = datetime(d.year, d.month, d.day, tzinfo=timezone.utc) + timedelta(days=1)
 
-        await session.execute(
-            text("DELETE FROM stock_snapshots WHERE scope = :scope AND snapshot_date = :d"),
-            {"scope": sc, "d": d},
-        )
+        await session.execute(text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"), {"d": d})
 
         await session.execute(
             text(
                 """
                 INSERT INTO stock_snapshots (
-                    scope,
                     snapshot_date,
                     warehouse_id,
                     item_id,
@@ -99,7 +68,6 @@ class SnapshotV3Service:
                     qty_allocated
                 )
                 SELECT
-                    :scope AS scope,
                     :d AS snapshot_date,
                     warehouse_id,
                     item_id,
@@ -108,13 +76,12 @@ class SnapshotV3Service:
                     SUM(delta) AS qty_available,
                     0 AS qty_allocated
                 FROM stock_ledger
-                WHERE scope = :scope
-                  AND occurred_at < :cut_to
+                WHERE occurred_at < :cut_to
                 GROUP BY warehouse_id, item_id, batch_code
                 HAVING SUM(delta) != 0;
                 """
             ),
-            {"scope": sc, "d": d, "cut_to": cut_to},
+            {"d": d, "cut_to": cut_to},
         )
 
         summary = (
@@ -124,11 +91,10 @@ class SnapshotV3Service:
                         """
                         SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty
                         FROM stock_snapshots
-                        WHERE scope = :scope
-                          AND snapshot_date = :d
+                        WHERE snapshot_date = :d
                         """
                     ),
-                    {"scope": sc, "d": d},
+                    {"d": d},
                 )
             )
             .mappings()
@@ -141,10 +107,7 @@ class SnapshotV3Service:
         session: AsyncSession,
         *,
         snapshot_date: datetime,
-        scope: str = "PROD",
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
-
         cut_ts: datetime = snapshot_date
         d: date = snapshot_date.date()
 
@@ -167,23 +130,20 @@ class SnapshotV3Service:
                 COALESCE(batch_code, '__NULL_BATCH__') AS batch_code_key,
                 SUM(delta) AS ledger_qty
             FROM stock_ledger
-            WHERE scope = :scope
-              AND occurred_at <= :cut
+            WHERE occurred_at <= :cut
             GROUP BY warehouse_id, item_id, batch_code
         ) AS x
         LEFT JOIN stock_snapshots s
-            ON s.scope           = :scope
-           AND s.snapshot_date   = :date
+            ON s.snapshot_date   = :date
            AND s.warehouse_id    = x.warehouse_id
            AND s.item_id         = x.item_id
            AND s.batch_code_key  = x.batch_code_key
         LEFT JOIN stocks st
-            ON st.scope          = :scope
-           AND st.warehouse_id   = x.warehouse_id
+            ON st.warehouse_id   = x.warehouse_id
            AND st.item_id        = x.item_id
            AND st.batch_code_key = x.batch_code_key
         ORDER BY x.warehouse_id, x.item_id, x.batch_code_key;
         """
 
-        rows = (await session.execute(text(sql), {"scope": sc, "cut": cut_ts, "date": d})).mappings().all()
+        rows = (await session.execute(text(sql), {"cut": cut_ts, "date": d})).mappings().all()
         return {"rows": [dict(r) for r in rows]}

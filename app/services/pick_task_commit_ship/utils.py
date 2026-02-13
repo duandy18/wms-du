@@ -2,21 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 UTC = timezone.utc
-
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
 
 
 def iso_utc(dt: datetime) -> str:
@@ -63,13 +54,10 @@ def count_temp_fact_lines(task: Any) -> int:
     return int(n)
 
 
-async def advisory_lock_outbound_commit(
-    session: AsyncSession, *, scope: str = "PROD", platform: str, shop_id: str, ref: str
-) -> None:
+async def advisory_lock_outbound_commit(session: AsyncSession, *, platform: str, shop_id: str, ref: str) -> None:
     """
-    事务级并发护栏：同一 (scope, platform, shop_id, ref) 的 commit 串行化。
-    这不改变任何业务概念，只是把竞态缝焊死，并避免 DRILL/PROD 互相阻塞。
+    事务级并发护栏：同一 (platform, shop_id, ref) 的 commit 串行化。
+    这不改变任何业务概念，只是把竞态缝焊死。
     """
-    sc = _norm_scope(scope)
-    key = f"outbound_commit:{sc}:{platform}:{shop_id}:{ref}"
+    key = f"outbound_commit:{platform}:{shop_id}:{ref}"
     await session.execute(SA("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})

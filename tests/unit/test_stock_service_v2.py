@@ -12,13 +12,6 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
-def _norm_scope(scope: str | None) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in ("PROD", "DRILL"):
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
-
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
     row = await session.execute(
         text("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
@@ -32,39 +25,28 @@ async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
-async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None, *, scope: str = "PROD") -> int:
-    sc = _norm_scope(scope)
+async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
     r = await session.execute(
         text(
             """
             SELECT qty
               FROM stocks
-             WHERE scope = :scope
-               AND item_id = :i
+             WHERE item_id = :i
                AND warehouse_id = :w
                AND batch_code IS NOT DISTINCT FROM :c
             """
         ),
-        {"scope": sc, "i": int(item_id), "w": int(wh), "c": code},
+        {"i": int(item_id), "w": int(wh), "c": code},
     )
     v = r.scalar_one_or_none()
     return int(v or 0)
 
 
-async def _ensure_stock_seed(
-    session: AsyncSession,
-    *,
-    item_id: int,
-    wh: int,
-    code: str | None,
-    qty: int,
-    scope: str = "PROD",
-) -> None:
-    sc = _norm_scope(scope)
+async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
     svc = StockService()
     now = datetime.now(UTC)
 
-    before = await _qty(session, item_id, wh, code, scope=sc)
+    before = await _qty(session, item_id, wh, code)
     if before >= qty:
         return
 
@@ -72,7 +54,6 @@ async def _ensure_stock_seed(
     if code is None:
         await svc.adjust(
             session=session,
-            scope=sc,
             item_id=int(item_id),
             delta=int(need),
             reason=MovementType.INBOUND,
@@ -85,7 +66,6 @@ async def _ensure_stock_seed(
     else:
         await svc.adjust(
             session=session,
-            scope=sc,
             item_id=int(item_id),
             delta=int(need),
             reason=MovementType.INBOUND,
@@ -116,11 +96,10 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
     wh = 1
     code = "B1"
 
-    before = await _qty(session, item_id=item_id, wh=wh, code=code, scope="PROD")
+    before = await _qty(session, item_id=item_id, wh=wh, code=code)
 
     res = await svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         delta=1,
         reason=MovementType.INBOUND,
@@ -132,7 +111,7 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
         # 不传日期，应该自动兜底
     )
 
-    after = await _qty(session, item_id=item_id, wh=wh, code=code, scope="PROD")
+    after = await _qty(session, item_id=item_id, wh=wh, code=code)
     assert after == before + 1
 
     prod = res.get("production_date")
@@ -151,7 +130,6 @@ async def test_adjust_outbound_requires_batch(session: AsyncSession):
     with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
-            scope="PROD",
             item_id=3001,
             delta=-1,
             reason=MovementType.OUTBOUND,
@@ -180,7 +158,6 @@ async def test_adjust_idempotent(session: AsyncSession):
 
     await svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         delta=1,
         reason=MovementType.INBOUND,
@@ -194,7 +171,6 @@ async def test_adjust_idempotent(session: AsyncSession):
 
     res = await svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         delta=1,
         reason=MovementType.INBOUND,
@@ -219,14 +195,13 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
     wh = 1
     code = await _slot_code(session, item_id)
 
-    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=10, scope="PROD")
+    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=10)
 
-    before = await _qty(session, item_id=item_id, wh=wh, code=code, scope="PROD")
+    before = await _qty(session, item_id=item_id, wh=wh, code=code)
     assert before >= 1
 
     r = await svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         delta=-1,
         reason=MovementType.OUTBOUND,
@@ -238,11 +213,10 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
     )
     assert r["after"] == before - 1
 
-    remain = await _qty(session, item_id=item_id, wh=wh, code=code, scope="PROD")
+    remain = await _qty(session, item_id=item_id, wh=wh, code=code)
     with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
-            scope="PROD",
             item_id=item_id,
             delta=-(remain + 1),
             reason=MovementType.OUTBOUND,

@@ -11,8 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.api.routers.devconsole_orders_schemas import DevDemoOrderOut
 from app.models.enums import MovementType
+from app.api.routers.devconsole_orders_schemas import DevDemoOrderOut
 from app.services.order_service import OrderService
 from app.services.stock_service import StockService
 
@@ -32,7 +32,6 @@ def register(router: APIRouter) -> None:
         - 订单 ingest：给出 province=UT，让其进入 SERVICE_ASSIGNED（只写 service_warehouse_id）
         - ❌ 不再写 orders.warehouse_id（devconsole 禁止后门写入）
         - 库存 seed：仍然可以往某个仓库里落库存（这不是“订单执行仓”）
-        - ✅ scope：dev demo 默认写入 DRILL（训练账本），避免污染 PROD
         """
         # 1) 随机物品（从已存在 items 里抽）
         rows = (await session.execute(text("SELECT id FROM items ORDER BY id LIMIT 10"))).fetchall()
@@ -73,10 +72,8 @@ def register(router: APIRouter) -> None:
             order_lines.append((item_id, qty))
 
         # 2) 落订单（Phase 5：显式给 province，进入 SERVICE_ASSIGNED）
-        #    ✅ scope：dev demo 默认走 DRILL
         result = await OrderService.ingest(
             session=session,
-            scope="DRILL",
             platform=plat,
             shop_id=shop,
             ext_order_no=ext_order_no,
@@ -107,7 +104,6 @@ def register(router: APIRouter) -> None:
 
             await stock_service.adjust(
                 session=session,
-                scope="DRILL",
                 item_id=item_id,
                 warehouse_id=seed_warehouse_id,
                 delta=seed_qty,

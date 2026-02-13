@@ -144,7 +144,6 @@ async def count_inventory(
     try:
         res = await svc.adjust(
             session=session,
-            scope="PROD",
             item_id=req.item_id,
             location_id=req.location_id,
             delta=delta,

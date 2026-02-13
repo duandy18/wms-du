@@ -40,7 +40,6 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     # 在 WH1 写一条 ledger 负账
     await stock_svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         warehouse_id=wh1,
         delta=-2,
@@ -55,7 +54,6 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     # 在 WH2 写一条 ledger 负账
     await stock_svc.adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         warehouse_id=wh2,
         delta=-3,

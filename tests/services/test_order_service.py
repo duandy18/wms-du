@@ -122,9 +122,9 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     await session.execute(
         text(
             """
-            INSERT INTO stocks(scope, item_id, warehouse_id, batch_id, batch_code, qty)
-            VALUES ('PROD', :item_id, :wid, NULL, NULL, 10)
-            ON CONFLICT (scope, item_id, warehouse_id, batch_code_key)
+            INSERT INTO stocks(item_id, warehouse_id, batch_id, batch_code, qty)
+            VALUES (:item_id, :wid, NULL, NULL, 10)
+            ON CONFLICT (item_id, warehouse_id, batch_code_key)
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
@@ -214,8 +214,7 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
                 """
                 SELECT reason, ref, trace_id, delta
                   FROM stock_ledger
-                 WHERE scope = 'PROD'
-                   AND ref = :ref
+                 WHERE ref = :ref
                  ORDER BY id DESC
                  LIMIT 1
                 """

@@ -72,16 +72,16 @@ VALUES
 
 -- ===== stocks =====
 -- 重要：
+-- - 单宇宙回归后，stocks 表不再含 scope 列
 -- - 非批次商品走 NULL 槽位（与 StockService.adjust 的护栏口径一致）
--- - ✅ Scope 第一阶段：stocks.scope NOT NULL，测试基线默认落在 PROD 口径
-INSERT INTO stocks (scope, item_id, warehouse_id, batch_code, qty)
+INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
 VALUES
-  ('PROD', 1,    1, NULL,        10),
-  ('PROD', 3001, 1, 'B-CONC-1',   3),
-  ('PROD', 3002, 1, 'B-OOO-1',    3),
-  ('PROD', 3003, 1, NULL,        10),
-  ('PROD', 4001, 1, 'B-MERGE-1', 10),
-  ('PROD', 4002, 1, 'B-PO-1',     0);
+  (1,    1, NULL,        10),
+  (3001, 1, 'B-CONC-1',   3),
+  (3002, 1, 'B-OOO-1',    3),
+  (3003, 1, NULL,        10),
+  (4001, 1, 'B-MERGE-1', 10),
+  (4002, 1, 'B-PO-1',     0);
 
 -- =========================
 -- ✅ 采购入库测试基线：供应商-商品绑定（合同化）

@@ -13,10 +13,6 @@ class RebuildService:
 
     不涉及 batches 主档，不涉及 snapshot_v2。
     单纯以 ledger 累加 δ 构建 stocks。
-
-    ✅ scope 世界观：
-    - stocks / stock_ledger 都必须按 scope 隔离
-    - rebuild 必须把 scope 一起重建，否则会出现 NULL scope 或串账
     """
 
     @staticmethod
@@ -30,12 +26,14 @@ class RebuildService:
         全量或时间切片重建 stocks。
 
         步骤：
-        1) TRUNCATE stocks
-        2) 从 ledger 按 (scope, warehouse,item,batch) 聚合 sum(delta)
-        3) 只写 qty != 0 的槽位
+        1) 备份当前 stocks 到内存（可选）
+        2) TRUNCATE stocks
+        3) 从 ledger 按 (warehouse,item,batch) 聚合 sum(delta)
+        4) 只写 qty != 0 的槽位
 
         输出：
         {
+            "affected": N,
             "slot_count": M,
             "total_qty": Q
         }
@@ -44,7 +42,7 @@ class RebuildService:
         # 1) 清空 stocks
         await session.execute(text("TRUNCATE TABLE stocks RESTART IDENTITY"))
 
-        # 2) 条件构造（仍沿用字符串拼接，但保持原语义）
+        # 2) 条件构造
         conditions = []
         if time_from:
             conditions.append(f"occurred_at >= '{time_from}'")
@@ -55,18 +53,17 @@ class RebuildService:
         if conditions:
             where_sql = "WHERE " + " AND ".join(conditions)
 
-        # 3) 聚合 ledger（必须带 scope）
+        # 3) 聚合 ledger
         insert_sql = f"""
-            INSERT INTO stocks (scope, warehouse_id, item_id, batch_code, qty)
+            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
             SELECT
-                scope,
                 warehouse_id,
                 item_id,
                 batch_code,
                 SUM(delta) AS qty
             FROM stock_ledger
             {where_sql}
-            GROUP BY scope, warehouse_id, item_id, batch_code
+            GROUP BY warehouse_id, item_id, batch_code
             HAVING SUM(delta) != 0;
         """
 
