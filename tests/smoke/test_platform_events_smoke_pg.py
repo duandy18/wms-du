@@ -26,11 +26,7 @@ async def test_smoke_multi_platform_end2end():
 
     async with Session() as s:
         # ---------- 1) 维度与初始库存 ----------
-        await s.execute(
-            text(
-                "INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"
-            )
-        )
+        await s.execute(text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"))
         await s.execute(
             text(
                 """
@@ -52,14 +48,14 @@ async def test_smoke_multi_platform_end2end():
         """
             )
         )
-        # v2 stocks：按 (warehouse_id, item_id, batch_code) 建唯一槽位
+        # v2 stocks：按 (scope, warehouse_id, item_id, batch_code_key) 建唯一槽位
         await s.execute(
             text(
                 """
-            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty) VALUES
-              (1, 1, 'B-1', 10),
-              (1, 2, 'B-2', 20),
-              (1, 3, 'B-3',  5)
+            INSERT INTO stocks (scope, warehouse_id, item_id, batch_code, qty) VALUES
+              ('PROD', 1, 1, 'B-1', 10),
+              ('PROD', 1, 2, 'B-2', 20),
+              ('PROD', 1, 3, 'B-3',  5)
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
             DO UPDATE SET qty = EXCLUDED.qty
         """
@@ -74,40 +70,19 @@ async def test_smoke_multi_platform_end2end():
                 "platform": "pdd",
                 "order_sn": ref_p,
                 "status": "SHIPPED",
-                "lines": [
-                    {
-                        "item_id": 1,
-                        "warehouse_id": 1,
-                        "batch_code": "B-1",
-                        "qty": 2,
-                    }
-                ],
+                "lines": [{"item_id": 1, "warehouse_id": 1, "batch_code": "B-1", "qty": 2}],
             },
             {
                 "platform": "taobao",
                 "tid": ref_t,
                 "trade_status": "WAIT_BUYER_CONFIRM_GOODS",
-                "lines": [
-                    {
-                        "item_id": 2,
-                        "warehouse_id": 1,
-                        "batch_code": "B-2",
-                        "qty": 5,
-                    }
-                ],
+                "lines": [{"item_id": 2, "warehouse_id": 1, "batch_code": "B-2", "qty": 5}],
             },
             {
                 "platform": "jd",
                 "orderId": ref_j,
                 "orderStatus": "DELIVERED",
-                "lines": [
-                    {
-                        "item_id": 3,
-                        "warehouse_id": 1,
-                        "batch_code": "B-3",
-                        "qty": 1,
-                    }
-                ],
+                "lines": [{"item_id": 3, "warehouse_id": 1, "batch_code": "B-3", "qty": 1}],
             },
         ]
 
@@ -121,7 +96,8 @@ async def test_smoke_multi_platform_end2end():
                     """
                 SELECT item_id, qty
                   FROM stocks
-                 WHERE warehouse_id = 1
+                 WHERE scope = 'PROD'
+                   AND warehouse_id = 1
                    AND item_id IN (1,2,3)
                  ORDER BY item_id
                 """

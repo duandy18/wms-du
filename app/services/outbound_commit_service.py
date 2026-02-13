@@ -21,6 +21,14 @@ from app.services.outbound_commit_models import (
 )
 
 UTC = timezone.utc
+_VALID_SCOPES = {"PROD", "DRILL"}
+
+
+def _norm_scope(scope: Optional[str]) -> str:
+    sc = (scope or "").strip().upper() or "PROD"
+    if sc not in _VALID_SCOPES:
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
 
 
 class OutboundService:
@@ -41,6 +49,9 @@ class OutboundService:
 
     Phase 3（三库一致性工程化）：
     - commit 成功的必要条件：ledger + stocks + snapshot 可观测一致（对本次 touched keys）
+
+    ✅ Scope 第一阶段：
+    - 所有 ledger/stocks 读写必须按 scope 隔离
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -55,8 +66,10 @@ class OutboundService:
         occurred_at: Optional[datetime] = None,
         warehouse_code: Optional[str] = None,  # 保留旧签名，当前实现不使用
         trace_id: Optional[str] = None,  # 上层可携带 trace_id
+        scope: str = "PROD",
     ) -> Dict[str, Any]:
         _ = warehouse_code
+        sc = _norm_scope(scope)
 
         ts = occurred_at or datetime.now(UTC)
         if ts.tzinfo is None:
@@ -81,20 +94,21 @@ class OutboundService:
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
             ck = batch_key(batch_code)
 
-            # ✅ 幂等查询：用 batch_code_key（NULL 语义稳定）
+            # ✅ 幂等查询：用 scope + batch_code_key（NULL 语义稳定）
             row = await session.execute(
                 sa.text(
                     """
                     SELECT COALESCE(SUM(delta), 0)
                     FROM stock_ledger
-                    WHERE ref=:ref
+                    WHERE scope=:scope
+                      AND ref=:ref
                       AND item_id=:item
                       AND warehouse_id=:wid
                       AND batch_code_key=:ck
                       AND delta < 0
                     """
                 ),
-                {"ref": str(order_id), "item": item_id, "wid": wh_id, "ck": ck},
+                {"scope": sc, "ref": str(order_id), "item": item_id, "wid": wh_id, "ck": ck},
             )
             already = int(row.scalar() or 0)
             need = int(want_qty) + already  # 目标是总 delta = -want_qty
@@ -115,6 +129,7 @@ class OutboundService:
             try:
                 res = await self.stock_svc.adjust(
                     session=session,
+                    scope=sc,
                     item_id=item_id,
                     delta=-need,
                     reason="OUTBOUND_SHIP",
@@ -212,6 +227,7 @@ async def ship_commit(
     warehouse_code: Optional[str] = None,
     occurred_at: Optional[datetime] = None,
     trace_id: Optional[str] = None,
+    scope: str = "PROD",
 ) -> Dict[str, Any]:
     svc = OutboundService()
     return await svc.commit(
@@ -221,6 +237,7 @@ async def ship_commit(
         warehouse_code=warehouse_code,
         occurred_at=occurred_at,
         trace_id=trace_id,
+        scope=scope,
     )
 
 

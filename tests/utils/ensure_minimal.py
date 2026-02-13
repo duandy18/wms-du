@@ -7,6 +7,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def _norm_scope(scope: Optional[str]) -> str:
+    sc = (scope or "").strip().upper() or "PROD"
+    if sc not in ("PROD", "DRILL"):
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
+
+
 # ---------- helpers ----------
 async def _sync_locations_seq(session: AsyncSession) -> None:
     """
@@ -98,9 +105,7 @@ async def ensure_location(
 
 
 # ---------- items ----------
-async def ensure_item(
-    session: AsyncSession, *, id: int, sku: Optional[str] = None, name: Optional[str] = None
-) -> None:
+async def ensure_item(session: AsyncSession, *, id: int, sku: Optional[str] = None, name: Optional[str] = None) -> None:
     """
     items 表：sku NOT NULL, name NOT NULL。
     自动生成 SKU/name 以防缺失。
@@ -141,53 +146,70 @@ async def ensure_batch(session: AsyncSession, *, item_id: int, location_id: int,
     )
 
 
-async def ensure_stock_slot(session: AsyncSession, *, item_id: int, location_id: int, batch_code: str) -> None:
+async def ensure_stock_slot(
+    session: AsyncSession,
+    *,
+    scope: str = "PROD",
+    item_id: int,
+    location_id: int,
+    batch_code: str,
+) -> None:
     """
     创建 stocks 槽位（旧测试工具，尽量保持行为）：
 
-    注意：当前 stocks 的唯一约束已经迁移为 uq_stocks_item_wh_batch（item_id, warehouse_id, batch_code_key）。
+    注意：当前 stocks 的唯一约束已经迁移为 uq_stocks_item_wh_batch（scope, item_id, warehouse_id, batch_code_key）。
     这里仍通过 batches 找到 warehouse_id，再插入 stocks 3D 槽位。
     """
+    sc = _norm_scope(scope)
     await session.execute(
         text(
             """
-            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
-            SELECT :item, b.warehouse_id, b.batch_code, 0
+            INSERT INTO stocks (scope, item_id, warehouse_id, batch_code, qty)
+            SELECT :sc, :item, b.warehouse_id, b.batch_code, 0
               FROM batches b
              WHERE b.item_id=:item AND b.batch_code=:code
              LIMIT 1
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
         """
         ),
-        {"item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
+        {"sc": sc, "item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
     )
 
 
 async def set_stock_qty(
-    session: AsyncSession, *, item_id: int, location_id: int, batch_code: str, qty: int
+    session: AsyncSession,
+    *,
+    scope: str = "PROD",
+    item_id: int,
+    location_id: int,
+    batch_code: str,
+    qty: int,
 ) -> None:
     """
     把 stocks 槽位的 qty 设置为特定值（幂等重置，用于测试）
     """
+    sc = _norm_scope(scope)
     await session.execute(
         text(
             """
             UPDATE stocks s
                SET qty = :q
               FROM batches b
-             WHERE s.item_id = b.item_id
+             WHERE s.scope = :sc
+               AND s.item_id = b.item_id
                AND s.warehouse_id = b.warehouse_id
                AND s.batch_code IS NOT DISTINCT FROM b.batch_code
                AND b.item_id=:item AND b.batch_code=:code
         """
         ),
-        {"q": int(qty), "item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
+        {"q": int(qty), "sc": sc, "item": int(item_id), "loc": int(location_id), "code": str(batch_code)},
     )
 
 
 async def ensure_batch_with_stock(
     session: AsyncSession,
     *,
+    scope: str = "PROD",
     item_id: int,
     location_id: int,
     warehouse_id: int,
@@ -197,8 +219,9 @@ async def ensure_batch_with_stock(
     """
     组合式工具：补齐依赖 → item / location / batch / stock 槽位，然后把 qty 设置到目标值。
     """
+    sc = _norm_scope(scope)
     await ensure_item(session, id=item_id)
     loc_id = await ensure_location(session, id=location_id, warehouse_id=warehouse_id, code=f"LOC-{location_id}")
     await ensure_batch(session, item_id=item_id, location_id=loc_id, batch_code=batch_code)
-    await ensure_stock_slot(session, item_id=item_id, location_id=loc_id, batch_code=batch_code)
-    await set_stock_qty(session, item_id=item_id, location_id=loc_id, batch_code=batch_code, qty=qty)
+    await ensure_stock_slot(session, scope=sc, item_id=item_id, location_id=loc_id, batch_code=batch_code)
+    await set_stock_qty(session, scope=sc, item_id=item_id, location_id=loc_id, batch_code=batch_code, qty=qty)

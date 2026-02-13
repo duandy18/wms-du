@@ -20,6 +20,9 @@ class InventoryAutoHealExecutor:
     功能：
     - dry_run=True: 提供即将执行的操作（不落库）
     - dry_run=False: 自动执行 adjust()，落库存 + ledger
+
+    ✅ Scope 第一阶段：
+    - 默认只在 PROD 口径执行，避免把训练口径混进运营数据
     """
 
     @staticmethod
@@ -54,6 +57,7 @@ class InventoryAutoHealExecutor:
 
             adj = await stocksvc.adjust(
                 session=session,
+                scope="PROD",
                 item_id=item,
                 warehouse_id=wh,
                 batch_code=batch,

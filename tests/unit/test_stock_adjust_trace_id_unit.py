@@ -1,5 +1,4 @@
 from datetime import date, datetime, timedelta, timezone
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -18,7 +17,7 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
     步骤：
       1) 从 items 表拿一条现有 item_id；
       2) 调用 adjust 做一次入库（delta>0），带上 trace_id='TR-UNIT-1'；
-      3) 在同一个测试中查询 stock_ledger，按 ref 过滤；
+      3) 在同一个测试中查询 stock_ledger，按 ref='UT-ADJUST-1' 过滤；
       4) 断言存在一条记录，且 trace_id='TR-UNIT-1'。
     """
     svc = StockService()
@@ -30,8 +29,7 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
     assert item_id is not None
 
     # 2) 入库：让 adjust 帮我们建 batch + stocks + ledger
-    uniq = uuid4().hex[:8]
-    ref = f"UT-ADJUST-TRACE-{uniq}"
+    ref = "UT-ADJUST-1"
     trace_id = "TR-UNIT-1"
 
     await svc.adjust(

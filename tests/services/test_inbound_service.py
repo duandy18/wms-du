@@ -38,6 +38,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     async with session.begin():
         _ = await StockService().adjust(
             session=session,
+            scope="PROD",
             item_id=item,
             warehouse_id=wh,  # ✅ v2：以仓库为主维度，不再传 location_id
             delta=6,

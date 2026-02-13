@@ -33,6 +33,16 @@ async def exec_retry(session: AsyncSession, stmt, params=None):
             await asyncio.sleep(backoff * (0.6 + 0.4 * random.random()))
 
 
+# ======================== scope 工具 ========================
+
+
+def _norm_scope(scope: str | None) -> str:
+    sc = (scope or "PROD").strip().upper()
+    if sc not in {"PROD", "DRILL"}:
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
+
+
 # ======================== 列访问器（固定契约） ========================
 
 
@@ -100,12 +110,13 @@ async def resolve_warehouse_by_location(session: AsyncSession, location_id: int)
     return wid
 
 
-# ======================== stocks 槽位（新宇宙观：item + wh + batch_code_key） ========================
+# ======================== stocks 槽位（新宇宙观：scope + item + wh + batch_code_key） ========================
 
 
 async def ensure_stock_slot(
     session: AsyncSession,
     *,
+    scope: str | None = "PROD",
     item_id: int,
     warehouse_id: int,
     location_id: int,
@@ -114,22 +125,23 @@ async def ensure_stock_slot(
     """
     在 stocks 维度的“空槽位”（qty=0）。
 
-    ✅ 重要：当前 DB 唯一性为 uq_stocks_item_wh_batch = (item_id, warehouse_id, batch_code_key)，
+    ✅ 重要：当前 DB 唯一性为 uq_stocks_item_wh_batch = (scope, item_id, warehouse_id, batch_code_key)，
     location_id 不再是唯一维度，因此这里必须使用 ON CONFLICT ON CONSTRAINT。
 
     说明：
     - location_id 参数保留仅为兼容调用方；stocks 的唯一性不依赖它。
     - batch_code 允许 None（无批次槽位）。
     """
+    sc = _norm_scope(scope)
     await session.execute(
         text(
             """
-            INSERT INTO stocks (item_id, warehouse_id, location_id, batch_code, qty)
-            VALUES (:i, :w, :l, :c, 0)
+            INSERT INTO stocks (scope, item_id, warehouse_id, location_id, batch_code, qty)
+            VALUES (:sc, :i, :w, :l, :c, 0)
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
-        {"i": int(item_id), "w": int(warehouse_id), "l": int(location_id), "c": batch_code},
+        {"sc": sc, "i": int(item_id), "w": int(warehouse_id), "l": int(location_id), "c": batch_code},
     )
 
 
@@ -139,17 +151,20 @@ async def ensure_stock_slot(
 async def ensure_stock_row(
     session: AsyncSession,
     *,
+    scope: str | None = "PROD",
     item_id: int,
     location_id: int,
     batch_code: str | None = None,
 ) -> tuple[int, float]:
     """
-    返回：stock_id, before_qty（按当前唯一维度：item_id + warehouse_id + batch_code_key）
+    返回：stock_id, before_qty（按当前唯一维度：scope + item_id + warehouse_id + batch_code_key）
 
     兼容旧调用：
     - 仍接收 location_id，但内部先 resolve warehouse_id
     - 不再用 location_id 参与 stocks 行定位（因为 DB 不再保证该维度唯一）
     """
+    sc = _norm_scope(scope)
+
     wid = (await session.execute(select(Location.warehouse_id).where(Location.id == location_id))).scalar_one_or_none()
     if wid is None:
         raise ValueError(f"locations({location_id}) missing; cannot resolve warehouse_id")
@@ -163,6 +178,7 @@ async def ensure_stock_row(
 
     await ensure_stock_slot(
         session,
+        scope=sc,
         item_id=int(item_id),
         warehouse_id=int(wid),
         location_id=int(location_id),
@@ -174,13 +190,14 @@ async def ensure_stock_row(
             """
             SELECT id, qty
               FROM stocks
-             WHERE item_id=:i
+             WHERE scope = :sc
+               AND item_id=:i
                AND warehouse_id=:w
                AND batch_code IS NOT DISTINCT FROM :c
              LIMIT 1
             """
         ),
-        {"i": int(item_id), "w": int(wid), "c": bc_norm},
+        {"sc": sc, "i": int(item_id), "w": int(wid), "c": bc_norm},
     )
     rec = row.first()
     if not rec:
@@ -203,7 +220,7 @@ async def bump_stock_by_stock_id(session: AsyncSession, *, stock_id: int, delta:
 # ======================== 兼容：按 item+loc 的粗粒度加减 ========================
 
 
-async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, delta: float) -> None:
+async def bump_stock(session: AsyncSession, *, scope: str | None = "PROD", item_id: int, location_id: int, delta: float) -> None:
     """
     保留旧接口（部分路径可能还在用）。
 
@@ -213,12 +230,22 @@ async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, d
 
     如果该 item 在该 warehouse 下没有任何 stocks 行，则创建一个 “无批次(NULL) 槽位” 来承接 delta。
     """
+    sc = _norm_scope(scope)
+
     wid = await resolve_warehouse_by_location(session, location_id)
     qcol = stock_qty_col()
 
     # 是否已有任意 stocks 行
     any_sid = (
-        await session.execute(select(Stock.id).where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid)).limit(1))
+        await session.execute(
+            select(Stock.id)
+            .where(
+                Stock.scope == sc,
+                Stock.item_id == int(item_id),
+                Stock.warehouse_id == int(wid),
+            )
+            .limit(1)
+        )
     ).scalar_one_or_none()
 
     if any_sid is None:
@@ -227,6 +254,7 @@ async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, d
             session,
             insert(Stock).values(
                 {
+                    "scope": sc,
                     "item_id": int(item_id),
                     "warehouse_id": int(wid),
                     "location_id": int(location_id),
@@ -237,11 +265,15 @@ async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, d
         )
         return
 
-    # 已有行：对该 warehouse 下该 item 的所有行一起加减
+    # 已有行：对该 warehouse 下该 item 的所有行一起加减（按 scope 隔离）
     await exec_retry(
         session,
         update(Stock)
-        .where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid))
+        .where(
+            Stock.scope == sc,
+            Stock.item_id == int(item_id),
+            Stock.warehouse_id == int(wid),
+        )
         .values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
     )
 
@@ -249,16 +281,22 @@ async def bump_stock(session: AsyncSession, *, item_id: int, location_id: int, d
 # ======================== 查询 ========================
 
 
-async def get_current_qty(session: AsyncSession, *, item_id: int, location_id: int) -> float:
+async def get_current_qty(session: AsyncSession, *, scope: str | None = "PROD", item_id: int, location_id: int) -> float:
     """
     旧语义：汇总该 loc 下所有批次的 qty。
     新现实：location_id 不再是 stocks 唯一维度，因此按 location -> warehouse 归一后汇总。
     """
+    sc = _norm_scope(scope)
+
     wid = await resolve_warehouse_by_location(session, location_id)
     qcol = stock_qty_col()
     val = (
         await session.execute(
-            select(func.coalesce(func.sum(qcol), 0)).where(Stock.item_id == int(item_id), Stock.warehouse_id == int(wid))
+            select(func.coalesce(func.sum(qcol), 0)).where(
+                Stock.scope == sc,
+                Stock.item_id == int(item_id),
+                Stock.warehouse_id == int(wid),
+            )
         )
     ).scalar_one()
     return float(val or 0.0)

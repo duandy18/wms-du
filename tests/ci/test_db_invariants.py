@@ -15,6 +15,7 @@ async def _seed_wh_item_stock(
     wh_id: int,
     item_id: int,
     batch_code: str = "LEDGER-TEST-BATCH",
+    scope: str = "PROD",
 ) -> None:
     """
     v2 口径下的最小种子数据：
@@ -22,10 +23,13 @@ async def _seed_wh_item_stock(
     - 保证有一个 warehouses 行；
     - 保证有一个 items 行；
     - 保证有一个 batches 行（按 (item_id, warehouse_id, batch_code) 口径）；
-    - 保证有一个 stocks 槽位 (warehouse_id, item_id, batch_code)。
+    - 保证有一个 stocks 槽位 (scope, warehouse_id, item_id, batch_code)。
 
     不再使用 location / stock_id 维度。
     """
+    sc = (scope or "PROD").strip().upper()
+    if sc not in ("PROD", "DRILL"):
+        raise ValueError("scope must be PROD|DRILL")
 
     # 1) 仓库（幂等）
     await session.execute(
@@ -61,20 +65,22 @@ async def _seed_wh_item_stock(
             """
             INSERT INTO batches (item_id, warehouse_id, batch_code)
             VALUES (:item_id, :wh_id, :batch_code)
+            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
             """
         ),
         {"item_id": item_id, "wh_id": wh_id, "batch_code": batch_code},
     )
 
-    # 4) stocks 槽位：v2 唯一口径 (warehouse_id, item_id, batch_code)
+    # 4) stocks 槽位：scope + v2 唯一口径
     await session.execute(
         text(
             """
-            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
-            VALUES (:wh_id, :item_id, :batch_code, 0)
+            INSERT INTO stocks (scope, warehouse_id, item_id, batch_code, qty)
+            VALUES (:sc, :wh_id, :item_id, :batch_code, 0)
+            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
-        {"item_id": item_id, "wh_id": wh_id, "batch_code": batch_code},
+        {"sc": sc, "item_id": item_id, "wh_id": wh_id, "batch_code": batch_code},
     )
 
     await session.commit()
@@ -85,11 +91,12 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     """
     v2 行为验证（无 stock_id 版）：
 
-    - 先造一个 stocks 槽位 (warehouse_id, item_id, batch_code, qty)
-    - 再往 stock_ledger 写一条 COUNT 记录，写入相同的 warehouse_id/item_id/batch_code
-    - 然后通过 (warehouse_id, item_id, batch_code) JOIN stocks，
+    - 先造一个 stocks 槽位 (scope, warehouse_id, item_id, batch_code, qty)
+    - 再往 stock_ledger 写一条 COUNT 记录，写入相同的 scope/warehouse_id/item_id/batch_code
+    - 然后通过 (scope, warehouse_id, item_id, batch_code) JOIN stocks，
       验证 ledger 维度与 stocks 槽位完全一致。
     """
+    sc = "PROD"
     wh_id, item_id = 1, 99901
     batch_code = "LEDGER-TEST-BATCH"
 
@@ -99,14 +106,16 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
         wh_id=wh_id,
         item_id=item_id,
         batch_code=batch_code,
+        scope=sc,
     )
 
-    # 2) 往 stock_ledger 插入一条记录，显式写入维度字段
+    # 2) 往 stock_ledger 插入一条记录，显式写入维度字段（含 scope）
     now = datetime.now(timezone.utc)
     row = await session.execute(
         text(
             """
             INSERT INTO stock_ledger (
+                scope,
                 warehouse_id,
                 item_id,
                 batch_code,
@@ -118,6 +127,7 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
                 after_qty
             )
             VALUES (
+                :sc,
                 :wh_id,
                 :item_id,
                 :batch_code,
@@ -132,6 +142,7 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
             """
         ),
         {
+            "sc": sc,
             "wh_id": wh_id,
             "item_id": item_id,
             "batch_code": batch_code,
@@ -140,7 +151,7 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     )
     ledger_id = int(row.scalar_one())
 
-    # 3) 通过 JOIN stocks 校验 ledger 与 stocks 的维度一致性
+    # 3) 通过 JOIN stocks 校验 ledger 与 stocks 的维度一致性（含 scope）
     row2 = await session.execute(
         text(
             """
@@ -153,7 +164,8 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
               s.batch_code   AS s_batch
             FROM stock_ledger AS l
             JOIN stocks AS s
-              ON s.warehouse_id = l.warehouse_id
+              ON s.scope        = l.scope
+             AND s.warehouse_id = l.warehouse_id
              AND s.item_id      = l.item_id
              AND s.batch_code   = l.batch_code
            WHERE l.id = :lid

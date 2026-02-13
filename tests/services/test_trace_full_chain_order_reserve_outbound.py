@@ -50,6 +50,7 @@ async def test_full_trace_order_outbound(session: AsyncSession):
     # === 1) 预先做一次入库：给这个 item/仓/批次准备库存 ===
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=int(item_id),
         warehouse_id=wh_id,
         delta=10,
@@ -182,7 +183,8 @@ async def test_full_trace_order_outbound(session: AsyncSession):
                 """
                 SELECT id
                   FROM stock_ledger
-                 WHERE trace_id = :tid
+                 WHERE scope='PROD'
+                   AND trace_id = :tid
                  ORDER BY id DESC
                  LIMIT 1
                 """

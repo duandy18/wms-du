@@ -19,6 +19,8 @@ async def handle_pick(
     """
     拣货（Pick）—— v2：以仓库+商品+批次为粒度。
     """
+    _ = task_line_id
+
     if qty <= 0:
         raise ValueError("Pick quantity must be positive.")
     if not batch_code or not str(batch_code).strip():
@@ -28,6 +30,7 @@ async def handle_pick(
 
     await StockService().adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=warehouse_id,
         delta=-int(qty),

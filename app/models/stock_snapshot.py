@@ -20,6 +20,12 @@ class StockSnapshot(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
+    scope: Mapped[str] = mapped_column(
+        sa.Enum("PROD", "DRILL", name="biz_scope"),
+        nullable=False,
+        index=True,
+    )
+
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
     warehouse_id: Mapped[int] = mapped_column(Integer, ForeignKey("warehouses.id"), nullable=False)
     item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id"), nullable=False)
@@ -44,6 +50,7 @@ class StockSnapshot(Base):
     __table_args__ = (
         # ✅ 唯一性改为 batch_code_key（保持约束名不变，便于 ON CONFLICT ON CONSTRAINT）
         UniqueConstraint(
+            "scope",
             "snapshot_date",
             "warehouse_id",
             "item_id",
@@ -53,6 +60,7 @@ class StockSnapshot(Base):
         Index("ix_stock_snapshots_item_id", "item_id"),
         Index("ix_stock_snapshots_snapshot_date", "snapshot_date"),
         Index("ix_stock_snapshots_warehouse_id", "warehouse_id"),
+        Index("ix_stock_snapshots_scope_date", "scope", "snapshot_date"),
         {"info": {"skip_autogen": True}},
     )
 
