@@ -8,6 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.pick_task_commit_ship_apply_stock import apply_stock_deductions_impl
 
+_VALID_SCOPES = {"PROD", "DRILL"}
+
+
+def _norm_scope(scope: Optional[str]) -> str:
+    sc = (scope or "").strip().upper() or "PROD"
+    if sc not in _VALID_SCOPES:
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
+
 
 def build_agg_from_commit_lines(commit_lines: Any) -> Dict[Tuple[int, Optional[str]], int]:
     agg: Dict[Tuple[int, Optional[str]], int] = {}
@@ -20,6 +29,7 @@ def build_agg_from_commit_lines(commit_lines: Any) -> Dict[Tuple[int, Optional[s
 async def apply_stock_deductions(
     session: AsyncSession,
     *,
+    scope: str = "PROD",
     task_id: int,
     warehouse_id: int,
     order_ref: str,
@@ -27,8 +37,10 @@ async def apply_stock_deductions(
     agg: Dict[Tuple[int, Optional[str]], int],
     trace_id: Optional[str],
 ) -> int:
+    sc = _norm_scope(scope)
     return await apply_stock_deductions_impl(
         session,
+        scope=sc,
         task_id=task_id,
         warehouse_id=warehouse_id,
         order_ref=order_ref,
@@ -41,6 +53,7 @@ async def apply_stock_deductions(
 async def write_outbound_commit_v2(
     session: AsyncSession,
     *,
+    scope: str = "PROD",
     platform: str,
     shop_id: str,
     ref: str,
@@ -51,11 +64,13 @@ async def write_outbound_commit_v2(
     - 插入成功：返回本次 trace_id + created_at
     - 冲突命中：不改 trace_id（保持历史真相），只 bump updated_at，并返回“已存在那条记录”的 trace_id/created_at
     """
+    sc = _norm_scope(scope)
     row = (
         await session.execute(
             SA(
                 """
                 INSERT INTO outbound_commits_v2 (
+                    scope,
                     platform,
                     shop_id,
                     ref,
@@ -65,6 +80,7 @@ async def write_outbound_commit_v2(
                     trace_id
                 )
                 VALUES (
+                    :scope,
                     :platform,
                     :shop_id,
                     :ref,
@@ -73,19 +89,18 @@ async def write_outbound_commit_v2(
                     now(),
                     :trace_id
                 )
-                ON CONFLICT (platform, shop_id, ref) DO UPDATE
+                ON CONFLICT (scope, platform, shop_id, ref) DO UPDATE
                 SET
                     updated_at = now(),
                     trace_id   = outbound_commits_v2.trace_id
                 RETURNING trace_id, created_at
                 """
             ),
-            {"platform": platform, "shop_id": shop_id, "ref": ref, "trace_id": trace_id},
+            {"scope": sc, "platform": platform, "shop_id": shop_id, "ref": ref, "trace_id": trace_id},
         )
     ).first()
 
     if not row:
-        # 理论上不会发生（RETURNING），但做一个防御
         return {"trace_id": str(trace_id), "created_at": None}
 
     tid = row[0]

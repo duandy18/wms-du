@@ -1,7 +1,7 @@
 # app/api/routers/stores_routes_order_sim_schemas.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, conint
 
@@ -85,7 +85,14 @@ class OrderSimCartPutOut(BaseModel):
 
 class OrderSimGenerateOrderIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    idempotency_key: Optional[str] = Field(None, description="可选：用于 ext_order_no 幂等锚点（同 key → 同 ext_order_no）")
+    idempotency_key: Optional[str] = Field(
+        None,
+        description="可选：用于 ext_order_no 幂等锚点（同 key → 同 ext_order_no）",
+    )
+    scope: Literal["DRILL", "PROD"] = Field(
+        "DRILL",
+        description="订单 scope（默认 DRILL：训练宇宙，不影响生产口径）",
+    )
 
 
 class OrderSimGenerateOrderOut(BaseModel):

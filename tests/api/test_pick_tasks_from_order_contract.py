@@ -129,19 +129,14 @@ async def test_pick_tasks_from_order_contract(
     )
     assert r0.status_code == 422, r0.text
 
-    # 2) 自动主线：from-order 不要求 warehouse_id（执行仓由店铺默认仓解析）
+    # 2) 当前实现：from-order 也要求显式 warehouse_id（禁止隐式推断执行仓）
     r_auto_main = await client.post(
         f"/pick-tasks/from-order/{order_id}",
         json={"source": "ORDER", "priority": 100},
     )
-    assert r_auto_main.status_code == 200, r_auto_main.text
-    task_auto = r_auto_main.json()
-    task_auto_id = int(task_auto["id"])
-
-    r_auto_get = await client.get(f"/pick-tasks/{task_auto_id}")
-    assert r_auto_get.status_code == 200, r_auto_get.text
-    auto_body = r_auto_get.json()
-    assert auto_body.get("print_job") is None, auto_body
+    assert r_auto_main.status_code == 422, r_auto_main.text
+    auto_body = r_auto_main.json()
+    assert auto_body.get("error_code") == "warehouse_required", auto_body
 
     # 3) 自动化入口：明确禁用
     r_auto_disabled = await client.post(

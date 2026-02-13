@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import BigInteger, DateTime, Numeric, String, text
+from sqlalchemy import BigInteger, DateTime, Numeric, String, Enum, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -29,6 +29,13 @@ class Order(Base):
     __allow_unmapped__ = True  # 保持对历史/未映射列的兼容
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    # ✅ Scope（Phase 3 起点：订单域进入双宇宙）
+    scope: Mapped[str] = mapped_column(
+        Enum("PROD", "DRILL", name="biz_scope"),
+        nullable=False,
+        comment="订单 scope（PROD/DRILL）。DRILL 与 PROD 订单宇宙隔离。",
+    )
 
     # 平台 + 店铺 + 外部订单号（业务主键三件套）
     platform: Mapped[str] = mapped_column(
@@ -129,6 +136,7 @@ class Order(Base):
     def __repr__(self) -> str:
         return (
             f"<Order id={self.id} "
+            f"scope={getattr(self, 'scope', None)} "
             f"{self.platform}/{self.shop_id} ext={self.ext_order_no} "
             f"status={self.status} trace={self.trace_id}>"
         )

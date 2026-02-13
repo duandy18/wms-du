@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
+from app.api.routers.platform_orders_address_fact_repo import upsert_platform_order_address
 from app.api.routers.stores_order_sim_bindings_repo import (
     build_components_summary_by_filled_code,
     list_bound_filled_code_options,
@@ -201,14 +202,30 @@ def register(router: APIRouter) -> None:
         )
         address = choose_address_from_cart(selected)
 
+        if address is None:
+            raise HTTPException(status_code=422, detail="address is required: 请在 cart 勾选行并填写 province/city")
+
         ext_order_no = build_ext_order_no(
             platform=platform,
             store_id=int(store_id),
             idempotency_key=payload.idempotency_key,
         )
 
+        scope = str(getattr(payload, "scope", None) or "DRILL").strip().upper()
+
+        # ✅ 订单级地址事实锚点：先写入 platform_order_addresses（不复制到 line.extras）
+        await upsert_platform_order_address(
+            session,
+            scope=scope,
+            platform=platform,
+            store_id=int(store_id),
+            ext_order_no=ext_order_no,
+            address=address,
+        )
+
         out_dict = await PlatformOrderIngestFlow.run_from_platform_lines(
             session,
+            scope=scope,
             platform=platform,
             shop_id=shop_id,
             store_id=int(store_id),
@@ -222,12 +239,14 @@ def register(router: APIRouter) -> None:
                 "_order_sim": True,
                 "source": "stores/order-sim/generate-order",
                 "store_id": int(store_id),
+                "scope": scope,
             },
             trace_id=None,
             source="stores/order-sim/generate-order",
             extras={
                 "store_id": int(store_id),
                 "source": "stores/order-sim/generate-order",
+                "scope": scope,
             },
         )
 
