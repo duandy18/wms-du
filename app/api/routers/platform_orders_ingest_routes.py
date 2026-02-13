@@ -9,23 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.api.problem import make_problem
 from app.core.audit import new_trace
-from app.services.order_service import OrderService
-from app.services.platform_order_fact_service import upsert_platform_order_lines
+from app.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.services.platform_order_resolve_service import (
-    load_items_brief,
     norm_platform,
     norm_shop_id,
-    resolve_platform_lines_to_items,
     resolve_store_id,
 )
 
 from app.api.routers.platform_orders_ingest_helpers import (
     build_address,
-    build_items_payload,
-    load_order_fulfillment_brief,
     load_shop_id_by_store_id,
 )
-from app.api.routers.platform_orders_ingest_risk import aggregate_risk_from_unresolved
 from app.api.routers.platform_orders_ingest_schemas import (
     PlatformOrderIngestIn,
     PlatformOrderIngestOut,
@@ -173,95 +167,21 @@ async def ingest_platform_order(
             )
         raw_lines.append(ln_norm)
 
-    facts_written = await upsert_platform_order_lines(
+    out_dict = await PlatformOrderIngestFlow.run_from_platform_lines(
         session,
         platform=plat,
         shop_id=shop_id,
         store_id=store_id,
-        ext_order_no=payload.ext_order_no,
-        lines=raw_lines,
-        raw_payload=payload.raw_payload,
-    )
-
-    resolved_lines, unresolved, item_qty_map = await resolve_platform_lines_to_items(
-        session,
-        platform=plat,
-        store_id=store_id,
-        lines=raw_lines,
-    )
-
-    risk_flags, risk_level, risk_reason = aggregate_risk_from_unresolved(unresolved)
-    allow_manual_continue = bool(unresolved)
-
-    if not item_qty_map:
-        await session.commit()
-        return PlatformOrderIngestOut(
-            status="UNRESOLVED",
-            id=None,
-            ref=f"ORD:{plat}:{shop_id}:{payload.ext_order_no}",
-            store_id=store_id,
-            resolved=[r.__dict__ for r in resolved_lines],
-            unresolved=unresolved,
-            facts_written=facts_written,
-            fulfillment_status=None,
-            blocked_reasons=None,
-            allow_manual_continue=allow_manual_continue,
-            risk_flags=risk_flags,
-            risk_level=risk_level,
-            risk_reason=risk_reason,
-        )
-
-    item_ids = sorted(item_qty_map.keys())
-    items_brief = await load_items_brief(session, item_ids=item_ids)
-
-    items_payload = build_items_payload(
-        item_qty_map=item_qty_map,
-        items_brief=items_brief,
-        store_id=store_id,
-        source="platform-orders/ingest",
-    )
-
-    r = await OrderService.ingest(
-        session,
-        platform=plat,
-        shop_id=shop_id,
         ext_order_no=payload.ext_order_no,
         occurred_at=payload.occurred_at,
         buyer_name=payload.buyer_name,
         buyer_phone=payload.buyer_phone,
-        order_amount=0.0,
-        pay_amount=0.0,
-        items=items_payload,
         address=address,
-        extras={"store_id": store_id, "source": "platform-orders/ingest"},
+        raw_lines=raw_lines,
+        raw_payload=payload.raw_payload,
         trace_id=trace.trace_id,
+        extras=None,
     )
 
     await session.commit()
-
-    oid = int(r.get("id") or 0) if r.get("id") is not None else None
-    ref = str(r.get("ref") or f"ORD:{plat}:{shop_id}:{payload.ext_order_no}")
-    status = str(r.get("status") or "OK")
-
-    fulfillment_status = None
-    blocked_reasons = None
-    if oid is not None:
-        fulfillment_status, blocked_reasons = await load_order_fulfillment_brief(
-            session, order_id=oid
-        )
-
-    return PlatformOrderIngestOut(
-        status=status,
-        id=oid,
-        ref=ref,
-        store_id=store_id,
-        resolved=[r.__dict__ for r in resolved_lines],
-        unresolved=unresolved,
-        facts_written=facts_written,
-        fulfillment_status=fulfillment_status,
-        blocked_reasons=blocked_reasons,
-        allow_manual_continue=allow_manual_continue,
-        risk_flags=risk_flags,
-        risk_level=risk_level,
-        risk_reason=risk_reason,
-    )
+    return PlatformOrderIngestOut(**out_dict)
