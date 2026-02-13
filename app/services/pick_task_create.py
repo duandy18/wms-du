@@ -15,6 +15,16 @@ from app.services.store_service import StoreService
 
 UTC = timezone.utc
 
+_VALID_SCOPES = {"PROD", "DRILL"}
+
+
+def _norm_scope(v: object) -> str:
+    sc = str(v or "").strip().upper() or "PROD"
+    if sc not in _VALID_SCOPES:
+        # 不抛更温柔？不，这里是服务层边界，脏数据要尽早炸
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
+
 
 def _norm_int(v: object) -> Optional[int]:
     if v in (None, 0, "0", ""):
@@ -51,16 +61,18 @@ async def _resolve_execution_warehouse_for_order(session: AsyncSession, *, order
 async def _find_existing_task_id(
     session: AsyncSession,
     *,
+    scope: str,
     ref: str,
     warehouse_id: int,
 ) -> Optional[int]:
     """
-    幂等护栏：同一 (ref, warehouse_id) 只能存在一个 pick_task。
+    幂等护栏：同一 (scope, ref, warehouse_id) 只能存在一个 pick_task。
     若已存在则返回其 id。
     """
     row = (
         await session.execute(
             select(PickTask.id).where(
+                PickTask.scope == str(scope),
                 PickTask.ref == str(ref),
                 PickTask.warehouse_id == int(warehouse_id),
             )
@@ -126,14 +138,15 @@ async def create_for_order(
     """
     从订单创建拣货任务（订单视角作业入口）：
 
+    ✅ Phase 3 合同（双宇宙）：
+    - task.scope 必须继承 order.scope（PROD/DRILL）
+    - 幂等唯一域： (scope, ref, warehouse_id)
+
     ✅ Phase 2 合同（收敛版）：
     - 自动入口：不传 warehouse_id → 仅通过「platform/shop_id → 店铺默认仓」解析执行仓
     - 手工入口（兼容）：若调用方显式传 warehouse_id → 直接使用该仓（用于 manual-from-order）
     - ❌ 不消费订单上的任何“计划/实际仓”字段来解析执行仓
     - ❌ 不隐性回填 orders.warehouse_id（本函数不写 orders 表）
-
-    ✅ 幂等：
-    - 若同一 (ref, warehouse_id) 已存在 pick_task，直接返回已存在的任务（不重复插入）
 
     ✅ 模型层收敛（药房处方语义）：
     - 强制“一 item 一行”（PickTaskLine 粒度 = item_id）
@@ -146,6 +159,7 @@ async def create_for_order(
     platform = str(order.get("platform") or "").upper()
     shop_id = str(order.get("shop_id") or "")
     ext_no = str(order.get("ext_order_no") or "")
+    order_scope = _norm_scope(order.get("scope") or "PROD")
 
     # 1) 若调用方显式传 warehouse_id（手工入口），优先使用
     requested_wh = _norm_int(warehouse_id)
@@ -175,11 +189,16 @@ async def create_for_order(
             "请先完成履约策略处理，使订单进入可拣货状态。"
         )
 
-    # 4) ref：订单维度幂等锚点
+    # 4) ref：订单维度幂等锚点（保持旧格式，不把 scope 编进 ref）
     order_ref = f"ORD:{platform}:{shop_id}:{ext_no}"
 
-    # ✅ 幂等：若已存在 (ref, warehouse_id) 则直接返回
-    existing_id = await _find_existing_task_id(session, ref=order_ref, warehouse_id=int(wh_id))
+    # ✅ 幂等：若已存在 (scope, ref, warehouse_id) 则直接返回
+    existing_id = await _find_existing_task_id(
+        session,
+        scope=order_scope,
+        ref=order_ref,
+        warehouse_id=int(wh_id),
+    )
     if existing_id is not None:
         return await load_task(session, existing_id)
 
@@ -195,6 +214,7 @@ async def create_for_order(
     now = datetime.now(UTC)
 
     task = PickTask(
+        scope=order_scope,
         warehouse_id=int(wh_id),
         source=source,
         ref=order_ref,
@@ -214,7 +234,12 @@ async def create_for_order(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        existing_id2 = await _find_existing_task_id(session, ref=order_ref, warehouse_id=int(wh_id))
+        existing_id2 = await _find_existing_task_id(
+            session,
+            scope=order_scope,
+            ref=order_ref,
+            warehouse_id=int(wh_id),
+        )
         if existing_id2 is None:
             raise
         return await load_task(session, existing_id2)

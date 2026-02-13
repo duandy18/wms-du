@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, Text, text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, Text, Enum, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -22,6 +22,14 @@ class PickTask(Base):
     __tablename__ = "pick_tasks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    # ✅ Phase 3：scope（PROD/DRILL）作业宇宙隔离
+    scope: Mapped[str] = mapped_column(
+        Enum("PROD", "DRILL", name="biz_scope"),
+        nullable=False,
+        comment="作业 scope（PROD/DRILL）。DRILL 与 PROD 作业宇宙隔离。",
+    )
+
     warehouse_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source: Mapped[Optional[str]] = mapped_column(Text)
     ref: Mapped[Optional[str]] = mapped_column(Text)
@@ -53,6 +61,7 @@ class PickTask(Base):
     def __repr__(self) -> str:
         return (
             f"<PickTask id={self.id} "
+            f"scope={getattr(self, 'scope', None)} "
             f"wh={getattr(self, 'timezone', None) or self.warehouse_id} "
             f"status={self.status}>"
         )

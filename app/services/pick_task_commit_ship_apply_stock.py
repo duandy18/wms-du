@@ -9,15 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.stock_service import StockService
-from app.services.pick_task_commit_ship_requirements import item_requires_batch, normalize_batch_code
 from app.services.pick_task_commit_ship_apply_stock_details import shortage_detail
 from app.services.pick_task_commit_ship_apply_stock_queries import load_on_hand_qty
+from app.services.pick_task_commit_ship_requirements import item_requires_batch, normalize_batch_code
+from app.services.stock_service import StockService
+
+_VALID_SCOPES = {"PROD", "DRILL"}
+
+
+def _norm_scope(scope: Optional[str]) -> str:
+    sc = (scope or "").strip().upper() or "PROD"
+    if sc not in _VALID_SCOPES:
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
 
 
 async def apply_stock_deductions_impl(
     session: AsyncSession,
     *,
+    scope: str = "PROD",
     task_id: int,
     warehouse_id: int,
     order_ref: str,
@@ -33,13 +43,10 @@ async def apply_stock_deductions_impl(
     - 库存不足必须 409 insufficient_stock（可行动 shortage 细节）
     - 其它未知异常统一收敛为 500 Problem（系统异常）
 
-    注意：
-    - 这里不再捕获 ValueError 并做字符串判断。
-      库存不足由 StockService.adjust 统一 Problem 化（见 stock_service.py），上层只需透传 HTTPException。
-
-    ✅ Scope 第一阶段：
-    - 默认在 PROD 口径扣减（训练口径留到 DRILL 链路全贯穿后再开放）
+    ✅ Scope Phase 3：
+    - 扣减与校验必须按 scope 隔离（PROD/DRILL 独立宇宙）
     """
+    sc = _norm_scope(scope)
     stock_svc = StockService()
     ref_line = 1
 
@@ -56,6 +63,7 @@ async def apply_stock_deductions_impl(
                 error_code="batch_required",
                 message="批次受控商品必须提供批次，禁止提交。",
                 context={
+                    "scope": sc,
                     "task_id": int(task_id),
                     "warehouse_id": int(warehouse_id),
                     "ref": str(order_ref),
@@ -83,7 +91,7 @@ async def apply_stock_deductions_impl(
             warehouse_id=int(warehouse_id),
             item_id=int(item_id),
             batch_code=bc_norm,
-            scope="PROD"
+            scope=sc,
         )
         if on_hand < need:
             raise_problem(
@@ -91,6 +99,7 @@ async def apply_stock_deductions_impl(
                 error_code="insufficient_stock",
                 message="库存不足，禁止提交出库。",
                 context={
+                    "scope": sc,
                     "task_id": int(task_id),
                     "warehouse_id": int(warehouse_id),
                     "ref": str(order_ref),
@@ -116,7 +125,7 @@ async def apply_stock_deductions_impl(
         try:
             await stock_svc.adjust(
                 session=session,
-                scope="PROD",
+                scope=sc,
                 item_id=int(item_id),
                 delta=-int(need),
                 reason=MovementType.SHIPMENT,
@@ -124,6 +133,7 @@ async def apply_stock_deductions_impl(
                 ref_line=int(ref_line),
                 occurred_at=occurred_at,
                 meta={
+                    "scope": sc,
                     "task_id": int(task_id),
                     "warehouse_id": int(warehouse_id),
                     "item_id": int(item_id),
@@ -147,6 +157,7 @@ async def apply_stock_deductions_impl(
                 error_code="pick_apply_failed",
                 message="拣货扣减失败：系统异常。",
                 context={
+                    "scope": sc,
                     "task_id": int(task_id),
                     "warehouse_id": int(warehouse_id),
                     "ref": str(order_ref),
