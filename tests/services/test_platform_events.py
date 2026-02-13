@@ -48,7 +48,7 @@ async def _ensure_order_for_event(
                 :tid,
                 now()
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO NOTHING
+            ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
             """
         ),
         {

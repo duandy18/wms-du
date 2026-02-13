@@ -8,15 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.print_jobs_service import enqueue_pick_list_job
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 async def _get_order_by_ref(
     session: AsyncSession,
@@ -61,7 +52,6 @@ async def _get_order_by_ref(
 async def ensure_pick_task_for_order_ref(
     session: AsyncSession,
     *,
-    scope: str = "PROD",
     ref: str,
     warehouse_id: int,
     priority: int = 100,
@@ -70,11 +60,10 @@ async def ensure_pick_task_for_order_ref(
     """
     幂等确保 pick_tasks 存在（强幂等、无竞态）：
 
-    - 依赖 DB 侧唯一索引：uq_pick_tasks_ref_wh (scope, ref, warehouse_id)
+    - 依赖 DB 侧唯一索引：uq_pick_tasks_ref_wh (ref, warehouse_id)
     - 使用 INSERT .. ON CONFLICT .. DO UPDATE RETURNING id
       这样不会抛 IntegrityError，也无需“先查再插”。
     """
-    sc = _norm_scope(scope)
     ref_norm = str(ref or "").strip()
     wh = int(warehouse_id)
 
@@ -84,16 +73,15 @@ async def ensure_pick_task_for_order_ref(
     ins = await session.execute(
         text(
             """
-            INSERT INTO pick_tasks(scope, ref, warehouse_id, source, priority, status, created_at, updated_at)
-            VALUES (:scope, :ref, :wh, :source, :priority, 'READY', now(), now())
-            ON CONFLICT (scope, ref, warehouse_id)
+            INSERT INTO pick_tasks(ref, warehouse_id, source, priority, status, created_at, updated_at)
+            VALUES (:ref, :wh, :source, :priority, 'READY', now(), now())
+            ON CONFLICT (ref, warehouse_id)
             DO UPDATE SET
               updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
         {
-            "scope": sc,
             "ref": ref_norm,
             "wh": wh,
             "source": str(source or "SYSTEM"),
@@ -227,7 +215,6 @@ async def resolve_order_and_ensure_task_and_print(
     order_id: int,
     target_qty: Mapping[int, int],
     trace_id: Optional[str],
-    scope: str = "PROD",
 ) -> Dict[str, Any]:
     """
     单入口 orchestration：
@@ -237,7 +224,6 @@ async def resolve_order_and_ensure_task_and_print(
     """
     pick_task_id = await ensure_pick_task_for_order_ref(
         session,
-        scope=scope,
         ref=ref,
         warehouse_id=warehouse_id,
     )

@@ -37,15 +37,6 @@ from app.services.pick_task_commit_ship.utils import (
     UTC,
 )
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 def _normalize_platform_shop(platform: str, shop_id: str) -> tuple[str, str]:
     return platform.upper(), str(shop_id)
@@ -95,7 +86,6 @@ async def _maybe_short_circuit_idempotent(
     session: AsyncSession,
     *,
     task: Any,
-    scope: str,
     platform: str,
     shop_id: str,
     order_ref: str,
@@ -107,13 +97,7 @@ async def _maybe_short_circuit_idempotent(
     """
     outbound_commits_v2 已存在 ⇒ 幂等短路（trace_id 不一致 ⇒ 409）
     """
-    existing_meta = await load_existing_outbound_commit_meta_or_none(
-        session,
-        scope=scope,
-        platform=platform,
-        shop_id=shop_id,
-        ref=order_ref,
-    )
+    existing_meta = await load_existing_outbound_commit_meta_or_none(session, platform=platform, shop_id=shop_id, ref=order_ref)
     existing_tid = str(existing_meta.get("trace_id")) if existing_meta else None
 
     # 脏 DONE 纠偏：task DONE 但无 outbound_commits_v2 ⇒ 继续主线
@@ -176,6 +160,46 @@ async def _load_commit_lines_or_raise(session: AsyncSession, *, task_id: int, or
     return task, commit_lines
 
 
+async def _apply_and_write_evidence(
+    session: AsyncSession,
+    *,
+    task: Any,
+    platform: str,
+    shop_id: str,
+    order_ref: str,
+    incoming_tid: Optional[str],
+    occurred_at: datetime,
+) -> tuple[str, str]:
+    """
+    6) 扣库存
+    7) 写/回读 outbound_commits_v2（主线证据 + 并发下真相回读）
+    """
+    agg = build_agg_from_commit_lines(await get_commit_lines(session, task_id=task.id, ignore_zero=True)[1])  # 保持原语义：commit_lines 由 picked>0 组成
+    await apply_stock_deductions(
+        session,
+        task_id=task.id,
+        warehouse_id=int(task.warehouse_id),
+        order_ref=order_ref,
+        occurred_at=occurred_at,
+        agg=agg,
+        trace_id=incoming_tid,
+    )
+
+    eff_tid = incoming_tid or order_ref
+    oc = await write_outbound_commit_v2(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        ref=order_ref,
+        trace_id=eff_tid,
+    )
+    final_trace_id = str(oc.get("trace_id") or eff_tid)
+    created_at = oc.get("created_at")
+    now = datetime.now(UTC)
+    committed_at = iso_utc(created_at if isinstance(created_at, datetime) else now)
+    return final_trace_id, committed_at
+
+
 async def commit_ship(
     session: AsyncSession,
     *,
@@ -188,15 +212,12 @@ async def commit_ship(
 ) -> Dict[str, Any]:
     task = await load_task(session, task_id, for_update=True)
 
-    # ✅ scope：以 task.scope 为准；老数据可能没有该列/值，回退 PROD
-    task_scope = _norm_scope(getattr(task, "scope", None))
-
     plat, shop = _normalize_platform_shop(platform, shop_id)
     wh_id = int(task.warehouse_id)
     order_ref = _normalize_order_ref(task)
 
-    # ✅ 并发护栏：同一订单 ref 的提交串行（需要纳入 scope）
-    await advisory_lock_outbound_commit(session, scope=task_scope, platform=plat, shop_id=shop, ref=order_ref)
+    # ✅ 并发护栏：同一订单 ref 的提交串行
+    await advisory_lock_outbound_commit(session, platform=plat, shop_id=shop, ref=order_ref)
 
     # 1) handoff（兼容校验）
     _maybe_validate_handoff_code(order_ref=order_ref, handoff_code=handoff_code, task_id=int(task.id), warehouse_id=int(wh_id))
@@ -213,7 +234,6 @@ async def commit_ship(
     idempotent_payload = await _maybe_short_circuit_idempotent(
         session,
         task=task,
-        scope=task_scope,
         platform=plat,
         shop_id=shop,
         order_ref=order_ref,
@@ -233,11 +253,11 @@ async def commit_ship(
 
     occurred_at = datetime.now(UTC)
 
-    # 6-7) 扣库存 + 写证据（全部按 task_scope）
+    # 6-7) 扣库存 + 写证据
+    # 注意：这里为了保持原逻辑“扣库以 picked>0 的 commit_lines 为基准”，不改变 apply_* 的语义入口
     agg = build_agg_from_commit_lines(commit_lines)
     await apply_stock_deductions(
         session,
-        scope=task_scope,
         task_id=task.id,
         warehouse_id=wh_id,
         order_ref=order_ref,
@@ -249,7 +269,6 @@ async def commit_ship(
     eff_tid = incoming_tid or order_ref
     oc = await write_outbound_commit_v2(
         session,
-        scope=task_scope,
         platform=plat,
         shop_id=shop,
         ref=order_ref,

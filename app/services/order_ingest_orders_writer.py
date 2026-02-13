@@ -9,20 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_utils import to_dec_str
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 async def insert_order_or_get_idempotent(
     session: AsyncSession,
     *,
-    scope: str = "PROD",
     platform: str,
     shop_id: str,
     ext_order_no: str,
@@ -46,13 +36,10 @@ async def insert_order_or_get_idempotent(
     """
     _ = items  # 明确不使用，避免 lint 误报（也保持行为不变）
 
-    sc = _norm_scope(scope)
-
     if orders_has_extras:
         sql_ins_orders = text(
             """
             INSERT INTO orders (
-                scope,
                 platform,
                 shop_id,
                 ext_order_no,
@@ -67,7 +54,6 @@ async def insert_order_or_get_idempotent(
                 trace_id
             )
             VALUES (
-                :sc,
                 :p, :s, :o,
                 'CREATED',
                 :bn, :bp,
@@ -81,7 +67,6 @@ async def insert_order_or_get_idempotent(
             """
         )
         bind_orders = {
-            "sc": sc,
             "p": platform,
             "s": shop_id,
             "o": ext_order_no,
@@ -97,7 +82,6 @@ async def insert_order_or_get_idempotent(
         sql_ins_orders = text(
             """
             INSERT INTO orders (
-                scope,
                 platform,
                 shop_id,
                 ext_order_no,
@@ -111,7 +95,6 @@ async def insert_order_or_get_idempotent(
                 trace_id
             )
             VALUES (
-                :sc,
                 :p, :s, :o,
                 'CREATED',
                 :bn, :bp,
@@ -124,7 +107,6 @@ async def insert_order_or_get_idempotent(
             """
         )
         bind_orders = {
-            "sc": sc,
             "p": platform,
             "s": shop_id,
             "o": ext_order_no,
@@ -146,14 +128,13 @@ async def insert_order_or_get_idempotent(
                     """
                     SELECT id
                       FROM orders
-                     WHERE scope=:sc
-                       AND platform=:p
+                     WHERE platform=:p
                        AND shop_id=:s
                        AND ext_order_no=:o
                      LIMIT 1
                     """
                 ),
-                {"sc": sc, "p": platform, "s": shop_id, "o": ext_order_no},
+                {"p": platform, "s": shop_id, "o": ext_order_no},
             )
         ).first()
         order_id = int(row[0]) if row else None

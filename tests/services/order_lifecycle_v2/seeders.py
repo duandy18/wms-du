@@ -147,7 +147,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             VALUES (
                 :platform, :shop_id, :ref, 'COMMITTED', now(), :trace_id
             )
-            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
+            ON CONFLICT (platform, shop_id, ref) DO NOTHING
             """
         ),
         {"platform": platform, "shop_id": shop_id, "ref": order_ref, "trace_id": trace_id},
@@ -270,7 +270,7 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
             VALUES (
                 :platform, :shop_id, :ref, 'COMMITTED', now(), :trace_id
             )
-            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
+            ON CONFLICT (platform, shop_id, ref) DO NOTHING
             """
         ),
         {"platform": platform, "shop_id": shop_id, "ref": order_ref, "trace_id": trace_id},

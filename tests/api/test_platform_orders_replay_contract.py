@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -13,8 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.main import app
-
-DEFAULT_SCOPE = "PROD"
 
 
 @pytest.fixture
@@ -69,70 +67,6 @@ def _locator_from_fact(*, filled_code: Optional[str], line_no: int) -> Tuple[str
     return "LINE_NO", str(int(line_no))
 
 
-async def _insert_address_fact(
-    session: AsyncSession,
-    *,
-    scope: str,
-    platform: str,
-    store_id: int,
-    ext_order_no: str,
-    province: str,
-    province_code: str,
-) -> None:
-    """
-    精确插入地址事实（已确认表结构）：
-      platform_order_addresses(scope, platform, store_id, ext_order_no) 唯一
-      raw NOT NULL，replay 的省份校验可能优先读 raw
-    所以这里做“双写”：列 + raw 同步写入。
-    """
-    raw = json.dumps(
-        {
-            "province": province,
-            "province_code": province_code,
-        },
-        ensure_ascii=False,
-    )
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO platform_order_addresses(
-              scope,
-              platform,
-              store_id,
-              ext_order_no,
-              province,
-              province_code,
-              raw
-            ) VALUES (
-              :scope,
-              :platform,
-              :store_id,
-              :ext_order_no,
-              :province,
-              :province_code,
-              (:raw)::jsonb
-            )
-            ON CONFLICT (scope, platform, store_id, ext_order_no)
-            DO UPDATE SET
-              province = EXCLUDED.province,
-              province_code = EXCLUDED.province_code,
-              raw = EXCLUDED.raw,
-              updated_at = now();
-            """
-        ),
-        {
-            "scope": scope,
-            "platform": platform,
-            "store_id": int(store_id),
-            "ext_order_no": ext_order_no,
-            "province": province,
-            "province_code": province_code,
-            "raw": raw,
-        },
-    )
-
-
 async def _insert_fact_line(
     session: AsyncSession,
     *,
@@ -163,7 +97,7 @@ async def _insert_fact_line(
               :line_no, :line_key,
               :locator_kind, :locator_value,
               :filled_code, :qty, :title, :spec,
-              '{}'::jsonb, '{}'::jsonb,
+              (:extras)::jsonb, (:raw_payload)::jsonb,
               now(), now()
             )
             ON CONFLICT (platform, shop_id, ext_order_no, line_key)
@@ -175,6 +109,8 @@ async def _insert_fact_line(
               qty=EXCLUDED.qty,
               title=EXCLUDED.title,
               spec=EXCLUDED.spec,
+              extras=EXCLUDED.extras,
+              raw_payload=EXCLUDED.raw_payload,
               updated_at=now();
             """
         ),
@@ -191,6 +127,8 @@ async def _insert_fact_line(
             "qty": int(qty),
             "title": title,
             "spec": spec,
+            "extras": json.dumps({}, ensure_ascii=False),
+            "raw_payload": json.dumps({}, ensure_ascii=False),
         },
     )
 
@@ -239,13 +177,12 @@ async def _orders_count(session: AsyncSession, *, platform: str, shop_id: str, e
                     """
                     SELECT count(*) AS n
                       FROM orders
-                     WHERE scope = :scope
-                       AND platform = :p
+                     WHERE platform = :p
                        AND shop_id = :s
                        AND ext_order_no = :e
                     """
                 ),
-                {"scope": DEFAULT_SCOPE, "p": platform, "s": shop_id, "e": ext_order_no},
+                {"p": platform, "s": shop_id, "e": ext_order_no},
             )
         )
         .mappings()
@@ -285,7 +222,7 @@ async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create
 
     resp = await async_client.post(
         "/platform-orders/replay",
-        json={"scope": DEFAULT_SCOPE, "platform": platform, "store_id": store_id, "ext_order_no": ext},
+        json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
@@ -315,20 +252,12 @@ async def test_replay_with_published_fsku_code_is_idempotent(
 
     ext = f"UT-REPLAY-OK-{uuid.uuid4().hex[:8]}"
 
+    # published fsku + component(item_id=1)
     fsku_id, fsku_code = await _create_published_fsku_with_component(db_session, item_id=1)
     assert fsku_id > 0
     assert isinstance(fsku_code, str) and fsku_code
 
-    await _insert_address_fact(
-        db_session,
-        scope=DEFAULT_SCOPE,
-        platform=platform,
-        store_id=store_id,
-        ext_order_no=ext,
-        province="河北省",
-        province_code="130000",
-    )
-
+    # 事实行里 filled_code 字段承载“填写码（兼容字段名）”
     await _insert_fact_line(
         db_session,
         platform=platform,
@@ -344,50 +273,29 @@ async def test_replay_with_published_fsku_code_is_idempotent(
     )
     await db_session.commit()
 
-    # ✅ DB 侧断言：地址事实必须真实存在且省份字段有效
-    addr = (
-        (
-            await db_session.execute(
-                text(
-                    """
-                    SELECT scope, platform, store_id, ext_order_no, province, province_code, raw
-                      FROM platform_order_addresses
-                     WHERE scope=:scope
-                       AND platform=:platform
-                       AND store_id=:store_id
-                       AND ext_order_no=:ext
-                     LIMIT 1
-                    """
-                ),
-                {
-                    "scope": DEFAULT_SCOPE,
-                    "platform": platform,
-                    "store_id": int(store_id),
-                    "ext": ext,
-                },
-            )
-        )
-        .mappings()
-        .first()
-    )
-    assert addr is not None, "address fact row missing in DB after insert"
-    assert (addr.get("province") or "").strip(), addr
-    assert (addr.get("province_code") or "").strip(), addr
-
+    # replay #1
     resp1 = await async_client.post(
         "/platform-orders/replay",
-        json={"scope": DEFAULT_SCOPE, "platform": platform, "store_id": store_id, "ext_order_no": ext},
+        json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp1.status_code == 200, resp1.text
     d1 = resp1.json()
+    assert d1["platform"] == platform
+    assert d1["store_id"] == store_id
+    assert d1["ext_order_no"] == ext
+    assert d1["facts_n"] == 1
+    assert d1.get("id") is not None
+    assert d1["status"] in ("OK", "FULFILLMENT_BLOCKED", "IDEMPOTENT")
 
     order_id_1 = int(d1["id"])
 
+    # replay #2 (must be idempotent)
     resp2 = await async_client.post(
         "/platform-orders/replay",
-        json={"scope": DEFAULT_SCOPE, "platform": platform, "store_id": store_id, "ext_order_no": ext},
+        json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp2.status_code == 200, resp2.text
     d2 = resp2.json()
+    assert d2.get("id") is not None
     assert int(d2["id"]) == order_id_1
     assert d2["status"] == "IDEMPOTENT"

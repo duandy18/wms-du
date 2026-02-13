@@ -106,7 +106,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
             """
             INSERT INTO outbound_commits_v2 (platform, shop_id, ref, state, created_at, trace_id)
             VALUES (:p, :s, :ref, 'COMMITTED', now(), :tid)
-            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
+            ON CONFLICT (platform, shop_id, ref) DO NOTHING
             """
         ),
         {"p": platform, "s": shop_id, "ref": order_ref, "tid": trace_id},

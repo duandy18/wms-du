@@ -9,13 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, constr
 class PlatformOrderReplayIn(BaseModel):
     """
     平台订单事实重放解码（内部治理接口）：
-    - 入参接收 store_id（stores.id）
+    - 入参只接收 store_id（stores.id）
     - 读取 platform_order_lines 事实行
-    - 复用 resolver + /orders ingest 主线幂等生成订单
-
-    Phase DRILL 双宇宙要求：
-    - scope 必须显式给出，或可从平台订单地址事实表 platform_order_addresses 唯一推断
-    - address 优先从 platform_order_addresses 回读（事实锚点），payload.address 仅作为显式覆盖
+    - 复用 resolver + OrderService.ingest 主线幂等
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -23,12 +19,6 @@ class PlatformOrderReplayIn(BaseModel):
     platform: constr(min_length=1, max_length=32)
     store_id: int = Field(..., ge=1)
     ext_order_no: constr(min_length=1)
-
-    # ✅ 推荐显式传入：DRILL / PROD
-    scope: Optional[constr(min_length=1, max_length=16)] = None
-
-    # ✅ 可选覆盖（默认仍应从 platform_order_addresses 回读）
-    address: Optional[Dict[str, Any]] = None
 
 
 class PlatformOrderReplayOut(BaseModel):

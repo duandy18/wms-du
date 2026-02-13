@@ -21,15 +21,6 @@ from app.services.order_ingest_schema_probe import (
 )
 from app.services.order_ingest_address_writer import upsert_order_address
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 class OrderIngestService:
     """
@@ -53,13 +44,11 @@ class OrderIngestService:
         shop_id: str,
         payload: Dict[str, Any],
         trace_id: Optional[str] = None,
-        scope: str = "PROD",
     ) -> dict:
         adapter = get_adapter(platform)
         co = adapter.normalize({**payload, "shop_id": shop_id})
         return await OrderIngestService.ingest(
             session,
-            scope=scope,
             platform=co["platform"],
             shop_id=co["shop_id"],
             ext_order_no=co["ext_order_no"],
@@ -78,7 +67,6 @@ class OrderIngestService:
     async def ingest(
         session: AsyncSession,
         *,
-        scope: str = "PROD",
         platform: str,
         shop_id: str,
         ext_order_no: str,
@@ -92,7 +80,6 @@ class OrderIngestService:
         extras: Optional[Mapping[str, Any]] = None,
         trace_id: Optional[str] = None,
     ) -> dict:
-        sc = _norm_scope(scope)
         plat = (platform or "").upper().strip()
         occurred_at = occurred_at or datetime.now(timezone.utc)
         order_ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
@@ -103,7 +90,6 @@ class OrderIngestService:
         # 1) orders（幂等）
         ins_res = await insert_order_or_get_idempotent(
             session,
-            scope=sc,
             platform=plat,
             shop_id=shop_id,
             ext_order_no=ext_order_no,
