@@ -51,7 +51,6 @@ async def handle_receive(
 
     await StockService().adjust(
         session=session,
-        scope="PROD",
         item_id=item_id,
         warehouse_id=warehouse_id,
         delta=int(qty),

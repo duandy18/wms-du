@@ -22,13 +22,6 @@ __all__ = [
 ]
 
 
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in ("PROD", "DRILL"):
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
-
 async def _has_table(session: AsyncSession, tbl: str) -> bool:
     row = await session.execute(SA("SELECT to_regclass(:q) IS NOT NULL"), {"q": f"public.{tbl}"})
     return bool(row.scalar_one())
@@ -99,9 +92,7 @@ async def seed_batch_slot(
     code: str,
     qty: int,
     days: int = 365,
-    scope: str = "PROD",
 ) -> None:
-    sc = _norm_scope(scope)
     wh = await _resolve_wh_by_loc(session, loc)
     expiry = date.today() + timedelta(days=days)
 
@@ -119,12 +110,12 @@ async def seed_batch_slot(
     await session.execute(
         SA(
             """
-            INSERT INTO stocks (scope, item_id, warehouse_id, batch_code, qty)
-            VALUES (:sc, :i, :w, :code, 0)
+            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+            VALUES (:i, :w, :code, 0)
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
-        {"sc": sc, "i": item, "w": wh, "code": code},
+        {"i": item, "w": wh, "code": code},
     )
 
     await session.execute(
@@ -132,13 +123,12 @@ async def seed_batch_slot(
             """
             UPDATE stocks
                SET qty = :q
-             WHERE scope = :sc
-               AND item_id = :i
+             WHERE item_id = :i
                AND warehouse_id = :w
                AND batch_code = :code
             """
         ),
-        {"q": qty, "sc": sc, "i": item, "w": wh, "code": code},
+        {"q": qty, "i": item, "w": wh, "code": code},
     )
 
 
@@ -150,7 +140,7 @@ async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
     wh = await _resolve_wh_by_loc(session, loc)
     row = await session.execute(
-        SA("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE scope='PROD' AND item_id=:i AND warehouse_id=:w"),
+        SA("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND warehouse_id=:w"),
         {"i": item, "w": wh},
     )
     return int(row.scalar_one() or 0)
@@ -170,8 +160,7 @@ async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) 
             """
             SELECT qty
               FROM stocks
-             WHERE scope='PROD'
-               AND item_id = :i
+             WHERE item_id = :i
                AND warehouse_id = :w
                AND batch_code = :code
              LIMIT 1
@@ -191,17 +180,14 @@ async def insert_snapshot(
     loc: int,
     on_hand: int,
     available: int,
-    scope: str = "PROD",
 ) -> None:
     _ = ts
-    sc = _norm_scope(scope)
     wh = await _resolve_wh_by_loc(session, loc)
 
     await session.execute(
         SA(
             """
             INSERT INTO stock_snapshots (
-                scope,
                 snapshot_date,
                 warehouse_id,
                 item_id,
@@ -210,12 +196,12 @@ async def insert_snapshot(
                 qty_available,
                 qty_allocated
             )
-            VALUES (:sc, :day, :w, :i, 'SNAP-TEST', :q, :av, 0)
+            VALUES (:day, :w, :i, 'SNAP-TEST', :q, :av, 0)
             ON CONFLICT ON CONSTRAINT uq_stock_snapshot_grain_v2
             DO UPDATE SET
                 qty           = stock_snapshots.qty + EXCLUDED.qty,
                 qty_available = stock_snapshots.qty_available + EXCLUDED.qty_available
             """
         ),
-        {"sc": sc, "day": day, "w": wh, "i": item, "q": on_hand, "av": available},
+        {"day": day, "w": wh, "i": item, "q": on_hand, "av": available},
     )

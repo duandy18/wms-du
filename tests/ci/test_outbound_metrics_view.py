@@ -36,19 +36,21 @@ async def test_metrics_view_basic(session):
     """
         )
     )
-    # 再造 stocks（必须带 scope）
+    # 再造 stocks，引用上面的 (item_id, warehouse_id, batch_code)
     await session.execute(
         text(
             """
-        INSERT INTO stocks (id, scope, item_id, warehouse_id, batch_code, qty)
-        VALUES (1, 'PROD', 1001, 1, 'AUTO-1001-1', 0)
+        INSERT INTO stocks (id, item_id, warehouse_id, batch_code, qty)
+        VALUES (1, 1001, 1, 'AUTO-1001-1', 0)
         ON CONFLICT (id) DO NOTHING
     """
         )
     )
 
     # 2) 清理同 ref 残留
-    await session.execute(text("DELETE FROM audit_events WHERE category='OUTBOUND' AND ref=:r"), {"r": ref})
+    await session.execute(
+        text("DELETE FROM audit_events WHERE category='OUTBOUND' AND ref=:r"), {"r": ref}
+    )
     await session.execute(text("DELETE FROM stock_ledger WHERE ref=:r"), {"r": ref})
     await session.commit()
 
@@ -68,42 +70,24 @@ async def test_metrics_view_basic(session):
         {"r": ref},
     )
 
-    # 4) 写 ledger：为了让三账审计通过，必须保持 ledger 净和 == stocks.qty
-    #    - metrics 视图需要 PICK -3 来产生 pick_qty=3
-    #    - 但 stocks.qty 这里是 0，因此我们先写一笔 +3（非 PICK），再写 PICK -3，使净 ledger=0
+    # 4) 写一笔 PICK 落账：
+    #    occurred_at = now()
+    #    warehouse_id = 1
+    #    item_id = 1001
+    #    batch_code = 'AUTO-1001-1'
+    #    after_qty 随便给个合理值（例如 -3），metrics 视图不依赖它
     await session.execute(
         text(
             """
             INSERT INTO stock_ledger(
-                scope,
                 reason, ref, ref_line,
                 warehouse_id, item_id, batch_code,
                 delta, occurred_at, after_qty
             )
             VALUES (
-                'PROD',
-                'COUNT', :r, 1,
+                'PICK', :r, 1,
                 1, 1001, 'AUTO-1001-1',
-                3, now(), 3
-            )
-            """
-        ),
-        {"r": ref},
-    )
-    await session.execute(
-        text(
-            """
-            INSERT INTO stock_ledger(
-                scope,
-                reason, ref, ref_line,
-                warehouse_id, item_id, batch_code,
-                delta, occurred_at, after_qty
-            )
-            VALUES (
-                'PROD',
-                'PICK', :r, 2,
-                1, 1001, 'AUTO-1001-1',
-                -3, now(), 0
+                -3, now(), -3
             )
             """
         ),

@@ -70,7 +70,6 @@ async def seed_ledger_test(
 
     注意：
     - 这里显式调用 session.commit()，确保写入持久化到 DB。
-    - ✅ scope：dev seed 默认写入 DRILL（训练账本），避免污染 PROD。
     """
 
     wh_id, item_id = await _pick_one_warehouse_and_item(session)
@@ -89,7 +88,6 @@ async def seed_ledger_test(
         # 1) 入库 +10
         r1 = await stock_service.adjust(
             session=session,
-            scope="DRILL",
             item_id=item_id,
             warehouse_id=wh_id,
             delta=10,
@@ -107,7 +105,6 @@ async def seed_ledger_test(
         # 2) 出库 -4
         r2 = await stock_service.adjust(
             session=session,
-            scope="DRILL",
             item_id=item_id,
             warehouse_id=wh_id,
             delta=-4,
@@ -127,8 +124,7 @@ async def seed_ledger_test(
                     text(
                         """
                     SELECT qty FROM stocks
-                    WHERE scope = 'DRILL'
-                      AND warehouse_id = :w
+                    WHERE warehouse_id = :w
                       AND item_id = :i
                       AND batch_code = :b
                     """
@@ -147,7 +143,6 @@ async def seed_ledger_test(
         if delta_count != 0:
             r3 = await stock_service.adjust(
                 session=session,
-                scope="DRILL",
                 item_id=item_id,
                 warehouse_id=wh_id,
                 delta=delta_count,

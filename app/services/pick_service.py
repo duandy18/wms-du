@@ -10,15 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 class PickService:
     """
@@ -30,8 +21,19 @@ class PickService:
     - 粒度统一：库存槽位最终以 (item_id, warehouse_id, batch_code|NULL) 表达
     - FEFO 柔性：不强制 FEFO，只要指定批次即可扣减；FEFO 风险通过快照/查询提示
 
-    ✅ Scope 第一阶段：
-    - 扣减与库存只读查询必须按 scope 隔离（默认 PROD）
+    Phase N（订单驱动增强）：
+    - 允许调用方传入 trace_id，用于将本次扣减挂到订单 trace 上；
+    - trace_id 透传到 StockService.adjust → stock_ledger.trace_id；
+    - 订单驱动的 HTTP 层可以从 orders.trace_id 获取该 trace_id 并传入。
+
+    语义约束（非常重要）：
+    - “扣减库存”只是动作；台账 reason 必须表达业务语义。
+    - 默认：通用拣货使用 MovementType.PICK（当前映射为 ADJUSTMENT）。
+    - 订单出库：调用方应显式传入 movement_type=MovementType.SHIP（落库为 SHIPMENT）。
+
+    ✅ 本窗口演进（唯一主线）：
+    - requires_batch=true  => batch_code 必填
+    - requires_batch=false => batch_code 允许为 NULL（表示“无批次”，不是“未知批次”）
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -67,7 +69,6 @@ class PickService:
         self,
         session: AsyncSession,
         *,
-        scope: str,
         warehouse_id: int,
         item_id: int,
         batch_code: Optional[str],
@@ -80,26 +81,20 @@ class PickService:
         ✅ 关键修复：
         - psycopg 对 NULL 参数类型推断敏感，`:bc IS NULL` + `batch_code=:bc` 会触发 AmbiguousParameter
         - 改为 `IS NOT DISTINCT FROM CAST(:bc AS TEXT)`，既处理 NULL，又显式类型
-
-        ✅ Scope 第一阶段：
-        - stocks 必须按 scope 隔离
         """
-        sc = _norm_scope(scope)
-
         row = (
             await session.execute(
                 SA(
                     """
                     SELECT qty
                       FROM stocks
-                     WHERE scope = :scope
-                       AND warehouse_id = :wid
+                     WHERE warehouse_id = :wid
                        AND item_id = :item_id
                        AND batch_code IS NOT DISTINCT FROM CAST(:bc AS TEXT)
                      LIMIT 1
                     """
                 ),
-                {"scope": sc, "wid": int(warehouse_id), "item_id": int(item_id), "bc": batch_code},
+                {"wid": int(warehouse_id), "item_id": int(item_id), "bc": batch_code},
             )
         ).first()
         if not row:
@@ -123,11 +118,7 @@ class PickService:
         start_ref_line: Optional[int] = None,
         task_line_id: Optional[int] = None,
         movement_type: Union[str, MovementType] = MovementType.PICK,
-        scope: str = "PROD",
     ) -> Dict[str, Any]:
-        _ = task_line_id
-        sc = _norm_scope(scope)
-
         if qty <= 0:
             raise ValueError("Qty must be > 0 for pick record.")
         if warehouse_id is None or int(warehouse_id) <= 0:
@@ -150,7 +141,6 @@ class PickService:
         try:
             result = await self.stock_svc.adjust(
                 session=session,
-                scope=sc,
                 item_id=item_id,
                 delta=-int(qty),
                 reason=movement_type,
@@ -167,7 +157,6 @@ class PickService:
 
             available = await self._load_stock_qty(
                 session,
-                scope=sc,
                 warehouse_id=int(warehouse_id),
                 item_id=int(item_id),
                 batch_code=bc_norm,
@@ -180,7 +169,6 @@ class PickService:
                 error_code="insufficient_stock",
                 message="库存已变化：当前可用量不足，无法提交出库。",
                 context={
-                    "scope": sc,
                     "warehouse_id": int(warehouse_id),
                     "item_id": int(item_id),
                     "batch_code": bc_norm,

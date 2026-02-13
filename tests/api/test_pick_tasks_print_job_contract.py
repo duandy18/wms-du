@@ -91,7 +91,6 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
 
     await stock.adjust(
         session=session,
-        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=10,

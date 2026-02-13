@@ -12,10 +12,6 @@ class StockAvailabilityService:
     口径（当前主线）：
         available_raw = Σ stocks.qty
 
-    ✅ 第一阶段：scope（PROD/DRILL）账本隔离
-    - 默认读取口径必须固定为 scope='PROD'
-    - 如需训练口径，调用方必须显式传 scope='DRILL'
-
     特性：
     - 返回值允许为负数（用于 UT/对账场景；实际 stocks.qty 可能因历史或并发产生负值）
     - 展示层 / UI 若要“可理解值”，再自行 max(available_raw, 0)
@@ -32,18 +28,12 @@ class StockAvailabilityService:
         shop_id: str,
         warehouse_id: int,
         item_id: int,
-        scope: str = "PROD",
     ) -> int:
-        sc = (scope or "").strip().upper()
-        if sc not in {"PROD", "DRILL"}:
-            raise ValueError("scope must be PROD|DRILL")
-
         sql = text(
             """
             SELECT COALESCE(SUM(s.qty), 0) AS available
             FROM stocks AS s
-            WHERE s.scope = :scope
-              AND s.item_id = :item_id
+            WHERE s.item_id = :item_id
               AND s.warehouse_id = :warehouse_id
             """
         )
@@ -51,7 +41,6 @@ class StockAvailabilityService:
         params = {
             "platform": platform,  # 保持参数形态稳定（不使用）
             "shop_id": shop_id,  # 保持参数形态稳定（不使用）
-            "scope": sc,
             "warehouse_id": int(warehouse_id),
             "item_id": int(item_id),
         }
@@ -68,7 +57,6 @@ class StockAvailabilityService:
         shop_id: str,
         warehouse_id: int,
         item_ids: list[int],
-        scope: str = "PROD",
     ) -> dict[int, int]:
         """
         批量版可售查询（Explain / 扫描等只读场景使用）：
@@ -84,10 +72,6 @@ class StockAvailabilityService:
         - available_raw 允许为负数（与单 item 版本一致）
         - platform / shop_id 作为形参保留，保持调用合同稳定
         """
-        sc = (scope or "").strip().upper()
-        if sc not in {"PROD", "DRILL"}:
-            raise ValueError("scope must be PROD|DRILL")
-
         ids = [int(x) for x in (item_ids or []) if int(x) > 0]
         if not ids:
             return {}
@@ -97,8 +81,7 @@ class StockAvailabilityService:
             WITH stocks_agg AS (
                 SELECT s.item_id, COALESCE(SUM(s.qty), 0) AS qty
                 FROM stocks AS s
-                WHERE s.scope = :scope
-                  AND s.warehouse_id = :warehouse_id
+                WHERE s.warehouse_id = :warehouse_id
                   AND s.item_id = ANY(:item_ids)
                 GROUP BY s.item_id
             )
@@ -116,7 +99,6 @@ class StockAvailabilityService:
         params = {
             "platform": platform,  # 保持参数形态稳定（不使用）
             "shop_id": shop_id,  # 保持参数形态稳定（不使用）
-            "scope": sc,
             "warehouse_id": int(warehouse_id),
             "item_ids": ids,
         }

@@ -132,7 +132,6 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     stock_svc = StockService()
     await stock_svc.adjust(
         session=db_session_like_pg,
-        scope="PROD",
         item_id=3001,
         delta=10,
         reason="RECEIPT",

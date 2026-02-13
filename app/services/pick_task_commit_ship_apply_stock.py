@@ -36,9 +36,6 @@ async def apply_stock_deductions_impl(
     注意：
     - 这里不再捕获 ValueError 并做字符串判断。
       库存不足由 StockService.adjust 统一 Problem 化（见 stock_service.py），上层只需透传 HTTPException。
-
-    ✅ Scope 第一阶段：
-    - 默认在 PROD 口径扣减（训练口径留到 DRILL 链路全贯穿后再开放）
     """
     stock_svc = StockService()
     ref_line = 1
@@ -83,7 +80,6 @@ async def apply_stock_deductions_impl(
             warehouse_id=int(warehouse_id),
             item_id=int(item_id),
             batch_code=bc_norm,
-            scope="PROD"
         )
         if on_hand < need:
             raise_problem(
@@ -116,7 +112,6 @@ async def apply_stock_deductions_impl(
         try:
             await stock_svc.adjust(
                 session=session,
-                scope="PROD",
                 item_id=int(item_id),
                 delta=-int(need),
                 reason=MovementType.SHIPMENT,

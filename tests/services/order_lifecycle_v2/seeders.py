@@ -170,12 +170,11 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：SHIPMENT / RETURN_IN（必须带 scope）
+    # stock_ledger：SHIPMENT / RETURN_IN
     await session.execute(
         text(
             """
             INSERT INTO stock_ledger (
-                scope,
                 trace_id,
                 warehouse_id,
                 item_id,
@@ -190,7 +189,6 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             )
             VALUES
             (
-                'PROD',
                 :trace_id,
                 :wh_id,
                 :item_id,
@@ -204,7 +202,6 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 0
             ),
             (
-                'PROD',
                 :trace_id,
                 :wh_id,
                 :item_id,

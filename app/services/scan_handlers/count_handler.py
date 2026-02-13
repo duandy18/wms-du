@@ -11,15 +11,6 @@ from app.services.stock_service import StockService
 from app.services.three_books_enforcer import enforce_three_books
 from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: str | None) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
-
 
 async def handle_count(
     session: AsyncSession,
@@ -32,7 +23,6 @@ async def handle_count(
     production_date: date | None = None,
     expiry_date: date | None = None,
     trace_id: str | None = None,
-    scope: str = "PROD",
 ) -> dict:
     """
     盘点（Count）—— v2：按 仓库 + 商品 + 批次 粒度。
@@ -41,12 +31,7 @@ async def handle_count(
     - delta != 0：写 ledger + 改 stocks + snapshot 可观测一致
     - delta == 0：也写一条“确认类事件台账”（ledger），stocks 不变
       * 通过 StockService.adjust 的 allow_zero_delta_ledger + sub_reason 实现
-
-    ✅ Scope 第一阶段：
-    - stocks/ledger 必须按 scope 隔离
     """
-    sc = _norm_scope(scope)
-
     if actual < 0:
         raise ValueError("Actual quantity must be non-negative.")
     if not batch_code or not str(batch_code).strip():
@@ -56,19 +41,14 @@ async def handle_count(
 
     bcode = str(batch_code).strip()
 
-    # 当前库存（按 scope + warehouse + item + batch 粒度加锁读取）
+    # 当前库存（按 warehouse + item + batch 粒度加锁读取）
     row = await session.execute(
         sa.text(
-            """
-            SELECT qty FROM stocks
-            WHERE scope=:scope
-              AND item_id=:i
-              AND warehouse_id=:w
-              AND batch_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
-            FOR UPDATE
-            """
+            "SELECT qty FROM stocks "
+            "WHERE item_id=:i AND warehouse_id=:w AND batch_code=:c "
+            "FOR UPDATE"
         ),
-        {"scope": sc, "i": item_id, "w": warehouse_id, "c": bcode},
+        {"i": item_id, "w": warehouse_id, "c": bcode},
     )
     current = int(row.scalar_one_or_none() or 0)
     delta = int(actual) - current
@@ -87,7 +67,7 @@ async def handle_count(
             expiry_date=expiry_date,
         )
 
-    meta: dict[str, object] = {
+    meta = {
         "sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM",
     }
     if delta == 0:
@@ -96,7 +76,6 @@ async def handle_count(
     stock_svc = StockService()
     await stock_svc.adjust(
         session=session,
-        scope=sc,
         item_id=item_id,
         warehouse_id=warehouse_id,
         delta=delta,
@@ -107,7 +86,7 @@ async def handle_count(
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
-        meta=meta,  # type: ignore[arg-type]
+        meta=meta,
     )
 
     ts = datetime.now(timezone.utc)

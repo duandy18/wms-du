@@ -55,7 +55,6 @@ def _batch_key(batch_code: Optional[str]) -> str:
 async def write_ledger(
     session: AsyncSession,
     *,
-    scope: str,
     warehouse_id: int,
     item_id: int,
     batch_code: Optional[str],
@@ -78,19 +77,11 @@ async def write_ledger(
     ✅ 无批次槽位支持：
     - batch_code 允许为 NULL（表示“无批次”）
     - DB 侧用生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与幂等唯一性
-
-    ✅ scope（PROD/DRILL）：
-    - 幂等键必须纳入 scope，避免 DRILL/PROD 互抢幂等锚点
     """
-    sc = (scope or "").strip().upper()
-    if sc not in {"PROD", "DRILL"}:
-        raise ValueError("scope must be PROD|DRILL")
-
     reason_canon = _canon_reason(reason)
     bc_norm = _norm_batch_code(batch_code)
 
     base_values = dict(
-        scope=sc,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
         batch_code=bc_norm,  # ✅ may be NULL
@@ -148,11 +139,10 @@ async def write_ledger(
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),
     }
 
-    # ✅ 用 batch_code_key 让 NULL 也能稳定命中同一幂等行 + scope
+    # ✅ 用 batch_code_key 让 NULL 也能稳定命中同一幂等行
     await session.execute(
         sa.update(StockLedger)
         .where(
-            StockLedger.scope == sc,
             StockLedger.warehouse_id == int(warehouse_id),
             StockLedger.item_id == int(item_id),
             StockLedger.batch_code_key == _batch_key(bc_norm),

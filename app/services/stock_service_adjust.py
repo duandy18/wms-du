@@ -85,7 +85,6 @@ async def _item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
 async def adjust_impl(  # noqa: C901
     *,
     session: AsyncSession,
-    scope: str,
     item_id: int,
     delta: int,
     reason: Union[str, MovementType],
@@ -99,7 +98,9 @@ async def adjust_impl(  # noqa: C901
     warehouse_id: int,
     trace_id: Optional[str],
     utc_now: Callable[[], datetime],
-    ensure_batch_dict_fn: Callable[[AsyncSession, int, int, str, Optional[date], Optional[date], datetime], Awaitable[None]],
+    ensure_batch_dict_fn: Callable[
+        [AsyncSession, int, int, str, Optional[date], Optional[date], datetime], Awaitable[None]
+    ],
 ) -> Dict[str, Any]:
     """
     批次增减（单一真实来源 stocks）
@@ -116,14 +117,7 @@ async def adjust_impl(  # noqa: C901
     - 对 requires_batch=false 的商品：
         若 batch_code 是明确假批次占位符（NOEXP/NEAR/FAR），则归一为 NULL
       注意：不再把 IDEM 当作假码，避免误伤现有测试/业务批次码。
-
-    ✅ 第一阶段：scope（PROD/DRILL）账本隔离
-    - idem 查询 / stocks 槽位 / ledger 写入 全部纳入 scope
     """
-    sc = (scope or "").strip().upper()
-    if sc not in {"PROD", "DRILL"}:
-        raise ValueError("scope must be PROD|DRILL")
-
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
     ts = occurred_at or utc_now()
@@ -169,14 +163,13 @@ async def adjust_impl(  # noqa: C901
         production_date = None
         expiry_date = None
 
-    # ---------- 幂等：用 scope + batch_code_key 对齐 NULL 语义 ----------
+    # ---------- 幂等：用 batch_code_key 对齐 NULL 语义 ----------
     idem = await session.execute(
         text(
             """
             SELECT 1
               FROM stock_ledger
-             WHERE scope        = :sc
-               AND warehouse_id = :w
+             WHERE warehouse_id = :w
                AND item_id      = :i
                AND batch_code_key = :ck
                AND reason       = :r
@@ -186,7 +179,6 @@ async def adjust_impl(  # noqa: C901
             """
         ),
         {
-            "sc": sc,
             "w": int(warehouse_id),
             "i": int(item_id),
             "ck": _batch_key(bc_norm),
@@ -210,19 +202,19 @@ async def adjust_impl(  # noqa: C901
             ts,
         )
 
-    # ---------- 确保 stocks 槽位存在（带 scope） ----------
+    # ---------- 确保 stocks 槽位存在 ----------
     await session.execute(
         text(
             """
-            INSERT INTO stocks (scope, item_id, warehouse_id, batch_code, qty)
-            VALUES (:sc, :i, :w, :c, 0)
+            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+            VALUES (:i, :w, :c, 0)
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
-        {"sc": sc, "i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
+        {"i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
     )
 
-    # ---------- 加锁读取当前库存（支持 NULL batch_code，带 scope） ----------
+    # ---------- 加锁读取当前库存（支持 NULL batch_code） ----------
     row = (
         (
             await session.execute(
@@ -230,21 +222,20 @@ async def adjust_impl(  # noqa: C901
                     """
                     SELECT id AS sid, qty AS q
                       FROM stocks
-                     WHERE scope = :sc
-                       AND item_id=:i
+                     WHERE item_id=:i
                        AND warehouse_id=:w
                        AND batch_code IS NOT DISTINCT FROM :c
                      FOR UPDATE
                     """
                 ),
-                {"sc": sc, "i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
+                {"i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
             )
         )
         .mappings()
         .first()
     )
     if not row:
-        raise ValueError(f"stock slot missing for scope={sc} item={item_id}, wh={warehouse_id}, code={bc_norm}")
+        raise ValueError(f"stock slot missing for item={item_id}, wh={warehouse_id}, code={bc_norm}")
 
     stock_id, before_qty = int(row["sid"]), int(row["q"])
 
@@ -257,7 +248,6 @@ async def adjust_impl(  # noqa: C901
 
     await write_ledger(
         session=session,
-        scope=sc,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
         batch_code=bc_norm,  # ✅ may be NULL

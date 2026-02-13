@@ -13,14 +13,6 @@ from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
 UTC = timezone.utc
 NOEXP_BATCH_CODE = "NOEXP"
-_VALID_SCOPES = {"PROD", "DRILL"}
-
-
-def _norm_scope(scope: Optional[str]) -> str:
-    sc = (scope or "").strip().upper() or "PROD"
-    if sc not in _VALID_SCOPES:
-        raise ValueError("scope must be PROD|DRILL")
-    return sc
 
 
 class InboundService:
@@ -73,10 +65,7 @@ class InboundService:
         trace_id: Optional[str] = None,
         # ✅ 合同化：业务细分（采购入库/退货入库/杂项入库等）
         sub_reason: Optional[str] = None,
-        scope: str = "PROD",
     ) -> Dict[str, Any]:
-        sc = _norm_scope(scope)
-
         if qty <= 0:
             raise ValueError("Receive quantity must be positive.")
         if item_id is None and (sku is None or not str(sku).strip()):
@@ -125,7 +114,6 @@ class InboundService:
 
         res = await self.stock_svc.adjust(
             session=session,
-            scope=sc,
             item_id=iid,
             warehouse_id=wid,
             delta=int(qty),

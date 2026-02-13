@@ -28,11 +28,11 @@ async def test_internal_outbound_end_to_end():
     # STEP 0 — 清理现场：删除旧的 seed 测试库存（可选）
     async with async_session_maker() as session:
         await session.execute(
-            text("DELETE FROM stock_ledger WHERE scope='PROD' AND ref = 'INT-SEED-TEST-001'")
+            text("DELETE FROM stock_ledger WHERE ref = 'INT-SEED-TEST-001'")
         )
         await session.execute(
             text(
-                "DELETE FROM stocks WHERE scope='PROD' AND warehouse_id=:w AND item_id=:i AND batch_code=:c"
+                "DELETE FROM stocks WHERE warehouse_id=:w AND item_id=:i AND batch_code=:c"
             ),
             {"w": warehouse_id, "i": item_id, "c": batch_code},
         )
@@ -43,7 +43,6 @@ async def test_internal_outbound_end_to_end():
         stock_svc = StockService()
         res = await stock_svc.adjust(
             session=session,
-            scope="PROD",
             item_id=item_id,
             warehouse_id=warehouse_id,
             delta=qty_seed,
@@ -88,6 +87,7 @@ async def test_internal_outbound_end_to_end():
         )
         await session.commit()
 
+        # 像 router 一样，用 get_with_lines 重新加载 doc，保证 lines 完整
         doc2 = await svc.get_with_lines(session, doc_id)
         assert len(doc2.lines) == 1
         line = doc2.lines[0]
@@ -110,30 +110,31 @@ async def test_internal_outbound_end_to_end():
 
     # STEP 5 — 验证库存减少与 ledger 存在
     async with async_session_maker() as session:
+        # ✅ 查指定批次的库存
         stock = (
             await session.execute(
                 text(
                     """
                     SELECT qty
                       FROM stocks
-                     WHERE scope='PROD'
-                       AND warehouse_id=:w AND item_id=:i AND batch_code=:c
+                     WHERE warehouse_id=:w AND item_id=:i AND batch_code=:c
                      ORDER BY qty DESC LIMIT 1
                     """
                 ),
                 {"w": warehouse_id, "i": item_id, "c": batch_code},
             )
         ).scalar()
+
         assert stock == qty_seed - qty_outbound  # 10 - 4 = 6
 
+        # 查 ledger（只看 ref=doc3.doc_no）
         ledger_rows = (
             await session.execute(
                 text(
                     """
                     SELECT reason, delta
                       FROM stock_ledger
-                     WHERE scope='PROD'
-                       AND ref = :ref
+                     WHERE ref = :ref
                      ORDER BY id DESC
                      LIMIT 10
                     """
@@ -142,5 +143,7 @@ async def test_internal_outbound_end_to_end():
             )
         ).all()
 
+        # 至少应有一条
         assert len(ledger_rows) >= 1
+        # 必须出现 INTERNAL_OUT, delta 为负数
         assert any(r[0] == "INTERNAL_OUT" and r[1] < 0 for r in ledger_rows)
