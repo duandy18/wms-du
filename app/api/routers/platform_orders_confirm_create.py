@@ -10,17 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.api.problem import make_problem
 from app.core.audit import new_trace
-from app.services.order_service import OrderService
+from app.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.services.platform_order_manual_decisions_service import (
     ManualDecisionRow,
     insert_manual_decisions_batch,
     new_batch_id,
 )
-from app.services.platform_order_resolve_service import (
-    load_items_brief,
-    norm_platform,
-    resolve_platform_lines_to_items,
-)
+from app.services.platform_order_resolve_service import norm_platform
 
 from app.api.routers.platform_orders_confirm_create_schemas import (
     PlatformOrderConfirmCreateIn,
@@ -31,9 +27,7 @@ from app.api.routers.platform_orders_fact_repo import (
     load_fact_lines_for_order,
     load_shop_id_by_store_id,
 )
-from app.api.routers.platform_orders_ingest_helpers import load_order_fulfillment_brief
 from app.api.routers.platform_orders_shared import (
-    build_items_payload_from_item_qty_map,
     collect_risk_flags_from_unresolved,
     validate_and_build_item_qty_map,
 )
@@ -184,7 +178,6 @@ async def confirm_and_create_platform_order(
         )
 
     # Phase N+2：不再补齐 filled_code；facts 里缺失就让 resolver/校验直接报错
-
     try:
         item_qty_map, audit_decisions = validate_and_build_item_qty_map(
             fact_lines=fact_lines,
@@ -207,18 +200,19 @@ async def confirm_and_create_platform_order(
             ),
         )
 
-    _, unresolved, _ = await resolve_platform_lines_to_items(
-        session, platform=plat, store_id=store_id, lines=fact_lines
+    # 只为 risk_flags 取 unresolved：也交给 Flow（router 不再碰 resolver）
+    _, unresolved, _ = await PlatformOrderIngestFlow.resolve_fact_lines(
+        session,
+        platform=plat,
+        store_id=store_id,
+        lines=fact_lines,
     )
     risk_flags = collect_risk_flags_from_unresolved(unresolved)
 
-    item_ids = sorted(item_qty_map.keys())
-    items_brief = await load_items_brief(session, item_ids=item_ids)
-
-    items_payload = build_items_payload_from_item_qty_map(
-        item_qty_map=item_qty_map,
-        items_brief=items_brief,
+    items_payload = await PlatformOrderIngestFlow.build_items_payload_from_item_qty_map(
+        session,
         store_id=store_id,
+        item_qty_map=item_qty_map,
         source="platform-orders/confirm-and-create",
         extras=None,
     )
@@ -229,31 +223,35 @@ async def confirm_and_create_platform_order(
         "trace_id": trace.trace_id,
     }
 
-    r: Dict[str, Any] = {}
     oid: Optional[int] = None
     ref: Optional[str] = None
     manual_batch_id: Optional[str] = None
+    out_tail: Dict[str, Any] = {}
 
     try:
-        r = await OrderService.ingest(
+        out_tail = await PlatformOrderIngestFlow.run_tail_from_items_payload(
             session,
             platform=plat,
             shop_id=shop_id,
+            store_id=store_id,
             ext_order_no=ext,
             occurred_at=None,
             buyer_name=None,
             buyer_phone=None,
-            order_amount=0.0,
-            pay_amount=0.0,
-            items=items_payload,
             address=None,
-            extras=extras,
+            items_payload=items_payload,
             trace_id=trace.trace_id,
+            source="platform-orders/confirm-and-create",
+            extras=extras,
+            resolved=[],
+            unresolved=unresolved,
+            facts_written=0,
+            risk_flags=[str(x) for x in risk_flags if isinstance(x, str)],
         )
 
-        oid = int(r.get("id") or 0) if r.get("id") is not None else None
-        ref = str(r.get("ref") or f"ORD:{plat}:{shop_id}:{ext}")
-        status = str(r.get("status") or "OK").strip().upper()
+        oid = int(out_tail.get("id") or 0) if out_tail.get("id") is not None else None
+        ref = str(out_tail.get("ref") or f"ORD:{plat}:{shop_id}:{ext}")
+        status = str(out_tail.get("status") or "OK").strip().upper()
 
         if status == "IDEMPOTENT" and oid is not None:
             manual_batch_id = await _load_latest_manual_batch_id_for_order(
@@ -264,7 +262,6 @@ async def confirm_and_create_platform_order(
             manual_batch_id = str(batch_id)
 
             # Phase N+4：证据表写入的 line_key/line_no/filled_code/fact_qty 必须来自事实行审计（audit_decisions）
-            # 这样 line_key 永远不会被外部输入污染。
             rows = []
             decisions_in = list(payload.decisions or [])
             if len(decisions_in) != len(audit_decisions):
@@ -326,15 +323,8 @@ async def confirm_and_create_platform_order(
         await session.rollback()
         raise
 
-    fulfillment_status = None
-    blocked_reasons = None
-    if oid is not None:
-        fulfillment_status, blocked_reasons = await load_order_fulfillment_brief(
-            session, order_id=oid
-        )
-
     return PlatformOrderConfirmCreateOut(
-        status=str(r.get("status") or "OK"),
+        status=str(out_tail.get("status") or "OK"),
         id=oid,
         ref=str(ref or f"ORD:{plat}:{shop_id}:{ext}"),
         platform=plat,
@@ -345,6 +335,6 @@ async def confirm_and_create_platform_order(
         manual_batch_id=manual_batch_id,
         risk_flags=[str(x) for x in risk_flags if isinstance(x, str)],
         facts_n=len(fact_lines),
-        fulfillment_status=fulfillment_status,
-        blocked_reasons=blocked_reasons,
+        fulfillment_status=out_tail.get("fulfillment_status"),
+        blocked_reasons=out_tail.get("blocked_reasons"),
     )

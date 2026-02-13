@@ -8,6 +8,7 @@ from app.api.routers import stores_routes_bindings
 from app.api.routers import stores_routes_crud
 from app.api.routers import stores_routes_platform_auth
 from app.api.routers import stores_routes_routing  # ✅ 新增：省级路由表 + health
+from app.api.routers import stores_routes_order_sim  # ✅ 新增：order-sim（merchant_lines/cart/generate-order）
 
 # 兼容导出：合同测试/旧 import 可能直接从 stores 模块 import schema/类型
 from app.api.routers.stores_helpers import (
@@ -46,6 +47,7 @@ def _register_all_routes() -> None:
     stores_routes_bindings.register(router)
     stores_routes_platform_auth.register(router)
     stores_routes_routing.register(router)  # ✅
+    stores_routes_order_sim.register(router)  # ✅
 
 
 _register_all_routes()
