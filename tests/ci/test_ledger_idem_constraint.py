@@ -7,14 +7,15 @@ pytestmark = pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_stock_ledger_idempotency_unique_exists(session):
     """
-    合同：幂等键 (warehouse_id, batch_code_key, item_id, reason, ref, ref_line)
+    合同：幂等键 (scope, warehouse_id, batch_code_key, item_id, reason, ref, ref_line)
     必须存在唯一约束/唯一索引。
 
     说明：
       - 当前模型支持 batch_code 可为空（无批次），因此用生成列 batch_code_key
         = COALESCE(batch_code, '__NULL_BATCH__') 参与唯一性；
       - 幂等性以“同一槽位 + 同一业务键 (reason, ref, ref_line)” 为单位，
-        即 (warehouse_id, batch_code_key, item_id, reason, ref, ref_line) 唯一。
+        即 (scope, warehouse_id, batch_code_key, item_id, reason, ref, ref_line) 唯一；
+      - scope 必须纳入唯一性，否则 DRILL/PROD 会共享幂等槽位（串账）。
     """
     # PG: 读取唯一索引的列
     sql = text(
@@ -40,7 +41,7 @@ async def test_stock_ledger_idempotency_unique_exists(session):
     cols_sets = {tuple(row[1]) for row in uniq}  # row[1] is array_agg
 
     # 目标列集合（顺序不敏感）
-    target = ("warehouse_id", "batch_code_key", "item_id", "reason", "ref", "ref_line")
+    target = ("scope", "warehouse_id", "batch_code_key", "item_id", "reason", "ref", "ref_line")
 
     assert any(
         set(cols) == set(target) for cols in cols_sets

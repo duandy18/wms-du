@@ -95,7 +95,8 @@ async def fefo_deduct_internal(
                         ON b.item_id      = s.item_id
                        AND b.warehouse_id = s.warehouse_id
                        AND b.batch_code IS NOT DISTINCT FROM s.batch_code
-                     WHERE s.item_id = :i
+                     WHERE s.scope = 'PROD'
+                       AND s.item_id = :i
                        AND s.warehouse_id = :w
                        AND s.qty > 0
                      ORDER BY b.expiry_date ASC NULLS LAST, s.id ASC
@@ -117,6 +118,7 @@ async def fefo_deduct_internal(
 
         await stock_svc.adjust(
             session=session,
+            scope="PROD",
             item_id=item_id,
             warehouse_id=warehouse_id,
             delta=-take,
@@ -164,6 +166,7 @@ async def confirm(
             bc = str(line.batch_code).strip()
             await stock_svc.adjust(
                 session=session,
+                scope="PROD",
                 item_id=line.item_id,
                 warehouse_id=doc.warehouse_id,
                 delta=-qty,

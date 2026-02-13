@@ -40,6 +40,7 @@ class RMAService:
         # 入退货池：RETURNS +qty
         await StockService.adjust(
             session=session,
+            scope="PROD",
             warehouse_id=int(wh),
             item_id=int(item_id),
             batch_code=str(batch_code),
@@ -70,6 +71,7 @@ class RMAService:
         # RETURNS 减（会在 StockService.adjust 内做不足校验）
         await StockService.adjust(
             session=session,
+            scope="PROD",
             warehouse_id=int(wh_ret),
             item_id=int(item_id),
             batch_code=str(batch_code),
@@ -85,6 +87,7 @@ class RMAService:
         # MAIN 加
         await StockService.adjust(
             session=session,
+            scope="PROD",
             warehouse_id=int(wh_main),
             item_id=int(item_id),
             batch_code=str(batch_code),
@@ -114,6 +117,7 @@ class RMAService:
         # RETURNS 报废：RETURNS -qty（不足校验由 StockService.adjust 负责）
         await StockService.adjust(
             session=session,
+            scope="PROD",
             warehouse_id=int(wh),
             item_id=int(item_id),
             batch_code=str(batch_code),

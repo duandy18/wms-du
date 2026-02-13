@@ -101,6 +101,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
 
     await stock.adjust(
         session=session,
+        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=10,
@@ -217,7 +218,8 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
                 ref,
                 trace_id
               FROM stock_ledger
-             WHERE warehouse_id = 1
+             WHERE scope = 'PROD'
+               AND warehouse_id = 1
                AND item_id = 1
                AND (trace_id = :trace_id OR ref = :ref)
              ORDER BY id DESC

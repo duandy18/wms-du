@@ -65,6 +65,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     # 2) 先做一笔入库，保证库存足够
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=2,
@@ -79,6 +80,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     # 3) 模拟发货 shipped=2（只统计负数 delta，用于 shipped 计算）
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=-2,
@@ -176,6 +178,7 @@ async def test_rma_commit_updates_counters_and_status(session: AsyncSession) -> 
     # 2) 先做一笔入库，保证库存足够
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=2,
@@ -190,6 +193,7 @@ async def test_rma_commit_updates_counters_and_status(session: AsyncSession) -> 
     # 3) 模拟发货 shipped=2（只统计负数 delta，用于 shipped 计算）
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=1,
         warehouse_id=1,
         delta=-2,

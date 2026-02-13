@@ -52,6 +52,7 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
     # 先造库存：+5
     await stock.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=warehouse_id,
         batch_code=batch_code,
@@ -115,6 +116,7 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
     # 先造库存：+5
     await stock.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=warehouse_id,
         batch_code=batch_code,

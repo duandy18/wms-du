@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -61,6 +62,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     # 1) 入库造库存：+10
     await stock.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_id,
         batch_code=batch_code,
@@ -76,11 +78,14 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     )
 
     # 2) 出库制造出库事实（ReturnTask 依据 ledger 反查 shipped）
-    order_ref = "UT:PH3:RET:ORDER"
+    #    ⚠️ order_ref 必须唯一，避免复用历史未 COMMITTED 的 return_task（picked_qty 会被累加）
+    uniq = uuid4().hex[:10]
+    order_ref = f"UT:PH3:RET:ORDER:{uniq}"
     shipped_qty = 4
 
     await stock.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_id,
         batch_code=batch_code,
@@ -134,7 +139,8 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
                 """
                 SELECT reason
                   FROM stock_ledger
-                 WHERE warehouse_id=:w AND item_id=:i AND batch_code=:c
+                 WHERE scope='PROD'
+                   AND warehouse_id=:w AND item_id=:i AND batch_code=:c
                    AND ref=:ref AND ref_line=:rl AND delta>0
                  ORDER BY id DESC
                  LIMIT 1

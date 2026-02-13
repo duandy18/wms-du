@@ -11,6 +11,13 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
+def _norm_scope(scope: str | None) -> str:
+    sc = (scope or "").strip().upper() or "PROD"
+    if sc not in ("PROD", "DRILL"):
+        raise ValueError("scope must be PROD|DRILL")
+    return sc
+
+
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
     row = await session.execute(
         text("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
@@ -24,25 +31,36 @@ async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
-async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None, *, scope: str = "PROD") -> int:
+    sc = _norm_scope(scope)
     r = await session.execute(
         text(
             """
             SELECT qty
               FROM stocks
-             WHERE item_id=:i
+             WHERE scope = :scope
+               AND item_id=:i
                AND warehouse_id=:w
                AND batch_code IS NOT DISTINCT FROM :c
             """
         ),
-        {"i": int(item_id), "w": int(wh), "c": code},
+        {"scope": sc, "i": int(item_id), "w": int(wh), "c": code},
     )
     return int(r.scalar_one_or_none() or 0)
 
 
-async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
+async def _ensure_stock_seed(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    wh: int,
+    code: str | None,
+    qty: int,
+    scope: str = "PROD",
+) -> None:
+    sc = _norm_scope(scope)
     svc = StockService()
-    before = await _qty(session, item_id, wh, code)
+    before = await _qty(session, item_id, wh, code, scope=sc)
     if before >= qty:
         return
 
@@ -50,6 +68,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
     if code is None:
         await svc.adjust(
             session=session,
+            scope=sc,
             item_id=int(item_id),
             warehouse_id=int(wh),
             delta=int(need),
@@ -62,6 +81,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
     else:
         await svc.adjust(
             session=session,
+            scope=sc,
             item_id=int(item_id),
             warehouse_id=int(wh),
             delta=int(need),
@@ -82,14 +102,15 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     code = await _slot_code(session, item_id)
 
     # ✅ 显式 seed，保证 before >= 1
-    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=10)
+    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=10, scope="PROD")
 
-    before = await _qty(session, item_id, wh, code)
+    before = await _qty(session, item_id, wh, code, scope="PROD")
     assert before >= 1
 
     # 扣 1
     await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         delta=-1,
         reason=MovementType.OUTBOUND,
@@ -99,12 +120,13 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
         batch_code=code,
         warehouse_id=wh,
     )
-    mid = await _qty(session, item_id, wh, code)
+    mid = await _qty(session, item_id, wh, code, scope="PROD")
     assert mid == before - 1
 
     # 同 ref/ref_line 幂等
     res = await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         delta=-1,
         reason=MovementType.OUTBOUND,
@@ -117,10 +139,11 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     assert res.get("idempotent") is True
 
     # 不足：新世界观为 409 + Problem（HTTPException）
-    remain = await _qty(session, item_id, wh, code)
+    remain = await _qty(session, item_id, wh, code, scope="PROD")
     with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
+            scope="PROD",
             item_id=item_id,
             delta=-(remain + 1),
             reason=MovementType.OUTBOUND,

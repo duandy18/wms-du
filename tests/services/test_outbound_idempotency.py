@@ -90,6 +90,7 @@ async def _seed_stock(
 
     await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         delta=qty,
         reason="INBOUND_SEED",
@@ -120,7 +121,8 @@ async def _sum_ledger_for_ref(
             """
             SELECT COALESCE(SUM(delta), 0) AS s
               FROM stock_ledger
-             WHERE warehouse_id = :wid
+             WHERE scope='PROD'
+               AND warehouse_id = :wid
                AND item_id      = :item
                AND batch_code   = :code
                AND ref          = :ref

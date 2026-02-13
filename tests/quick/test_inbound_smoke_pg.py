@@ -20,7 +20,7 @@ async def _ensure_min_domain_v2(
     在 v2 世界下，确保最小域存在：
     - warehouses: id = warehouse_id
     - items     : id = item_id
-    - stocks    : (warehouse_id, item_id, batch_code) 存在一行，qty 初始为 0
+    - stocks    : (scope, warehouse_id, item_id, batch_code) 存在一行，qty 初始为 0
     """
 
     # 仓库（最小一行）
@@ -39,12 +39,12 @@ async def _ensure_min_domain_v2(
         {"i": item_id, "sku": f"SKU-{item_id}", "name": f"ITEM-{item_id}"},
     )
 
-    # stocks 3D 槽位：warehouse + item + batch_code
+    # stocks 3D 槽位：scope + warehouse + item + batch_code
     await session.execute(
         text(
             """
-            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
-            VALUES (:w, :i, :b, 0)
+            INSERT INTO stocks (scope, warehouse_id, item_id, batch_code, qty)
+            VALUES ('PROD', :w, :i, :b, 0)
             ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
             """
         ),
@@ -84,7 +84,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
                 """
                 SELECT qty
                 FROM stocks
-                WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+                WHERE scope = 'PROD' AND warehouse_id = :w AND item_id = :i AND batch_code = :b
                 """
             ),
             {"w": WH, "i": ITEM, "b": BATCH},
@@ -98,7 +98,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
             """
             UPDATE stocks
             SET qty = :after
-            WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+            WHERE scope = 'PROD' AND warehouse_id = :w AND item_id = :i AND batch_code = :b
             """
         ),
         {"after": after, "w": WH, "i": ITEM, "b": BATCH},
@@ -107,6 +107,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
     # 4) 写一条账本记录（通过正式的 ledger_writer，而不是硬编码列）
     await write_ledger(
         session,
+        scope="PROD",
         warehouse_id=WH,
         item_id=ITEM,
         batch_code=BATCH,
@@ -130,7 +131,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
                 """
                 SELECT qty
                 FROM stocks
-                WHERE warehouse_id = :w AND item_id = :i AND batch_code = :b
+                WHERE scope = 'PROD' AND warehouse_id = :w AND item_id = :i AND batch_code = :b
                 """
             ),
             {"w": WH, "i": ITEM, "b": BATCH},
@@ -145,7 +146,8 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
                 """
                 SELECT reason, delta, after_qty
                 FROM stock_ledger
-                WHERE warehouse_id = :w
+                WHERE scope = 'PROD'
+                  AND warehouse_id = :w
                   AND item_id = :i
                   AND batch_code = :b
                 ORDER BY id DESC
@@ -156,9 +158,4 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
         )
     ).first()
 
-    assert (
-        row is not None
-        and row.reason == "INBOUND"
-        and int(row.delta) == 5
-        and int(row.after_qty) == after
-    )
+    assert row is not None and row.reason == "INBOUND" and int(row.delta) == 5 and int(row.after_qty) == after

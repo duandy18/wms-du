@@ -33,7 +33,8 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
             """
             SELECT qty
               FROM stocks
-             WHERE item_id=:i
+             WHERE scope='PROD'
+               AND item_id=:i
                AND warehouse_id=:w
                AND batch_code IS NOT DISTINCT FROM :c
             """
@@ -57,6 +58,7 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     # 1) RETURNS：入库 +2
     await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_returns,
         delta=+2,
@@ -73,6 +75,7 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     # 2) 净零迁移：RETURNS -1 → MAIN +1
     await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_returns,
         delta=-1,
@@ -84,6 +87,7 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     )
     await svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         warehouse_id=wh_main,
         delta=+1,

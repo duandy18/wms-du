@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -65,6 +66,7 @@ async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
     ref_in = "UT:PH3:IN"
     await stock_svc.adjust(
         session=session,
+        scope="PROD",
         item_id=item_id,
         delta=10,  # 入库 +10
         reason="RECEIPT",
@@ -80,7 +82,8 @@ async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
     )
 
     # 出库：扣 3
-    order_id = "UT:PH3:OUT"
+    uniq = uuid4().hex[:10]
+    order_id = f"UT:PH3:OUT:{uniq}"
     ship_qty = 3
 
     res = await outbound_svc.commit(

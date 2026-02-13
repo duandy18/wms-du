@@ -112,11 +112,12 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         {"p": platform, "s": shop_id, "ref": order_ref, "tid": trace_id},
     )
 
-    # stock_ledger：SHIPMENT
+    # stock_ledger：SHIPMENT（必须带 scope）
     await session.execute(
         text(
             """
             INSERT INTO stock_ledger (
+                scope,
                 trace_id,
                 warehouse_id,
                 item_id,
@@ -130,6 +131,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
                 after_qty
             )
             VALUES (
+                'PROD',
                 :trace_id,
                 :wh_id,
                 :item_id,

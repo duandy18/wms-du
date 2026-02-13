@@ -15,7 +15,8 @@ async def test_alembic_single_head_and_stocks_batch_code_not_null(session: Async
     2. 确保 stocks 使用“无批次 = NULL”的真实语义：
        - stocks.batch_code 允许 NULL
        - 存在生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__')
-       - 唯一约束 uq_stocks_item_wh_batch 以 batch_code_key 为第三列（稳定幂等/唯一）
+       - 唯一约束 uq_stocks_item_wh_batch 必须纳入 batch_code_key（稳定幂等/唯一）
+       - 唯一约束 uq_stocks_item_wh_batch 必须纳入 scope（PROD/DRILL 账本隔离）
     """
 
     # 1) alembic_version 表应存在且仅一行（单 head）
@@ -76,3 +77,4 @@ async def test_alembic_single_head_and_stocks_batch_code_not_null(session: Async
     assert "batch_code_key" in set(col_names)
     assert "item_id" in set(col_names)
     assert "warehouse_id" in set(col_names)
+    assert "scope" in set(col_names)

@@ -24,13 +24,20 @@ class Stock(Base):
     - (item_id, warehouse_id) 下只允许存在一个 NULL 槽位：
       通过生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与唯一性（见迁移）
 
-    ✅ Route 2.3：
-    - 已彻底删除 stocks.qty_on_hand（事实列收敛到 stocks.qty）
+    ✅ scope（第一阶段：PROD/DRILL 账本隔离）：
+    - stocks 是“默认可用库存口径”的事实表，因此必须带 scope
+    - 唯一性约束 uq_stocks_item_wh_batch 必须纳入 scope（否则 DRILL/PROD 会共享同一槽位行）
     """
 
     __tablename__ = "stocks"
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+
+    scope: Mapped[str] = mapped_column(
+        sa.Enum("PROD", "DRILL", name="biz_scope"),
+        nullable=False,
+        index=True,
+    )
 
     warehouse_id: Mapped[int] = mapped_column(
         sa.Integer,
@@ -60,8 +67,15 @@ class Stock(Base):
 
     __table_args__ = (
         # ✅ 唯一性用 batch_code_key（DB 迁移会创建/重建同名约束）
-        sa.UniqueConstraint("item_id", "warehouse_id", "batch_code_key", name="uq_stocks_item_wh_batch"),
+        sa.UniqueConstraint(
+            "scope",
+            "item_id",
+            "warehouse_id",
+            "batch_code_key",
+            name="uq_stocks_item_wh_batch",
+        ),
         Index("ix_stocks_item_wh_batch", "item_id", "warehouse_id", "batch_code"),
+        Index("ix_stocks_scope_item_wh", "scope", "warehouse_id", "item_id"),
     )
 
     warehouse = relationship("Warehouse", lazy="selectin")
@@ -84,6 +98,6 @@ class Stock(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Stock wh={self.warehouse_id} item={self.item_id} "
+            f"<Stock scope={self.scope} wh={self.warehouse_id} item={self.item_id} "
             f"code={self.batch_code} qty={self.qty}>"
         )
