@@ -111,6 +111,9 @@ async def _list_orders_summary_rows(
     参数语义（不兼容硬改）：
     - status：过滤 orders.status（CREATED / PICKABLE / ...）
     - fulfillment_status：过滤 order_fulfillment.fulfillment_status（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
+
+    ✅ PROD-only（简化口径）：
+    - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
     """
     clauses: List[str] = []
     params: Dict[str, Any] = {"limit": limit}
@@ -142,6 +145,21 @@ async def _list_orders_summary_rows(
     if time_to:
         clauses.append("o.created_at <= :to_ts")
         params["to_ts"] = time_to
+
+    # PROD-only：测试店铺门禁（store_id）
+    clauses.append(
+        """
+        NOT EXISTS (
+          SELECT 1
+            FROM stores ss
+            JOIN platform_test_shops pts
+              ON pts.store_id = ss.id
+             AND pts.code = 'DEFAULT'
+           WHERE upper(ss.platform) = upper(o.platform)
+             AND btrim(CAST(ss.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+        )
+        """.strip()
+    )
 
     where_sql = ""
     if clauses:

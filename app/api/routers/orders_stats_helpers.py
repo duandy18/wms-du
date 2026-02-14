@@ -21,6 +21,9 @@ async def calc_daily_stats(
     - 创建订单数（orders.created_at）
     - 发货订单数（ledger 中 ref=ORD:* 且 delta<0 的 distinct ref）
     - 退货订单数（receive_tasks.source_type='ORDER' 且 COMMITTED 的 distinct source_id）
+
+    ✅ PROD-only（简化口径）：
+    - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
     """
     # 统一按 UTC 自然日计算
     start = datetime.combine(day, time(0, 0, 0), tzinfo=timezone.utc)
@@ -28,7 +31,7 @@ async def calc_daily_stats(
 
     plat = platform.upper().strip() if platform else None
 
-    # ---- created: 直接查 orders ----
+    # ----------------- created: orders -----------------
     clauses = ["created_at >= :start", "created_at < :end"]
     params: dict = {"start": start, "end": end}
 
@@ -39,6 +42,21 @@ async def calc_daily_stats(
         clauses.append("shop_id = :s")
         params["s"] = shop_id
 
+    # PROD-only：测试店铺门禁（store_id）
+    clauses.append(
+        """
+        NOT EXISTS (
+          SELECT 1
+            FROM stores s
+            JOIN platform_test_shops pts
+              ON pts.store_id = s.id
+             AND pts.code = 'DEFAULT'
+           WHERE upper(s.platform) = upper(orders.platform)
+             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(orders.shop_id AS text))
+        )
+        """.strip()
+    )
+
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     sql_created = f"""
         SELECT COUNT(*) AS c
@@ -48,34 +66,53 @@ async def calc_daily_stats(
     created_res = await session.execute(text(sql_created), params)
     orders_created = int(created_res.scalar() or 0)
 
-    # ---- shipped: 查 stock_ledger（ref=ORD:*，delta<0，按 ref 去重）----
-    params2: dict = {"start": start, "end": end}
+    # ----------------- shipped: stock_ledger -> parse ref -> join orders -----------------
+    # ref 形态：ORD:{PLAT}:{shop_id}:{ext_order_no...}
+    # 用 split_part/regexp_replace 解析后 join orders(platform, shop_id, ext_order_no)
     shipped_clauses = [
-        "occurred_at >= :start",
-        "occurred_at < :end",
-        "delta < 0",
+        "l.occurred_at >= :start",
+        "l.occurred_at < :end",
+        "l.delta < 0",
+        "l.ref LIKE 'ORD:%'",
     ]
+    params2: dict = {"start": start, "end": end}
 
-    # ref 过滤：ORD:{PLAT}:{shop_id}:{ext_order_no}
-    if plat and shop_id:
-        shipped_clauses.append("ref LIKE :ref_prefix")
-        params2["ref_prefix"] = f"ORD:{plat}:{shop_id}:%"
-    elif plat:
-        shipped_clauses.append("ref LIKE :ref_prefix")
-        params2["ref_prefix"] = f"ORD:{plat}:%"
-    else:
-        shipped_clauses.append("ref LIKE 'ORD:%'")
+    if plat:
+        shipped_clauses.append("upper(o.platform) = :p")
+        params2["p"] = plat
+    if shop_id:
+        shipped_clauses.append("btrim(CAST(o.shop_id AS text)) = btrim(CAST(:s AS text))")
+        params2["s"] = shop_id
+
+    # PROD-only：测试店铺门禁（store_id）
+    shipped_clauses.append(
+        """
+        NOT EXISTS (
+          SELECT 1
+            FROM stores s
+            JOIN platform_test_shops pts
+              ON pts.store_id = s.id
+             AND pts.code = 'DEFAULT'
+           WHERE upper(s.platform) = upper(o.platform)
+             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+        )
+        """.strip()
+    )
 
     where_sql2 = "WHERE " + " AND ".join(shipped_clauses)
     sql_shipped = f"""
-        SELECT COUNT(DISTINCT ref) AS c
-          FROM stock_ledger
+        SELECT COUNT(DISTINCT l.ref) AS c
+          FROM stock_ledger l
+          JOIN orders o
+            ON upper(o.platform) = upper(split_part(l.ref, ':', 2))
+           AND btrim(CAST(o.shop_id AS text)) = btrim(split_part(l.ref, ':', 3))
+           AND btrim(CAST(o.ext_order_no AS text)) = btrim(regexp_replace(l.ref, '^ORD:[^:]+:[^:]+:', ''))
           {where_sql2}
     """
     shipped_res = await session.execute(text(sql_shipped), params2)
     orders_shipped = int(shipped_res.scalar() or 0)
 
-    # ---- returned: 查 source_type='ORDER' 的 receive_tasks，并关联 orders ----
+    # ----------------- returned: receive_tasks JOIN orders -----------------
     params3: dict = {"start": start, "end": end}
     returned_clauses = [
         "rt.source_type = 'ORDER'",
@@ -89,6 +126,21 @@ async def calc_daily_stats(
     if shop_id:
         returned_clauses.append("o.shop_id = :s")
         params3["s"] = shop_id
+
+    # PROD-only：测试店铺门禁（store_id）
+    returned_clauses.append(
+        """
+        NOT EXISTS (
+          SELECT 1
+            FROM stores s
+            JOIN platform_test_shops pts
+              ON pts.store_id = s.id
+             AND pts.code = 'DEFAULT'
+           WHERE upper(s.platform) = upper(o.platform)
+             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+        )
+        """.strip()
+    )
 
     where_sql3 = "WHERE " + " AND ".join(returned_clauses)
     sql_returned = f"""

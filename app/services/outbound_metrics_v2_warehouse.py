@@ -32,8 +32,21 @@ async def load_by_warehouse(
              AND ae.category='OUTBOUND'
              AND (ae.meta->>'platform') = :platform
             WHERE l.delta < 0
+              AND l.ref LIKE 'ORD:%'
               AND l.reason IN ('PICK','OUTBOUND_SHIP','OUTBOUND_V2_SHIP','SHIP')
               AND (l.occurred_at AT TIME ZONE 'utc')::date = :day
+              AND (ae.meta->>'shop_id') IS NOT NULL
+
+              -- PROD-only：测试店铺门禁（store_id）
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM stores s
+                  JOIN platform_test_shops pts
+                    ON pts.store_id = s.id
+                   AND pts.code = 'DEFAULT'
+                 WHERE upper(s.platform) = upper(ae.meta->>'platform')
+                   AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(ae.meta->>'shop_id' AS text))
+              )
             GROUP BY l.warehouse_id, l.ref
         ),
         order_refs AS (

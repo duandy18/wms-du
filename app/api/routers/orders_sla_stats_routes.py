@@ -50,6 +50,9 @@ def register(router: APIRouter) -> None:
         - 两表通过 trace_id 关联。
 
         只统计在给定时间窗口内发货的订单（按 outbound_commits_v2.created_at 过滤）。
+
+        ✅ PROD-only（简化口径）：
+        - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
         """
         start, end = normalize_window(time_from, time_to)
 
@@ -71,6 +74,17 @@ def register(router: APIRouter) -> None:
           WHERE oc.state = 'COMPLETED'
             AND oc.created_at >= :start
             AND oc.created_at <= :end
+
+            -- ----------------- PROD-only：测试店铺门禁（store_id 级别） -----------------
+            AND NOT EXISTS (
+              SELECT 1
+                FROM stores s
+                JOIN platform_test_shops pts
+                  ON pts.store_id = s.id
+                 AND pts.code = 'DEFAULT'
+               WHERE upper(s.platform) = upper(o.platform)
+                 AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+            )
         {plat_clause}
         {shop_clause}
         )
