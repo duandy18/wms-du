@@ -55,6 +55,11 @@ class StoreListItem(BaseModel):
     active: bool
     route_mode: str
 
+    # ✅ 新增：店铺类型（用于区分测试/正式）
+    # - TEST：命中 platform_test_shops
+    # - PROD：默认
+    shop_type: str = "PROD"
+
     email: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
@@ -99,7 +104,6 @@ class BindingDeleteOut(BaseModel):
 class StorePlatformAuthOut(BaseModel):
     ok: bool = True
     data: Dict[str, Any]
-
 
 
 # ================================

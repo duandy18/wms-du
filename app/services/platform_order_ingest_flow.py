@@ -1,11 +1,15 @@
 # app/services/platform_order_ingest_flow.py
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.problem import make_problem
+from app.services.item_test_set_service import ItemTestSetService
 from app.services.order_service import OrderService
 from app.services.platform_order_fact_service import upsert_platform_order_lines
 from app.services.platform_order_resolve_service import (
@@ -28,6 +32,98 @@ from app.api.routers.platform_orders_ingest_risk import (  # noqa: WPS433
 from app.api.routers.platform_orders_shared import (  # noqa: WPS433
     build_items_payload_from_item_qty_map,
 )
+
+
+def _get_test_shop_id() -> str | None:
+    s = (os.getenv("TEST_SHOP_ID") or "").strip()
+    return s or None
+
+
+def _is_test_shop(shop_id: str) -> bool:
+    tid = _get_test_shop_id()
+    if tid is None:
+        return False
+    return str(shop_id) == tid
+
+
+def _extract_item_ids_from_items_payload(items_payload: Sequence[Mapping[str, Any]]) -> list[int]:
+    """
+    从 items_payload 提取 item_id 列表（兼容不同 payload 形态）。
+    约定优先级：
+      1) item_id
+      2) id
+    """
+    ids: set[int] = set()
+    for it in items_payload or ():
+        if not isinstance(it, Mapping):
+            continue
+        v = it.get("item_id")
+        if v is None:
+            v = it.get("id")
+        if v is None:
+            continue
+        try:
+            ids.add(int(v))
+        except Exception:
+            continue
+    return sorted(ids)
+
+
+async def _enforce_no_test_items_in_non_test_shop(
+    session: AsyncSession,
+    *,
+    shop_id: str,
+    store_id: Optional[int],
+    item_ids: list[int],
+    source: str,
+) -> None:
+    """
+    宇宙边界兜底（不污染 resolver）：
+
+    当 TEST_SHOP_ID 设置后：
+      - 非 TEST shop：禁止出现 DEFAULT Test Set items
+      - TEST shop：不在这里强制“必须全是测试商品”（那条更偏 dev/order-sim 入口约束）
+    """
+    tid = _get_test_shop_id()
+    if tid is None:
+        return
+
+    if _is_test_shop(shop_id):
+        return
+
+    if not item_ids:
+        return
+
+    ts = ItemTestSetService(session)
+    try:
+        await ts.assert_items_not_in_test_set(item_ids=item_ids, set_code="DEFAULT")
+    except ItemTestSetService.NotFound as e:
+        raise HTTPException(
+            status_code=500,
+            detail=make_problem(
+                status_code=500,
+                error_code="internal_error",
+                message=f"测试集合不可用：{e.message}",
+                context={"shop_id": str(shop_id), "test_shop_id": str(tid), "set_code": "DEFAULT", "source": source},
+            ),
+        )
+    except ItemTestSetService.Conflict as e:
+        raise HTTPException(
+            status_code=409,
+            detail=make_problem(
+                status_code=409,
+                error_code="conflict",
+                message=e.message,
+                context={
+                    "shop_id": str(shop_id),
+                    "test_shop_id": str(tid),
+                    "store_id": int(store_id) if store_id is not None else None,
+                    "set_code": e.set_code,
+                    "out_of_set_item_ids": e.out_of_set_item_ids,
+                    "source": source,
+                },
+            ),
+        )
 
 
 class PlatformOrderIngestFlow:
@@ -170,6 +266,17 @@ class PlatformOrderIngestFlow:
             }
 
         item_ids = sorted(item_qty_map.keys())
+
+        # ✅ 宇宙边界兜底：非 TEST 商铺禁止出现测试商品（DEFAULT Test Set）
+        # （不改 resolver；在写订单前阻断，避免测试物料污染真实商铺）
+        await _enforce_no_test_items_in_non_test_shop(
+            session,
+            shop_id=sid,
+            store_id=store_id_int,
+            item_ids=item_ids,
+            source=source,
+        )
+
         items_brief = await load_items_brief(session, item_ids=item_ids)
 
         items_payload = build_items_payload(
@@ -257,6 +364,16 @@ class PlatformOrderIngestFlow:
             raise ValueError("ext_order_no is required")
 
         store_id_out = int(store_id) if store_id is not None else None
+
+        # ✅ 宇宙边界兜底：tail/replay/confirm-create 也不能把测试商品写进非 TEST 商铺
+        item_ids = _extract_item_ids_from_items_payload(items_payload)
+        await _enforce_no_test_items_in_non_test_shop(
+            session,
+            shop_id=sid,
+            store_id=store_id_out,
+            item_ids=item_ids,
+            source=source,
+        )
 
         merged_extras: Dict[str, Any] = {"source": source}
         if store_id_out is not None:

@@ -1,12 +1,14 @@
 # app/api/routers/stores_routes_order_sim.py
 from __future__ import annotations
 
+import os
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
+from app.api.problem import make_problem
 from app.api.routers.stores_order_sim_bindings_repo import (
     build_components_summary_by_filled_code,
     list_bound_filled_code_options,
@@ -37,6 +39,7 @@ from app.api.routers.stores_routes_order_sim_schemas import (
     OrderSimMerchantLinesPutOut,
 )
 from app.db.deps import get_db
+from app.services.item_test_set_service import ItemTestSetService
 from app.services.order_ingest_routing.normalize import normalize_province_name
 from app.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 
@@ -45,6 +48,80 @@ def _norm_str(v) -> str:
     if v is None:
         return ""
     return str(v).replace("\u3000", " ").strip()
+
+
+def _get_order_sim_test_store_id() -> int | None:
+    raw = (os.getenv("ORDER_SIM_TEST_STORE_ID") or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _enforce_order_sim_test_store_gate(*, store_id: int) -> None:
+    tid = _get_order_sim_test_store_id()
+    if tid is None:
+        return
+    if int(store_id) != int(tid):
+        raise HTTPException(
+            status_code=403,
+            detail=make_problem(
+                status_code=403,
+                error_code="forbidden",
+                message="order-sim 已启用测试商铺门禁：仅允许 TEST store_id 访问",
+                context={"store_id": int(store_id), "allowed_test_store_id": int(tid)},
+            ),
+        )
+
+
+def _get_test_shop_id() -> str | None:
+    s = (os.getenv("TEST_SHOP_ID") or "").strip()
+    return s or None
+
+
+def _enforce_order_sim_test_shop_gate(*, shop_id: str) -> None:
+    """
+    可选：当 TEST_SHOP_ID 设置后，order-sim 入口只能用于该测试商铺。
+    """
+    tid = _get_test_shop_id()
+    if tid is None:
+        return
+    if str(shop_id) != tid:
+        raise HTTPException(
+            status_code=403,
+            detail=make_problem(
+                status_code=403,
+                error_code="forbidden",
+                message="order-sim 已启用测试商铺门禁：仅允许 TEST shop_id 访问",
+                context={"shop_id": str(shop_id), "allowed_test_shop_id": str(tid)},
+            ),
+        )
+
+
+def _extract_expanded_item_ids(out_dict: dict) -> list[int]:
+    ids: set[int] = set()
+    resolved = out_dict.get("resolved")
+    if not isinstance(resolved, list):
+        return []
+    for r in resolved:
+        if not isinstance(r, dict):
+            continue
+        exp = r.get("expanded_items")
+        if not isinstance(exp, list):
+            continue
+        for it in exp:
+            if not isinstance(it, dict):
+                continue
+            v = it.get("item_id")
+            try:
+                if v is None:
+                    continue
+                ids.add(int(v))
+            except Exception:
+                continue
+    return sorted(ids)
 
 
 def register(router: APIRouter) -> None:
@@ -60,8 +137,13 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.read"])
         await ensure_store_exists(session, store_id)
+
+        _, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+
         items = await get_merchant_lines(session, store_id=store_id)
         return OrderSimMerchantLinesGetOut(ok=True, data={"store_id": int(store_id), "items": items})
 
@@ -75,10 +157,13 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.read"])
         await ensure_store_exists(session, store_id)
 
         platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+
         items = await list_bound_filled_code_options(session, platform=platform, shop_id=shop_id)
         return OrderSimFilledCodeOptionsOut(ok=True, data={"items": items})
 
@@ -93,10 +178,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
 
         platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
 
         seen: set[int] = set()
         for it in payload.items or []:
@@ -105,7 +192,6 @@ def register(router: APIRouter) -> None:
                 raise HTTPException(status_code=422, detail=f"row_no 重复：{rn}")
             seen.add(rn)
 
-            # ✅ spec 不可修改：忽略前端传入 spec，后端按绑定事实重算
             spec_summary = None
             if (it.filled_code or "").strip():
                 spec_summary = await build_components_summary_by_filled_code(
@@ -141,8 +227,13 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.read"])
         await ensure_store_exists(session, store_id)
+
+        _, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+
         items = await get_cart_lines(session, store_id=store_id)
         return OrderSimCartGetOut(ok=True, data={"store_id": int(store_id), "items": items})
 
@@ -157,8 +248,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
+
+        _, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
 
         seen: set[int] = set()
         for it in payload.items or []:
@@ -202,10 +297,13 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
+        _enforce_order_sim_test_store_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
 
         platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
+        _enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+
         merchant_items = await get_merchant_lines(session, store_id=int(store_id))
         cart_items = await get_cart_lines(session, store_id=int(store_id))
 
@@ -246,6 +344,41 @@ def register(router: APIRouter) -> None:
                 "source": "stores/order-sim/generate-order",
             },
         )
+
+        # ✅ 测试域硬隔离护栏：order-sim 必须“全部是测试商品”
+        try:
+            item_ids = _extract_expanded_item_ids(out_dict if isinstance(out_dict, dict) else {})
+            ts = ItemTestSetService(session)
+            await ts.assert_items_in_test_set(item_ids=item_ids, set_code="DEFAULT")
+        except ItemTestSetService.NotFound as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=make_problem(
+                    status_code=500,
+                    error_code="internal_error",
+                    message=f"测试集合不可用：{e.message}",
+                    context={"platform": platform, "shop_id": shop_id, "store_id": int(store_id), "set_code": "DEFAULT"},
+                ),
+            )
+        except ItemTestSetService.Conflict as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=make_problem(
+                    status_code=409,
+                    error_code="conflict",
+                    message=e.message,
+                    context={
+                        "platform": platform,
+                        "shop_id": shop_id,
+                        "store_id": int(store_id),
+                        "set_code": e.set_code,
+                        "out_of_set_item_ids": e.out_of_set_item_ids,
+                        "resolved_item_ids": _extract_expanded_item_ids(out_dict if isinstance(out_dict, dict) else {}),
+                    },
+                ),
+            )
 
         await session.commit()
         return OrderSimGenerateOrderOut(ok=True, data=out_dict)

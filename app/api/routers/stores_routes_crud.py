@@ -79,8 +79,12 @@ def register(router: APIRouter) -> None:
               COALESCE(s.route_mode, 'FALLBACK') AS route_mode,
               s.email,
               s.contact_name,
-              s.contact_phone
+              s.contact_phone,
+              CASE WHEN pts.id IS NULL THEN 'PROD' ELSE 'TEST' END AS shop_type
             FROM stores AS s
+            LEFT JOIN platform_test_shops AS pts
+              ON pts.store_id = s.id
+             AND pts.code = 'DEFAULT'
             WHERE {' AND '.join(where_parts)}
             ORDER BY s.id
             LIMIT :limit OFFSET :offset
@@ -98,6 +102,7 @@ def register(router: APIRouter) -> None:
                 name=row["name"],
                 active=row["active"],
                 route_mode=row["route_mode"],
+                shop_type=row.get("shop_type") or "PROD",
                 email=row.get("email"),
                 contact_name=row.get("contact_name"),
                 contact_phone=row.get("contact_phone"),
