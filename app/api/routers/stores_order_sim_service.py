@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 
 from app.api.routers.platform_orders_ingest_routes import normalize_filled_code
+from app.services.order_ingest_routing.normalize import normalize_province_name
 
 
 def now_utc_ms() -> int:
@@ -21,6 +22,12 @@ def norm_row_no(v: Any) -> int:
     if n < 1 or n > 6:
         raise HTTPException(status_code=422, detail="row_no 必须在 1..6")
     return n
+
+
+def _norm_str(v: Any) -> str:
+    if v is None:
+        return ""
+    return str(v).replace("\u3000", " ").strip()
 
 
 def build_raw_lines_from_facts(
@@ -59,32 +66,56 @@ def build_raw_lines_from_facts(
     return raw_lines, selected
 
 
+def _pick_single_value(selected: List[Dict[str, Any]], field: str, *, label: str) -> str:
+    vals = {_norm_str(x.get(field)) for x in selected}
+    vals.discard("")
+    if len(vals) > 1:
+        raise HTTPException(status_code=422, detail=f"购物车选中行的 {label} 不一致，请先统一")
+    return next(iter(vals), "")
+
+
 def choose_address_from_cart(selected: List[Dict[str, Any]]) -> Dict[str, str] | None:
-    provs = {str(x.get("province") or "").strip() for x in selected}
-    cities = {str(x.get("city") or "").strip() for x in selected}
+    """
+    ✅ 与 OrderService.ingest(address=...) 刚性对齐：
+      receiver_name / receiver_phone / province / city / district / detail / zipcode
 
-    provs.discard("")
-    cities.discard("")
+    ✅ 同时做 normalize（单一真相）：
+      province 走 normalize_province_name（优先标准全称；否则保留 routing key）
+    """
+    receiver_name = _pick_single_value(selected, "receiver_name", label="receiver_name")
+    receiver_phone = _pick_single_value(selected, "receiver_phone", label="receiver_phone")
+    province_raw = _pick_single_value(selected, "province", label="province")
+    city = _pick_single_value(selected, "city", label="city")
+    district = _pick_single_value(selected, "district", label="district")
+    detail = _pick_single_value(selected, "detail", label="detail")
+    zipcode = _pick_single_value(selected, "zipcode", label="zipcode")
 
-    if len(provs) > 1:
-        raise HTTPException(status_code=422, detail="购物车选中行的 province 不一致，请先统一省份")
-    if len(cities) > 1:
-        raise HTTPException(status_code=422, detail="购物车选中行的 city 不一致，请先统一城市")
-
-    province = next(iter(provs), "")
-    city = next(iter(cities), "")
-
-    if not province and not city:
+    has_any = any([receiver_name, receiver_phone, province_raw, city, district, detail, zipcode])
+    if not has_any:
         return None
 
-    return {
-        "province": province,
+    prov_norm = normalize_province_name(province_raw)
+
+    # 最小强约束：省/市/详细地址/电话 必填（订单路由/解释依赖）
+    if not prov_norm:
+        raise HTTPException(status_code=422, detail="请在购物车填写 province（省份）")
+    if not city:
+        raise HTTPException(status_code=422, detail="请在购物车填写 city（城市）")
+    if not detail:
+        raise HTTPException(status_code=422, detail="请在购物车填写 detail（详细地址）")
+    if not receiver_phone:
+        raise HTTPException(status_code=422, detail="请在购物车填写 receiver_phone（收货电话）")
+
+    out: Dict[str, str] = {
+        "receiver_name": receiver_name,
+        "receiver_phone": receiver_phone,
+        "province": prov_norm,
         "city": city,
-        "district": "",
-        "address": "",
-        "name": "",
-        "phone": "",
+        "district": district,
+        "detail": detail,
+        "zipcode": zipcode,
     }
+    return {k: v for k, v in out.items() if v}
 
 
 def build_ext_order_no(*, platform: str, store_id: int, idempotency_key: Optional[str]) -> str:

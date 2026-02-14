@@ -50,8 +50,16 @@ class CartLineItemIn(BaseModel):
     row_no: OrderSimRowNo
     checked: bool = False
     qty: int = 0
+
+    # ✅ 地址字段（与 OrderService.ingest(address=...) 对齐）
+    receiver_name: Optional[str] = None
+    receiver_phone: Optional[str] = None
     province: Optional[str] = None
     city: Optional[str] = None
+    district: Optional[str] = None
+    detail: Optional[str] = None
+    zipcode: Optional[str] = None
+
     if_version: Optional[int] = None
 
 
@@ -65,8 +73,16 @@ class CartLineItemOut(BaseModel):
     row_no: int
     checked: bool = False
     qty: int = 0
+
+    # ✅ 地址字段（与 ingest 对齐）
+    receiver_name: Optional[str] = None
+    receiver_phone: Optional[str] = None
     province: Optional[str] = None
     city: Optional[str] = None
+    district: Optional[str] = None
+    detail: Optional[str] = None
+    zipcode: Optional[str] = None
+
     version: int = 0
     updated_at: Optional[Any] = None
 

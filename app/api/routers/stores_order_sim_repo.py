@@ -81,8 +81,13 @@ async def get_cart_lines(session: AsyncSession, *, store_id: int) -> List[Dict[s
                   row_no,
                   checked,
                   qty,
+                  receiver_name,
+                  receiver_phone,
                   province,
                   city,
+                  district,
+                  detail,
+                  zipcode,
                   version,
                   updated_at
                 FROM store_order_sim_cart
@@ -103,8 +108,13 @@ async def get_cart_lines(session: AsyncSession, *, store_id: int) -> List[Dict[s
                 "row_no": i,
                 "checked": bool(r.get("checked") or False),
                 "qty": int(r.get("qty") or 0),
+                "receiver_name": r.get("receiver_name"),
+                "receiver_phone": r.get("receiver_phone"),
                 "province": r.get("province"),
                 "city": r.get("city"),
+                "district": r.get("district"),
+                "detail": r.get("detail"),
+                "zipcode": r.get("zipcode"),
                 "version": int(r.get("version") or 0),
                 "updated_at": r.get("updated_at"),
             }
@@ -182,8 +192,13 @@ async def upsert_cart_line(
     row_no: int,
     checked: bool,
     qty: int,
+    receiver_name: Optional[str],
+    receiver_phone: Optional[str],
     province: Optional[str],
     city: Optional[str],
+    district: Optional[str],
+    detail: Optional[str],
+    zipcode: Optional[str],
     if_version: Optional[int],
 ) -> None:
     if if_version is not None:
@@ -216,22 +231,31 @@ async def upsert_cart_line(
             """
             INSERT INTO store_order_sim_cart(
               store_id, row_no,
-              checked, qty, province, city,
+              checked, qty,
+              receiver_name, receiver_phone,
+              province, city, district, detail, zipcode,
               version, updated_at
             )
             VALUES(
               :sid, :rn,
-              :checked, :qty, :province, :city,
+              :checked, :qty,
+              :receiver_name, :receiver_phone,
+              :province, :city, :district, :detail, :zipcode,
               1, now()
             )
             ON CONFLICT (store_id, row_no)
             DO UPDATE SET
-              checked    = EXCLUDED.checked,
-              qty        = EXCLUDED.qty,
-              province   = EXCLUDED.province,
-              city       = EXCLUDED.city,
-              version    = store_order_sim_cart.version + 1,
-              updated_at = now()
+              checked        = EXCLUDED.checked,
+              qty            = EXCLUDED.qty,
+              receiver_name  = EXCLUDED.receiver_name,
+              receiver_phone = EXCLUDED.receiver_phone,
+              province       = EXCLUDED.province,
+              city           = EXCLUDED.city,
+              district       = EXCLUDED.district,
+              detail         = EXCLUDED.detail,
+              zipcode        = EXCLUDED.zipcode,
+              version        = store_order_sim_cart.version + 1,
+              updated_at     = now()
             """
         ),
         {
@@ -239,7 +263,12 @@ async def upsert_cart_line(
             "rn": int(row_no),
             "checked": bool(checked),
             "qty": q,
-            "province": None if province is None else str(province),
-            "city": None if city is None else str(city),
+            "receiver_name": None if receiver_name is None else str(receiver_name).strip(),
+            "receiver_phone": None if receiver_phone is None else str(receiver_phone).strip(),
+            "province": None if province is None else str(province).strip(),
+            "city": None if city is None else str(city).strip(),
+            "district": None if district is None else str(district).strip(),
+            "detail": None if detail is None else str(detail).strip(),
+            "zipcode": None if zipcode is None else str(zipcode).strip(),
         },
     )
