@@ -5,13 +5,15 @@ from typing import List
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.batch_code_contract import normalize_optional_batch_code
 from app.api.routers.stock_ledger_helpers import build_common_filters, normalize_time_range
 from app.db.session import get_session
 from app.models.item import Item
+from app.models.item_test_set import ItemTestSet
+from app.models.item_test_set_item import ItemTestSetItem
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import LedgerQuery, LedgerReasonStat, LedgerSummary
 
@@ -27,10 +29,8 @@ def register(router: APIRouter) -> None:
 
         - 使用与明细查询相同的过滤条件（LedgerQuery）；
         - 按 reason 聚合 count / sum(delta)；
-        - 不返回明细 rows，只返回统计结果。
+        - ✅ 统计口径 PROD-only：排除 DEFAULT Test Set 商品。
         """
-        # ✅ 主线 B：查询级 batch_code 归一（None/空串/'None' -> None）
-        # helper 内会基于 batch_code_key 做过滤；这里先做入口层防回潮。
         norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
         if getattr(payload, "batch_code", None) != norm_bc:
             payload = payload.model_copy(update={"batch_code": norm_bc})
@@ -38,16 +38,30 @@ def register(router: APIRouter) -> None:
         time_from, time_to = normalize_time_range(payload)
         conditions = build_common_filters(payload, time_from, time_to)
 
+        default_set_id_sq = (
+            select(ItemTestSet.id)
+            .where(ItemTestSet.code == "DEFAULT")
+            .limit(1)
+            .scalar_subquery()
+        )
+
         stmt = (
             select(
                 StockLedger.reason,
                 func.count(StockLedger.id).label("cnt"),
-                func.sum(StockLedger.delta).label("total_delta"),
+                func.coalesce(func.sum(StockLedger.delta), 0).label("total_delta"),
             )
             .select_from(StockLedger)
+            .outerjoin(
+                ItemTestSetItem,
+                and_(
+                    ItemTestSetItem.item_id == StockLedger.item_id,
+                    ItemTestSetItem.set_id == default_set_id_sq,
+                ),
+            )
+            .where(ItemTestSetItem.id.is_(None))  # ✅ PROD-only
         )
 
-        # 若使用 item_keyword，则需要 JOIN items
         if payload.item_keyword:
             kw = f"%{payload.item_keyword.strip()}%"
             stmt = stmt.join(Item, Item.id == StockLedger.item_id)

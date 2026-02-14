@@ -20,6 +20,8 @@ MODEL_SPECS = [
 
     # -------- 库存 / 批次 --------
     ("app.models.item", "Item"),
+    ("app.models.item_test_set", "ItemTestSet"),
+    ("app.models.item_test_set_item", "ItemTestSetItem"),
     ("app.models.location", "Location"),
     ("app.models.warehouse", "Warehouse"),
     ("app.models.batch", "Batch"),
@@ -100,6 +102,8 @@ __all__ = [
 
     # ---- Inventory ----
     "Item",
+    "ItemTestSet",
+    "ItemTestSetItem",
     "Location",
     "Warehouse",
     "Batch",
