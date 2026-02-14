@@ -22,15 +22,9 @@ async def load_failures(
     platform: str,
 ) -> OutboundFailuresMetricsResponse:
     """
-    出库失败诊断（v2）：
+    出库失败诊断（v2，PROD-only 简化口径）：
 
-    兼容两类失败来源：
-    1) 旧口径：category IN ('OUTBOUND_FAIL','ROUTING') + meta.fail_point
-    2) Phase 4 新增：/ship/confirm 的合同拒绝（reject）
-       - category='OUTBOUND'
-       - meta.event='SHIP_CONFIRM_REJECT'
-       - meta.error_code / meta.message 可统计、可追责
-       - 归入 ship_failed
+    ✅ 默认排除测试店铺（store_id 级别门禁）。
     """
     fail_sql = text(
         """
@@ -44,11 +38,7 @@ async def load_failures(
               ELSE COALESCE(meta->>'fail_point', '')
             END AS fail_point,
 
-            CASE
-              WHEN category = 'OUTBOUND' AND (meta->>'event') = 'SHIP_CONFIRM_REJECT'
-                THEN COALESCE(meta->>'error_code', '')
-              ELSE COALESCE(meta->>'error_code', '')
-            END AS error_code,
+            COALESCE(meta->>'error_code', '') AS error_code,
 
             CASE
               WHEN category = 'OUTBOUND' AND (meta->>'event') = 'SHIP_CONFIRM_REJECT'
@@ -62,6 +52,18 @@ async def load_failures(
         )
           AND (meta->>'platform') = :platform
           AND (created_at AT TIME ZONE 'utc')::date = :day
+          AND (meta->>'shop_id') IS NOT NULL
+
+          -- PROD-only：测试店铺门禁（store_id）
+          AND NOT EXISTS (
+            SELECT 1
+              FROM stores s
+              JOIN platform_test_shops pts
+                ON pts.store_id = s.id
+               AND pts.code = 'DEFAULT'
+             WHERE upper(s.platform) = upper(audit_events.meta->>'platform')
+               AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(audit_events.meta->>'shop_id' AS text))
+          )
         """
     )
     rows = (await session.execute(fail_sql, {"platform": platform, "day": day})).fetchall()
@@ -98,7 +100,6 @@ async def load_failures(
             _bump(inv_by_code, code_raw)
             fail_point = "INVENTORY_FAIL"
         else:
-            # 未知失败点仍收集，但不计入四类总数；可以后续再扩展
             fail_point = fail_point_raw or "UNKNOWN"
 
         details.append(

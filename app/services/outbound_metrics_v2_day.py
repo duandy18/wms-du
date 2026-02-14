@@ -13,11 +13,39 @@ from app.schemas.metrics_outbound_v2 import (
 )
 
 
+# ----------------- PROD-only：测试店铺门禁（store_id 级别） -----------------
+# 用于 audit_events：依赖 meta->>'platform' + meta->>'shop_id'
+AUDIT_STORE_GATE = """
+  AND NOT EXISTS (
+    SELECT 1
+      FROM stores s
+      JOIN platform_test_shops pts
+        ON pts.store_id = s.id
+       AND pts.code = 'DEFAULT'
+     WHERE upper(s.platform) = upper(audit_events.meta->>'platform')
+       AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(audit_events.meta->>'shop_id' AS text))
+  )
+""".strip()
+
+# 用于 stock_ledger：通过 ref 解析并 join orders，再对 orders 做 store 门禁
+ORDER_STORE_GATE = """
+  AND NOT EXISTS (
+    SELECT 1
+      FROM stores s
+      JOIN platform_test_shops pts
+        ON pts.store_id = s.id
+       AND pts.code = 'DEFAULT'
+     WHERE upper(s.platform) = upper(o.platform)
+       AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+  )
+""".strip()
+
+
 async def _calc_success_rate(
     session: AsyncSession, *, day: date, platform: str
 ) -> tuple[int, int, float]:
     orders_sql = text(
-        """
+        f"""
         SELECT
             count(*) FILTER (WHERE (meta->>'event')='ORDER_CREATED') AS total,
             count(*) FILTER (WHERE (meta->>'event')='SHIP_COMMIT') AS success
@@ -25,6 +53,8 @@ async def _calc_success_rate(
         WHERE category='OUTBOUND'
           AND (meta->>'platform') = :platform
           AND (created_at AT TIME ZONE 'utc')::date = :day
+          AND (meta->>'shop_id') IS NOT NULL
+          {AUDIT_STORE_GATE}
         """
     )
     r = await session.execute(orders_sql, {"platform": platform, "day": day})
@@ -42,7 +72,7 @@ async def _calc_fallback_rate(
     session: AsyncSession, *, day: date, platform: str
 ) -> tuple[int, int, float]:
     routing_sql = text(
-        """
+        f"""
         SELECT
             count(*) FILTER (WHERE meta->>'routing_event'='FALLBACK') AS fallback_times,
             count(*) FILTER (
@@ -52,6 +82,8 @@ async def _calc_fallback_rate(
         WHERE category='ROUTING'
           AND (meta->>'platform') = :platform
           AND (created_at AT TIME ZONE 'utc')::date = :day
+          AND (meta->>'shop_id') IS NOT NULL
+          {AUDIT_STORE_GATE}
         """
     )
     r = await session.execute(routing_sql, {"platform": platform, "day": day})
@@ -65,9 +97,10 @@ async def _calc_fallback_rate(
     return fallback_times, total_routing, fallback_rate
 
 
-async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date) -> float:
+async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date, platform: str) -> float:
+    # 通过解析 ledger.ref join orders，才能拿到 shop_id 做 store 门禁
     pick_sql = text(
-        """
+        f"""
         SELECT
             l.item_id,
             l.batch_code,
@@ -75,12 +108,19 @@ async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date) -> float:
             abs(l.delta) AS qty,
             l.occurred_at
         FROM stock_ledger l
+        JOIN orders o
+          ON upper(o.platform) = upper(split_part(l.ref, ':', 2))
+         AND btrim(CAST(o.shop_id AS text)) = btrim(split_part(l.ref, ':', 3))
+         AND btrim(CAST(o.ext_order_no AS text)) = btrim(regexp_replace(l.ref, '^ORD:[^:]+:[^:]+:', ''))
         WHERE l.delta < 0
+          AND l.ref LIKE 'ORD:%'
+          AND o.platform = :platform
           AND l.reason IN ('PICK','OUTBOUND_SHIP','OUTBOUND_V2_SHIP','SHIP')
           AND (l.occurred_at AT TIME ZONE 'utc')::date = :day
+          {ORDER_STORE_GATE}
         """
     )
-    rows = (await session.execute(pick_sql, {"day": day})).fetchall()
+    rows = (await session.execute(pick_sql, {"day": day, "platform": platform})).fetchall()
 
     fefo_correct = 0
     fefo_total = 0
@@ -119,7 +159,7 @@ async def _calc_distribution(
     platform: str,
 ) -> List[OutboundDistributionPoint]:
     dist_orders_sql = text(
-        """
+        f"""
         SELECT
             to_char(date_trunc('hour', created_at AT TIME ZONE 'utc'), 'HH24') AS hour,
             count(*) FILTER (WHERE (meta->>'event')='ORDER_CREATED') AS orders
@@ -127,6 +167,8 @@ async def _calc_distribution(
         WHERE category='OUTBOUND'
           AND (meta->>'platform') = :platform
           AND (created_at AT TIME ZONE 'utc')::date = :day
+          AND (meta->>'shop_id') IS NOT NULL
+          {AUDIT_STORE_GATE}
         GROUP BY 1
         ORDER BY 1
         """
@@ -136,19 +178,26 @@ async def _calc_distribution(
     ).fetchall()
 
     dist_pick_sql = text(
-        """
+        f"""
         SELECT
-            to_char(date_trunc('hour', occurred_at AT TIME ZONE 'utc'), 'HH24') AS hour,
-            sum(abs(delta)) AS pick_qty
-        FROM stock_ledger
-        WHERE delta < 0
-          AND reason IN ('PICK','OUTBOUND_SHIP','OUTBOUND_V2_SHIP','SHIP')
-          AND (occurred_at AT TIME ZONE 'utc')::date = :day
+            to_char(date_trunc('hour', l.occurred_at AT TIME ZONE 'utc'), 'HH24') AS hour,
+            sum(abs(l.delta)) AS pick_qty
+        FROM stock_ledger l
+        JOIN orders o
+          ON upper(o.platform) = upper(split_part(l.ref, ':', 2))
+         AND btrim(CAST(o.shop_id AS text)) = btrim(split_part(l.ref, ':', 3))
+         AND btrim(CAST(o.ext_order_no AS text)) = btrim(regexp_replace(l.ref, '^ORD:[^:]+:[^:]+:', ''))
+        WHERE l.delta < 0
+          AND l.ref LIKE 'ORD:%'
+          AND o.platform = :platform
+          AND l.reason IN ('PICK','OUTBOUND_SHIP','OUTBOUND_V2_SHIP','SHIP')
+          AND (l.occurred_at AT TIME ZONE 'utc')::date = :day
+          {ORDER_STORE_GATE}
         GROUP BY 1
         ORDER BY 1
         """
     )
-    pick_rows = (await session.execute(dist_pick_sql, {"day": day})).fetchall()
+    pick_rows = (await session.execute(dist_pick_sql, {"day": day, "platform": platform})).fetchall()
     picks_map = {r.hour: int(r.pick_qty or 0) for r in pick_rows}
 
     distribution: List[OutboundDistributionPoint] = []
@@ -179,7 +228,7 @@ async def load_day(
         day=day,
         platform=platform,
     )
-    fefo_hit_rate = await _calc_fefo_hit_rate(session, day=day)
+    fefo_hit_rate = await _calc_fefo_hit_rate(session, day=day, platform=platform)
     distribution = await _calc_distribution(session, day=day, platform=platform)
 
     return OutboundMetricsV2(

@@ -20,13 +20,25 @@ async def load_by_shop(
         """
         WITH orders AS (
             SELECT
-                COALESCE(meta->>'shop_id', 'UNKNOWN') AS shop_id,
+                meta->>'shop_id' AS shop_id,
                 meta->>'event' AS event,
                 ref
             FROM audit_events
             WHERE category='OUTBOUND'
               AND (meta->>'platform') = :platform
               AND (created_at AT TIME ZONE 'utc')::date = :day
+              AND (meta->>'shop_id') IS NOT NULL
+
+              -- PROD-only：测试店铺门禁（store_id）
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM stores s
+                  JOIN platform_test_shops pts
+                    ON pts.store_id = s.id
+                   AND pts.code = 'DEFAULT'
+                 WHERE upper(s.platform) = upper(audit_events.meta->>'platform')
+                   AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(audit_events.meta->>'shop_id' AS text))
+              )
         )
         SELECT
             shop_id,
@@ -42,7 +54,7 @@ async def load_by_shop(
     routing_sql = text(
         """
         SELECT
-            COALESCE(meta->>'shop_id', 'UNKNOWN') AS shop_id,
+            meta->>'shop_id' AS shop_id,
             count(*) FILTER (WHERE meta->>'routing_event'='FALLBACK') AS fallback_times,
             count(*) FILTER (
                 WHERE meta->>'routing_event' IN ('REQUEST','FALLBACK','OK')
@@ -51,6 +63,18 @@ async def load_by_shop(
         WHERE category='ROUTING'
           AND (meta->>'platform') = :platform
           AND (created_at AT TIME ZONE 'utc')::date = :day
+          AND (meta->>'shop_id') IS NOT NULL
+
+          -- PROD-only：测试店铺门禁（store_id）
+          AND NOT EXISTS (
+            SELECT 1
+              FROM stores s
+              JOIN platform_test_shops pts
+                ON pts.store_id = s.id
+               AND pts.code = 'DEFAULT'
+             WHERE upper(s.platform) = upper(audit_events.meta->>'platform')
+               AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(audit_events.meta->>'shop_id' AS text))
+          )
         GROUP BY shop_id
         """
     )
@@ -61,23 +85,17 @@ async def load_by_shop(
 
     shops: List[OutboundShopMetric] = []
     for r in rows:
-        shop_id = str(r.shop_id)
+        sid = str(r.shop_id)
         total = int(r.total_orders or 0)
         success = int(r.success_orders or 0)
-        if total > 0:
-            success_rate = round(success * 100.0 / total, 2)
-        else:
-            success_rate = 0.0
+        success_rate = round(success * 100.0 / total, 2) if total > 0 else 0.0
 
-        fb_times, fb_total = routing_map.get(shop_id, (0, 0))
-        if fb_total > 0:
-            fb_rate = round(fb_times * 100.0 / fb_total, 2)
-        else:
-            fb_rate = 0.0
+        fb_times, fb_total = routing_map.get(sid, (0, 0))
+        fb_rate = round(fb_times * 100.0 / fb_total, 2) if fb_total > 0 else 0.0
 
         shops.append(
             OutboundShopMetric(
-                shop_id=shop_id,
+                shop_id=sid,
                 total_orders=total,
                 success_orders=success,
                 success_rate=success_rate,
