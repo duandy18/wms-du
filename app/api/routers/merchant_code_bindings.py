@@ -7,12 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.api.problem import make_problem
-from app.models.fsku import Fsku
-from app.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
-from app.models.store import Store
-from app.services.merchant_code_binding_service import MerchantCodeBindingService
-from app.services.platform_order_resolve_service import norm_platform, norm_shop_id
-
 from app.api.routers.merchant_code_bindings_schemas import (
     FskuLiteOut,
     MerchantCodeBindingBindIn,
@@ -23,6 +17,12 @@ from app.api.routers.merchant_code_bindings_schemas import (
     MerchantCodeBindingRowOut,
     StoreLiteOut,
 )
+from app.models.fsku import Fsku
+from app.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
+from app.models.store import Store
+from app.services.merchant_code_binding_service import MerchantCodeBindingService
+from app.services.platform_order_resolve_service import norm_platform, norm_shop_id
+from app.services.test_shop_testset_guard_service import TestShopTestSetGuardService
 
 router = APIRouter(tags=["merchant-code-bindings"])
 
@@ -140,6 +140,19 @@ async def bind_merchant_code(
     plat = norm_platform(payload.platform)
     shop_id = norm_shop_id(payload.shop_id)
 
+    # ✅ 宇宙边界（以 platform_test_shops 为唯一真相）：
+    #    - 有 components 才校验；无 components 直接放行（合同兼容）
+    guard = TestShopTestSetGuardService(session)
+    await guard.guard_fsku_components_by_shop(
+        platform=plat,
+        shop_id=shop_id,
+        store_id=None,
+        fsku_id=int(payload.fsku_id),
+        set_code="DEFAULT",
+        path="/merchant-code-bindings/bind",
+        method="POST",
+    )
+
     svc = MerchantCodeBindingService(session)
     try:
         obj = await svc.bind_upsert(
@@ -165,9 +178,7 @@ async def bind_merchant_code(
             )
 
         store = (
-            await session.execute(
-                select(Store).where(Store.platform == plat, Store.shop_id == shop_id).limit(1)
-            )
+            await session.execute(select(Store).where(Store.platform == plat, Store.shop_id == shop_id).limit(1))
         ).scalars().first()
         if store is None:
             raise HTTPException(
@@ -238,9 +249,7 @@ async def close_merchant_code_binding(
             )
 
         store = (
-            await session.execute(
-                select(Store).where(Store.platform == plat, Store.shop_id == shop_id).limit(1)
-            )
+            await session.execute(select(Store).where(Store.platform == plat, Store.shop_id == shop_id).limit(1))
         ).scalars().first()
         if store is None:
             raise HTTPException(
