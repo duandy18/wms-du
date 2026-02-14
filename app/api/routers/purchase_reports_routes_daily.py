@@ -6,12 +6,15 @@ from decimal import Decimal
 from typing import List, Optional, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import distinct, func, select
+from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routers.purchase_reports_helpers import apply_common_filters, time_mode_query
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
+from app.models.item import Item
+from app.models.item_test_set import ItemTestSet
+from app.models.item_test_set_item import ItemTestSetItem
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.models.receive_task import ReceiveTask
@@ -36,8 +39,19 @@ def register(router: APIRouter) -> None:
         ),
         time_mode: str = time_mode_query("occurred"),
     ) -> List[DailyPurchaseReportItem]:
+        """
+        采购日报表（按天汇总）——统计口径 PROD-only（排除 DEFAULT Test Set 商品）
+        """
+
+        default_set_id_sq = (
+            select(ItemTestSet.id)
+            .where(ItemTestSet.code == "DEFAULT")
+            .limit(1)
+            .scalar_subquery()
+        )
+
         # -----------------------------
-        # fact：Receipt 事实口径（原逻辑）
+        # fact：Receipt 事实口径（原逻辑 + PROD-only 过滤）
         # -----------------------------
         if mode == "fact":
             if time_mode == "po_created":
@@ -57,9 +71,18 @@ def register(router: APIRouter) -> None:
                 )
                 .select_from(InboundReceipt)
                 .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
+                .join(Item, Item.id == InboundReceiptLine.item_id)
+                .outerjoin(
+                    ItemTestSetItem,
+                    and_(
+                        ItemTestSetItem.item_id == Item.id,
+                        ItemTestSetItem.set_id == default_set_id_sq,
+                    ),
+                )
                 .outerjoin(ReceiveTask, ReceiveTask.id == InboundReceipt.receive_task_id)
                 .outerjoin(PurchaseOrder, PurchaseOrder.id == ReceiveTask.po_id)
                 .where(InboundReceipt.source_type == "PO")
+                .where(ItemTestSetItem.id.is_(None))  # ✅ PROD-only
             )
 
             stmt = apply_common_filters(
@@ -74,8 +97,7 @@ def register(router: APIRouter) -> None:
 
             stmt = stmt.group_by(day_expr).order_by(day_expr.asc())
 
-            res = await session.execute(stmt)
-            rows = res.all()
+            rows = (await session.execute(stmt)).all()
 
             items: List[DailyPurchaseReportItem] = []
             for day_val, order_count, total_qty_cases, total_units, total_amount in rows:
@@ -91,7 +113,7 @@ def register(router: APIRouter) -> None:
             return items
 
         # -----------------------------
-        # plan：PO 下单计划口径
+        # plan：PO 下单计划口径（原逻辑 + PROD-only 过滤）
         # -----------------------------
         if time_mode == "po_created":
             day_expr = func.date(PurchaseOrder.created_at).label("day")
@@ -118,6 +140,15 @@ def register(router: APIRouter) -> None:
             )
             .select_from(PurchaseOrder)
             .join(PurchaseOrderLine, PurchaseOrderLine.po_id == PurchaseOrder.id)
+            .join(Item, Item.id == PurchaseOrderLine.item_id)
+            .outerjoin(
+                ItemTestSetItem,
+                and_(
+                    ItemTestSetItem.item_id == Item.id,
+                    ItemTestSetItem.set_id == default_set_id_sq,
+                ),
+            )
+            .where(ItemTestSetItem.id.is_(None))  # ✅ PROD-only
         )
 
         if date_from is not None:
@@ -134,8 +165,7 @@ def register(router: APIRouter) -> None:
 
         stmt = stmt.group_by(day_expr).order_by(day_expr.asc())
 
-        res = await session.execute(stmt)
-        rows = res.all()
+        rows = (await session.execute(stmt)).all()
 
         items: List[DailyPurchaseReportItem] = []
         for day_val, order_count, total_qty_cases, total_units, total_amount in rows:

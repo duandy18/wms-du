@@ -37,7 +37,13 @@ def register(router: APIRouter) -> None:
         ),
     ) -> List[FinanceDailyRow]:
         """
-        财务总览（按日）——运营视角粗估版本：
+        财务总览（按日）——运营视角粗估版本（PROD-only）：
+
+        ✅ 统计口径（封板）：
+        - 财务统计只统计真实业务（PROD-only）：
+          1) 排除 DEFAULT Test Set 商品
+          2) 排除测试店铺（platform_test_shops, code='DEFAULT'）
+          3) 收入口径：排除“含任意测试商品”的订单（否则订单总额会混入测试线）
 
         - 收入：orders.pay_amount（缺失则退回 order_amount），按 orders.created_at::date 汇总
         - 商品成本：以 purchase_order_lines 的平均单价（总金额 / 总最小单位数）粗算，
@@ -50,7 +56,24 @@ def register(router: APIRouter) -> None:
 
         sql = text(
             """
-            WITH day_dim AS (
+            WITH
+            default_set AS (
+              SELECT id AS set_id
+                FROM item_test_sets
+               WHERE code = 'DEFAULT'
+               LIMIT 1
+            ),
+            test_items AS (
+              SELECT its.item_id
+                FROM item_test_set_items its
+               WHERE its.set_id = (SELECT set_id FROM default_set)
+            ),
+            test_shops AS (
+              SELECT platform, shop_id
+                FROM platform_test_shops
+               WHERE code = 'DEFAULT'
+            ),
+            day_dim AS (
               SELECT generate_series(:from_date, :to_date, interval '1 day')::date AS day
             ),
             item_cost AS (
@@ -60,6 +83,7 @@ def register(router: APIRouter) -> None:
                 COALESCE(SUM(pol.qty_ordered * COALESCE(pol.units_per_case, 1)), 0) AS total_units
               FROM purchase_orders po
               JOIN purchase_order_lines pol ON pol.po_id = po.id
+              WHERE pol.item_id NOT IN (SELECT item_id FROM test_items)
               GROUP BY pol.item_id
             ),
             item_avg_cost AS (
@@ -81,6 +105,8 @@ def register(router: APIRouter) -> None:
               JOIN order_items oi ON oi.order_id = o.id
               LEFT JOIN item_avg_cost iac ON iac.item_id = oi.item_id
               WHERE DATE(o.created_at) BETWEEN :from_date AND :to_date
+                AND (o.platform, o.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
+                AND oi.item_id NOT IN (SELECT item_id FROM test_items)
               GROUP BY DATE(o.created_at)
             ),
             order_revenue AS (
@@ -91,15 +117,23 @@ def register(router: APIRouter) -> None:
                 ) AS total_revenue
               FROM orders o
               WHERE DATE(o.created_at) BETWEEN :from_date AND :to_date
+                AND (o.platform, o.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM order_items oi
+                   WHERE oi.order_id = o.id
+                     AND oi.item_id IN (SELECT item_id FROM test_items)
+                )
               GROUP BY DATE(o.created_at)
             ),
             ship_cost AS (
               SELECT
-                DATE(created_at) AS day,
-                SUM(COALESCE(cost_estimated, 0)) AS total_shipping_cost
-              FROM shipping_records
-              WHERE DATE(created_at) BETWEEN :from_date AND :to_date
-              GROUP BY DATE(created_at)
+                DATE(sr.created_at) AS day,
+                SUM(COALESCE(sr.cost_estimated, 0)) AS total_shipping_cost
+              FROM shipping_records sr
+              WHERE DATE(sr.created_at) BETWEEN :from_date AND :to_date
+                AND (sr.platform, sr.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
+              GROUP BY DATE(sr.created_at)
             )
             SELECT
               d.day AS day,

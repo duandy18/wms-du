@@ -49,11 +49,17 @@ def register(router: APIRouter) -> None:
         ),
     ) -> List[FinanceShopRow]:
         """
-        店铺盈利能力（粗粒度）：
+        店铺盈利能力（粗粒度）（PROD-only）：
+
+        ✅ 统计口径（封板）：
+        - 财务统计只统计真实业务（PROD-only）：
+          1) 排除 DEFAULT Test Set 商品
+          2) 排除测试店铺（platform_test_shops, code='DEFAULT'）
+          3) 收入口径：排除“含任意测试商品”的订单（否则订单总额会混入测试线）
 
         - 收入：orders.pay_amount（缺失则退回 order_amount），按平台 / 店铺汇总
-        - 商品成本：基于 purchase_order_lines 推导的 avg_unit_cost × order_items.qty
-        - 发货成本：shipping_records.cost_estimated，按平台 / 店铺汇总
+        - 商品成本：基于 purchase_order_lines 推导的 avg_unit_cost × order_items.qty（排除测试商品）
+        - 发货成本：shipping_records.cost_estimated，按平台 / 店铺汇总（排除测试店铺）
 
         说明：
         - plat='' / shop='' 表示“不过滤”，避免 asyncpg 对 NULL 参数类型歧义。
@@ -67,13 +73,31 @@ def register(router: APIRouter) -> None:
 
         sql = text(
             """
-            WITH item_cost AS (
+            WITH
+            default_set AS (
+              SELECT id AS set_id
+                FROM item_test_sets
+               WHERE code = 'DEFAULT'
+               LIMIT 1
+            ),
+            test_items AS (
+              SELECT its.item_id
+                FROM item_test_set_items its
+               WHERE its.set_id = (SELECT set_id FROM default_set)
+            ),
+            test_shops AS (
+              SELECT platform, shop_id
+                FROM platform_test_shops
+               WHERE code = 'DEFAULT'
+            ),
+            item_cost AS (
               SELECT
                 pol.item_id,
                 COALESCE(SUM(COALESCE(pol.line_amount, 0)), 0) AS total_amount,
                 COALESCE(SUM(pol.qty_ordered * COALESCE(pol.units_per_case, 1)), 0) AS total_units
               FROM purchase_orders po
               JOIN purchase_order_lines pol ON pol.po_id = po.id
+              WHERE pol.item_id NOT IN (SELECT item_id FROM test_items)
               GROUP BY pol.item_id
             ),
             item_avg_cost AS (
@@ -98,6 +122,8 @@ def register(router: APIRouter) -> None:
               WHERE DATE(o.created_at) BETWEEN :from_date AND :to_date
                 AND (:plat = '' OR o.platform = :plat)
                 AND (:shop = '' OR o.shop_id = :shop)
+                AND (o.platform, o.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
+                AND oi.item_id NOT IN (SELECT item_id FROM test_items)
               GROUP BY o.platform, o.shop_id
             ),
             order_revenue_shop AS (
@@ -111,6 +137,13 @@ def register(router: APIRouter) -> None:
               WHERE DATE(o.created_at) BETWEEN :from_date AND :to_date
                 AND (:plat = '' OR o.platform = :plat)
                 AND (:shop = '' OR o.shop_id = :shop)
+                AND (o.platform, o.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM order_items oi
+                   WHERE oi.order_id = o.id
+                     AND oi.item_id IN (SELECT item_id FROM test_items)
+                )
               GROUP BY o.platform, o.shop_id
             ),
             ship_cost_shop AS (
@@ -122,6 +155,7 @@ def register(router: APIRouter) -> None:
               WHERE DATE(sr.created_at) BETWEEN :from_date AND :to_date
                 AND (:plat = '' OR sr.platform = :plat)
                 AND (:shop = '' OR sr.shop_id = :shop)
+                AND (sr.platform, sr.shop_id) NOT IN (SELECT platform, shop_id FROM test_shops)
               GROUP BY sr.platform, sr.shop_id
             ),
             shop_dim AS (

@@ -40,13 +40,71 @@ def _try_get_options(client: TestClient, *, token: str, store_id: int) -> Tuple[
     return resp.status_code, payload
 
 
+def _list_stores(client: TestClient, *, token: str) -> List[Dict[str, Any]]:
+    """
+    通过 /stores 列表拿到 shop_type，用于选择 TEST store。
+    兼容返回形态：
+      - { ok: true, data: [...] }
+      - { ok: true, data: { items: [...] } }
+      - 其它：尽量容错，返回空
+    """
+    resp = client.get("/stores", headers=_auth_headers(token))
+    if resp.status_code != 200:
+        return []
+    try:
+        payload = resp.json()
+    except Exception:
+        return []
+
+    if not isinstance(payload, dict):
+        return []
+
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        rows = data.get("items") or []
+    elif isinstance(data, list):
+        rows = data
+    else:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if isinstance(r, dict):
+            out.append(r)
+    return out
+
+
+def _extract_store_id(row: Dict[str, Any]) -> Optional[int]:
+    sid = row.get("id")
+    if sid is None:
+        sid = row.get("store_id")
+    if sid is None:
+        return None
+    try:
+        x = int(sid)
+    except Exception:
+        return None
+    return x if x >= 1 else None
+
+
+def _is_test_store_row(row: Dict[str, Any]) -> bool:
+    # /stores 已显性化 shop_type: TEST | PROD
+    st = str(row.get("shop_type") or "").strip().upper()
+    return st == "TEST"
+
+
 def _find_existing_store_id(client: TestClient, *, token: str) -> Optional[int]:
     """
-    Contract test 不硬编码 store_id。
+    Contract test 不硬编码 store_id，但 order-sim 已启用测试商铺门禁：
+      - 必须选择一个 TEST store，否则 403 属于正确行为。
+
     策略：
-      1) 如果设置 STORE_ID_FOR_CONTRACT，优先用它（且必须存在）
-      2) 尝试常见 store_id（1..30 + 常用 demo id）
-      3) 若找不到，跳过（说明该测试环境未 seed stores）
+      1) 如果设置 STORE_ID_FOR_CONTRACT，优先用它：
+         - 必须存在（非 404）
+         - 且必须能 200 访问 order-sim（即 TEST store）
+         否则 fail，提示修正 seed 或 env。
+      2) 否则从 /stores 中挑选第一个 shop_type=TEST 的 store_id，并验证其能 200 访问 order-sim。
+      3) 若找不到 TEST store，则跳过（说明该测试环境未 seed TEST stores）。
     """
     v = (os.getenv("STORE_ID_FOR_CONTRACT") or "").strip()
     if v:
@@ -55,24 +113,27 @@ def _find_existing_store_id(client: TestClient, *, token: str) -> Optional[int]:
         except Exception:
             sid = -1
         if sid >= 1:
-            code, _ = _try_get_options(client, token=token, store_id=sid)
-            if code != 404:
-                return sid
-            # 明确指定但不存在：让测试失败，提示修正 seed 或 env
-            pytest.fail(f"STORE_ID_FOR_CONTRACT={sid} but store not found (404)")
+            code, payload = _try_get_options(client, token=token, store_id=sid)
+            if code == 404:
+                pytest.fail(f"STORE_ID_FOR_CONTRACT={sid} but store not found (404)")
+            if code == 403:
+                pytest.fail(
+                    f"STORE_ID_FOR_CONTRACT={sid} is not a TEST store (order-sim gate returns 403): {payload}"
+                )
+            if code != 200:
+                pytest.fail(f"STORE_ID_FOR_CONTRACT={sid} unexpected status={code}: {payload}")
+            return sid
 
-    # 常见候选：优先小范围，避免 testserver 里跑太多请求
-    candidates: List[int] = []
-    candidates.extend([1, 2, 3, 10, 11, 12, 100, 101, 900, 915, 916])
-    candidates.extend(list(range(1, 31)))
-
-    seen: set[int] = set()
-    for sid in candidates:
-        if sid in seen or sid < 1:
+    # 走 /stores 列表挑 TEST store
+    rows = _list_stores(client, token=token)
+    for r in rows:
+        if not _is_test_store_row(r):
             continue
-        seen.add(sid)
-        code, _ = _try_get_options(client, token=token, store_id=sid)
-        if code != 404:
+        sid = _extract_store_id(r)
+        if sid is None:
+            continue
+        code, _payload = _try_get_options(client, token=token, store_id=sid)
+        if code == 200:
             return sid
 
     return None
@@ -96,7 +157,7 @@ def test_order_sim_filled_code_options_contract() -> None:
 
     store_id = _find_existing_store_id(client, token=token)
     if store_id is None:
-        pytest.skip("No seeded store found for /stores/{id}/order-sim/filled-code-options contract test")
+        pytest.skip("No TEST store seeded; order-sim endpoints are gated to TEST stores only")
 
     status, payload = _try_get_options(client, token=token, store_id=store_id)
     assert status == 200, payload
