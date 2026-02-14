@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,128 @@ class ItemService:
     # 兼容 router：/items/sku/next
     def next_sku(self) -> str:
         return next_sku(self.db)
+
+    # ===========================
+    # Test Set（同步 Session 版）
+    # ===========================
+    def _load_test_set_id(self, *, set_code: str) -> int:
+        code = (set_code or "").strip()
+        if not code:
+            raise ValueError("set_code 不能为空")
+
+        row = (
+            self.db.execute(
+                text(
+                    """
+                    SELECT id
+                      FROM item_test_sets
+                     WHERE code = :code
+                     LIMIT 1
+                    """
+                ),
+                {"code": code},
+            )
+            .mappings()
+            .first()
+        )
+        if not row or row.get("id") is None:
+            raise ValueError(f"测试集合不存在：{code}")
+        return int(row["id"])
+
+    def _get_membership_map(self, *, item_ids: List[int], set_code: str = "DEFAULT") -> dict[int, bool]:
+        ids = sorted({int(x) for x in item_ids if x is not None})
+        if not ids:
+            return {}
+
+        sid = self._load_test_set_id(set_code=set_code)
+        rows = (
+            self.db.execute(
+                text(
+                    """
+                    SELECT item_id
+                      FROM item_test_set_items
+                     WHERE set_id = :sid
+                       AND item_id = ANY(:ids)
+                    """
+                ),
+                {"sid": int(sid), "ids": ids},
+            )
+            .mappings()
+            .all()
+        )
+        hit = {int(r["item_id"]) for r in rows if r.get("item_id") is not None}
+        return {i: (i in hit) for i in ids}
+
+    def _attach_is_test_for_items(self, *, items: List[Item], set_code: str = "DEFAULT") -> List[Item]:
+        if not items:
+            return items
+        m = self._get_membership_map(item_ids=[int(x.id) for x in items], set_code=set_code)
+        for it in items:
+            setattr(it, "is_test", bool(m.get(int(it.id), False)))
+        return items
+
+    def _attach_is_test_for_item(self, *, item: Item | None, set_code: str = "DEFAULT") -> Item | None:
+        if item is None:
+            return None
+        m = self._get_membership_map(item_ids=[int(item.id)], set_code=set_code)
+        setattr(item, "is_test", bool(m.get(int(item.id), False)))
+        return item
+
+    def enable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
+        obj = self.db.get(Item, int(item_id))
+        if obj is None:
+            raise ValueError("Item not found")
+
+        sid = self._load_test_set_id(set_code=set_code)
+        try:
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO item_test_set_items(set_id, item_id)
+                    VALUES (:sid, :iid)
+                    ON CONFLICT (set_id, item_id) DO NOTHING
+                    """
+                ),
+                {"sid": int(sid), "iid": int(item_id)},
+            )
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise ValueError(f"DB error: {e}") from e
+
+        self.db.refresh(obj)
+        obj = decorate_rules(obj)
+        obj = self._attach_is_test_for_item(item=obj, set_code=set_code)
+        assert obj is not None
+        return obj
+
+    def disable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
+        obj = self.db.get(Item, int(item_id))
+        if obj is None:
+            raise ValueError("Item not found")
+
+        sid = self._load_test_set_id(set_code=set_code)
+        try:
+            self.db.execute(
+                text(
+                    """
+                    DELETE FROM item_test_set_items
+                     WHERE set_id = :sid
+                       AND item_id = :iid
+                    """
+                ),
+                {"sid": int(sid), "iid": int(item_id)},
+            )
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise ValueError(f"DB error: {e}") from e
+
+        self.db.refresh(obj)
+        obj = decorate_rules(obj)
+        obj = self._attach_is_test_for_item(item=obj, set_code=set_code)
+        assert obj is not None
+        return obj
 
     def create_item(
         self,
@@ -87,7 +210,10 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return decorate_rules(obj)
+        obj = decorate_rules(obj)
+        obj = self._attach_is_test_for_item(item=obj)
+        assert obj is not None
+        return obj
 
     def create_item_by_id(
         self,
@@ -122,7 +248,10 @@ class ItemService:
         # ✅ 若已存在：只返回，不覆盖、不改码
         exists = self.db.get(Item, id)
         if exists is not None:
-            return decorate_rules(exists)
+            exists = decorate_rules(exists)
+            exists = self._attach_is_test_for_item(item=exists)
+            assert exists is not None
+            return exists
 
         sku_val = (sku or str(id)).strip()
         if not sku_val:
@@ -165,7 +294,10 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return decorate_rules(obj)
+        obj = decorate_rules(obj)
+        obj = self._attach_is_test_for_item(item=obj)
+        assert obj is not None
+        return obj
 
     def get_items(
         self,
@@ -176,7 +308,9 @@ class ItemService:
         limit: Optional[int] = None,
     ) -> List[Item]:
         rows = repo_get_items(self.db, supplier_id=supplier_id, enabled=enabled, q=q, limit=limit)
-        return [decorate_rules(r) for r in rows]
+        rows = [decorate_rules(r) for r in rows]
+        rows = self._attach_is_test_for_items(items=rows)
+        return rows
 
     # 兼容旧接口：保留原方法名
     def get_all_items(self) -> List[Item]:
@@ -184,11 +318,15 @@ class ItemService:
 
     def get_item_by_id(self, id: int) -> Optional[Item]:
         obj = repo_get_item_by_id(self.db, id)
-        return decorate_rules(obj) if obj else None
+        obj = decorate_rules(obj) if obj else None
+        obj = self._attach_is_test_for_item(item=obj)
+        return obj
 
     def get_item_by_sku(self, sku: str) -> Optional[Item]:
         obj = repo_get_item_by_sku(self.db, sku)
-        return decorate_rules(obj) if obj else None
+        obj = decorate_rules(obj) if obj else None
+        obj = self._attach_is_test_for_item(item=obj)
+        return obj
 
     def update_item(
         self,
@@ -263,7 +401,10 @@ class ItemService:
             changed = True
 
         if not changed:
-            return decorate_rules(obj)
+            obj = decorate_rules(obj)
+            obj = self._attach_is_test_for_item(item=obj)
+            assert obj is not None
+            return obj
 
         try:
             self.db.commit()
@@ -272,4 +413,7 @@ class ItemService:
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         self.db.refresh(obj)
-        return decorate_rules(obj)
+        obj = decorate_rules(obj)
+        obj = self._attach_is_test_for_item(item=obj)
+        assert obj is not None
+        return obj

@@ -115,6 +115,35 @@ def get_item_by_sku(sku: str, item_service: ItemService = Depends(get_item_servi
 
 
 # ===========================
+# Test Set (DEFAULT) membership toggle
+# ===========================
+@router.post("/{id}/test:enable", response_model=ItemOut)
+def enable_test_item(id: int, item_service: ItemService = Depends(get_item_service)):
+    try:
+        return item_service.enable_item_test_flag(item_id=id, set_code="DEFAULT")
+    except ValueError as e:
+        detail = str(e)
+        if detail == "Item not found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+        if detail.startswith("测试集合不存在："):
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+@router.post("/{id}/test:disable", response_model=ItemOut)
+def disable_test_item(id: int, item_service: ItemService = Depends(get_item_service)):
+    try:
+        return item_service.disable_item_test_flag(item_id=id, set_code="DEFAULT")
+    except ValueError as e:
+        detail = str(e)
+        if detail == "Item not found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+        if detail.startswith("测试集合不存在："):
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+# ===========================
 # Update（不允许改 SKU）
 # ===========================
 @router.patch("/{id}", response_model=ItemOut)
