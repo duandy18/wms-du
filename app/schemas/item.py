@@ -188,6 +188,9 @@ class ItemOut(ItemBase):
     requires_dates: bool = True
     default_batch_code: Optional[str] = None
 
+    # ✅ 新增：是否为 DEFAULT Test Set 商品（由后端投影，前端可显性化）
+    is_test: bool = False
+
 
 __all__ = [
     "NextSkuOut",
