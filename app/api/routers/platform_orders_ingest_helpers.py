@@ -45,20 +45,20 @@ def build_address(payload: PlatformOrderIngestIn) -> Optional[Dict[str, str]]:
     address 结构直接喂给 OrderService.ingest(address=...)
     字段名对齐 order_address：receiver_name/receiver_phone/province/city/district/detail/zipcode
 
-    最小策略：
+    最小策略（单一真相）：
     - 若完全没给任何地址字段 => None（保持兼容）
     - 若给了任意地址字段，但 province 为空 => 抛 ValueError（上层转 422）
 
     Phase 2（省份 normalize）：
-    - 允许常见非标准写法（如“河北”“ 河北 ”“内蒙”）规范化为标准省级行政区全称；
-    - 无法识别则视为不合法（抛 ValueError），避免落脏数据污染履约路由。
+    - 允许常见非标准写法（如“河北”“ 河北 ”“内蒙”）被规范化为标准全称；
+    - ✅ 无法识别时回退为原始非空字符串（trim 后），用于 routing key（与 normalize.py 合同一致）。
     """
     prov_norm = normalize_province_name(payload.province)
 
     raw = {
         "receiver_name": (payload.receiver_name or "").strip(),
         "receiver_phone": (payload.receiver_phone or "").strip(),
-        # ✅ province 以 normalize 后的标准全称写入（用于审计/解释/UI 展示 + 履约路由一致性）
+        # ✅ province 以 normalize 后的字符串写入（优先标准全称；否则保留 routing key）
         "province": (prov_norm or ""),
         "city": (payload.city or "").strip(),
         "district": (payload.district or "").strip(),
@@ -71,8 +71,8 @@ def build_address(payload: PlatformOrderIngestIn) -> Optional[Dict[str, str]]:
         return None
 
     if not raw["province"]:
-        # 省份缺失或不合法（如“Hebei”等无法识别）
-        raise ValueError("province 不能为空且必须是可识别的省级行政区（如：河北省）")
+        # province 缺失（None/空串）
+        raise ValueError("province 不能为空")
 
     return {k: v for k, v in raw.items() if v}
 

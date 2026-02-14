@@ -37,7 +37,14 @@ from app.api.routers.stores_routes_order_sim_schemas import (
     OrderSimMerchantLinesPutOut,
 )
 from app.db.deps import get_db
+from app.services.order_ingest_routing.normalize import normalize_province_name
 from app.services.platform_order_ingest_flow import PlatformOrderIngestFlow
+
+
+def _norm_str(v) -> str:
+    if v is None:
+        return ""
+    return str(v).replace("\u3000", " ").strip()
 
 
 def register(router: APIRouter) -> None:
@@ -160,14 +167,21 @@ def register(router: APIRouter) -> None:
                 raise HTTPException(status_code=422, detail=f"row_no 重复：{rn}")
             seen.add(rn)
 
+            prov_norm = normalize_province_name(_norm_str(it.province)) if _norm_str(it.province) else None
+
             await upsert_cart_line(
                 session,
                 store_id=store_id,
                 row_no=rn,
                 checked=bool(it.checked),
                 qty=int(it.qty or 0),
-                province=it.province,
-                city=it.city,
+                receiver_name=_norm_str(it.receiver_name) or None,
+                receiver_phone=_norm_str(it.receiver_phone) or None,
+                province=prov_norm,
+                city=_norm_str(it.city) or None,
+                district=_norm_str(it.district) or None,
+                detail=_norm_str(it.detail) or None,
+                zipcode=_norm_str(it.zipcode) or None,
                 if_version=it.if_version,
             )
 
@@ -200,6 +214,8 @@ def register(router: APIRouter) -> None:
             cart_items=cart_items,
         )
         address = choose_address_from_cart(selected)
+        if address is None:
+            raise HTTPException(status_code=422, detail="请先在购物车填写收货地址（province/city/detail/receiver_phone 等）")
 
         ext_order_no = build_ext_order_no(
             platform=platform,
