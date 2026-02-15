@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.api.schemas.fsku import FskuDetailOut, FskuListItem, FskuListOut
@@ -19,64 +19,116 @@ def get_detail(db: Session, fsku_id: int) -> FskuDetailOut | None:
     return to_detail(obj, comps)
 
 
-def list_fskus(db: Session, *, query: str | None, status: str | None, limit: int, offset: int) -> FskuListOut:
-    base = select(Fsku.id)
-    if query:
-        q = f"%{query.strip()}%"
-        base = base.where(Fsku.name.ilike(q) | Fsku.code.ilike(q))
-    if status:
-        base = base.where(Fsku.status == status)
-
-    total = int(db.scalar(select(func.count()).select_from(base.subquery())) or 0)
-
-    sql = """
-    SELECT
-      f.id,
-      f.code,
-      f.name,
-      f.shape,
-      f.status,
-      f.updated_at,
-      f.published_at,
-      f.retired_at,
-      COALESCE(
-        STRING_AGG(
-          (i.sku || '×' || (c.qty::int)::text || '(' || c.role || ')'),
-          ' + '
-          ORDER BY c.role, i.sku
+def _is_test_store(db: Session, store_id: int) -> bool:
+    v = db.execute(
+        text(
+            """
+            SELECT EXISTS (
+              SELECT 1
+                FROM platform_test_shops pts
+               WHERE pts.store_id = :sid
+                 AND pts.code = 'DEFAULT'
+            ) AS is_test
+            """
         ),
-        ''
-      ) AS components_summary,
-      COALESCE(
-        STRING_AGG(
-          (COALESCE(i.name, i.sku) || '×' || (c.qty::int)::text || '(' || c.role || ')'),
-          ' + '
-          ORDER BY c.role, COALESCE(i.name, i.sku)
-        ),
-        ''
-      ) AS components_summary_name
-    FROM fskus f
-    LEFT JOIN fsku_components c ON c.fsku_id = f.id
-    LEFT JOIN items i ON i.id = c.item_id
-    WHERE 1=1
-    """
-    params: dict[str, Any] = {"limit": limit, "offset": offset}
+        {"sid": int(store_id)},
+    ).scalar()
+    return bool(v or False)
+
+
+def list_fskus(
+    db: Session,
+    *,
+    query: str | None,
+    status: str | None,
+    store_id: int | None,
+    limit: int,
+    offset: int,
+) -> FskuListOut:
+    is_test_store = False
+    if store_id is not None:
+        is_test_store = _is_test_store(db, int(store_id))
+
+    # --- WHERE 片段（同口径复用）---
+    where_sql = " WHERE 1=1 "
+    params: dict[str, Any] = {"limit": int(limit), "offset": int(offset)}
+
+    # PROD 店铺：过滤测试 FSKU（命中 DEFAULT test set）
+    if store_id is not None and not is_test_store:
+        where_sql += """
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fsku_components c2
+            JOIN item_test_set_items tsi ON tsi.item_id = c2.item_id
+            JOIN item_test_sets ts ON ts.id = tsi.set_id AND ts.code = 'DEFAULT'
+           WHERE c2.fsku_id = f.id
+        )
+        """
 
     if query:
-        sql += " AND (f.name ILIKE :q OR f.code ILIKE :q) "
         params["q"] = f"%{query.strip()}%"
+        where_sql += " AND (f.name ILIKE :q OR f.code ILIKE :q) "
 
     if status:
-        sql += " AND f.status = :status "
         params["status"] = status
+        where_sql += " AND f.status = :status "
 
-    sql += """
-    GROUP BY f.id
-    ORDER BY f.updated_at DESC
-    LIMIT :limit OFFSET :offset
-    """
+    # --- total（与 items 同口径）---
+    count_sql = (
+        """
+        SELECT COUNT(*) FROM (
+          SELECT f.id
+            FROM fskus f
+        """
+        + where_sql
+        + """
+           GROUP BY f.id
+        ) t
+        """
+    )
+    total = int(db.execute(text(count_sql), params).scalar() or 0)
 
-    rows = db.execute(text(sql), params).mappings().all()
+    # --- list ---
+    list_sql = (
+        """
+        SELECT
+          f.id,
+          f.code,
+          f.name,
+          f.shape,
+          f.status,
+          f.updated_at,
+          f.published_at,
+          f.retired_at,
+          COALESCE(
+            STRING_AGG(
+              (i.sku || '×' || (c.qty::int)::text || '(' || c.role || ')'),
+              ' + '
+              ORDER BY c.role, i.sku
+            ),
+            ''
+          ) AS components_summary,
+          COALESCE(
+            STRING_AGG(
+              (COALESCE(i.name, i.sku) || '×' || (c.qty::int)::text || '(' || c.role || ')'),
+              ' + '
+              ORDER BY c.role, COALESCE(i.name, i.sku)
+            ),
+            ''
+          ) AS components_summary_name
+        FROM fskus f
+        LEFT JOIN fsku_components c ON c.fsku_id = f.id
+        LEFT JOIN items i ON i.id = c.item_id
+        """
+        + where_sql
+        + """
+        GROUP BY f.id
+        ORDER BY f.updated_at DESC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+
+    rows = db.execute(text(list_sql), params).mappings().all()
 
     items = [
         FskuListItem(

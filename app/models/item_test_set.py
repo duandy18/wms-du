@@ -19,7 +19,8 @@ class ItemTestSet(Base):
 
     id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
 
-    code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # 与 d95f7d97126f 保持一致：唯一性由 unique index 承担，而不是 column unique constraint
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -35,5 +36,6 @@ class ItemTestSet(Base):
     )
 
     __table_args__ = (
-        Index("ix_item_test_sets_code", "code"),
+        # d95: op.create_index(... unique=True)
+        Index("ix_item_test_sets_code", "code", unique=True),
     )
