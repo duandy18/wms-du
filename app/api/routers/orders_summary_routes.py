@@ -28,20 +28,18 @@ class OrderSummaryOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    # ✅ store_id（stores.id）：用于内部治理/解析卡 replay 入参（前端不得推导）
+    # store 主键（stores.id）
     store_id: Optional[int] = None
 
-    # 执行仓（实际出库）
+    # 执行仓
     warehouse_id: Optional[int] = None
-    # 服务仓（系统裁决、服务归属）
+    # 服务仓
     service_warehouse_id: Optional[int] = None
-    # 履约状态（系统事实）
+    # 履约状态
     fulfillment_status: Optional[str] = None
 
-    # 派生字段（审计/统计；前端可不展示）
     warehouse_assign_mode: Optional[str] = None
 
-    # ✅ 后端对齐的可操作事实（前端不得推导）
     can_manual_assign_execution_warehouse: bool = False
     manual_assign_hint: Optional[str] = None
 
@@ -52,7 +50,6 @@ class OrderSummaryOut(BaseModel):
 class OrdersSummaryResponse(BaseModel):
     ok: bool = True
     data: List[OrderSummaryOut]
-    # ✅ 候选执行仓（后端给出，前端不得自行拉 /warehouses）
     warehouses: List[WarehouseOptionOut]
 
 
@@ -62,11 +59,6 @@ def _derive_assign_mode(
     warehouse_id: Optional[int],
     service_warehouse_id: Optional[int],
 ) -> str:
-    """
-    说明：这里的 warehouse_id/service_warehouse_id 都是“兼容字段名”，实际来源是：
-      - service_warehouse_id := order_fulfillment.planned_warehouse_id
-      - warehouse_id := order_fulfillment.actual_warehouse_id
-    """
     fs = (fulfillment_status or "").strip().upper()
     if fs == "MANUALLY_ASSIGNED":
         return "MANUAL"
@@ -75,7 +67,6 @@ def _derive_assign_mode(
             return "AUTO_FROM_SERVICE"
         return "OTHER"
 
-    # ✅ 有 planned（服务仓）但没有 actual（执行仓）：已分配服务仓，待指定执行仓
     if warehouse_id is None and service_warehouse_id is not None:
         return "SERVICE_ASSIGNED"
 
@@ -102,19 +93,7 @@ async def _list_orders_summary_rows(
     time_to: Optional[datetime],
     limit: int,
 ) -> List[Mapping[str, Any]]:
-    """
-    一步到位迁移后：
-    - orders 只保留订单头
-    - 履约/仓库快照在 order_fulfillment
-    因此这里从 orders LEFT JOIN order_fulfillment 取 planned/actual/status。
 
-    参数语义（不兼容硬改）：
-    - status：过滤 orders.status（CREATED / PICKABLE / ...）
-    - fulfillment_status：过滤 order_fulfillment.fulfillment_status（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
-
-    ✅ PROD-only（简化口径）：
-    - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
-    """
     clauses: List[str] = []
     params: Dict[str, Any] = {"limit": limit}
 
@@ -142,24 +121,10 @@ async def _list_orders_summary_rows(
     if time_from:
         clauses.append("o.created_at >= :from_ts")
         params["from_ts"] = time_from
+
     if time_to:
         clauses.append("o.created_at <= :to_ts")
         params["to_ts"] = time_to
-
-    # PROD-only：测试店铺门禁（store_id）
-    clauses.append(
-        """
-        NOT EXISTS (
-          SELECT 1
-            FROM stores ss
-            JOIN platform_test_shops pts
-              ON pts.store_id = ss.id
-             AND pts.code = 'DEFAULT'
-           WHERE upper(ss.platform) = upper(o.platform)
-             AND btrim(CAST(ss.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
-        )
-        """.strip()
-    )
 
     where_sql = ""
     if clauses:
@@ -200,11 +165,11 @@ async def _list_orders_summary_rows(
         .mappings()
         .all()
     )
+
     return rows
 
 
 async def _list_candidate_warehouses(session: AsyncSession) -> List[WarehouseOptionOut]:
-    # 这里故意做得保守：给出 active != false 的仓作为候选集合
     rows = (
         (
             await session.execute(
@@ -241,14 +206,13 @@ def register(router) -> None:
         session: AsyncSession = Depends(get_session),
         platform: Optional[str] = Query(None),
         shop_id: Optional[str] = Query(None),
-        status: Optional[str] = Query(None, description="订单头状态（orders.status）：CREATED / PICKABLE / ..."),
-        fulfillment_status: Optional[str] = Query(
-            None, description="履约状态（order_fulfillment.fulfillment_status）：SERVICE_ASSIGNED / READY_TO_FULFILL / ..."
-        ),
+        status: Optional[str] = Query(None),
+        fulfillment_status: Optional[str] = Query(None),
         time_from: Optional[datetime] = Query(None),
         time_to: Optional[datetime] = Query(None),
         limit: int = Query(100),
     ) -> OrdersSummaryResponse:
+
         rows = await _list_orders_summary_rows(
             session,
             platform=platform,
@@ -269,7 +233,6 @@ def register(router) -> None:
             swid = r.get("service_warehouse_id")
             sid = r.get("store_id")
 
-            # ✅ 可操作事实：SERVICE_ASSIGNED 且已有 planned 且 actual 为空
             can_manual = (fs == "SERVICE_ASSIGNED") and (swid is not None) and (whid is None)
 
             data.append(
