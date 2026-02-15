@@ -74,6 +74,17 @@ def _pick_single_value(selected: List[Dict[str, Any]], field: str, *, label: str
     return next(iter(vals), "")
 
 
+def choose_buyer_from_cart(selected: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    从选中行抽取“客户信息”（用于喂给 ingest flow 的 buyer_* 字段）。
+    - buyer_name ← receiver_name
+    - buyer_phone ← receiver_phone
+    """
+    receiver_name = _pick_single_value(selected, "receiver_name", label="receiver_name")
+    receiver_phone = _pick_single_value(selected, "receiver_phone", label="receiver_phone")
+    return (receiver_name or None, receiver_phone or None)
+
+
 def choose_address_from_cart(selected: List[Dict[str, Any]]) -> Dict[str, str] | None:
     """
     ✅ 与 OrderService.ingest(address=...) 刚性对齐：
@@ -96,7 +107,9 @@ def choose_address_from_cart(selected: List[Dict[str, Any]]) -> Dict[str, str] |
 
     prov_norm = normalize_province_name(province_raw)
 
-    # 最小强约束：省/市/详细地址/电话 必填（订单路由/解释依赖）
+    # 最小强约束：姓名/省/市/详细地址/电话 必填（逼真订单 + 订单路由/解释依赖）
+    if not receiver_name:
+        raise HTTPException(status_code=422, detail="请在购物车填写 receiver_name（收货人）")
     if not prov_norm:
         raise HTTPException(status_code=422, detail="请在购物车填写 province（省份）")
     if not city:

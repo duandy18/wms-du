@@ -75,6 +75,8 @@ class PlatformOrderLineResult(BaseModel):
     行级解析结果（Phase N+2 输出）
     """
 
+    model_config = ConfigDict(extra="ignore")
+
     filled_code: Optional[str] = None
 
     # deprecated alias
@@ -88,11 +90,20 @@ class PlatformOrderLineResult(BaseModel):
     risk_level: Optional[str] = None
     risk_reason: Optional[str] = None
 
-    # ✅ 新增：给前端的“下一步动作”（用于人工救火闭环）
+    # ✅ 行级下一步动作（用于人工救火闭环）
     next_actions: Optional[List[Dict[str, Any]]] = None
 
 
 class PlatformOrderIngestOut(BaseModel):
+    """
+    Phase D · 证据结构化输出（顶层）
+
+    - reason_code：单一主因（稳定治理锚点）
+    - next_actions：面向操作者的全局动作建议（可执行）
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     status: str
     id: Optional[int]
     ref: str
@@ -110,3 +121,7 @@ class PlatformOrderIngestOut(BaseModel):
     risk_flags: List[str] = Field(default_factory=list)
     risk_level: Optional[str] = None
     risk_reason: Optional[str] = None
+
+    # ✅ Phase D：顶层证据字段
+    reason_code: Optional[str] = Field(None, description="单一主因（OK / CODE_NOT_BOUND / MISSING_FILLED_CODE / ROUTING_BLOCKED 等）")
+    next_actions: List[Dict[str, Any]] = Field(default_factory=list, description="面向操作者的下一步动作建议（可执行）")

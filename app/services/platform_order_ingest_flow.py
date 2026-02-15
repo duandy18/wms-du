@@ -1,17 +1,15 @@
 # app/services/platform_order_ingest_flow.py
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import make_problem
-from app.services.item_test_set_service import ItemTestSetService
 from app.services.order_service import OrderService
 from app.services.platform_order_fact_service import upsert_platform_order_lines
+from app.services.platform_order_ingest_evidence import attach_reason_and_actions
+from app.services.platform_order_ingest_universe_guard import enforce_no_test_items_in_non_test_shop, extract_item_ids_from_items_payload
 from app.services.platform_order_resolve_service import (
     ResolvedLine,
     load_items_brief,
@@ -34,98 +32,6 @@ from app.api.routers.platform_orders_shared import (  # noqa: WPS433
 )
 
 
-def _get_test_shop_id() -> str | None:
-    s = (os.getenv("TEST_SHOP_ID") or "").strip()
-    return s or None
-
-
-def _is_test_shop(shop_id: str) -> bool:
-    tid = _get_test_shop_id()
-    if tid is None:
-        return False
-    return str(shop_id) == tid
-
-
-def _extract_item_ids_from_items_payload(items_payload: Sequence[Mapping[str, Any]]) -> list[int]:
-    """
-    从 items_payload 提取 item_id 列表（兼容不同 payload 形态）。
-    约定优先级：
-      1) item_id
-      2) id
-    """
-    ids: set[int] = set()
-    for it in items_payload or ():
-        if not isinstance(it, Mapping):
-            continue
-        v = it.get("item_id")
-        if v is None:
-            v = it.get("id")
-        if v is None:
-            continue
-        try:
-            ids.add(int(v))
-        except Exception:
-            continue
-    return sorted(ids)
-
-
-async def _enforce_no_test_items_in_non_test_shop(
-    session: AsyncSession,
-    *,
-    shop_id: str,
-    store_id: Optional[int],
-    item_ids: list[int],
-    source: str,
-) -> None:
-    """
-    宇宙边界兜底（不污染 resolver）：
-
-    当 TEST_SHOP_ID 设置后：
-      - 非 TEST shop：禁止出现 DEFAULT Test Set items
-      - TEST shop：不在这里强制“必须全是测试商品”（那条更偏 dev/order-sim 入口约束）
-    """
-    tid = _get_test_shop_id()
-    if tid is None:
-        return
-
-    if _is_test_shop(shop_id):
-        return
-
-    if not item_ids:
-        return
-
-    ts = ItemTestSetService(session)
-    try:
-        await ts.assert_items_not_in_test_set(item_ids=item_ids, set_code="DEFAULT")
-    except ItemTestSetService.NotFound as e:
-        raise HTTPException(
-            status_code=500,
-            detail=make_problem(
-                status_code=500,
-                error_code="internal_error",
-                message=f"测试集合不可用：{e.message}",
-                context={"shop_id": str(shop_id), "test_shop_id": str(tid), "set_code": "DEFAULT", "source": source},
-            ),
-        )
-    except ItemTestSetService.Conflict as e:
-        raise HTTPException(
-            status_code=409,
-            detail=make_problem(
-                status_code=409,
-                error_code="conflict",
-                message=e.message,
-                context={
-                    "shop_id": str(shop_id),
-                    "test_shop_id": str(tid),
-                    "store_id": int(store_id) if store_id is not None else None,
-                    "set_code": e.set_code,
-                    "out_of_set_item_ids": e.out_of_set_item_ids,
-                    "source": source,
-                },
-            ),
-        )
-
-
 class PlatformOrderIngestFlow:
     """
     平台订单接入编排流（唯一真相）：
@@ -135,7 +41,7 @@ class PlatformOrderIngestFlow:
     - 不负责：事务提交/回滚（由调用方 router 控制）
     """
 
-    # -------- Common helpers (move logic out of routers) -------- #
+    # -------- Common helpers -------- #
 
     @staticmethod
     async def resolve_fact_lines(
@@ -248,8 +154,9 @@ class PlatformOrderIngestFlow:
         risk_flags, risk_level, risk_reason = aggregate_risk_from_unresolved(unresolved)
         allow_manual_continue = bool(unresolved)
 
+        # 未解析出任何 items：只返回事实+解析证据（不落单）
         if not item_qty_map:
-            return {
+            out = {
                 "status": "UNRESOLVED",
                 "id": None,
                 "ref": f"ORD:{plat}:{sid}:{ext}",
@@ -264,12 +171,12 @@ class PlatformOrderIngestFlow:
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
             }
+            return attach_reason_and_actions(out, platform=plat, shop_id=sid)
 
         item_ids = sorted(item_qty_map.keys())
 
         # ✅ 宇宙边界兜底：非 TEST 商铺禁止出现测试商品（DEFAULT Test Set）
-        # （不改 resolver；在写订单前阻断，避免测试物料污染真实商铺）
-        await _enforce_no_test_items_in_non_test_shop(
+        await enforce_no_test_items_in_non_test_shop(
             session,
             shop_id=sid,
             store_id=store_id_int,
@@ -315,7 +222,7 @@ class PlatformOrderIngestFlow:
         if oid is not None:
             fulfillment_status, blocked_reasons = await load_order_fulfillment_brief(session, order_id=oid)
 
-        return {
+        out = {
             "status": status,
             "id": oid,
             "ref": ref,
@@ -330,6 +237,7 @@ class PlatformOrderIngestFlow:
             "risk_level": risk_level,
             "risk_reason": risk_reason,
         }
+        return attach_reason_and_actions(out, platform=plat, shop_id=sid)
 
     # -------- Tail flow: from items_payload (replay/confirm-create) -------- #
 
@@ -366,8 +274,8 @@ class PlatformOrderIngestFlow:
         store_id_out = int(store_id) if store_id is not None else None
 
         # ✅ 宇宙边界兜底：tail/replay/confirm-create 也不能把测试商品写进非 TEST 商铺
-        item_ids = _extract_item_ids_from_items_payload(items_payload)
-        await _enforce_no_test_items_in_non_test_shop(
+        item_ids = extract_item_ids_from_items_payload(items_payload)
+        await enforce_no_test_items_in_non_test_shop(
             session,
             shop_id=sid,
             store_id=store_id_out,
@@ -408,11 +316,9 @@ class PlatformOrderIngestFlow:
 
         resolved_out = list(resolved or [])
         unresolved_out = list(unresolved or [])
-        allow_manual_continue_out = (
-            bool(unresolved_out) if allow_manual_continue is None else bool(allow_manual_continue)
-        )
+        allow_manual_continue_out = bool(unresolved_out) if allow_manual_continue is None else bool(allow_manual_continue)
 
-        return {
+        out = {
             "status": status,
             "id": oid,
             "ref": ref,
@@ -427,3 +333,4 @@ class PlatformOrderIngestFlow:
             "risk_level": risk_level,
             "risk_reason": risk_reason,
         }
+        return attach_reason_and_actions(out, platform=plat, shop_id=sid)
