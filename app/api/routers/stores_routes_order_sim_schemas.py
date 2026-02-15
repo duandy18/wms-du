@@ -111,6 +111,21 @@ class OrderSimGenerateOrderOut(BaseModel):
 
 
 # ============================================================
+# ✅ 新增：preview-order（不落库）—— 生成前订单预览/证据输出
+# ============================================================
+
+class OrderSimPreviewOrderIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    idempotency_key: Optional[str] = Field(None, description="可选：用于 preview 的 ext_order_no（与 generate-order 对齐）")
+
+
+class OrderSimPreviewOrderOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ok: bool
+    data: Dict[str, Any]
+
+
+# ============================================================
 # ✅ 新增：filled_code 下拉候选（只用绑定事实 merchant_code → published FSKU）
 # ============================================================
 
