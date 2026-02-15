@@ -19,12 +19,15 @@ class ItemTestSetItem(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
+    # 与 d95f7d97126f 保持一致：set_id/item_id 都是 BigInteger
     set_id: Mapped[int] = mapped_column(
+        BigInteger,
         ForeignKey("item_test_sets.id", ondelete="CASCADE"),
         nullable=False,
     )
 
     item_id: Mapped[int] = mapped_column(
+        BigInteger,
         ForeignKey("items.id", ondelete="RESTRICT"),
         nullable=False,
     )
