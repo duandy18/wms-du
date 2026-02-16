@@ -150,17 +150,27 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 {"wid": wh_id, "prov": prov},
             )
 
-        row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))
-        any_store_id = row.scalar_one_or_none()
-        if any_store_id is None:
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO stores(platform, shop_id, name, active)
-                    VALUES('PDD', '1', 'UT-测试店铺', TRUE)
-                    """
-                )
+        # ✅ Baseline 需要覆盖多条合同测试使用的 (platform, shop_id)
+        # - PDD/1：历史 UT 默认
+        # - DEMO/1：merchant-code-bindings / order ingest 等合同测试依赖
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('PDD', '1', 'UT-测试店铺', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
             )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('DEMO', '1', 'DEMO-1', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
+            )
+        )
 
         await conn.execute(
             text(
