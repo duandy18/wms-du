@@ -8,6 +8,25 @@
 INSERT INTO warehouses (id, name)
 VALUES (1, 'WH-1');
 
+-- ===== stores (TEST gate baseline) =====
+-- 目的：
+-- - order-sim 系列接口有 TEST 店铺门禁：必须命中 platform_test_shops(code='DEFAULT')
+-- - contract test: tests/api/test_stores_order_sim_filled_code_options_contract.py 需要至少一个 TEST store
+--
+-- 约束说明：
+-- - stores.store_code NOT NULL，但由触发器 trg_stores_store_code_default BEFORE INSERT 自动生成
+-- - stores(platform, shop_id) UNIQUE
+-- - platform_test_shops(platform, code) UNIQUE：每个平台只有一个 DEFAULT 测试集合
+INSERT INTO stores (id, platform, shop_id, name, active, route_mode)
+VALUES (9001, 'PDD', 'UT-TEST-SHOP-1', 'UT-TEST-STORE-1', true, 'FALLBACK')
+ON CONFLICT (id) DO NOTHING;
+
+-- 绑定 TEST 门禁：唯一真相（platform_test_shops）
+INSERT INTO platform_test_shops (platform, shop_id, store_id, code)
+VALUES ('PDD', 'UT-TEST-SHOP-1', 9001, 'DEFAULT')
+ON CONFLICT (platform, code)
+DO UPDATE SET shop_id = EXCLUDED.shop_id, store_id = EXCLUDED.store_id;
+
 -- ===== suppliers (minimal) =====
 -- 目的：
 -- - items.supplier_id 有 FK 约束（fk_items_supplier），测试基线必须提供供应商主数据
@@ -19,16 +38,16 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== items =====
--- 目前仅使用 head schema 中最低要求字段：id/sku/name/qty_available
+-- 目前仅使用 head schema 中最低要求字段：id/sku/name
 -- 如果以后 items 强制新增非空列（无默认），只需要改这里，不需要改 conftest.py
-INSERT INTO items (id, sku, name, qty_available)
+INSERT INTO items (id, sku, name)
 VALUES
-  (1,    'SKU-0001', 'UT-ITEM-1',         0),
-  (3001, 'SKU-3001', 'SOFT-RESERVE-1',    0),
-  (3002, 'SKU-3002', 'SOFT-RESERVE-2',    0),
-  (3003, 'SKU-3003', 'SOFT-RESERVE-BASE', 0),
-  (4001, 'SKU-4001', 'OUTBOUND-MERGE',    0),
-  (4002, 'SKU-4002', 'PURCHASE-BASE-1',   0);
+  (1,    'SKU-0001', 'UT-ITEM-1'),
+  (3001, 'SKU-3001', 'SOFT-RESERVE-1'),
+  (3002, 'SKU-3002', 'SOFT-RESERVE-2'),
+  (3003, 'SKU-3003', 'SOFT-RESERVE-BASE'),
+  (4001, 'SKU-4001', 'OUTBOUND-MERGE'),
+  (4002, 'SKU-4002', 'PURCHASE-BASE-1');
 
 -- ===== item_barcodes (primary) =====
 -- 每个 item 生成一个主条码：AUTO-BC-{item_id}
@@ -47,7 +66,7 @@ WHERE NOT EXISTS (
 );
 
 -- ===== sequences =====
--- 修正 warehouses/items 的序列（serial/identity 时生效）
+-- 修正 warehouses/items/stores 的序列（serial/identity 时生效）
 SELECT setval(
   pg_get_serial_sequence('warehouses','id'),
   COALESCE((SELECT MAX(id) FROM warehouses), 0),
@@ -57,6 +76,12 @@ SELECT setval(
 SELECT setval(
   pg_get_serial_sequence('items','id'),
   COALESCE((SELECT MAX(id) FROM items), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('stores','id'),
+  COALESCE((SELECT MAX(id) FROM stores), 0),
   true
 );
 
@@ -102,6 +127,9 @@ WHERE id IN (3001, 3002, 4002);
 -- 至少一个商品开启有效期管理（用于“必须补录日期/批次”的入库测试）
 UPDATE items
 SET has_shelf_life = true,
+    -- ✅ 合同收敛：has_shelf_life=true 必须同时具备 shelf_life_value/unit（满足 DB CHECK）
+    shelf_life_value = 30,
+    shelf_life_unit = 'DAY',
     enabled = true,
     supplier_id = 1
 WHERE id = 3001;

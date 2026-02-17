@@ -37,10 +37,10 @@ class PurchaseOrderLineBase(BaseModel):
     units_per_case: Optional[int] = Field(
         None,
         ge=0,
-        description="每件数量，仅用于金额，不进入库存",
+        description="每件数量（换算因子）；库存/核算主线以 base 口径为真相",
     )
 
-    qty_ordered: int = Field(..., gt=0, description="订购件数（按采购单位）")
+    qty_ordered: int = Field(..., gt=0, description="订购数量（按采购单位 purchase_uom）")
     remark: Optional[str] = Field(None, description="行备注")
 
 
@@ -69,21 +69,25 @@ class PurchaseOrderLineListOut(BaseModel):
     列表态行输出：只保证行自身的最小字段，避免“详情态强合同字段”污染列表接口。
 
     ✅ Phase B 收敛补充（关键）：
-    - 为了让列表/概览页能用“最小单位口径”展示数量，
-      列表态需要携带换算因子与单位快照：
-        * units_per_case
-        * base_uom
-        * purchase_uom
-    - 不做 Item 主数据补齐；仅使用 PO 行自身快照字段（与 purchase_order_lines 表一致）。
+    - 列表态也显性化 base 口径字段（唯一真相），避免前端自行推导：
+        * qty_ordered_base
+        * qty_received_base
+      remaining 若需要，由详情态提供（避免列表接口合同膨胀）
+    - units_per_case/base_uom/purchase_uom 用于展示换算解释
     """
     id: int
     po_id: int
     line_no: int
     item_id: int
 
+    # 展示口径（采购单位）
     qty_ordered: int
-    qty_ordered_base: int  # ✅ 最小单位订购量（事实字段）
-    qty_received: int
+
+    # ✅ base 口径（唯一真相）
+    qty_ordered_base: int  # 最小单位订购量（事实字段）
+    qty_received_base: int = Field(..., ge=0, description="最小单位已收数量（事实字段）")
+
+    # 兼容字段：历史上这里叫 qty_received，但语义容易误解；列表态保留 status 用于展示
     status: str
 
     # ✅ 最小单位换算与单位快照（列表态也要有，便于统一口径展示）
@@ -98,7 +102,7 @@ class PurchaseOrderLineListOut(BaseModel):
 
 
 # -----------------------
-# ✅ 详情态：强合同行输出（含 qty_remaining + 主数据补齐）
+# ✅ 详情态：强合同行输出（含 remaining + 主数据补齐）
 # -----------------------
 class PurchaseOrderLineOut(BaseModel):
     id: int
@@ -140,15 +144,27 @@ class PurchaseOrderLineOut(BaseModel):
     promo_price: Optional[Decimal]
     min_price: Optional[Decimal]
 
-    # 数量体系
+    # 数量体系（展示字段：采购单位）
     qty_cases: Optional[int]
     units_per_case: Optional[int]
-    qty_ordered: int
-    qty_ordered_base: int  # ✅ 最小单位订购量（事实字段）
-    qty_received: int
+    qty_ordered: int = Field(..., gt=0, description="订购数量（采购单位 purchase_uom，展示用）")
 
-    # ✅ 强合同：剩余可收数量（事实字段，后端计算）
-    qty_remaining: int = Field(..., ge=0, description="剩余可收数量（qty_ordered - qty_received，底限为 0）")
+    # ✅ base 口径（唯一真相）
+    qty_ordered_base: int = Field(..., gt=0, description="订购数量（最小单位 base，事实字段）")
+    qty_received_base: int = Field(..., ge=0, description="已收数量（最小单位 base，事实字段）")
+    qty_remaining_base: int = Field(..., ge=0, description="剩余可收数量（最小单位 base，事实字段）")
+
+    # 兼容字段（采购单位口径，仅展示/历史兼容）
+    qty_received: int = Field(
+        ...,
+        ge=0,
+        description="已收数量（采购单位口径，展示/兼容字段；判断逻辑请使用 qty_received_base）",
+    )
+    qty_remaining: int = Field(
+        ...,
+        ge=0,
+        description="剩余可收数量（采购单位口径，展示/兼容字段；判断逻辑请使用 qty_remaining_base）",
+    )
 
     # 金额 & 状态
     line_amount: Optional[Decimal]
@@ -197,6 +213,11 @@ class PurchaseOrderListItemOut(BaseModel):
 class PurchaseOrderWithLinesOut(BaseModel):
     """
     采购单详情（头 + 行，强合同）。
+
+    ✅ 合同收敛（关键）：
+    - “是否可继续收货 / 是否允许新建收货任务”只能看 base 口径：
+        sum(lines.qty_remaining_base) > 0
+    - 前端不得自行推导 base remaining（避免第二真相）
     """
     id: int
     supplier: str
@@ -246,7 +267,7 @@ class PurchaseOrderReceiveLineIn(BaseModel):
     """
     line_id: Optional[int] = Field(None, description="行 ID（可选，优先使用）")
     line_no: Optional[int] = Field(None, description="行号（可选，line_id 缺失时用）")
-    qty: int = Field(..., gt=0, description="本次收货件数（>0）")
+    qty: int = Field(..., gt=0, description="本次收货数量（最小单位 base，>0）")
 
     production_date: Optional[date] = Field(None, description="生产日期（有效期商品必填）")
     expiry_date: Optional[date] = Field(None, description="到期日期（无法推算时必填）")

@@ -9,12 +9,17 @@ from sqlalchemy.orm import selectinload
 from app.models.purchase_order import PurchaseOrder
 
 
-async def load_po(session: AsyncSession, po_id: int) -> PurchaseOrder:
+async def load_po(session: AsyncSession, po_id: int, *, for_update: bool = False) -> PurchaseOrder:
     stmt = (
         select(PurchaseOrder)
         .options(selectinload(PurchaseOrder.lines))
         .where(PurchaseOrder.id == po_id)
     )
+    if for_update:
+        # ✅ 合同收敛：创建 ReceiveTask 时对 PO 加行级锁，避免并发重复创建 DRAFT
+        # 注意：这是事务内锁；router 中 commit/rollback 释放锁
+        stmt = stmt.with_for_update()
+
     res = await session.execute(stmt)
     po = res.scalars().first()
     if po is None:
