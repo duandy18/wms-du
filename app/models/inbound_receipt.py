@@ -11,6 +11,13 @@ from app.db.base import Base
 
 
 class InboundReceipt(Base):
+    """
+    终态收货单模型（唯一事实表）
+
+    - 草稿与确认通过 status 区分
+    - 不再依赖 receive_task
+    """
+
     __tablename__ = "inbound_receipts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -28,20 +35,16 @@ class InboundReceipt(Base):
     )
     supplier_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    source_type: Mapped[str] = mapped_column(String(16), nullable=False)  # PO / ORDER / OTHER
+    # 事实来源
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)  # PO / OTHER
     source_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    receive_task_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("receive_tasks.id", ondelete="SET NULL"),
-        nullable=True,
-        unique=True,  # 幂等锚点（NULL 可重复）
-    )
-
+    # 唯一单据标识
     ref: Mapped[str] = mapped_column(String(128), nullable=False)
     trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CONFIRMED")
+    # DRAFT / CONFIRMED / CANCELLED
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -93,7 +96,6 @@ class InboundReceiptLine(Base):
     item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     item_sku: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # ✅ 新增：商品/采购行快照字段（事实层可解释）
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     spec_text: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     base_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
@@ -123,4 +125,7 @@ class InboundReceiptLine(Base):
         server_default=func.now(),
     )
 
-    receipt: Mapped["InboundReceipt"] = relationship("InboundReceipt", back_populates="lines")
+    receipt: Mapped["InboundReceipt"] = relationship(
+        "InboundReceipt",
+        back_populates="lines",
+    )

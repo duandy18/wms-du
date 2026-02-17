@@ -30,7 +30,8 @@ class OrderReconcileService:
     - 头信息来自 orders；
     - 行信息来自 order_items（qty）；
     - shipped 来自 stock_ledger(ref=ORD:PLAT:SHOP:ext_no, delta<0)；
-    - returned 来自 receive_tasks(source_type='ORDER') + receive_task_lines.committed_qty；
+    - returned 来自 inbound_receipts(source_type='ORDER', status='CONFIRMED')
+      + inbound_receipt_lines.qty_received（按 item_id 聚合）；
     - remaining_refundable = max(min(ordered, shipped) - returned, 0)。
 
     提供能力：

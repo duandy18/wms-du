@@ -70,10 +70,11 @@ async def get_order_facts(
           reason LIKE 'SHIP%' OR reason = 'OUTBOUND_SHIP'
         （即 SHIP / SHIPMENT / SHIP_OUT / OUTBOUND_SHIP 等）
       - 拣货（PICK）、退货出库（RETURN_OUT）、调整类负数不计入 shipped。
+      - qty_returned 终态口径：Receipt(CONFIRMED)
+          inbound_receipts.source_type='ORDER' AND status='CONFIRMED' AND source_id=order_id
+          + inbound_receipt_lines.qty_received（按 item_id 聚合）
     """
-    head = await get_order_head(
-        session, platform=platform, shop_id=shop_id, ext_order_no=ext_order_no
-    )
+    head = await get_order_head(session, platform=platform, shop_id=shop_id, ext_order_no=ext_order_no)
     if head is None:
         raise ValueError(
             f"order not found: platform={platform.upper()}, shop_id={shop_id}, ext_order_no={ext_order_no}"
@@ -152,22 +153,22 @@ async def get_order_facts(
         item_id = int(r["item_id"])
         shipped_map[item_id] = int(r.get("shipped_qty") or 0)
 
-    # 3) returned：RMA 收货任务
+    # 3) returned：Receipt(CONFIRMED) 口径
     rows_returned = (
         (
             await session.execute(
                 text(
                     """
                     SELECT
-                        rtl.item_id,
-                        SUM(COALESCE(rtl.committed_qty, 0)) AS returned_qty
-                      FROM receive_task_lines AS rtl
-                      JOIN receive_tasks AS rt
-                        ON rt.id = rtl.task_id
-                     WHERE rt.source_type = 'ORDER'
-                       AND rt.source_id = :oid
-                       AND rt.status = 'COMMITTED'
-                     GROUP BY rtl.item_id
+                        rl.item_id,
+                        SUM(COALESCE(rl.qty_received, 0)) AS returned_qty
+                      FROM inbound_receipt_lines AS rl
+                      JOIN inbound_receipts AS r
+                        ON r.id = rl.receipt_id
+                     WHERE r.source_type = 'ORDER'
+                       AND r.source_id = :oid
+                       AND r.status = 'CONFIRMED'
+                     GROUP BY rl.item_id
                     """
                 ),
                 {"oid": order_id},

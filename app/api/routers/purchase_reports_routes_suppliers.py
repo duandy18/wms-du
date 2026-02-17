@@ -17,7 +17,6 @@ from app.models.item_test_set import ItemTestSet
 from app.models.item_test_set_item import ItemTestSetItem
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
-from app.models.receive_task import ReceiveTask
 from app.schemas.purchase_report import SupplierPurchaseReportItem
 
 
@@ -25,23 +24,14 @@ def register(router: APIRouter) -> None:
     @router.get("/suppliers", response_model=List[SupplierPurchaseReportItem])
     async def purchase_report_by_suppliers(
         session: AsyncSession = Depends(get_session),
-        date_from: Optional[date] = Query(None, description="起始日期（含）"),
-        date_to: Optional[date] = Query(None, description="结束日期（含）"),
-        warehouse_id: Optional[int] = Query(None, description="按仓库 ID 过滤"),
-        supplier_id: Optional[int] = Query(None, description="按供应商 ID 过滤"),
-        status: Optional[str] = Query(
-            None,
-            description="按采购单状态过滤，例如 CREATED / PARTIAL / RECEIVED / CLOSED",
-        ),
-        mode: Literal["fact", "plan"] = Query(
-            "fact",
-            description="口径：fact=收货事实（Receipt）；plan=下单计划（PO）",
-        ),
+        date_from: Optional[date] = Query(None),
+        date_to: Optional[date] = Query(None),
+        warehouse_id: Optional[int] = Query(None),
+        supplier_id: Optional[int] = Query(None),
+        status: Optional[str] = Query(None),
+        mode: Literal["fact", "plan"] = Query("fact"),
         time_mode: str = time_mode_query("occurred"),
     ) -> List[SupplierPurchaseReportItem]:
-        """
-        供应商维度采购报表——统计口径 PROD-only（排除 DEFAULT Test Set 商品）
-        """
 
         default_set_id_sq = (
             select(ItemTestSet.id)
@@ -50,9 +40,9 @@ def register(router: APIRouter) -> None:
             .scalar_subquery()
         )
 
-        # -----------------------------
-        # fact：Receipt 事实口径（原逻辑 + PROD-only 过滤）
-        # -----------------------------
+        # ================================
+        # FACT 口径（基于 inbound_receipts）
+        # ================================
         if mode == "fact":
             supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label("supplier_name")
 
@@ -67,6 +57,7 @@ def register(router: APIRouter) -> None:
                 )
                 .select_from(InboundReceipt)
                 .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
+                .join(PurchaseOrder, PurchaseOrder.id == InboundReceipt.source_id)
                 .join(Item, Item.id == InboundReceiptLine.item_id)
                 .outerjoin(
                     ItemTestSetItem,
@@ -75,10 +66,9 @@ def register(router: APIRouter) -> None:
                         ItemTestSetItem.set_id == default_set_id_sq,
                     ),
                 )
-                .outerjoin(ReceiveTask, ReceiveTask.id == InboundReceipt.receive_task_id)
-                .outerjoin(PurchaseOrder, PurchaseOrder.id == ReceiveTask.po_id)
                 .where(InboundReceipt.source_type == "PO")
-                .where(ItemTestSetItem.id.is_(None))  # ✅ PROD-only
+                .where(InboundReceipt.status == "CONFIRMED")
+                .where(ItemTestSetItem.id.is_(None))
             )
 
             stmt = apply_common_filters(
@@ -102,10 +92,11 @@ def register(router: APIRouter) -> None:
             for supplier_id_val, supplier_name, order_count, total_qty_cases, total_units, total_amount in rows:
                 total_units_int = int(total_units or 0)
                 total_amount_dec = Decimal(str(total_amount or 0))
-                if total_units_int > 0:
-                    avg_unit_price = (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
-                else:
-                    avg_unit_price = None
+                avg_unit_price = (
+                    (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
+                    if total_units_int > 0
+                    else None
+                )
 
                 items.append(
                     SupplierPurchaseReportItem(
@@ -118,20 +109,33 @@ def register(router: APIRouter) -> None:
                         avg_unit_price=avg_unit_price,
                     )
                 )
+
             return items
 
-        # -----------------------------
-        # plan：PO 下单计划口径（原逻辑 + PROD-only 过滤）
-        # -----------------------------
-        supplier_name_expr = func.coalesce(PurchaseOrder.supplier_name, PurchaseOrder.supplier, "").label("supplier_name")
+        # ================================
+        # PLAN 口径（保持原逻辑）
+        # ================================
+        supplier_name_expr = func.coalesce(
+            PurchaseOrder.supplier_name,
+            PurchaseOrder.supplier,
+            "",
+        ).label("supplier_name")
 
         line_amount_expr = func.coalesce(
             PurchaseOrderLine.line_amount,
-            (PurchaseOrderLine.qty_ordered * func.coalesce(PurchaseOrderLine.units_per_case, 1) * func.coalesce(PurchaseOrderLine.supply_price, 0)),
+            (
+                PurchaseOrderLine.qty_ordered
+                * func.coalesce(PurchaseOrderLine.units_per_case, 1)
+                * func.coalesce(PurchaseOrderLine.supply_price, 0)
+            ),
         )
 
         total_units_expr = func.coalesce(
-            func.sum(PurchaseOrderLine.qty_ordered * func.coalesce(PurchaseOrderLine.units_per_case, 1)), 0
+            func.sum(
+                PurchaseOrderLine.qty_ordered
+                * func.coalesce(PurchaseOrderLine.units_per_case, 1)
+            ),
+            0,
         )
         total_qty_cases_expr = func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0)
         total_amount_expr = func.coalesce(func.sum(line_amount_expr), 0)
@@ -155,7 +159,7 @@ def register(router: APIRouter) -> None:
                     ItemTestSetItem.set_id == default_set_id_sq,
                 ),
             )
-            .where(ItemTestSetItem.id.is_(None))  # ✅ PROD-only
+            .where(ItemTestSetItem.id.is_(None))
         )
 
         if time_mode == "po_created":
@@ -167,7 +171,6 @@ def register(router: APIRouter) -> None:
             stmt = stmt.where(func.date(time_col) >= date_from)
         if date_to is not None:
             stmt = stmt.where(func.date(time_col) <= date_to)
-
         if warehouse_id is not None:
             stmt = stmt.where(PurchaseOrder.warehouse_id == int(warehouse_id))
         if supplier_id is not None:
@@ -183,10 +186,11 @@ def register(router: APIRouter) -> None:
         for supplier_id_val, supplier_name, order_count, total_qty_cases, total_units, total_amount in rows:
             total_units_int = int(total_units or 0)
             total_amount_dec = Decimal(str(total_amount or 0))
-            if total_units_int > 0:
-                avg_unit_price = (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
-            else:
-                avg_unit_price = None
+            avg_unit_price = (
+                (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
+                if total_units_int > 0
+                else None
+            )
 
             items.append(
                 SupplierPurchaseReportItem(
