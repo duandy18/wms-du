@@ -23,9 +23,13 @@ class Item(Base):
     关键区分：
     - has_shelf_life（开关）：是否需要有效期管理（= 入库是否强制日期）
       * True  -> 入库必须填写生产日期；到期日期可直接填，或由保质期参数推算
-      * False -> 入库不需要日期，批次缺省 NOEXP
+      * False -> 入库不需要日期；库存核算层走“无批次槽位”（batch_code=NULL）
     - shelf_life_value/unit（参数）：可选保质期参数，用于 production_date + 参数 => 推算 expiry_date
       * 注意：参数不是必须；若缺参数，则入库必须直接填 expiry_date
+
+    库存说明（重要）：
+    - items 表不承载可用库存的真实事实。
+    - 库存真实来源：stocks / stock_ledger / stock_snapshots（以及三账一致性校验）。
     """
 
     __tablename__ = "items"
@@ -34,12 +38,6 @@ class Item(Base):
 
     sku: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-
-    qty_available: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("0"),
-    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -84,8 +82,7 @@ class Item(Base):
         comment="单件净重（kg），用于运费预估，不含包材",
     )
 
-    # 可选保质期参数（用于推算到期日）
-    shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # ✅ 可选保质期参数（用于推算到期日）
     shelf_life_value: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shelf_life_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 

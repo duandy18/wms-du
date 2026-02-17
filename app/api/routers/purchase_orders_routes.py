@@ -1,7 +1,7 @@
 # app/api/routers/purchase_orders_routes.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.purchase_order import (
     PurchaseOrderCreateV2,
+    PurchaseOrderLineListOut,
     PurchaseOrderListItemOut,
     PurchaseOrderReceiveLineIn,
     PurchaseOrderWithLinesOut,
@@ -20,6 +21,8 @@ from app.schemas.purchase_order import (
 from app.schemas.purchase_order_receipts import PurchaseOrderReceiptEventOut
 from app.services.purchase_order_receipts import list_po_receipt_events
 from app.services.purchase_order_service import PurchaseOrderService
+from app.services.qty_base import ordered_base as _ordered_base_impl
+from app.services.qty_base import received_base as _received_base_impl
 
 
 def register(router: APIRouter, svc: PurchaseOrderService) -> None:
@@ -100,7 +103,8 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found after receive")
         return po_out
 
-    # ✅ 列表态：返回 PurchaseOrderListItemOut（轻量，不含 qty_remaining）
+    # ✅ 列表态：返回 PurchaseOrderListItemOut（轻量）
+    # ✅ 合同加严：列表态行必须显性返回 qty_ordered_base / qty_received_base（base 真相），避免前端自行推导。
     @router.get("/", response_model=List[PurchaseOrderListItemOut])
     async def list_purchase_orders(
         session: AsyncSession = Depends(get_session),
@@ -125,11 +129,55 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         res = await session.execute(stmt)
         rows = list(res.scalars())
 
+        out: List[PurchaseOrderListItemOut] = []
         for po in rows:
             if po.lines:
                 po.lines.sort(key=lambda line: (line.line_no, line.id))
 
-        return [PurchaseOrderListItemOut.model_validate(po) for po in rows]
+            line_out: List[PurchaseOrderLineListOut] = []
+            for ln in (po.lines or []):
+                ordered_base = int(_ordered_base_impl(ln) or 0)
+                received_base = int(_received_base_impl(ln) or 0)
+
+                line_out.append(
+                    PurchaseOrderLineListOut(
+                        id=int(getattr(ln, "id")),
+                        po_id=int(getattr(ln, "po_id")),
+                        line_no=int(getattr(ln, "line_no")),
+                        item_id=int(getattr(ln, "item_id")),
+                        qty_ordered=int(getattr(ln, "qty_ordered") or 0),
+                        qty_ordered_base=ordered_base,
+                        qty_received_base=received_base,
+                        status=str(getattr(ln, "status") or ""),
+                        units_per_case=getattr(ln, "units_per_case", None),
+                        base_uom=getattr(ln, "base_uom", None),
+                        purchase_uom=getattr(ln, "purchase_uom", None),
+                        created_at=getattr(ln, "created_at"),
+                        updated_at=getattr(ln, "updated_at"),
+                    )
+                )
+
+            out.append(
+                PurchaseOrderListItemOut(
+                    id=int(getattr(po, "id")),
+                    supplier=str(getattr(po, "supplier") or ""),
+                    warehouse_id=int(getattr(po, "warehouse_id")),
+                    supplier_id=getattr(po, "supplier_id", None),
+                    supplier_name=getattr(po, "supplier_name", None),
+                    total_amount=getattr(po, "total_amount", None),
+                    purchaser=str(getattr(po, "purchaser") or ""),
+                    purchase_time=getattr(po, "purchase_time"),
+                    remark=getattr(po, "remark", None),
+                    status=str(getattr(po, "status") or ""),
+                    created_at=getattr(po, "created_at"),
+                    updated_at=getattr(po, "updated_at"),
+                    last_received_at=getattr(po, "last_received_at", None),
+                    closed_at=getattr(po, "closed_at", None),
+                    lines=line_out,
+                )
+            )
+
+        return out
 
     @router.post("/dev-demo", response_model=PurchaseOrderWithLinesOut)
     async def create_demo_purchase_order(
@@ -164,10 +212,12 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
 
         # ✅ 关键修复：demo item 必须属于该 supplier_id，否则会触发“供应商->商品”硬闸
         item_rows = (
-            (await session.execute(
-                text("SELECT id, name FROM items WHERE supplier_id = :sid ORDER BY id LIMIT 5"),
-                {"sid": supplier_id},
-            ))
+            (
+                await session.execute(
+                    text("SELECT id, name FROM items WHERE supplier_id = :sid ORDER BY id LIMIT 5"),
+                    {"sid": supplier_id},
+                )
+            )
             .mappings()
             .all()
         )
@@ -204,7 +254,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
                 }
             )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         try:
             po = await svc.create_po_v2(
                 session,

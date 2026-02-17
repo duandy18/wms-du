@@ -77,7 +77,7 @@ def register(router: APIRouter) -> None:
         batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
 
         try:
-            task = await svc.record_scan(
+            await svc.record_scan(
                 session,
                 task_id=task_id,
                 item_id=payload.item_id,
@@ -87,7 +87,10 @@ def register(router: APIRouter) -> None:
                 expiry_date=payload.expiry_date,
             )
             await session.commit()
-            return ReceiveTaskOut.model_validate(task)
+
+            # ✅ commit 后对象可能 expire（async 懒加载会触发 MissingGreenlet）
+            task_after = await svc.get_with_lines(session, task_id)
+            return ReceiveTaskOut.model_validate(task_after)
         except ValueError as e:
             await session.rollback()
             raise HTTPException(status_code=400, detail=str(e))
@@ -122,13 +125,16 @@ def register(router: APIRouter) -> None:
                 )
 
         try:
-            task = await svc.commit(
+            await svc.commit(
                 session,
                 task_id=task_id,
                 trace_id=payload.trace_id,
             )
             await session.commit()
-            return ReceiveTaskOut.model_validate(task)
+
+            # ✅ commit 后重新加载，避免 MissingGreenlet（updated_at / lines 等字段惰性加载）
+            task_after = await svc.get_with_lines(session, task_id)
+            return ReceiveTaskOut.model_validate(task_after)
         except ValueError as e:
             await session.rollback()
             raise HTTPException(status_code=400, detail=str(e))

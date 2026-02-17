@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.receive_task import ReceiveTask, ReceiveTaskLine
@@ -27,8 +28,25 @@ async def create_for_po(
     - qty_received：最小单位已收事实
     - expected_qty：最小单位（remaining_base）
     """
-    po = await load_po(session, po_id)
+    # ✅ 合同收敛：对 PO 加锁，避免并发重复创建 DRAFT
+    po = await load_po(session, po_id, for_update=True)
     wh_id = warehouse_id or po.warehouse_id
+
+    # ✅ 合同收敛（Phase 2）：PO → ReceiveTask 防重复创建（幂等）
+    stmt = (
+        select(ReceiveTask.id)
+        .where(
+            ReceiveTask.source_type == "PO",
+            ReceiveTask.po_id == po.id,
+            ReceiveTask.warehouse_id == wh_id,
+            ReceiveTask.status == "DRAFT",
+        )
+        .order_by(ReceiveTask.id.desc())
+        .limit(1)
+    )
+    existing_id = (await session.execute(stmt)).scalar_one_or_none()
+    if existing_id is not None:
+        return await get_with_lines(session, int(existing_id))
 
     task = ReceiveTask(
         source_type="PO",
