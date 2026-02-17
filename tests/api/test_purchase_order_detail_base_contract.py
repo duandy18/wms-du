@@ -74,6 +74,21 @@ def _assert_line_base_contract(line: Dict[str, Any]) -> None:
         assert int(line["qty_remaining"]) == expected_remaining_purchase, line
 
 
+def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
+    """
+    ✅ Contract: PO 详情态每行必须包含“商品快照字段”，且由后端生成，不允许为 null/空串。
+    目的：防止前端漏传/字段漂移导致作业台“商品名称空白”。
+    """
+    assert "item_name" in line, line
+    assert "item_sku" in line, line
+
+    name = (line.get("item_name") or "").strip()
+    sku = (line.get("item_sku") or "").strip()
+
+    assert name, f"item_name must be non-empty (backend-generated snapshot), line={line}"
+    assert sku, f"item_sku must be non-empty (backend-generated snapshot), line={line}"
+
+
 def _pick_line_for_receive(lines: list[Dict[str, Any]]) -> Dict[str, Any]:
     # 优先选不需要有效期的商品，避免引入日期干扰
     for ln in lines:
@@ -128,6 +143,7 @@ def test_purchase_order_detail_base_contract_and_receive_line_updates() -> None:
     for ln in lines:
         assert isinstance(ln, dict), ln
         _assert_line_base_contract(ln)
+        _assert_line_snapshot_contract(ln)
 
     target = _pick_line_for_receive(lines)
     payload = _build_receive_payload(target)
@@ -146,3 +162,4 @@ def test_purchase_order_detail_base_contract_and_receive_line_updates() -> None:
     for ln in lines2:
         assert isinstance(ln, dict), ln
         _assert_line_base_contract(ln)
+        _assert_line_snapshot_contract(ln)
