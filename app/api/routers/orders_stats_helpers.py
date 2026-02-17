@@ -20,7 +20,7 @@ async def calc_daily_stats(
     计算单日的：
     - 创建订单数（orders.created_at）
     - 发货订单数（ledger 中 ref=ORD:* 且 delta<0 的 distinct ref）
-    - 退货订单数（receive_tasks.source_type='ORDER' 且 COMMITTED 的 distinct source_id）
+    - 退货订单数（Receipt 口径：inbound_receipts.source_type='ORDER' 且 status='CONFIRMED' 的 distinct source_id）
 
     ✅ PROD-only（简化口径）：
     - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
@@ -112,13 +112,18 @@ async def calc_daily_stats(
     shipped_res = await session.execute(text(sql_shipped), params2)
     orders_shipped = int(shipped_res.scalar() or 0)
 
-    # ----------------- returned: receive_tasks JOIN orders -----------------
+    # ----------------- returned: inbound_receipts JOIN orders -----------------
+    # Receipt 终态口径：
+    # - source_type='ORDER'
+    # - status='CONFIRMED'
+    # - occurred_at 落在自然日内（事实发生时间）
     params3: dict = {"start": start, "end": end}
     returned_clauses = [
-        "rt.source_type = 'ORDER'",
-        "rt.status = 'COMMITTED'",
-        "rt.created_at >= :start",
-        "rt.created_at < :end",
+        "r.source_type = 'ORDER'",
+        "r.status = 'CONFIRMED'",
+        "r.source_id IS NOT NULL",
+        "r.occurred_at >= :start",
+        "r.occurred_at < :end",
     ]
     if plat:
         returned_clauses.append("o.platform = :p")
@@ -144,10 +149,10 @@ async def calc_daily_stats(
 
     where_sql3 = "WHERE " + " AND ".join(returned_clauses)
     sql_returned = f"""
-        SELECT COUNT(DISTINCT rt.source_id) AS c
-          FROM receive_tasks AS rt
+        SELECT COUNT(DISTINCT r.source_id) AS c
+          FROM inbound_receipts AS r
           JOIN orders AS o
-            ON o.id = rt.source_id
+            ON o.id = r.source_id
           {where_sql3}
     """
     returned_res = await session.execute(text(sql_returned), params3)

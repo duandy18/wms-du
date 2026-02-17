@@ -18,7 +18,6 @@ router = APIRouter(prefix="/inbound-receipts", tags=["inbound-receipts"])
 @router.get("/", response_model=List[InboundReceiptOut])
 async def list_inbound_receipts(
     session: AsyncSession = Depends(get_session),
-    receive_task_id: Optional[int] = Query(None),
     ref: Optional[str] = Query(None),
     trace_id: Optional[str] = Query(None),
     warehouse_id: Optional[int] = Query(None),
@@ -32,7 +31,6 @@ async def list_inbound_receipts(
     try:
         xs = await list_receipts(
             session,
-            receive_task_id=receive_task_id,
             ref=ref,
             trace_id=trace_id,
             warehouse_id=warehouse_id,

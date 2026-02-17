@@ -151,26 +151,24 @@ class DevOrdersService:
             .all()
         )
 
-        shipped_map: Dict[int, int] = {
-            int(r["item_id"]): int(r.get("shipped_qty") or 0) for r in rows_shipped
-        }
+        shipped_map: Dict[int, int] = {int(r["item_id"]): int(r.get("shipped_qty") or 0) for r in rows_shipped}
 
-        # 3) returned（RMA 收货）
+        # 3) returned（Receipt(CONFIRMED) 终态口径）
         rows_returned = (
             (
                 await self.session.execute(
                     text(
                         """
                         SELECT
-                            rtl.item_id,
-                            SUM(COALESCE(rtl.committed_qty, 0)) AS returned_qty
-                          FROM receive_task_lines AS rtl
-                          JOIN receive_tasks AS rt
-                            ON rt.id = rtl.task_id
-                         WHERE rt.source_type = 'ORDER'
-                           AND rt.source_id = :oid
-                           AND rt.status = 'COMMITTED'
-                         GROUP BY rtl.item_id
+                            rl.item_id,
+                            SUM(COALESCE(rl.qty_received, 0)) AS returned_qty
+                          FROM inbound_receipt_lines AS rl
+                          JOIN inbound_receipts AS r
+                            ON r.id = rl.receipt_id
+                         WHERE r.source_type = 'ORDER'
+                           AND r.source_id = :oid
+                           AND r.status = 'CONFIRMED'
+                         GROUP BY rl.item_id
                         """
                     ),
                     {"oid": order_id},
@@ -180,9 +178,7 @@ class DevOrdersService:
             .all()
         )
 
-        returned_map: Dict[int, int] = {
-            int(r["item_id"]): int(r.get("returned_qty") or 0) for r in rows_returned
-        }
+        returned_map: Dict[int, int] = {int(r["item_id"]): int(r.get("returned_qty") or 0) for r in rows_returned}
 
         facts: List[Dict[str, Any]] = []
         for item_id, base in ordered_map.items():

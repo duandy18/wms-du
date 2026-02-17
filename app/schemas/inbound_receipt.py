@@ -55,7 +55,6 @@ class InboundReceiptOut(BaseModel):
 
     source_type: str
     source_id: Optional[int] = None
-    receive_task_id: Optional[int] = None
 
     ref: str
     trace_id: Optional[str] = None

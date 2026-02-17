@@ -103,21 +103,28 @@ async def load_shipped(
 
 
 async def load_returned(session: AsyncSession, order_id: int) -> Dict[int, int]:
+    """
+    returned 终态口径：Receipt(CONFIRMED) -> ReceiptLines.qty_received
+    - inbound_receipts.source_type='ORDER'
+    - inbound_receipts.source_id = order_id
+    - inbound_receipts.status='CONFIRMED'
+    - 汇总 inbound_receipt_lines.qty_received 按 item_id 聚合
+    """
     rows = (
         (
             await session.execute(
                 text(
                     """
                 SELECT
-                    rtl.item_id,
-                    SUM(COALESCE(rtl.committed_qty, 0)) AS returned_qty
-                  FROM receive_task_lines AS rtl
-                  JOIN receive_tasks AS rt
-                    ON rt.id = rtl.task_id
-                 WHERE rt.source_type = 'ORDER'
-                   AND rt.source_id = :oid
-                   AND rt.status = 'COMMITTED'
-                 GROUP BY rtl.item_id
+                    rl.item_id,
+                    SUM(COALESCE(rl.qty_received, 0)) AS returned_qty
+                  FROM inbound_receipt_lines AS rl
+                  JOIN inbound_receipts AS r
+                    ON r.id = rl.receipt_id
+                 WHERE r.source_type = 'ORDER'
+                   AND r.source_id = :oid
+                   AND r.status = 'CONFIRMED'
+                 GROUP BY rl.item_id
                 """
                 ),
                 {"oid": order_id},

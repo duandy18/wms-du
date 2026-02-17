@@ -14,7 +14,6 @@ from app.models.inbound_receipt import InboundReceipt
 async def list_receipts(
     session: AsyncSession,
     *,
-    receive_task_id: Optional[int] = None,
     ref: Optional[str] = None,
     trace_id: Optional[str] = None,
     warehouse_id: Optional[int] = None,
@@ -33,8 +32,6 @@ async def list_receipts(
         .limit(min(max(int(limit), 1), 200))
     )
 
-    if receive_task_id is not None:
-        stmt = stmt.where(InboundReceipt.receive_task_id == int(receive_task_id))
     if ref:
         stmt = stmt.where(InboundReceipt.ref == ref.strip())
     if trace_id:
