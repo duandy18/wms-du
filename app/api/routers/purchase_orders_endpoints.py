@@ -1,4 +1,17 @@
-# app/api/routers/purchase_orders_routes.py
+# app/api/routers/purchase_orders_endpoints.py
+"""
+Purchase Orders Endpoints（内部模块，封板）
+
+硬规则：
+- 本文件只提供 register(router, svc)，不创建/导出 APIRouter 实例。
+- 禁止在 app/main.py 直接 include 本文件。
+- /purchase-orders 的唯一 router 入口是：app/api/routers/purchase_orders.py
+
+目的：
+- 防止重复挂载与路径覆盖
+- 防止 response_model 契约漂移（例如 base 字段缺失导致前端“无可收货行”）
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -192,7 +205,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             raise HTTPException(status_code=400, detail="warehouses 表为空，请先创建仓库。")
         warehouse_id = int(wh_row["id"])
 
-        # ✅ Phase 2 合同：必须绑定供应商（优先 active=true）
         supplier_row = (
             (await session.execute(text("SELECT id, name FROM suppliers WHERE active IS TRUE ORDER BY id LIMIT 1")))
             .mappings()
@@ -210,7 +222,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         supplier_id = int(supplier_row["id"])
         supplier_name = str(supplier_row.get("name") or f"SUPPLIER-{supplier_id}")
 
-        # ✅ 关键修复：demo item 必须属于该 supplier_id，否则会触发“供应商->商品”硬闸
         item_rows = (
             (
                 await session.execute(

@@ -41,6 +41,13 @@ def _safe_upc(v: Optional[int]) -> int:
     return n if n > 0 else 1
 
 
+def _trim_or_none(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 async def create_po_v2(
     session: AsyncSession,
     *,
@@ -61,6 +68,10 @@ async def create_po_v2(
     - units_per_case: 换算因子（每采购单位包含多少最小单位）
     - qty_ordered_base: 最小单位订购量（事实字段）
     - qty_received: 最小单位已收量（事实字段）
+
+    ✅ 封板规则（关键）：
+    - item_name / item_sku 必须由后端从 Item 主数据生成写入 purchase_order_lines（行快照）
+    - 不允许前端传入/覆盖（避免第二真相入口）
     """
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
@@ -104,9 +115,7 @@ async def create_po_v2(
             raise ValueError(f"第 {idx} 行：商品未绑定供应商，禁止用于采购（item_id={item_id}）")
 
         if int(it_supplier_id) != int(po_supplier_id):
-            raise ValueError(
-                f"第 {idx} 行：商品不属于当前供应商（item_id={item_id}）"
-            )
+            raise ValueError(f"第 {idx} 行：商品不属于当前供应商（item_id={item_id}）")
 
     norm_lines: List[Dict[str, Any]] = []
     total_amount = Decimal("0")
@@ -121,6 +130,10 @@ async def create_po_v2(
         qty_ordered = int(qty_ordered)
         if qty_ordered <= 0:
             raise ValueError("行 qty_ordered 必须 > 0")
+
+        it = items_map.get(item_id)
+        if it is None:
+            raise ValueError(f"第 {idx} 行：商品不存在（item_id={item_id}）")
 
         supply_price = raw.get("supply_price")
         if supply_price is not None:
@@ -146,7 +159,6 @@ async def create_po_v2(
         if line_amount_raw is not None:
             line_amount = Decimal(str(line_amount_raw))
         elif supply_price is not None:
-            # 价格按最小单位计价（qty_ordered_base）
             line_amount = supply_price * Decimal(int(qty_ordered_base))
         else:
             line_amount = None
@@ -154,25 +166,29 @@ async def create_po_v2(
         if line_amount is not None:
             total_amount += line_amount
 
+        # ✅ 封板：行快照字段来自 Item 主数据（前端无权传入）
+        item_name_snapshot = _trim_or_none(getattr(it, "name", None))
+        item_sku_snapshot = _trim_or_none(getattr(it, "sku", None))
+
         norm_lines.append(
             {
                 "line_no": line_no,
                 "item_id": item_id,
-                "item_name": raw.get("item_name"),
-                "item_sku": raw.get("item_sku"),
-                "category": raw.get("category"),
-                "spec_text": raw.get("spec_text"),
-                "base_uom": raw.get("base_uom"),
-                "purchase_uom": raw.get("purchase_uom"),
+                "item_name": item_name_snapshot,
+                "item_sku": item_sku_snapshot,
+                "category": _trim_or_none(raw.get("category")),
+                "spec_text": _trim_or_none(raw.get("spec_text")),
+                "base_uom": _trim_or_none(raw.get("base_uom")),
+                "purchase_uom": _trim_or_none(raw.get("purchase_uom")),
                 "supply_price": supply_price,
                 "retail_price": raw.get("retail_price"),
                 "promo_price": raw.get("promo_price"),
                 "min_price": raw.get("min_price"),
                 "qty_cases": raw.get("qty_cases") or qty_ordered,
                 "units_per_case": units_per_case_int,
-                "qty_ordered": qty_ordered,                 # 采购单位快照
-                "qty_ordered_base": qty_ordered_base,       # ✅ 最小单位事实
-                "qty_received": 0,                          # ✅ 最小单位事实
+                "qty_ordered": qty_ordered,
+                "qty_ordered_base": qty_ordered_base,
+                "qty_received": 0,
                 "line_amount": line_amount,
                 "status": "CREATED",
                 "remark": raw.get("remark"),
@@ -211,7 +227,7 @@ async def create_po_v2(
             qty_cases=nl["qty_cases"],
             units_per_case=nl["units_per_case"],
             qty_ordered=nl["qty_ordered"],
-            qty_ordered_base=nl["qty_ordered_base"],  # ✅ 新字段
+            qty_ordered_base=nl["qty_ordered_base"],
             qty_received=nl["qty_received"],
             line_amount=nl["line_amount"],
             status=nl["status"],

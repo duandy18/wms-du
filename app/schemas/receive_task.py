@@ -95,6 +95,9 @@ class ReceiveTaskCreateFromPo(BaseModel):
 class ReceiveTaskCreateFromPoSelectedLineIn(BaseModel):
     """
     选择式创建：本次到货的某一行
+
+    ✅ Phase 3 收敛：支持在创建任务阶段直接携带“批次/生产日期/到期日期”（必要时）
+    - 是否必填由服务层基于 Item.has_shelf_life 与 shelf_life 参数裁决
     """
 
     po_line_id: int = Field(..., description="采购单行 ID（必须属于该采购单）")
@@ -103,6 +106,10 @@ class ReceiveTaskCreateFromPoSelectedLineIn(BaseModel):
         gt=0,
         description="本次计划收货量（最小单位 base units，>0，且不超过 remaining_base）",
     )
+
+    batch_code: Optional[str] = Field(None, description="批次号（保质期商品必填）")
+    production_date: Optional[date] = Field(None, description="生产日期（保质期商品必填）")
+    expiry_date: Optional[date] = Field(None, description="到期日期（无法推算时必填）")
 
 
 class ReceiveTaskCreateFromPoSelected(BaseModel):
