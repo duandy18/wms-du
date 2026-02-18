@@ -1,16 +1,15 @@
 # app/services/purchase_order_receive.py
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Optional, Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
-from app.services.inbound_service import InboundService
 from app.services.purchase_order_queries import get_po_with_lines
 from app.services.purchase_order_time import UTC
 from app.services.qty_base import ordered_base as _ordered_base_impl
@@ -19,72 +18,98 @@ from app.services.qty_base import remaining_base as _remaining_base_impl
 
 
 def _ordered_base(line: Any) -> int:
-    """
-    ✅ ordered_base（base）：统一委托 app/services/qty_base.py
-    """
     return _ordered_base_impl(line)
 
 
 def _received_base(line: Any) -> int:
-    """
-    ✅ received_base（base）：统一委托 app/services/qty_base.py
-    """
     return _received_base_impl(line)
 
 
 def _remaining_base(line: Any) -> int:
-    """
-    ✅ remaining_base（base）：统一委托 app/services/qty_base.py
-    """
     return _remaining_base_impl(line)
 
 
-def _recalc_po_line_status(line: PurchaseOrderLine) -> None:
+async def _get_latest_po_draft_receipt(session: AsyncSession, *, po_id: int) -> Optional[InboundReceipt]:
+    stmt = (
+        select(InboundReceipt)
+        .where(InboundReceipt.source_type == "PO")
+        .where(InboundReceipt.source_id == int(po_id))
+        .where(InboundReceipt.status == "DRAFT")
+        .order_by(InboundReceipt.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def _get_or_create_po_draft_receipt(
+    session: AsyncSession,
+    *,
+    po: PurchaseOrder,
+    occurred_at: datetime,
+) -> InboundReceipt:
     """
-    ✅ 行状态回算（全部 base 口径比较）
+    Phase5：PO 收货“录入”只写 Receipt(DRAFT) 事实，不落账。
+    规则：
+    - source_type 固定为 'PO'
+    - source_id = po.id
+    - 优先复用最新的 DRAFT receipt；没有则创建
     """
-    o_base = _ordered_base(line)  # base
-    r_base = _received_base(line)  # base
+    draft = await _get_latest_po_draft_receipt(session, po_id=int(po.id))
+    if draft is not None:
+        return draft
 
-    if r_base <= 0:  # base
-        line.status = "CREATED"
-    elif r_base < o_base:  # base
-        line.status = "PARTIAL"
-    elif r_base >= o_base:  # base
-        line.status = "RECEIVED"
-    else:
-        line.status = "CLOSED"
+    # ref：保持可读且唯一（按时间戳）
+    ts = int(occurred_at.timestamp() * 1000)
+    ref = f"DRFT-PO-{po.id}-{ts}"
+
+    r = InboundReceipt(
+        warehouse_id=int(po.warehouse_id),
+        supplier_id=getattr(po, "supplier_id", None),
+        supplier_name=getattr(po, "supplier_name", None),
+        source_type="PO",
+        source_id=int(po.id),
+        ref=ref,
+        trace_id=None,
+        status="DRAFT",
+        remark="from PO receive-line (DRAFT)",
+        occurred_at=occurred_at,
+    )
+    session.add(r)
+    await session.flush()
+    return r
 
 
-def _recalc_po_header(po: PurchaseOrder, now: datetime) -> None:
+async def _next_receipt_line_no(session: AsyncSession, *, receipt_id: int) -> int:
     """
-    ✅ 头状态回算（全部 base 口径比较）
+    在 async 环境中禁止访问 receipt.lines（可能触发 lazyload -> MissingGreenlet）。
+    这里用 SQL 直接取 MAX(line_no)+1，稳定且无懒加载风险。
     """
-    lines = list(po.lines or [])
-    if not lines:
-        po.status = "CREATED"
-        po.closed_at = None
-        po.last_received_at = now
-        return
+    row = await session.execute(
+        text(
+            """
+            SELECT COALESCE(MAX(line_no), 0) AS mx
+              FROM inbound_receipt_lines
+             WHERE receipt_id = :rid
+            """
+        ),
+        {"rid": int(receipt_id)},
+    )
+    mx = int(row.scalar() or 0)
+    return mx + 1
 
-    all_zero = all(_received_base(ln) == 0 for ln in lines)  # base
-    all_full = all(_received_base(ln) >= _ordered_base(ln) for ln in lines)  # base
 
-    if all_zero:
-        po.status = "CREATED"
-        po.closed_at = None
-    elif all_full:
-        po.status = "RECEIVED"
-        po.closed_at = now
-    else:
-        po.status = "PARTIAL"
-        po.closed_at = None
-
-    po.last_received_at = now
+def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> str:
+    """
+    Phase5：录入阶段必须给 batch_code（DB NOT NULL）。
+    - 若提供 production_date：用可解释的 deterministic batch_code
+    - 若未提供：先落 NOEXP（后续在 Receipt 页面补齐/修正）
+    """
+    if production_date is None:
+        return "NOEXP"
+    return f"BATCH-PO{po_id}-L{po_line_no}-{production_date.isoformat()}"
 
 
 async def receive_po_line(
-    inbound_svc: InboundService,
     session: AsyncSession,
     *,
     po_id: int,
@@ -96,19 +121,12 @@ async def receive_po_line(
     expiry_date: Optional[date] = None,
 ) -> PurchaseOrder:
     """
-    对某一行执行收货（行级收货）。
-
-    ✅ 口径收敛（重要）：
+    Phase5：对某一行执行“收货录入”（行级）。
+    - ✅ 只写 Receipt(DRAFT) 事实（InboundReceipt / InboundReceiptLine）
+    - ❌ 不写 stock_ledger / stocks / snapshot（库存动作只能由 Receipt(CONFIRMED) 触发）
     - qty 为最小单位（base）
-    - PO 行 qty_received 为最小单位（base）
-    - ordered_base：优先 qty_ordered_base；旧数据 fallback 才推导（唯一实现见 qty_base.py）
-    - remaining_base = ordered_base - qty_received（全部 base 口径）
-
-    关键合同：
-    - stock_ledger 存在唯一约束 (reason, ref, ref_line)
-      => ref_line 必须在 (reason, ref) 维度全局递增，不能按 item_id 分桶。
     """
-    if qty <= 0:  # base
+    if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
     if line_id is None and line_no is None:
         raise ValueError("receive_po_line 需要提供 line_id 或 line_no 之一")
@@ -116,7 +134,6 @@ async def receive_po_line(
     po = await get_po_with_lines(session, po_id, for_update=True)
     if po is None:
         raise ValueError(f"PurchaseOrder not found: id={po_id}")
-
     if not po.lines:
         raise ValueError(f"采购单 {po_id} 没有任何行，无法执行行级收货")
 
@@ -133,59 +150,58 @@ async def receive_po_line(
                 break
 
     if target is None:
-        raise ValueError(
-            f"在采购单 {po_id} 中未找到匹配的行 (line_id={line_id}, line_no={line_no})"
-        )
+        raise ValueError(f"在采购单 {po_id} 中未找到匹配的行 (line_id={line_id}, line_no={line_no})")
 
     if target.status in {"RECEIVED", "CLOSED"}:
-        raise ValueError(
-            f"行已收完或已关闭，无法再收货 (line_id={target.id}, status={target.status})"
-        )
+        raise ValueError(f"行已收完或已关闭，无法再收货 (line_id={target.id}, status={target.status})")
 
-    remaining_base = _remaining_base(target)  # base
-    if qty > remaining_base:  # base
+    remaining_base = int(_remaining_base(target) or 0)
+    if qty > remaining_base:
         raise ValueError(
             f"行收货数量超出剩余数量（base 口径）：ordered_base={_ordered_base(target)}, "
             f"received_base={_received_base(target)}, remaining_base={remaining_base}, try_receive={qty}"
         )
 
-    ref = f"PO-{po.id}"
-    reason_val = MovementType.INBOUND.value
+    now = occurred_at or datetime.now(UTC)
 
-    # ✅ ref_line 必须在 (reason, ref) 维度全局递增
-    row = await session.execute(
-        text(
-            """
-            SELECT COALESCE(MAX(ref_line), 0)
-              FROM stock_ledger
-             WHERE ref = :ref
-               AND reason = :reason
-            """
-        ),
-        {"ref": ref, "reason": reason_val},
+    # 1) 取得/创建 DRAFT Receipt
+    draft = await _get_or_create_po_draft_receipt(session, po=po, occurred_at=now)
+
+    # 2) 生成 line_no（receipt 内递增）——使用 SQL，避免 draft.lines 懒加载
+    next_line_no = await _next_receipt_line_no(session, receipt_id=int(draft.id))
+
+    # 3) 写入 ReceiptLine（注意：DB 约束 batch_code NOT NULL / qty_received NOT NULL / item_id NOT NULL）
+    units_per_case = int(getattr(target, "units_per_case", 1) or 1)
+    po_line_no_val = int(getattr(target, "line_no", 0) or 0)
+    batch_code = _build_batch_code(
+        po_id=int(po.id),
+        po_line_no=po_line_no_val,
+        production_date=production_date,
     )
-    max_ref_line = int(row.scalar() or 0)
-    next_ref_line = max_ref_line + 1
 
-    # 1) 写库存/台账（qty=最小单位 base）
-    await inbound_svc.receive(
-        session,
-        qty=int(qty),
-        ref=ref,
-        ref_line=next_ref_line,
-        warehouse_id=po.warehouse_id,
-        item_id=target.item_id,
-        occurred_at=occurred_at or datetime.now(UTC),
+    rl = InboundReceiptLine(
+        receipt_id=int(draft.id),
+        line_no=int(next_line_no),
+        po_line_id=int(getattr(target, "id")),
+        item_id=int(getattr(target, "item_id")),
+        item_name=getattr(target, "item_name", None),
+        item_sku=getattr(target, "item_sku", None),
+        category=getattr(target, "category", None),
+        spec_text=getattr(target, "spec_text", None),
+        base_uom=getattr(target, "base_uom", None),
+        purchase_uom=getattr(target, "purchase_uom", None),
+        batch_code=batch_code,
         production_date=production_date,
         expiry_date=expiry_date,
+        qty_received=int(qty),
+        units_per_case=int(units_per_case),
+        qty_units=int(qty),  # 继续沿用 base=units 的既有口径
+        unit_cost=None,
+        line_amount=None,
+        remark=None,
     )
-
-    # 2) 回写 PO 行（qty_received=最小单位 base）
-    target.qty_received = int(target.qty_received or 0) + int(qty)
-    now = datetime.now(UTC)
-
-    _recalc_po_line_status(target)
-    _recalc_po_header(po, now)
-
+    session.add(rl)
     await session.flush()
+
+    # Phase5：不回写 PO 的 qty_received，不回算 PO 状态
     return po
