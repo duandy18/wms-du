@@ -17,10 +17,6 @@ EnsureBatchFn = Callable[
     Awaitable[None],
 ]
 
-# 第三阶段护栏（保守版）：
-# 仅拦截“明确属于历史假批次占位符”的码，避免误伤可能被测试/业务当作真实批次码的字符串（例如 IDEM）
-_FAKE_BATCH_CODES = {"NOEXP", "NEAR", "FAR"}
-
 
 def _meta_bool(meta: Optional[Dict[str, Any]], key: str) -> bool:
     if not meta:
@@ -113,10 +109,9 @@ async def adjust_impl(  # noqa: C901
     - 只要 delta>0 且 batch_code 非空，就会自动兜底并推导日期
     - batch_code 为 NULL（无批次槽位）时不推导日期
 
-    ✅ 第三阶段护栏（防历史假批次回流，保守版）：
-    - 对 requires_batch=false 的商品：
-        若 batch_code 是明确假批次占位符（NOEXP/NEAR/FAR），则归一为 NULL
-      注意：不再把 IDEM 当作假码，避免误伤现有测试/业务批次码。
+    ✅ Phase5（方案 C）：彻底删除“假批次占位符”护栏
+    - 内核不再把某些字符串（例如 NOEXP/NEAR/FAR）偷偷归一为 NULL
+    - batch_code 的语义由事实层/入口层决定：传什么就记什么；想表达“无批次”就传 NULL
     """
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
@@ -133,11 +128,6 @@ async def adjust_impl(  # noqa: C901
 
     requires_batch = await _item_requires_batch(session, item_id=int(item_id))
     bc_norm = _norm_batch_code(batch_code)
-
-    # ✅ 第三阶段护栏：非批次商品遇到明确假码 → 归一为 NULL
-    if not requires_batch and bc_norm is not None:
-        if bc_norm.upper() in _FAKE_BATCH_CODES:
-            bc_norm = None
 
     if requires_batch and not bc_norm:
         raise ValueError("批次受控商品必须指定 batch_code。")
@@ -250,7 +240,7 @@ async def adjust_impl(  # noqa: C901
         session=session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,  # ✅ may be NULL
+        batch_code=bc_norm,  # ✅ may be NULL, but we will not “auto-null” fake codes anymore
         reason=reason_val,
         sub_reason=sub_reason,
         delta=int(delta),
