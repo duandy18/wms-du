@@ -179,6 +179,7 @@ from app.api.routers.fake_platform import router as fake_platform_router
 from app.api.routers.finance_overview import router as finance_overview_router
 from app.api.routers.flow_replay import router as flow_replay_router
 from app.api.routers.inbound_receipts import router as inbound_receipts_router
+from app.api.routers.inbound_receipts import po_receive_router as po_receive_router
 # ✅ 新增：收货单草稿（对照 PO 打勾 → 扫码/录入 → commit 生成 confirmed receipt）
 from app.api.routers.intelligence import router as intelligence_router
 from app.api.routers.item_barcodes import router as item_barcodes_router
@@ -291,6 +292,7 @@ app.include_router(outbound_ops_router)
 app.include_router(purchase_orders_router)
 app.include_router(purchase_reports_router)
 app.include_router(inbound_receipts_router)
+app.include_router(po_receive_router)
 # ✅ 新增：草稿收货单（先勾选/扫码/录入 → commit 生成 confirmed receipt）
 app.include_router(return_tasks_router)
 app.include_router(pick_tasks_router)

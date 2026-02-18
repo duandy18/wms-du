@@ -32,7 +32,12 @@ async def _insert_confirmed_order_return_receipt(
     - inbound_receipts.source_id=order_id
     - inbound_receipts.status='CONFIRMED'
     - inbound_receipt_lines.qty_received 作为 returned_qty（按 item_id 聚合）
+
+    Phase5+ 护栏：
+    - inbound_receipts.ref 全局唯一 → 同一订单多张 RMA receipt 必须使用唯一 ref
     """
+    ref = f"RMA-ORD-{order_id}-{trace_id}-{int(occurred_at.timestamp()*1000)}"
+
     receipt_id = int(
         (
             await session.execute(
@@ -72,7 +77,7 @@ async def _insert_confirmed_order_return_receipt(
                 {
                     "warehouse_id": int(warehouse_id),
                     "order_id": int(order_id),
-                    "ref": f"RMA-ORD-{order_id}",
+                    "ref": str(ref),
                     "trace_id": str(trace_id),
                     "occurred_at": occurred_at,
                 },
@@ -148,7 +153,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
       - 下单 qty=2（item_id=1）；
       - 入库 + 发货 shipped=2（ref=ORD:...）；
       - 写入一张 confirmed Receipt returned=2 → remaining=0；
-      - 再试图追加 returned=1（第二张 Receipt） -> 剩余可退=0，应当拒绝（此处用 reconcile 结果进行断言）。
+      - 再试图追加 returned=1（第二张 Receipt） -> returned>shipped 的问题被识别出来。
     """
     platform = "PDD"
     shop_id = "RMA_TEST_SHOP"
@@ -227,7 +232,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     assert lf.qty_returned == 2
     assert lf.remaining_refundable == 0
 
-    # 5) 再追加一张 returned=1 的 Receipt，会导致 returned>shipped 的问题被识别出来
+    # 5) 再追加一张 returned=1 的 Receipt → returned=3 > shipped=2
     await _insert_confirmed_order_return_receipt(
         session,
         order_id=order_id,
@@ -262,7 +267,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
       - orders.status 变为 PARTIALLY_RETURNED。
 
     说明：
-      - returned 的事实源不再是 旧执行层 commit，而是 confirmed InboundReceipt。
+      - returned 的事实源不再是旧执行层 commit，而是 confirmed InboundReceipt。
     """
     platform = "PDD"
     shop_id = "RMA_TEST_SHOP2"
