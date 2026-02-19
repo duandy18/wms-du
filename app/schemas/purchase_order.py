@@ -183,12 +183,15 @@ class PurchaseOrderLineOut(BaseModel):
 class PurchaseOrderListItemOut(BaseModel):
     """
     列表态采购单：用于 /purchase-orders/ 列表。
-    - 不做主数据补齐
+    - 不做主数据补齐（但允许补充主数据“显示字段”，例如 warehouse_name）
     - 行使用 PurchaseOrderLineListOut（无 qty_remaining）
     """
     id: int
     supplier: str
     warehouse_id: int
+
+    # ✅ 展示用：仓库名称（来自 warehouses 主数据；不落 purchase_orders 表）
+    warehouse_name: Optional[str] = None
 
     supplier_id: Optional[int]
     supplier_name: Optional[str]

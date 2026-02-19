@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
 from app.models.purchase_order import PurchaseOrder
+from app.models.warehouse import Warehouse
 from app.schemas.purchase_order import (
     PurchaseOrderCreateV2,
     PurchaseOrderLineListOut,
@@ -147,6 +148,20 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         res = await session.execute(stmt)
         rows = list(res.scalars())
 
+        # ✅ 批量加载仓库名称（展示字段，不写入 purchase_orders 表）
+        wh_ids = sorted({int(getattr(po, "warehouse_id")) for po in rows if getattr(po, "warehouse_id", None) is not None})
+        wh_map: dict[int, str] = {}
+        if wh_ids:
+            wh_rows = (
+                await session.execute(
+                    select(Warehouse.id, Warehouse.name).where(Warehouse.id.in_(wh_ids))
+                )
+            ).all()
+            for wid, name in wh_rows:
+                if wid is None:
+                    continue
+                wh_map[int(wid)] = str(name or "")
+
         out: List[PurchaseOrderListItemOut] = []
         for po in rows:
             if po.lines:
@@ -175,11 +190,13 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
                     )
                 )
 
+            wid = int(getattr(po, "warehouse_id"))
             out.append(
                 PurchaseOrderListItemOut(
                     id=int(getattr(po, "id")),
                     supplier=str(getattr(po, "supplier") or ""),
-                    warehouse_id=int(getattr(po, "warehouse_id")),
+                    warehouse_id=wid,
+                    warehouse_name=wh_map.get(wid) or None,
                     supplier_id=getattr(po, "supplier_id", None),
                     supplier_name=getattr(po, "supplier_name", None),
                     total_amount=getattr(po, "total_amount", None),
@@ -290,5 +307,5 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
 
         po_out = await svc.get_po_with_lines(session, po.id)
         if po_out is None:
-            raise HTTPException(status_code=500, detail="Failed to load demo PurchaseOrder with lines")
+            raise HTTPException(status_code=500, detail="Failed to load deo PurchaseOrder with lines")
         return po_out

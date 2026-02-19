@@ -11,12 +11,14 @@ from sqlalchemy.orm import selectinload
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.models.inbound_receipt import InboundReceipt
+from app.models.purchase_order import PurchaseOrder
 from app.schemas.inbound_receipt import InboundReceiptOut
 from app.schemas.inbound_receipt_confirm import (
     InboundReceiptConfirmLedgerRef,
     InboundReceiptConfirmOut,
 )
 from app.services.inbound_receipt_explain import explain_receipt
+from app.services.purchase_order_receive_workbench import get_receive_workbench
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -89,6 +91,65 @@ def _opt_bool(res: object, key: str) -> bool | None:
     if key not in res:
         return None
     return bool(res.get(key))
+
+
+async def _maybe_auto_close_po_after_confirm(
+    *,
+    session: AsyncSession,
+    receipt: InboundReceipt,
+    now: datetime,
+) -> None:
+    """
+    Phase5+：PO 自动关闭（计划生命周期）
+    规则：
+    - Receipt(CONFIRMED) 写入后，如果该 receipt 属于 PO（source_type='PO'），
+      且 PO 处于 CREATED，
+      且 workbench 聚合显示所有行 remaining_qty==0，
+      则自动关闭 PO：
+        status='CLOSED', close_reason='AUTO_COMPLETED', closed_at=now(若为空)
+
+    注意：
+    - 这是“计划层状态变更”，不写库存，只做计划终态固化。
+    - 必须在同一事务内完成，且对 PO 加锁，避免并发 confirm 竞争。
+    """
+    source_type = str(getattr(receipt, "source_type", "") or "").upper()
+    if source_type != "PO":
+        return
+
+    source_id = getattr(receipt, "source_id", None)
+    if source_id is None:
+        return
+    po_id = int(source_id)
+
+    po_obj = (
+        (await session.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).with_for_update()))
+        .scalars()
+        .first()
+    )
+    if po_obj is None:
+        return
+
+    po_status = str(getattr(po_obj, "status", "") or "").upper()
+    if po_status != "CREATED":
+        # 只对可执行态的计划做自动关闭；若已 CLOSED/CANCELED，保持原样
+        return
+
+    wb = await get_receive_workbench(session, po_id=po_id)
+    if not wb.rows:
+        return
+
+    # ✅ 以 workbench.remaining_qty 为准（后端已统一 base 口径）
+    is_completed = all(int(getattr(r, "remaining_qty", 0) or 0) == 0 for r in wb.rows)
+    if not is_completed:
+        return
+
+    po_obj.status = "CLOSED"
+    if getattr(po_obj, "closed_at", None) is None:
+        po_obj.closed_at = now
+    if getattr(po_obj, "close_reason", None) is None:
+        po_obj.close_reason = "AUTO_COMPLETED"
+
+    await session.flush()
 
 
 async def confirm_receipt(
@@ -177,6 +238,9 @@ async def confirm_receipt(
 
     receipt.status = "CONFIRMED"
     await session.flush()
+
+    # ✅ Phase5+：自动关闭 PO（全部按计划完成）
+    await _maybe_auto_close_po_after_confirm(session=session, receipt=receipt, now=datetime.now(UTC))
 
     return InboundReceiptConfirmOut(
         receipt=InboundReceiptOut.model_validate(receipt),
