@@ -4,95 +4,17 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
-from app.schemas.purchase_order import PurchaseOrderLineOut, PurchaseOrderWithLinesOut
+from app.schemas.purchase_order import PurchaseOrderWithLinesOut
 from app.schemas.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
 from app.services.purchase_order_create import create_po_v2 as _create_po_v2
+from app.services.purchase_order_presenter import build_po_with_lines_out
 from app.services.purchase_order_queries import get_po_with_lines as _get_po_with_lines
 from app.services.purchase_order_receive import receive_po_line as _receive_po_line
 from app.services.purchase_order_receive_workbench import get_receive_workbench
-from app.services.qty_base import ordered_base as _ordered_base_impl
-from app.services.qty_base import received_base as _received_base_impl
 
 UTC = timezone.utc
-
-
-def _get_qty_ordered_base(ln: Any) -> int:
-    """
-    ✅ Phase 2：最小单位订购事实（base）
-    统一委托 app/services/qty_base.py
-    """
-    return int(_ordered_base_impl(ln) or 0)
-
-
-def _get_qty_received_base(ln: Any) -> int:
-    """
-    ✅ Phase 2：最小单位已收事实（base）
-    统一委托 app/services/qty_base.py
-    """
-    return int(_received_base_impl(ln) or 0)
-
-
-def _safe_upc(v: Any) -> int:
-    try:
-        n = int(v or 1)
-    except Exception:
-        n = 1
-    return n if n > 0 else 1
-
-
-def _base_to_purchase(base_qty: int, upc: int) -> int:
-    """
-    展示用：把 base 换算为采购单位（向下取整）。
-    """
-    if upc <= 0:
-        return int(base_qty)
-    return int(base_qty) // int(upc)
-
-
-async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
-    if not item_ids:
-        return {}
-    rows = (await session.execute(select(Item).where(Item.id.in_(item_ids)))).scalars().all()
-    return {int(it.id): it for it in rows}
-
-
-async def _load_primary_barcodes(session: AsyncSession, item_ids: List[int]) -> Dict[int, str]:
-    """
-    主条码规则（与 snapshot_inventory.py 保持一致）：
-    - 仅 active=true
-    - is_primary 优先，否则最小 id（稳定且可解释）
-    """
-    if not item_ids:
-        return {}
-
-    rows = (
-        (
-            await session.execute(
-                select(ItemBarcode)
-                .where(ItemBarcode.item_id.in_(item_ids), ItemBarcode.active.is_(True))
-                .order_by(
-                    ItemBarcode.item_id.asc(),
-                    ItemBarcode.is_primary.desc(),
-                    ItemBarcode.id.asc(),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    m: Dict[int, str] = {}
-    for bc in rows:
-        iid = int(bc.item_id)
-        if iid in m:
-            continue
-        m[iid] = bc.barcode
-    return m
 
 
 class PurchaseOrderService:
@@ -145,98 +67,29 @@ class PurchaseOrderService:
         if po is None:
             return None
 
-        item_ids = sorted({int(ln.item_id) for ln in (po.lines or []) if ln.item_id})
-        items_map = await _load_items_map(session, item_ids)
-        barcode_map = await _load_primary_barcodes(session, item_ids)
+        # ✅ 关键补强：强制以 DB 为准刷新头部字段，确保 close API 回显不吃 session 状态/缓存影响
+        # - 修复现象：DB 已写入 close_reason/close_note，但 API 返回仍为 null
+        # - 这里 refresh 的都是标量字段，不触发 lines lazyload（lines 已由 query selectinload）
+        try:
+            await session.refresh(
+                po,
+                attribute_names=[
+                    "status",
+                    "last_received_at",
+                    "closed_at",
+                    "close_reason",
+                    "close_note",
+                    "closed_by",
+                    "canceled_at",
+                    "canceled_reason",
+                    "canceled_by",
+                ],
+            )
+        except Exception:
+            # refresh 失败不应阻断读接口；后续 out 仍会用 getattr 安全读取
+            pass
 
-        out_lines: List[PurchaseOrderLineOut] = []
-        for ln in (po.lines or []):
-            ordered_purchase = int(getattr(ln, "qty_ordered", 0) or 0)
-            upc = _safe_upc(getattr(ln, "units_per_case", None))
-
-            ordered_base = _get_qty_ordered_base(ln)
-            received_base = _get_qty_received_base(ln)
-            remaining_base = max(0, ordered_base - received_base)
-
-            received_purchase = _base_to_purchase(received_base, upc)
-            remaining_purchase = max(0, ordered_purchase - received_purchase)
-
-            data: Dict[str, Any] = {
-                "id": int(getattr(ln, "id")),
-                "po_id": int(getattr(ln, "po_id")),
-                "line_no": int(getattr(ln, "line_no")),
-                "item_id": int(getattr(ln, "item_id")),
-                "item_name": getattr(ln, "item_name", None),
-                "item_sku": getattr(ln, "item_sku", None),
-                "biz_category": getattr(ln, "category", None),
-                "spec_text": getattr(ln, "spec_text", None),
-                "base_uom": getattr(ln, "base_uom", None),
-                "purchase_uom": getattr(ln, "purchase_uom", None),
-                "supply_price": getattr(ln, "supply_price", None),
-                "retail_price": getattr(ln, "retail_price", None),
-                "promo_price": getattr(ln, "promo_price", None),
-                "min_price": getattr(ln, "min_price", None),
-                "qty_cases": getattr(ln, "qty_cases", None),
-                "units_per_case": getattr(ln, "units_per_case", None),
-                "qty_ordered": ordered_purchase,
-                "qty_ordered_base": ordered_base,
-                "qty_received_base": received_base,
-                "qty_remaining_base": remaining_base,
-                "qty_received": received_purchase,
-                "qty_remaining": remaining_purchase,
-                "line_amount": getattr(ln, "line_amount", None),
-                "status": getattr(ln, "status", None),
-                "remark": getattr(ln, "remark", None),
-                "created_at": getattr(ln, "created_at"),
-                "updated_at": getattr(ln, "updated_at"),
-                "sku": None,
-                "primary_barcode": None,
-                "brand": None,
-                "category": None,
-                "supplier_id": None,
-                "supplier_name": None,
-                "weight_kg": None,
-                "uom": None,
-                "has_shelf_life": None,
-                "shelf_life_value": None,
-                "shelf_life_unit": None,
-                "enabled": None,
-            }
-
-            it = items_map.get(int(getattr(ln, "item_id")))
-            if it is not None:
-                data["sku"] = it.sku
-                data["brand"] = it.brand
-                data["category"] = it.category
-                data["supplier_id"] = it.supplier_id
-                data["supplier_name"] = it.supplier_name
-                data["weight_kg"] = getattr(it, "weight_kg", None)
-                data["uom"] = it.uom
-                data["has_shelf_life"] = it.has_shelf_life
-                data["shelf_life_value"] = it.shelf_life_value
-                data["shelf_life_unit"] = it.shelf_life_unit
-                data["enabled"] = it.enabled
-
-            data["primary_barcode"] = barcode_map.get(int(getattr(ln, "item_id")))
-            out_lines.append(PurchaseOrderLineOut.model_validate(data))
-
-        return PurchaseOrderWithLinesOut(
-            id=po.id,
-            supplier=po.supplier,
-            warehouse_id=po.warehouse_id,
-            supplier_id=po.supplier_id,
-            supplier_name=po.supplier_name,
-            total_amount=po.total_amount,
-            purchaser=po.purchaser,
-            purchase_time=po.purchase_time,
-            remark=po.remark,
-            status=po.status,
-            created_at=po.created_at,
-            updated_at=po.updated_at,
-            last_received_at=po.last_received_at,
-            closed_at=po.closed_at,
-            lines=out_lines,
-        )
+        return await build_po_with_lines_out(session, po)
 
     async def receive_po_line(
         self,
