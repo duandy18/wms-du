@@ -1,13 +1,14 @@
 # app/services/purchase_order_line_mapper.py
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Dict, Tuple
 
 from app.schemas.purchase_order import PurchaseOrderLineOut
-from app.services.purchase_order_qty import base_to_purchase, get_qty_ordered_base, get_qty_received_base, safe_upc
+from app.services.purchase_order_qty import base_to_purchase, get_qty_ordered_base, safe_upc
 
 
-def _calc_qty_fields(ln: Any) -> Tuple[int, int, int, int, int, int]:
+def _calc_qty_fields(*, ln: Any, received_base: int) -> Tuple[int, int, int, int, int, int]:
     """
     返回：
     - ordered_purchase
@@ -21,36 +22,42 @@ def _calc_qty_fields(ln: Any) -> Tuple[int, int, int, int, int, int]:
     upc = safe_upc(getattr(ln, "units_per_case", None))
 
     ordered_base = get_qty_ordered_base(ln)
-    received_base = get_qty_received_base(ln)
-    remaining_base = max(0, ordered_base - received_base)
+    received_base_i = max(int(received_base or 0), 0)
+    remaining_base = max(0, ordered_base - received_base_i)
 
-    received_purchase = base_to_purchase(received_base, upc)
+    received_purchase = base_to_purchase(received_base_i, upc)
     remaining_purchase = max(0, ordered_purchase - received_purchase)
 
     return (
         ordered_purchase,
         ordered_base,
-        received_base,
+        received_base_i,
         remaining_base,
         received_purchase,
         remaining_purchase,
     )
 
 
-def build_line_base_data(ln: Any) -> Dict[str, Any]:
+def build_line_base_data(*, ln: Any, received_base: int) -> Dict[str, Any]:
     """
-    只负责“行本体 + qty 口径”字段，完全不依赖 items_map/barcode_map。
+    只负责“行本体 + qty 口径”字段（已收来自 receipt 聚合注入）。
     """
     (
         ordered_purchase,
         ordered_base,
-        received_base,
+        received_base_i,
         remaining_base,
         received_purchase,
         remaining_purchase,
-    ) = _calc_qty_fields(ln)
+    ) = _calc_qty_fields(ln=ln, received_base=received_base)
 
     item_id = int(getattr(ln, "item_id"))
+
+    discount_amount = getattr(ln, "discount_amount", None)
+    try:
+        discount_amount_val = Decimal(str(discount_amount or 0))
+    except Exception:
+        discount_amount_val = Decimal("0")
 
     return {
         "id": int(getattr(ln, "id")),
@@ -59,24 +66,19 @@ def build_line_base_data(ln: Any) -> Dict[str, Any]:
         "item_id": item_id,
         "item_name": getattr(ln, "item_name", None),
         "item_sku": getattr(ln, "item_sku", None),
-        "biz_category": getattr(ln, "category", None),
         "spec_text": getattr(ln, "spec_text", None),
         "base_uom": getattr(ln, "base_uom", None),
         "purchase_uom": getattr(ln, "purchase_uom", None),
         "supply_price": getattr(ln, "supply_price", None),
-        "retail_price": getattr(ln, "retail_price", None),
-        "promo_price": getattr(ln, "promo_price", None),
-        "min_price": getattr(ln, "min_price", None),
-        "qty_cases": getattr(ln, "qty_cases", None),
-        "units_per_case": getattr(ln, "units_per_case", None),
+        "discount_amount": discount_amount_val,
+        "discount_note": getattr(ln, "discount_note", None),
+        "units_per_case": int(getattr(ln, "units_per_case", 1) or 1),
         "qty_ordered": ordered_purchase,
         "qty_ordered_base": ordered_base,
-        "qty_received_base": received_base,
+        "qty_received_base": received_base_i,
         "qty_remaining_base": remaining_base,
         "qty_received": received_purchase,
         "qty_remaining": remaining_purchase,
-        "line_amount": getattr(ln, "line_amount", None),
-        "status": getattr(ln, "status", None),
         "remark": getattr(ln, "remark", None),
         "created_at": getattr(ln, "created_at"),
         "updated_at": getattr(ln, "updated_at"),
@@ -126,16 +128,17 @@ def apply_barcode_enrichment(data: Dict[str, Any], *, primary_barcode: str | Non
 def map_po_line_out(
     ln: Any,
     *,
+    received_base: int,
     items_map: Dict[int, Any],
     barcode_map: Dict[int, str],
 ) -> PurchaseOrderLineOut:
     """
-    单行映射（可扩展但不污染 presenter/service）：
-    - build_line_base_data：行本体 + qty
+    单行映射：
+    - build_line_base_data：行本体 + qty（已收来自 receipt 聚合注入）
     - apply_item_enrichment：item 扩展
     - apply_barcode_enrichment：条码扩展
     """
-    data = build_line_base_data(ln)
+    data = build_line_base_data(ln=ln, received_base=received_base)
     item_id = int(data["item_id"])
 
     apply_item_enrichment(data, item_obj=items_map.get(item_id))

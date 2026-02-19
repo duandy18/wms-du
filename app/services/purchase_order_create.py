@@ -16,11 +16,7 @@ from app.models.purchase_order_line import PurchaseOrderLine
 async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
     if not item_ids:
         return {}
-    rows = (
-        (await session.execute(select(Item).where(Item.id.in_(item_ids))))
-        .scalars()
-        .all()
-    )
+    rows = (await session.execute(select(Item).where(Item.id.in_(item_ids)))).scalars().all()
     return {int(it.id): it for it in rows}
 
 
@@ -48,6 +44,18 @@ def _trim_or_none(v: Any) -> Optional[str]:
     return s or None
 
 
+def _parse_discount_amount(v: Any) -> Decimal:
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return Decimal("0")
+    try:
+        d = Decimal(str(v))
+    except Exception as e:
+        raise ValueError("discount_amount 必须为数字") from e
+    if d < 0:
+        raise ValueError("discount_amount 必须 >= 0")
+    return d
+
+
 async def create_po_v2(
     session: AsyncSession,
     *,
@@ -63,11 +71,17 @@ async def create_po_v2(
     """
     创建“头 + 多行”的采购单。
 
-    ✅ Phase 2（最终形态）数量合同：
-    - qty_ordered: 采购单位订购量（件/箱）——保留为输入快照/兼容
-    - units_per_case: 换算因子（每采购单位包含多少最小单位）
-    - qty_ordered_base: 最小单位订购量（事实字段）
-    - qty_received: 最小单位已收量（事实字段）
+    ✅ 数量合同（方案 A）：
+    - qty_ordered: 采购单位订购量（输入快照）
+    - units_per_case: 换算因子（每采购单位包含多少最小单位，>0，默认 1）
+    - qty_ordered_base: 最小单位订购量（事实字段，唯一口径）
+      * 由 qty_ordered 与 units_per_case 在写入阶段计算得到（计算逻辑集中在服务层）
+
+    ✅ 价格合同：
+    - supply_price: 按 base_uom 计价的采购单价快照（可空）
+    - discount_amount: 整行减免金额（>=0）
+    - discount_note: 折扣说明（可选）
+    - 行金额不落库；PO.total_amount 在创建时可按可计算行聚合写入
 
     ✅ 封板规则（关键）：
     - item_name / item_sku 必须由后端从 Item 主数据生成写入 purchase_order_lines（行快照）
@@ -82,7 +96,7 @@ async def create_po_v2(
     if not isinstance(purchase_time, datetime):
         raise ValueError("purchase_time 必须为 datetime 类型")
 
-    # ✅ 采购事实硬闸：采购单必须绑定供应商（否则无法做到“供应商->商品”的事实约束）
+    # ✅ 采购事实硬闸：采购单必须绑定供应商
     po_supplier_id = _require_supplier_for_po(supplier_id)
 
     # 先收集 item_ids，用于批量查 Item（避免 N+1）
@@ -119,6 +133,7 @@ async def create_po_v2(
 
     norm_lines: List[Dict[str, Any]] = []
     total_amount = Decimal("0")
+    any_amount = False
 
     for idx, raw in enumerate(lines, start=1):
         item_id = raw.get("item_id")
@@ -152,21 +167,27 @@ async def create_po_v2(
 
         # ✅ 最小单位订购量（事实字段）
         qty_ordered_base = qty_ordered * upc
+        if qty_ordered_base <= 0:
+            raise ValueError("行 qty_ordered_base 必须 > 0")
 
         line_no = raw.get("line_no") or idx
 
-        line_amount_raw = raw.get("line_amount")
-        if line_amount_raw is not None:
-            line_amount = Decimal(str(line_amount_raw))
-        elif supply_price is not None:
-            line_amount = supply_price * Decimal(int(qty_ordered_base))
-        else:
-            line_amount = None
+        discount_amount = _parse_discount_amount(raw.get("discount_amount"))
+        discount_note = _trim_or_none(raw.get("discount_note"))
 
-        if line_amount is not None:
-            total_amount += line_amount
+        # 如果给了折扣但没价格，无法复算金额，直接拒绝（避免脏合同）
+        if discount_amount > 0 and supply_price is None:
+            raise ValueError("存在折扣时必须提供 supply_price（按 base_uom 单价）")
 
-        # ✅ 封板：行快照字段来自 Item 主数据（前端无权传入）
+        # ✅ 计算行金额（不落库）：仅用于 PO.total_amount 的创建聚合
+        if supply_price is not None:
+            line_total = (supply_price * Decimal(int(qty_ordered_base))) - discount_amount
+            if line_total < 0:
+                raise ValueError("折扣金额超出行金额，导致行金额为负")
+            total_amount += line_total
+            any_amount = True
+
+        # ✅ 封板：行快照字段来自 Item 主数据
         item_name_snapshot = _trim_or_none(getattr(it, "name", None))
         item_sku_snapshot = _trim_or_none(getattr(it, "sku", None))
 
@@ -176,21 +197,15 @@ async def create_po_v2(
                 "item_id": item_id,
                 "item_name": item_name_snapshot,
                 "item_sku": item_sku_snapshot,
-                "category": _trim_or_none(raw.get("category")),
                 "spec_text": _trim_or_none(raw.get("spec_text")),
                 "base_uom": _trim_or_none(raw.get("base_uom")),
                 "purchase_uom": _trim_or_none(raw.get("purchase_uom")),
                 "supply_price": supply_price,
-                "retail_price": raw.get("retail_price"),
-                "promo_price": raw.get("promo_price"),
-                "min_price": raw.get("min_price"),
-                "qty_cases": raw.get("qty_cases") or qty_ordered,
-                "units_per_case": units_per_case_int,
+                "units_per_case": upc,  # ✅ 直接写非空 upc
                 "qty_ordered": qty_ordered,
                 "qty_ordered_base": qty_ordered_base,
-                "qty_received": 0,
-                "line_amount": line_amount,
-                "status": "CREATED",
+                "discount_amount": discount_amount,
+                "discount_note": discount_note,
                 "remark": raw.get("remark"),
             }
         )
@@ -202,7 +217,7 @@ async def create_po_v2(
         warehouse_id=int(warehouse_id),
         purchaser=purchaser.strip(),
         purchase_time=purchase_time,
-        total_amount=total_amount if total_amount != Decimal("0") else None,
+        total_amount=total_amount if any_amount else None,
         status="CREATED",
         remark=remark,
     )
@@ -216,21 +231,15 @@ async def create_po_v2(
             item_id=nl["item_id"],
             item_name=nl["item_name"],
             item_sku=nl["item_sku"],
-            category=nl["category"],
             spec_text=nl["spec_text"],
             base_uom=nl["base_uom"],
             purchase_uom=nl["purchase_uom"],
             supply_price=nl["supply_price"],
-            retail_price=nl["retail_price"],
-            promo_price=nl["promo_price"],
-            min_price=nl["min_price"],
-            qty_cases=nl["qty_cases"],
             units_per_case=nl["units_per_case"],
             qty_ordered=nl["qty_ordered"],
             qty_ordered_base=nl["qty_ordered_base"],
-            qty_received=nl["qty_received"],
-            line_amount=nl["line_amount"],
-            status=nl["status"],
+            discount_amount=nl["discount_amount"],
+            discount_note=nl["discount_note"],
             remark=nl["remark"],
         )
         session.add(line)

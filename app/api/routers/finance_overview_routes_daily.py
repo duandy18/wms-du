@@ -40,14 +40,9 @@ def register(router: APIRouter) -> None:
         财务总览（按日）——运营视角粗估版本（PROD-only）：
 
         ✅ 统计口径（封板）：
-        - 财务统计只统计真实业务（PROD-only）：
-          1) 排除 DEFAULT Test Set 商品
-          2) 排除测试店铺（platform_test_shops, code='DEFAULT'）
-          3) 收入口径：排除“含任意测试商品”的订单（否则订单总额会混入测试线）
-
         - 收入：orders.pay_amount（缺失则退回 order_amount），按 orders.created_at::date 汇总
-        - 商品成本：以 purchase_order_lines 的平均单价（总金额 / 总最小单位数）粗算，
-                    再乘以 order_items.qty（忽略退货与发货时点，只按订单创建日统计）
+        - 商品成本：以 purchase_order_lines 的平均单价（总金额 / 总最小单位数）粗算
+                 行金额口径：qty_ordered_base * supply_price - discount_amount（line_amount 不落库）
         - 发货成本：shipping_records.cost_estimated，按 shipping_records.created_at::date 汇总
         """
         from_dt = parse_date_param(from_date)
@@ -79,8 +74,11 @@ def register(router: APIRouter) -> None:
             item_cost AS (
               SELECT
                 pol.item_id,
-                COALESCE(SUM(COALESCE(pol.line_amount, 0)), 0) AS total_amount,
-                COALESCE(SUM(pol.qty_ordered * COALESCE(pol.units_per_case, 1)), 0) AS total_units
+                COALESCE(SUM(
+                  (COALESCE(pol.qty_ordered_base, 0) * COALESCE(pol.supply_price, 0))
+                  - COALESCE(pol.discount_amount, 0)
+                ), 0) AS total_amount,
+                COALESCE(SUM(COALESCE(pol.qty_ordered_base, 0)), 0) AS total_units
               FROM purchase_orders po
               JOIN purchase_order_lines pol ON pol.po_id = po.id
               WHERE pol.item_id NOT IN (SELECT item_id FROM test_items)
@@ -168,9 +166,7 @@ def register(router: APIRouter) -> None:
 
             if revenue > 0:
                 gross_margin = (gross_profit / revenue).quantize(Decimal("0.0001"))
-                fulfillment_ratio = (shipping_cost / revenue).quantize(
-                    Decimal("0.0001"),
-                )
+                fulfillment_ratio = (shipping_cost / revenue).quantize(Decimal("0.0001"))
             else:
                 gross_margin = None
                 fulfillment_ratio = None

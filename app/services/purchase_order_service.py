@@ -22,8 +22,11 @@ class PurchaseOrderService:
     采购单服务（Phase 2：唯一形态）
 
     ✅ 合同加严（关键）：
-    - base（最小单位）为唯一事实口径：qty_ordered_base / qty_received_base / qty_remaining_base
-    - qty_ordered / qty_received / qty_remaining 为采购单位展示口径（由 base + units_per_case 换算）
+    - base（最小单位）为唯一事实口径：qty_ordered_base
+    - qty_ordered 为采购单位展示/输入快照（方案 A），units_per_case 为换算因子（>=1）
+
+    ✅ 执行口径（关键）：
+    - PO 行不再持久化 qty_received；已收/剩余一律来自 Receipt(CONFIRMED) 聚合视图（workbench / presenter 统一）
     """
 
     def __init__(self) -> None:
@@ -67,9 +70,7 @@ class PurchaseOrderService:
         if po is None:
             return None
 
-        # ✅ 关键补强：强制以 DB 为准刷新头部字段，确保 close API 回显不吃 session 状态/缓存影响
-        # - 修复现象：DB 已写入 close_reason/close_note，但 API 返回仍为 null
-        # - 这里 refresh 的都是标量字段，不触发 lines lazyload（lines 已由 query selectinload）
+        # ✅ 强制 refresh 头部字段，确保 close API 回显与 DB 一致
         try:
             await session.refresh(
                 po,
@@ -86,7 +87,6 @@ class PurchaseOrderService:
                 ],
             )
         except Exception:
-            # refresh 失败不应阻断读接口；后续 out 仍会用 getattr 安全读取
             pass
 
         return await build_po_with_lines_out(session, po)

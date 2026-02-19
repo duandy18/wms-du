@@ -21,10 +21,6 @@ def ordered_base(obj: Any) -> int:
     ✅ Phase 2：最小单位订购事实（base units）
 
     优先使用 qty_ordered_base（最小单位订购事实字段）。
-
-    ⚠️ Legacy fallback（唯一允许的乘法位置）：
-    - 仅当旧数据缺失 qty_ordered_base 时，才允许用 qty_ordered * units_per_case 推导 base。
-    - services 运行时其余位置禁止散落乘法与跨口径比较。
     """
     qob = getattr(obj, "qty_ordered_base", None)
     if qob is not None:
@@ -33,6 +29,7 @@ def ordered_base(obj: Any) -> int:
         except Exception:
             return 0
 
+    # legacy fallback（仍保留但尽量不依赖）
     upc = safe_upc(getattr(obj, "units_per_case", None))
     try:
         ordered_purchase = int(getattr(obj, "qty_ordered") or 0)
@@ -46,12 +43,15 @@ def received_base(obj: Any) -> int:
     """
     ✅ Phase 2：最小单位已收事实（base units）
 
-    约定：qty_received 为最小单位（base）。
+    注意：PO 行不再持久化 qty_received；对 PurchaseOrderLine 的已收应由 Receipt(CONFIRMED) 聚合得出。
+    这里保留对旧对象/ReceiptLine 的兼容：有 qty_received 就读；没有就当 0。
     """
-    try:
-        return max(int(getattr(obj, "qty_received", 0) or 0), 0)
-    except Exception:
-        return 0
+    if hasattr(obj, "qty_received"):
+        try:
+            return max(int(getattr(obj, "qty_received", 0) or 0), 0)
+        except Exception:
+            return 0
+    return 0
 
 
 def remaining_base(obj: Any) -> int:

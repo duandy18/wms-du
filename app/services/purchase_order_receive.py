@@ -13,23 +13,15 @@ from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.services.purchase_order_queries import get_po_with_lines
 from app.services.qty_base import ordered_base as _ordered_base_impl
-from app.services.qty_base import received_base as _received_base_impl
-from app.services.qty_base import remaining_base as _remaining_base_impl
 
 
 def _ordered_base(line: Any) -> int:
     return _ordered_base_impl(line)
 
 
-def _received_base(line: Any) -> int:
-    return _received_base_impl(line)
-
-
-def _remaining_base(line: Any) -> int:
-    return _remaining_base_impl(line)
-
-
-async def _get_latest_po_draft_receipt(session: AsyncSession, *, po_id: int) -> Optional[InboundReceipt]:
+async def _get_latest_po_draft_receipt(
+    session: AsyncSession, *, po_id: int
+) -> Optional[InboundReceipt]:
     stmt = (
         select(InboundReceipt)
         .where(InboundReceipt.source_type == "PO")
@@ -94,7 +86,6 @@ async def get_or_create_po_draft_receipt_explicit(
     try:
         return await _create_po_draft_receipt(session, po=po, occurred_at=occurred_at)
     except IntegrityError:
-        # 并发下另一个事务已经创建了 DRAFT：回滚本次 flush 冲突，再查一次返回
         await session.rollback()
         draft2 = await _get_po_draft_receipt(session, po_id=int(po.id))
         if draft2 is not None:
@@ -105,7 +96,7 @@ async def get_or_create_po_draft_receipt_explicit(
 async def _next_receipt_line_no(session: AsyncSession, *, receipt_id: int) -> int:
     """
     在 async 环境中禁止访问 receipt.lines（可能触发 lazyload -> MissingGreenlet）。
-    这里用 SQL 直接取 MAX(line_no)+1，稳定且无懒加载风险。
+    用 SQL 直接取 MAX(line_no)+1。
     """
     row = await session.execute(
         text(
@@ -124,12 +115,52 @@ async def _next_receipt_line_no(session: AsyncSession, *, receipt_id: int) -> in
 def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> str:
     """
     Phase5：录入阶段必须给 batch_code（DB NOT NULL）。
-    - 若提供 production_date：用可解释的 deterministic batch_code
-    - 若未提供：先落 NOEXP（后续在 Receipt 页面补齐/修正）
+    - 若提供 production_date：用 deterministic batch_code
+    - 若未提供：先落 NOEXP（下一阶段会禁止 NOEXP for shelf-life items）
     """
     if production_date is None:
         return "NOEXP"
     return f"BATCH-PO{po_id}-L{po_line_no}-{production_date.isoformat()}"
+
+
+async def _sum_confirmed_received_base(
+    session: AsyncSession, *, po_id: int, po_line_id: int
+) -> int:
+    sql = text(
+        """
+        SELECT COALESCE(SUM(rl.qty_received), 0)::int AS qty
+          FROM inbound_receipt_lines rl
+          JOIN inbound_receipts r
+            ON r.id = rl.receipt_id
+         WHERE r.source_type='PO'
+           AND r.source_id=:po_id
+           AND r.status='CONFIRMED'
+           AND rl.po_line_id=:po_line_id
+        """
+    )
+    return int(
+        (await session.execute(sql, {"po_id": int(po_id), "po_line_id": int(po_line_id)})).scalar()
+        or 0
+    )
+
+
+async def _sum_draft_received_base(
+    session: AsyncSession, *, receipt_id: int, po_line_id: int
+) -> int:
+    sql = text(
+        """
+        SELECT COALESCE(SUM(qty_received), 0)::int AS qty
+          FROM inbound_receipt_lines
+         WHERE receipt_id=:rid
+           AND po_line_id=:po_line_id
+        """
+    )
+    return int(
+        (
+            await session.execute(sql, {"rid": int(receipt_id), "po_line_id": int(po_line_id)})
+        ).scalar()
+        or 0
+    )
 
 
 async def receive_po_line(
@@ -150,8 +181,8 @@ async def receive_po_line(
     - ❌ 不写 stock_ledger / stocks / snapshot（库存动作只能由 Receipt(CONFIRMED) 触发）
     - qty 为最小单位（base）
 
-    关键收敛：不再隐式创建 DRAFT receipt
-    - 必须先通过显式接口创建/复用 DRAFT receipt
+    关键收敛：不再依赖 purchase_order_lines.qty_received/status/category 等字段。
+    余量校验以 Receipt 事实为准：remaining = ordered_base - confirmed_received_base - draft_received_base
     """
     if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
@@ -177,25 +208,37 @@ async def receive_po_line(
                 break
 
     if target is None:
-        raise ValueError(f"在采购单 {po_id} 中未找到匹配的行 (line_id={line_id}, line_no={line_no})")
-
-    if target.status in {"RECEIVED", "CLOSED"}:
-        raise ValueError(f"行已收完或已关闭，无法再收货 (line_id={target.id}, status={target.status})")
-
-    remaining_base = int(_remaining_base(target) or 0)
-    if qty > remaining_base:
         raise ValueError(
-            f"行收货数量超出剩余数量（base 口径）：ordered_base={_ordered_base(target)}, "
-            f"received_base={_received_base(target)}, remaining_base={remaining_base}, try_receive={qty}"
+            f"在采购单 {po_id} 中未找到匹配的行 (line_id={line_id}, line_no={line_no})"
         )
-
 
     # 1) 必须已有 DRAFT Receipt（显式创建）
     draft = await _get_po_draft_receipt(session, po_id=int(po.id))
     if draft is None:
         raise ValueError(f"请先开始收货：未找到 PO 的 DRAFT 收货单 (po_id={po_id})")
 
-    # 2) 生成 line_no（receipt 内递增）——使用 SQL，避免 draft.lines 懒加载
+    ordered_base = int(_ordered_base(target) or 0)
+    if ordered_base <= 0:
+        raise ValueError(
+            f"行订购数量非法（base 口径）：ordered_base={ordered_base} (line_id={target.id})"
+        )
+
+    confirmed_received_base = await _sum_confirmed_received_base(
+        session, po_id=int(po.id), po_line_id=int(target.id)
+    )
+    draft_received_base = await _sum_draft_received_base(
+        session, receipt_id=int(draft.id), po_line_id=int(target.id)
+    )
+
+    remaining_base = max(0, ordered_base - confirmed_received_base - draft_received_base)
+    if qty > remaining_base:
+        raise ValueError(
+            f"行收货数量超出剩余数量（base 口径）：ordered_base={ordered_base}, "
+            f"confirmed_received_base={confirmed_received_base}, draft_received_base={draft_received_base}, "
+            f"remaining_base={remaining_base}, try_receive={qty}"
+        )
+
+    # 2) 生成 receipt_line_no（receipt 内递增）
     next_line_no = await _next_receipt_line_no(session, receipt_id=int(draft.id))
 
     # 3) 写入 ReceiptLine
@@ -214,7 +257,7 @@ async def receive_po_line(
         item_id=int(getattr(target, "item_id")),
         item_name=getattr(target, "item_name", None),
         item_sku=getattr(target, "item_sku", None),
-        category=getattr(target, "category", None),
+        category=None,  # ✅ PO 行不再承载 category
         spec_text=getattr(target, "spec_text", None),
         base_uom=getattr(target, "base_uom", None),
         purchase_uom=getattr(target, "purchase_uom", None),
