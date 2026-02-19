@@ -269,5 +269,7 @@ class PurchaseOrderReceiveLineIn(BaseModel):
     line_no: Optional[int] = Field(None, description="行号（可选，line_id 缺失时用）")
     qty: int = Field(..., gt=0, description="本次收货数量（最小单位 base，>0）")
 
+    barcode: Optional[str] = Field(None, description="本次收货条码（快照，写入 receipt_lines.barcode，可选）")
+
     production_date: Optional[date] = Field(None, description="生产日期（有效期商品必填）")
     expiry_date: Optional[date] = Field(None, description="到期日期（无法推算时必填）")

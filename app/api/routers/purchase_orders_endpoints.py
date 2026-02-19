@@ -31,6 +31,7 @@ from app.schemas.purchase_order import (
     PurchaseOrderReceiveLineIn,
     PurchaseOrderWithLinesOut,
 )
+from app.schemas.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
 from app.schemas.purchase_order_receipts import PurchaseOrderReceiptEventOut
 from app.services.purchase_order_receipts import list_po_receipt_events
 from app.services.purchase_order_service import PurchaseOrderService
@@ -87,17 +88,18 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
-    @router.post("/{po_id}/receive-line", response_model=PurchaseOrderWithLinesOut)
+    # ✅ Phase5+：收货录入后直接返回 workbench（前端不再拼装 PO + Receipt + Explain）
+    @router.post("/{po_id}/receive-line", response_model=PurchaseOrderReceiveWorkbenchOut)
     async def receive_purchase_order_line(
         po_id: int,
         payload: PurchaseOrderReceiveLineIn,
         session: AsyncSession = Depends(get_session),
-    ) -> PurchaseOrderWithLinesOut:
+    ) -> PurchaseOrderReceiveWorkbenchOut:
         if payload.line_id is None and payload.line_no is None:
             raise HTTPException(status_code=400, detail="line_id 和 line_no 不能同时为空")
 
         try:
-            po = await svc.receive_po_line(
+            out = await svc.receive_po_line_workbench(
                 session,
                 po_id=po_id,
                 line_id=payload.line_id,
@@ -105,16 +107,19 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
                 qty=payload.qty,
                 production_date=getattr(payload, "production_date", None),
                 expiry_date=getattr(payload, "expiry_date", None),
+                barcode=getattr(payload, "barcode", None),
             )
             await session.commit()
+            return out
         except ValueError as e:
             await session.rollback()
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            msg = str(e)
 
-        po_out = await svc.get_po_with_lines(session, po.id)
-        if po_out is None:
-            raise HTTPException(status_code=404, detail="PurchaseOrder not found after receive")
-        return po_out
+            # Phase5+ 收敛：未显式开始收货 → 409（前端据此引导先 POST /receipts/draft）
+            if "请先开始收货" in msg or "未找到 PO 的 DRAFT 收货单" in msg:
+                raise HTTPException(status_code=409, detail=msg) from e
+
+            raise HTTPException(status_code=400, detail=msg) from e
 
     # ✅ 列表态：返回 PurchaseOrderListItemOut（轻量）
     # ✅ 合同加严：列表态行必须显性返回 qty_ordered_base / qty_received_base（base 真相），避免前端自行推导。

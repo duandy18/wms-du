@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.item import Item
 from app.models.item_barcode import ItemBarcode
 from app.schemas.purchase_order import PurchaseOrderLineOut, PurchaseOrderWithLinesOut
+from app.schemas.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
 from app.services.purchase_order_create import create_po_v2 as _create_po_v2
 from app.services.purchase_order_queries import get_po_with_lines as _get_po_with_lines
 from app.services.purchase_order_receive import receive_po_line as _receive_po_line
+from app.services.purchase_order_receive_workbench import get_receive_workbench
 from app.services.qty_base import ordered_base as _ordered_base_impl
 from app.services.qty_base import received_base as _received_base_impl
 
@@ -258,3 +260,32 @@ class PurchaseOrderService:
             production_date=production_date,
             expiry_date=expiry_date,
         )
+
+    async def receive_po_line_workbench(
+        self,
+        session: AsyncSession,
+        *,
+        po_id: int,
+        line_id: Optional[int] = None,
+        line_no: Optional[int] = None,
+        qty: int,
+        occurred_at: Optional[datetime] = None,
+        production_date: Optional[date] = None,
+        expiry_date: Optional[date] = None,
+        barcode: Optional[str] = None,
+    ) -> PurchaseOrderReceiveWorkbenchOut:
+        # 1) 写入 Receipt(DRAFT) 事实（Phase5+：内部已禁止隐式创建 draft）
+        await _receive_po_line(
+            session,
+            po_id=po_id,
+            line_id=line_id,
+            line_no=line_no,
+            qty=qty,
+            occurred_at=occurred_at,
+            production_date=production_date,
+            expiry_date=expiry_date,
+            barcode=barcode,
+        )
+
+        # 2) 直接返回 workbench（前端只渲染，不再拼装）
+        return await get_receive_workbench(session, po_id=int(po_id))

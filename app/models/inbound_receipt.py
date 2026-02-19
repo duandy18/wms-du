@@ -101,6 +101,9 @@ class InboundReceiptLine(Base):
     base_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     purchase_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
+    # ✅ Phase5+：条码快照（DB 已新增 barcode 列）
+    barcode: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
     batch_code: Mapped[str] = mapped_column(String(64), nullable=False)
     production_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)

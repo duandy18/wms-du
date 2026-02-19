@@ -75,10 +75,6 @@ def _assert_line_base_contract(line: Dict[str, Any]) -> None:
 
 
 def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
-    """
-    ✅ Contract: PO 详情态每行必须包含“商品快照字段”，且由后端生成，不允许为 null/空串。
-    目的：防止前端漏传/字段漂移导致作业台“商品名称空白”。
-    """
     assert "item_name" in line, line
     assert "item_sku" in line, line
 
@@ -90,11 +86,9 @@ def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
 
 
 def _pick_line_for_receive(lines: list[Dict[str, Any]]) -> Dict[str, Any]:
-    # 优先选不需要有效期的商品，避免引入日期干扰
     for ln in lines:
         if not bool(ln.get("has_shelf_life") or False):
             return ln
-    # 否则退而求其次：选第一条
     return lines[0]
 
 
@@ -108,11 +102,9 @@ def _build_receive_payload(line: Dict[str, Any]) -> Dict[str, Any]:
     if not has_sl:
         return payload
 
-    # ✅ 有效期商品：必须提供生产日期
     today = date.today()
     payload["production_date"] = today.isoformat()
 
-    # 若无法推算到期（缺 value/unit），则兜底传 expiry_date
     sv = line.get("shelf_life_value")
     su = line.get("shelf_life_unit")
     if sv is None or su is None or not str(su).strip():
@@ -147,6 +139,11 @@ def test_purchase_order_detail_base_contract_and_receive_line_updates() -> None:
 
     target = _pick_line_for_receive(lines)
     payload = _build_receive_payload(target)
+    target_line_no = int(target.get("line_no") or 0)
+    assert target_line_no > 0, target
+
+    rd = client.post(f"/purchase-orders/{po_id}/receipts/draft", headers=_auth_headers(token))
+    assert rd.status_code == 200, rd.text
 
     rr = client.post(
         f"/purchase-orders/{po_id}/receive-line",
@@ -154,12 +151,12 @@ def test_purchase_order_detail_base_contract_and_receive_line_updates() -> None:
         json=payload,
     )
     assert rr.status_code == 200, rr.text
-    detail2 = rr.json()
-    assert isinstance(detail2, dict), detail2
-    lines2 = detail2.get("lines")
-    assert isinstance(lines2, list) and lines2, detail2
 
-    for ln in lines2:
-        assert isinstance(ln, dict), ln
-        _assert_line_base_contract(ln)
-        _assert_line_snapshot_contract(ln)
+    wb = rr.json()
+    assert isinstance(wb, dict), wb
+    rows = wb.get("rows")
+    assert isinstance(rows, list) and rows, wb
+
+    hit = [r for r in rows if int(r.get("line_no") or 0) == target_line_no]
+    assert hit, {"msg": "target line not found in workbench.rows", "target": target, "rows": rows}
+    assert int(hit[0].get("draft_received_qty") or 0) >= 1

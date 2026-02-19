@@ -10,12 +10,70 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.schemas.inbound_receipt import InboundReceiptOut
 from app.schemas.inbound_receipt_confirm import InboundReceiptConfirmOut
+from app.schemas.inbound_receipt_create import InboundReceiptCreateIn
 from app.schemas.inbound_receipt_explain import InboundReceiptExplainOut
+from app.schemas.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
 from app.services.inbound_receipt_confirm import confirm_receipt
+from app.services.inbound_receipt_create import create_po_draft_receipt
 from app.services.inbound_receipt_explain import explain_receipt
 from app.services.inbound_receipt_query import get_receipt, list_receipts
+from app.services.purchase_order_queries import get_po_with_lines
+from app.services.purchase_order_receive import get_or_create_po_draft_receipt_explicit
+from app.services.purchase_order_receive_workbench import get_receive_workbench
+from app.services.purchase_order_time import UTC
 
 router = APIRouter(prefix="/inbound-receipts", tags=["inbound-receipts"])
+
+# ✅ 新增：PO 收货工作台（独立 router，满足你要求的路径）
+po_receive_router = APIRouter(prefix="/purchase-orders", tags=["purchase-orders-receive"])
+
+
+def _norm_source_type(raw: str) -> str:
+    v = str(raw or "").strip().upper()
+    if v in {"PURCHASE_ORDER", "PURCHASE-ORDER", "PURCHASEORDER"}:
+        return "PO"
+    return v
+
+
+@router.post("/", response_model=InboundReceiptOut)
+async def create_inbound_receipt(
+    payload: InboundReceiptCreateIn,
+    session: AsyncSession = Depends(get_session),
+) -> InboundReceiptOut:
+    """
+    Phase5：Receipt 创建入口（DRAFT）
+    - 当前仅支持 PO：创建/复用最新 DRAFT receipt
+    - ✅ 只写 Receipt(DRAFT) 事实
+    - ❌ 不写库存（库存只能由 /confirm 触发）
+
+    重要：返回前必须确保 lines 已加载，避免 async 环境下触发 relationship lazyload -> MissingGreenlet
+    """
+    try:
+        st = _norm_source_type(payload.source_type)
+        if st != "PO":
+            raise HTTPException(status_code=400, detail=f"unsupported source_type: {payload.source_type}")
+
+        obj = await create_po_draft_receipt(
+            session,
+            po_id=int(payload.source_id),
+            occurred_at=payload.occurred_at,
+        )
+
+        # ✅ 关键：用 query 再读一次（selectinload lines），避免 Pydantic 访问 obj.lines 触发 MissingGreenlet
+        await session.flush()
+        loaded = await get_receipt(session, receipt_id=int(obj.id))
+
+        await session.commit()
+        return InboundReceiptOut.model_validate(loaded)
+    except HTTPException:
+        await session.rollback()
+        raise
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/", response_model=List[InboundReceiptOut])
@@ -104,4 +162,60 @@ async def confirm_inbound_receipt(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =========================
+# ✅ Phase5+ 收货工作台主入口
+# =========================
+
+@po_receive_router.post("/{po_id}/receipts/draft", response_model=InboundReceiptOut)
+async def start_po_receive_draft(
+    po_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> InboundReceiptOut:
+    """
+    显式开始收货：创建/复用 PO 的 DRAFT receipt
+    - 彻底消除“录入接口隐式生成 receipt”的行为
+    """
+    try:
+        po = await get_po_with_lines(session, int(po_id), for_update=True)
+        if po is None:
+            raise HTTPException(status_code=404, detail=f"PurchaseOrder not found: id={po_id}")
+
+        now = datetime.now(UTC)
+        draft = await get_or_create_po_draft_receipt_explicit(session, po=po, occurred_at=now)
+
+        await session.flush()
+        loaded = await get_receipt(session, receipt_id=int(draft.id))
+
+        await session.commit()
+        return InboundReceiptOut.model_validate(loaded)
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@po_receive_router.get("/{po_id}/receive-workbench", response_model=PurchaseOrderReceiveWorkbenchOut)
+async def get_po_receive_workbench(
+    po_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> PurchaseOrderReceiveWorkbenchOut:
+    """
+    Workbench 统一输出：
+    - po_summary（合同锚点）
+    - receipt（当前 DRAFT 或 null）
+    - rows（计划 + 已确认实收 + 草稿实收 + 剩余应收 + 批次维度）
+    - explain（confirm 预检结果）
+    - caps（可 confirm 与否）
+    """
+    try:
+        out = await get_receive_workbench(session, po_id=int(po_id))
+        return out
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

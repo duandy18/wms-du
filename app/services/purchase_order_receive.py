@@ -5,13 +5,13 @@ from datetime import date, datetime
 from typing import Optional, Any
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.services.purchase_order_queries import get_po_with_lines
-from app.services.purchase_order_time import UTC
 from app.services.qty_base import ordered_base as _ordered_base_impl
 from app.services.qty_base import received_base as _received_base_impl
 from app.services.qty_base import remaining_base as _remaining_base_impl
@@ -41,24 +41,20 @@ async def _get_latest_po_draft_receipt(session: AsyncSession, *, po_id: int) -> 
     return (await session.execute(stmt)).scalars().first()
 
 
-async def _get_or_create_po_draft_receipt(
+async def _get_po_draft_receipt(session: AsyncSession, *, po_id: int) -> Optional[InboundReceipt]:
+    return await _get_latest_po_draft_receipt(session, po_id=int(po_id))
+
+
+async def _create_po_draft_receipt(
     session: AsyncSession,
     *,
     po: PurchaseOrder,
     occurred_at: datetime,
 ) -> InboundReceipt:
     """
-    Phase5：PO 收货“录入”只写 Receipt(DRAFT) 事实，不落账。
-    规则：
-    - source_type 固定为 'PO'
-    - source_id = po.id
-    - 优先复用最新的 DRAFT receipt；没有则创建
+    显式创建 DRAFT receipt（只创建，不复用）。
+    注意：DB 有 partial unique（PO + DRAFT），并发下可能冲突。
     """
-    draft = await _get_latest_po_draft_receipt(session, po_id=int(po.id))
-    if draft is not None:
-        return draft
-
-    # ref：保持可读且唯一（按时间戳）
     ts = int(occurred_at.timestamp() * 1000)
     ref = f"DRFT-PO-{po.id}-{ts}"
 
@@ -71,12 +67,39 @@ async def _get_or_create_po_draft_receipt(
         ref=ref,
         trace_id=None,
         status="DRAFT",
-        remark="from PO receive-line (DRAFT)",
+        remark="explicit draft (Phase5)",
         occurred_at=occurred_at,
     )
     session.add(r)
     await session.flush()
     return r
+
+
+async def get_or_create_po_draft_receipt_explicit(
+    session: AsyncSession,
+    *,
+    po: PurchaseOrder,
+    occurred_at: datetime,
+) -> InboundReceipt:
+    """
+    显式入口（给 POST draft 用）：
+    - 先查现有 DRAFT，有则复用
+    - 没有才创建
+    - 并发下若触发 partial unique：自动 rollback 后再查一次（幂等）
+    """
+    draft = await _get_po_draft_receipt(session, po_id=int(po.id))
+    if draft is not None:
+        return draft
+
+    try:
+        return await _create_po_draft_receipt(session, po=po, occurred_at=occurred_at)
+    except IntegrityError:
+        # 并发下另一个事务已经创建了 DRAFT：回滚本次 flush 冲突，再查一次返回
+        await session.rollback()
+        draft2 = await _get_po_draft_receipt(session, po_id=int(po.id))
+        if draft2 is not None:
+            return draft2
+        raise
 
 
 async def _next_receipt_line_no(session: AsyncSession, *, receipt_id: int) -> int:
@@ -119,12 +142,16 @@ async def receive_po_line(
     occurred_at: Optional[datetime] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
+    barcode: Optional[str] = None,
 ) -> PurchaseOrder:
     """
     Phase5：对某一行执行“收货录入”（行级）。
     - ✅ 只写 Receipt(DRAFT) 事实（InboundReceipt / InboundReceiptLine）
     - ❌ 不写 stock_ledger / stocks / snapshot（库存动作只能由 Receipt(CONFIRMED) 触发）
     - qty 为最小单位（base）
+
+    关键收敛：不再隐式创建 DRAFT receipt
+    - 必须先通过显式接口创建/复用 DRAFT receipt
     """
     if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
@@ -162,15 +189,16 @@ async def receive_po_line(
             f"received_base={_received_base(target)}, remaining_base={remaining_base}, try_receive={qty}"
         )
 
-    now = occurred_at or datetime.now(UTC)
 
-    # 1) 取得/创建 DRAFT Receipt
-    draft = await _get_or_create_po_draft_receipt(session, po=po, occurred_at=now)
+    # 1) 必须已有 DRAFT Receipt（显式创建）
+    draft = await _get_po_draft_receipt(session, po_id=int(po.id))
+    if draft is None:
+        raise ValueError(f"请先开始收货：未找到 PO 的 DRAFT 收货单 (po_id={po_id})")
 
     # 2) 生成 line_no（receipt 内递增）——使用 SQL，避免 draft.lines 懒加载
     next_line_no = await _next_receipt_line_no(session, receipt_id=int(draft.id))
 
-    # 3) 写入 ReceiptLine（注意：DB 约束 batch_code NOT NULL / qty_received NOT NULL / item_id NOT NULL）
+    # 3) 写入 ReceiptLine
     units_per_case = int(getattr(target, "units_per_case", 1) or 1)
     po_line_no_val = int(getattr(target, "line_no", 0) or 0)
     batch_code = _build_batch_code(
@@ -190,6 +218,7 @@ async def receive_po_line(
         spec_text=getattr(target, "spec_text", None),
         base_uom=getattr(target, "base_uom", None),
         purchase_uom=getattr(target, "purchase_uom", None),
+        barcode=(str(barcode).strip() if barcode is not None and str(barcode).strip() else None),
         batch_code=batch_code,
         production_date=production_date,
         expiry_date=expiry_date,
@@ -203,5 +232,4 @@ async def receive_po_line(
     session.add(rl)
     await session.flush()
 
-    # Phase5：不回写 PO 的 qty_received，不回算 PO 状态
     return po

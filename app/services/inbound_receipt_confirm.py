@@ -79,6 +79,18 @@ async def _load_next_ref_line_base(session: AsyncSession, *, ref: str, reason: s
     return int(row.scalar() or 0)
 
 
+def _opt_bool(res: object, key: str) -> bool | None:
+    """
+    StockService.adjust 的返回 dict 可能不包含 applied/idempotent。
+    缺字段时必须返回 None，避免误导为 False。
+    """
+    if not isinstance(res, dict):
+        return None
+    if key not in res:
+        return None
+    return bool(res.get(key))
+
+
 async def confirm_receipt(
     *,
     session: AsyncSession,
@@ -158,8 +170,8 @@ async def confirm_receipt(
                 ref_line=ref_line,
                 item_id=item_id,
                 qty_delta=qty_delta,
-                idempotent=bool(res.get("idempotent")) if isinstance(res, dict) else None,
-                applied=bool(res.get("applied")) if isinstance(res, dict) else None,
+                idempotent=_opt_bool(res, "idempotent"),
+                applied=_opt_bool(res, "applied"),
             )
         )
 
