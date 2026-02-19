@@ -46,12 +46,10 @@ def register(router: APIRouter) -> None:
         """
         SKU 毛利榜（粗粒度版本）：
 
-        - 维度：item_id（辅以 sku_id / title）
-        - 收入：SUM(order_items.amount)，若 amount 为空则退回 qty * price
         - 商品成本：avg_unit_cost(item_id) × SUM(order_items.qty)
-            * avg_unit_cost = purchase_order_lines.line_amount
-                              / (qty_ordered * units_per_case)
-        - 不含运费：暂不分摊 shipping_records，专注商品毛利。
+          avg_unit_cost = total_amount / total_units
+          total_amount = SUM(qty_ordered_base*supply_price - discount_amount)
+          total_units  = SUM(qty_ordered_base)
         """
         from_dt = parse_date_param(from_date)
         to_dt = parse_date_param(to_date)
@@ -64,8 +62,11 @@ def register(router: APIRouter) -> None:
             WITH item_cost AS (
               SELECT
                 pol.item_id,
-                COALESCE(SUM(COALESCE(pol.line_amount, 0)), 0) AS total_amount,
-                COALESCE(SUM(pol.qty_ordered * COALESCE(pol.units_per_case, 1)), 0) AS total_units
+                COALESCE(SUM(
+                  (COALESCE(pol.qty_ordered_base, 0) * COALESCE(pol.supply_price, 0))
+                  - COALESCE(pol.discount_amount, 0)
+                ), 0) AS total_amount,
+                COALESCE(SUM(COALESCE(pol.qty_ordered_base, 0)), 0) AS total_units
               FROM purchase_orders po
               JOIN purchase_order_lines pol ON pol.po_id = po.id
               GROUP BY pol.item_id

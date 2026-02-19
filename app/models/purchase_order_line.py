@@ -39,46 +39,50 @@ class PurchaseOrderLine(Base):
     item_name: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
     item_sku: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True, index=True)
 
-    category: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
-
     spec_text: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
     base_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
     purchase_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
 
+    # ✅ 采购单价（按 base_uom 计价的单价快照）
     supply_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    retail_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    promo_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    min_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
 
-    qty_cases: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
-    units_per_case: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    # ✅ 单位换算（方案 A）：upc 非空（默认 1），base 唯一事实
+    units_per_case: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="换算因子：每 1 采购单位包含多少最小单位（>0）",
+    )
 
-    # 采购单位订购量（兼容/输入快照）
-    qty_ordered: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # 采购单位订购量（输入快照/展示口径）
+    qty_ordered: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+        comment="订购数量（采购单位口径，>0）",
+    )
 
-    # ✅ 最小单位订购量（事实字段，Phase 2 最终形态）
+    # ✅ 最小单位订购量（事实字段）
     qty_ordered_base: Mapped[int] = mapped_column(
         sa.Integer,
         nullable=False,
         default=0,
         server_default="0",
-        comment="订购数量（最小单位，事实字段）",
+        comment="订购数量（最小单位 base，事实字段）",
     )
 
-    # ✅ 最小单位已收量（事实字段，现状已如此）
-    qty_received: Mapped[int] = mapped_column(
-        sa.Integer,
+    # ✅ 折扣（整行减免金额 + 说明）
+    discount_amount: Mapped[Decimal] = mapped_column(
+        sa.Numeric(14, 2),
         nullable=False,
-        default=0,
+        default=Decimal("0"),
         server_default="0",
+        comment="整行减免金额（>=0）",
     )
-
-    line_amount: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(14, 2), nullable=True)
-    status: Mapped[str] = mapped_column(
-        sa.String(32),
-        nullable=False,
-        default="CREATED",
-        server_default="CREATED",
+    discount_note: Mapped[Optional[str]] = mapped_column(
+        sa.Text,
+        nullable=True,
+        comment="折扣说明（可选）",
     )
 
     remark: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
@@ -105,5 +109,6 @@ class PurchaseOrderLine(Base):
             f"<POLine id={self.id} po_id={self.po_id} "
             f"line_no={self.line_no} item_id={self.item_id} "
             f"ordered={self.qty_ordered}/{self.qty_ordered_base} "
-            f"received={self.qty_received} status={self.status}>"
+            f"upc={self.units_per_case} "
+            f"price={self.supply_price} discount={self.discount_amount}>"
         )

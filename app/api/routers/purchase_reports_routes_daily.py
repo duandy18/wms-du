@@ -34,10 +34,7 @@ def register(router: APIRouter) -> None:
     ) -> List[DailyPurchaseReportItem]:
 
         default_set_id_sq = (
-            select(ItemTestSet.id)
-            .where(ItemTestSet.code == "DEFAULT")
-            .limit(1)
-            .scalar_subquery()
+            select(ItemTestSet.id).where(ItemTestSet.code == "DEFAULT").limit(1).scalar_subquery()
         )
 
         # ================================
@@ -55,9 +52,13 @@ def register(router: APIRouter) -> None:
                 select(
                     day_expr,
                     func.count(distinct(InboundReceipt.source_id)).label("order_count"),
-                    func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label("total_qty_cases"),
+                    func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label(
+                        "total_qty_cases"
+                    ),
                     func.coalesce(func.sum(InboundReceiptLine.qty_units), 0).label("total_units"),
-                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label("total_amount"),
+                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label(
+                        "total_amount"
+                    ),
                 )
                 .select_from(InboundReceipt)
                 .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
@@ -103,7 +104,7 @@ def register(router: APIRouter) -> None:
             return items
 
         # ================================
-        # PLAN 口径（不变）
+        # PLAN 口径（line_amount 不再存在）
         # ================================
         if time_mode == "po_created":
             day_expr = func.date(PurchaseOrder.created_at).label("day")
@@ -112,14 +113,9 @@ def register(router: APIRouter) -> None:
             day_expr = func.date(PurchaseOrder.purchase_time).label("day")
             time_col = PurchaseOrder.purchase_time
 
-        line_amount_expr = func.coalesce(
-            PurchaseOrderLine.line_amount,
-            (
-                PurchaseOrderLine.qty_ordered
-                * func.coalesce(PurchaseOrderLine.units_per_case, 1)
-                * func.coalesce(PurchaseOrderLine.supply_price, 0)
-            ),
-        )
+        line_amount_expr = func.coalesce(PurchaseOrderLine.qty_ordered_base, 0) * func.coalesce(
+            PurchaseOrderLine.supply_price, 0
+        ) - func.coalesce(PurchaseOrderLine.discount_amount, 0)
 
         stmt = (
             select(
@@ -127,11 +123,7 @@ def register(router: APIRouter) -> None:
                 func.count(distinct(PurchaseOrder.id)).label("order_count"),
                 func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0).label("total_qty_cases"),
                 func.coalesce(
-                    func.sum(
-                        PurchaseOrderLine.qty_ordered
-                        * func.coalesce(PurchaseOrderLine.units_per_case, 1)
-                    ),
-                    0,
+                    func.sum(func.coalesce(PurchaseOrderLine.qty_ordered_base, 0)), 0
                 ).label("total_units"),
                 func.coalesce(func.sum(line_amount_expr), 0).label("total_amount"),
             )

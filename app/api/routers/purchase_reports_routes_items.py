@@ -37,10 +37,7 @@ def register(router: APIRouter) -> None:
     ) -> List[ItemPurchaseReportItem]:
 
         default_set_id_sq = (
-            select(ItemTestSet.id)
-            .where(ItemTestSet.code == "DEFAULT")
-            .limit(1)
-            .scalar_subquery()
+            select(ItemTestSet.id).where(ItemTestSet.code == "DEFAULT").limit(1).scalar_subquery()
         )
 
         main_barcode_expr = (
@@ -55,7 +52,9 @@ def register(router: APIRouter) -> None:
         # FACT 口径（基于 inbound_receipts）
         # ================================
         if mode == "fact":
-            supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label("supplier_name")
+            supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label(
+                "supplier_name"
+            )
 
             stmt = (
                 select(
@@ -69,9 +68,13 @@ def register(router: APIRouter) -> None:
                     InboundReceipt.supplier_id.label("supplier_id"),
                     supplier_name_expr,
                     func.count(distinct(InboundReceipt.source_id)).label("order_count"),
-                    func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label("total_qty_cases"),
+                    func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label(
+                        "total_qty_cases"
+                    ),
                     func.coalesce(func.sum(InboundReceiptLine.qty_units), 0).label("total_units"),
-                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label("total_amount"),
+                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label(
+                        "total_amount"
+                    ),
                 )
                 .select_from(InboundReceipt)
                 .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
@@ -111,19 +114,16 @@ def register(router: APIRouter) -> None:
                     )
                 )
 
-            stmt = (
-                stmt.group_by(
-                    InboundReceiptLine.item_id,
-                    Item.sku,
-                    Item.name,
-                    Item.brand,
-                    Item.category,
-                    InboundReceipt.supplier_id,
-                    supplier_name_expr,
-                    main_barcode_expr,
-                )
-                .order_by(InboundReceiptLine.item_id.asc())
-            )
+            stmt = stmt.group_by(
+                InboundReceiptLine.item_id,
+                Item.sku,
+                Item.name,
+                Item.brand,
+                Item.category,
+                InboundReceipt.supplier_id,
+                supplier_name_expr,
+                main_barcode_expr,
+            ).order_by(InboundReceiptLine.item_id.asc())
 
             rows = (await session.execute(stmt)).all()
 
@@ -172,21 +172,18 @@ def register(router: APIRouter) -> None:
             return items
 
         # ================================
-        # PLAN 口径（保持原逻辑）
+        # PLAN 口径（保持原逻辑，但 line_amount 不再存在）
         # ================================
-        supplier_name_expr = func.coalesce(PurchaseOrder.supplier_name, PurchaseOrder.supplier, "").label("supplier_name")
+        supplier_name_expr = func.coalesce(
+            PurchaseOrder.supplier_name, PurchaseOrder.supplier, ""
+        ).label("supplier_name")
 
-        line_amount_expr = func.coalesce(
-            PurchaseOrderLine.line_amount,
-            (
-                PurchaseOrderLine.qty_ordered
-                * func.coalesce(PurchaseOrderLine.units_per_case, 1)
-                * func.coalesce(PurchaseOrderLine.supply_price, 0)
-            ),
-        )
+        line_amount_expr = func.coalesce(PurchaseOrderLine.qty_ordered_base, 0) * func.coalesce(
+            PurchaseOrderLine.supply_price, 0
+        ) - func.coalesce(PurchaseOrderLine.discount_amount, 0)
 
         total_units_expr = func.coalesce(
-            func.sum(PurchaseOrderLine.qty_ordered * func.coalesce(PurchaseOrderLine.units_per_case, 1)), 0
+            func.sum(func.coalesce(PurchaseOrderLine.qty_ordered_base, 0)), 0
         )
         total_qty_cases_expr = func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0)
         total_amount_expr = func.coalesce(func.sum(line_amount_expr), 0)
@@ -247,19 +244,16 @@ def register(router: APIRouter) -> None:
                 )
             )
 
-        stmt = (
-            stmt.group_by(
-                PurchaseOrderLine.item_id,
-                Item.sku,
-                Item.name,
-                Item.brand,
-                Item.category,
-                PurchaseOrder.supplier_id,
-                supplier_name_expr,
-                main_barcode_expr,
-            )
-            .order_by(PurchaseOrderLine.item_id.asc())
-        )
+        stmt = stmt.group_by(
+            PurchaseOrderLine.item_id,
+            Item.sku,
+            Item.name,
+            Item.brand,
+            Item.category,
+            PurchaseOrder.supplier_id,
+            supplier_name_expr,
+            main_barcode_expr,
+        ).order_by(PurchaseOrderLine.item_id.asc())
 
         rows = (await session.execute(stmt)).all()
 
