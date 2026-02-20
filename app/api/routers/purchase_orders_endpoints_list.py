@@ -68,8 +68,9 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
             .limit(max(limit, 1))
         )
 
+        # ✅ 废除 supplier 自由文本：列表搜索走 supplier_name
         if supplier:
-            stmt = stmt.where(PurchaseOrder.supplier.ilike(f"%{supplier.strip()}%"))
+            stmt = stmt.where(PurchaseOrder.supplier_name.ilike(f"%{supplier.strip()}%"))
         if status:
             stmt = stmt.where(PurchaseOrder.status == status.strip().upper())
 
@@ -147,11 +148,10 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
             out.append(
                 PurchaseOrderListItemOut(
                     id=int(getattr(po, "id")),
-                    supplier=str(getattr(po, "supplier") or ""),
                     warehouse_id=wid,
                     warehouse_name=wh_map.get(wid) or None,
-                    supplier_id=getattr(po, "supplier_id", None),
-                    supplier_name=getattr(po, "supplier_name", None),
+                    supplier_id=int(getattr(po, "supplier_id")),
+                    supplier_name=str(getattr(po, "supplier_name") or ""),
                     total_amount=getattr(po, "total_amount", None),
                     purchaser=str(getattr(po, "purchaser") or ""),
                     purchase_time=getattr(po, "purchase_time"),

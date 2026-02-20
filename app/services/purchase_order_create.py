@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.item import Item
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
+from app.models.supplier import Supplier
 
 
 async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
@@ -20,13 +21,24 @@ async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[in
     return {int(it.id): it for it in rows}
 
 
-def _require_supplier_for_po(supplier_id: Optional[int]) -> int:
+async def _require_supplier_for_po(session: AsyncSession, supplier_id: Optional[int]) -> Supplier:
     if supplier_id is None:
         raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
     sid = int(supplier_id)
     if sid <= 0:
         raise ValueError("supplier_id 非法：采购单必须绑定供应商")
-    return sid
+
+    supplier = (
+        (await session.execute(select(Supplier).where(Supplier.id == sid))).scalars().first()
+    )
+    if supplier is None:
+        raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid}）")
+
+    # 可选：如果你们有 active 字段且要硬闸，可以放开下面逻辑
+    # if getattr(supplier, "active", True) is not True:
+    #     raise ValueError("供应商已停用，禁止创建采购单")
+
+    return supplier
 
 
 def _safe_upc(v: Optional[int]) -> int:
@@ -59,10 +71,8 @@ def _parse_discount_amount(v: Any) -> Decimal:
 async def create_po_v2(
     session: AsyncSession,
     *,
-    supplier: str,
+    supplier_id: int,
     warehouse_id: int,
-    supplier_id: Optional[int] = None,
-    supplier_name: Optional[str] = None,
     purchaser: str,
     purchase_time: datetime,
     remark: Optional[str] = None,
@@ -86,6 +96,10 @@ async def create_po_v2(
     ✅ 封板规则（关键）：
     - item_name / item_sku 必须由后端从 Item 主数据生成写入 purchase_order_lines（行快照）
     - 不允许前端传入/覆盖（避免第二真相入口）
+
+    ✅ 供应商规则（关键）：
+    - 废除 supplier 自由文本列：只接受 supplier_id
+    - supplier_name 由后端从 suppliers 表取值并写快照（必填）
     """
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
@@ -96,8 +110,12 @@ async def create_po_v2(
     if not isinstance(purchase_time, datetime):
         raise ValueError("purchase_time 必须为 datetime 类型")
 
-    # ✅ 采购事实硬闸：采购单必须绑定供应商
-    po_supplier_id = _require_supplier_for_po(supplier_id)
+    # ✅ 采购事实硬闸：采购单必须绑定供应商（并且 supplier 必须存在）
+    supplier_obj = await _require_supplier_for_po(session, supplier_id)
+    po_supplier_id = int(getattr(supplier_obj, "id"))
+    po_supplier_name = str(getattr(supplier_obj, "name") or "").strip()
+    if not po_supplier_name:
+        raise ValueError("供应商名称为空，禁止创建采购单（suppliers.name 不能为空）")
 
     # 先收集 item_ids，用于批量查 Item（避免 N+1）
     raw_item_ids: List[int] = []
@@ -133,7 +151,6 @@ async def create_po_v2(
 
     norm_lines: List[Dict[str, Any]] = []
     total_amount = Decimal("0")
-    any_amount = False
 
     for idx, raw in enumerate(lines, start=1):
         item_id = raw.get("item_id")
@@ -151,8 +168,10 @@ async def create_po_v2(
             raise ValueError(f"第 {idx} 行：商品不存在（item_id={item_id}）")
 
         supply_price = raw.get("supply_price")
-        if supply_price is not None:
+        if supply_price is not None and not (isinstance(supply_price, str) and not supply_price.strip()):
             supply_price = Decimal(str(supply_price))
+        else:
+            supply_price = None
 
         units_per_case = raw.get("units_per_case")
         units_per_case_int: Optional[int]
@@ -179,13 +198,12 @@ async def create_po_v2(
         if discount_amount > 0 and supply_price is None:
             raise ValueError("存在折扣时必须提供 supply_price（按 base_uom 单价）")
 
-        # ✅ 计算行金额（不落库）：仅用于 PO.total_amount 的创建聚合
-        if supply_price is not None:
-            line_total = (supply_price * Decimal(int(qty_ordered_base))) - discount_amount
-            if line_total < 0:
-                raise ValueError("折扣金额超出行金额，导致行金额为负")
-            total_amount += line_total
-            any_amount = True
+        # ✅ 计算行金额（不落库）：用于 PO.total_amount 的创建聚合
+        # 规则：supply_price 为空 -> 按 0 计；保证 total_amount 永不为 NULL
+        line_total = (Decimal("0") if supply_price is None else (supply_price * Decimal(int(qty_ordered_base)))) - discount_amount
+        if line_total < 0:
+            raise ValueError("折扣金额超出行金额，导致行金额为负")
+        total_amount += line_total
 
         # ✅ 封板：行快照字段来自 Item 主数据
         item_name_snapshot = _trim_or_none(getattr(it, "name", None))
@@ -193,7 +211,7 @@ async def create_po_v2(
 
         norm_lines.append(
             {
-                "line_no": line_no,
+                "line_no": int(line_no),
                 "item_id": item_id,
                 "item_name": item_name_snapshot,
                 "item_sku": item_sku_snapshot,
@@ -211,13 +229,12 @@ async def create_po_v2(
         )
 
     po = PurchaseOrder(
-        supplier=supplier.strip(),
         supplier_id=po_supplier_id,
-        supplier_name=(supplier_name or supplier).strip(),
+        supplier_name=po_supplier_name,
         warehouse_id=int(warehouse_id),
         purchaser=purchaser.strip(),
         purchase_time=purchase_time,
-        total_amount=total_amount if any_amount else None,
+        total_amount=total_amount,  # ✅ 永不返回 None（避免 UI/报表到处判空）
         status="CREATED",
         remark=remark,
     )

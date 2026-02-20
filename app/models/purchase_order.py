@@ -23,7 +23,8 @@ class PurchaseOrder(Base):
     - 不再保存 item_id / qty_ordered / qty_received / unit_cost 等行级信息；
     - 所有数量与金额都以行表（purchase_order_lines）为事实来源；
     - 头表表达“计划合同”与“计划生命周期”信息：
-        * 供应商 / 仓库
+        * 供应商（supplier_id + supplier_name 快照）
+        * 仓库
         * 采购人 / 采购时间
         * 汇总金额
         * 计划生命周期状态（status）
@@ -40,19 +41,18 @@ class PurchaseOrder(Base):
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
 
-    # 供应商（自由文本 + 主数据 + 快照）
-    supplier: Mapped[str] = mapped_column(sa.String(100), nullable=False, index=True)
-
-    supplier_id: Mapped[Optional[int]] = mapped_column(
+    # ✅ 供应商：只保留主数据 ID + 下单快照（废除 supplier 自由文本）
+    supplier_id: Mapped[int] = mapped_column(
         sa.Integer,
-        nullable=True,
+        sa.ForeignKey("suppliers.id", ondelete="RESTRICT"),
+        nullable=False,
         index=True,
-        comment="FK → suppliers.id，可为空",
+        comment="FK → suppliers.id（必填）",
     )
-    supplier_name: Mapped[Optional[str]] = mapped_column(
+    supplier_name: Mapped[str] = mapped_column(
         sa.String(255),
-        nullable=True,
-        comment="下单时的供应商名称快照，通常来自 suppliers.name",
+        nullable=False,
+        comment="下单时的供应商名称快照（必填，通常来自 suppliers.name）",
     )
 
     # 仓库
@@ -148,7 +148,7 @@ class PurchaseOrder(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PO id={self.id} supplier={self.supplier!r} "
+            f"<PO id={self.id} supplier_id={self.supplier_id} supplier_name={self.supplier_name!r} "
             f"wh={self.warehouse_id} purchaser={self.purchaser!r} "
             f"status={self.status} total_amount={self.total_amount}>"
         )

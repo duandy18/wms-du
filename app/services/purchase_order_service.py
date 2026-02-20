@@ -27,6 +27,9 @@ class PurchaseOrderService:
 
     ✅ 执行口径（关键）：
     - PO 行不再持久化 qty_received；已收/剩余一律来自 Receipt(CONFIRMED) 聚合视图（workbench / presenter 统一）
+
+    ✅ 供应商口径（关键）：
+    - 废除 supplier 自由文本：只允许 supplier_id（必填），supplier_name 由后端写快照（必填）
     """
 
     def __init__(self) -> None:
@@ -38,10 +41,8 @@ class PurchaseOrderService:
         self,
         session: AsyncSession,
         *,
-        supplier: str,
+        supplier_id: int,
         warehouse_id: int,
-        supplier_id: Optional[int] = None,
-        supplier_name: Optional[str] = None,
         purchaser: str,
         purchase_time: datetime,
         remark: Optional[str] = None,
@@ -49,10 +50,8 @@ class PurchaseOrderService:
     ):
         return await _create_po_v2(
             session,
-            supplier=supplier,
+            supplier_id=int(supplier_id),
             warehouse_id=warehouse_id,
-            supplier_id=supplier_id,
-            supplier_name=supplier_name,
             purchaser=purchaser,
             purchase_time=purchase_time,
             remark=remark,

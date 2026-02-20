@@ -41,6 +41,7 @@ def create_item(
 ):
     try:
         # SKU 永远由后端生成；不接受前端/脚本传入
+        # barcode（可选）：若提供，则写入 item_barcodes 并设为主条码（primary）
         return item_service.create_item(
             name=item_in.name,
             spec=item_in.spec,
@@ -79,7 +80,7 @@ def get_all_items(
     ),
     q: Optional[str] = Query(
         None,
-        description="关键词搜索（命中 sku/name/barcode/id；大小写不敏感）",
+        description="关键词搜索（命中 sku/name/primary_barcode/id；大小写不敏感）",
     ),
     limit: Optional[int] = Query(
         None,
@@ -144,7 +145,7 @@ def disable_test_item(id: int, item_service: ItemService = Depends(get_item_serv
 
 
 # ===========================
-# Update（不允许改 SKU）
+# Update（不允许改 SKU；不允许在 /items 更新条码）
 # ===========================
 @router.patch("/{id}", response_model=ItemOut)
 def update_item(
@@ -159,6 +160,13 @@ def update_item(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="SKU is immutable and managed by backend",
+        )
+
+    # ✅ 条码必须走 /item-barcodes（避免出现“双真相”与治理混乱）
+    if "barcode" in data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="barcode is managed by /item-barcodes (set primary there)",
         )
 
     try:

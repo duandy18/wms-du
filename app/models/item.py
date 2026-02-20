@@ -100,7 +100,8 @@ class Item(Base):
 
     @property
     def barcode(self) -> Optional[str]:
-        return None
+        # ✅ 兼容输出：旧字段 barcode = 主条码（primary_barcode）
+        return getattr(self, "primary_barcode", None)
 
     @property
     def supplier_name(self) -> Optional[str]:

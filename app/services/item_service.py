@@ -1,160 +1,74 @@
 # app/services/item_service.py
 from __future__ import annotations
 
-import os
 from typing import List, Optional
 
-from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
-from app.services.item_repo import get_item_by_id as repo_get_item_by_id
-from app.services.item_repo import get_item_by_sku as repo_get_item_by_sku
-from app.services.item_repo import get_items as repo_get_items
-from app.services.item_rules import decorate_rules
-from app.services.item_sku import next_sku
-
-
-def _allow_create_item_by_id() -> bool:
-    """
-    “例外通道”总开关（默认关闭）：
-    - 仅用于历史兼容/修复/运维脚本
-    - 生产环境默认不应开启
-    """
-    return os.getenv("WMS_ALLOW_CREATE_ITEM_BY_ID", "").strip() == "1"
+from app.services.item_maintenance_service import ItemMaintenanceService
+from app.services.item_presenter import ItemPresenter
+from app.services.item_query_service import ItemQueryService
+from app.services.item_test_set_service import ItemTestSetService
+from app.services.item_write_service import ItemWriteService
 
 
 class ItemService:
+    """
+    门面（Facade）：
+
+    - 对外保持现有接口不变（router 不用改）
+    - 内部按功能拆分到：Query / Write / Presenter / TestSet / Maintenance
+    """
+
     def __init__(self, db: Session) -> None:
         self.db = db
+        self._query = ItemQueryService(db)
+        self._write = ItemWriteService(db)
+        self._present = ItemPresenter(db)
+        self._test_sets = ItemTestSetService(db)
+        self._maintenance = ItemMaintenanceService(db)
 
     # 兼容 router：/items/sku/next
     def next_sku(self) -> str:
-        return next_sku(self.db)
+        return self._write.next_sku()
 
-    # ===========================
-    # Test Set（同步 Session 版）
-    # ===========================
-    def _load_test_set_id(self, *, set_code: str) -> int:
-        code = (set_code or "").strip()
-        if not code:
-            raise ValueError("set_code 不能为空")
-
-        row = (
-            self.db.execute(
-                text(
-                    """
-                    SELECT id
-                      FROM item_test_sets
-                     WHERE code = :code
-                     LIMIT 1
-                    """
-                ),
-                {"code": code},
-            )
-            .mappings()
-            .first()
-        )
-        if not row or row.get("id") is None:
-            raise ValueError(f"测试集合不存在：{code}")
-        return int(row["id"])
-
-    def _get_membership_map(self, *, item_ids: List[int], set_code: str = "DEFAULT") -> dict[int, bool]:
-        ids = sorted({int(x) for x in item_ids if x is not None})
-        if not ids:
-            return {}
-
-        sid = self._load_test_set_id(set_code=set_code)
-        rows = (
-            self.db.execute(
-                text(
-                    """
-                    SELECT item_id
-                      FROM item_test_set_items
-                     WHERE set_id = :sid
-                       AND item_id = ANY(:ids)
-                    """
-                ),
-                {"sid": int(sid), "ids": ids},
-            )
-            .mappings()
-            .all()
-        )
-        hit = {int(r["item_id"]) for r in rows if r.get("item_id") is not None}
-        return {i: (i in hit) for i in ids}
-
-    def _attach_is_test_for_items(self, *, items: List[Item], set_code: str = "DEFAULT") -> List[Item]:
-        if not items:
-            return items
-        m = self._get_membership_map(item_ids=[int(x.id) for x in items], set_code=set_code)
-        for it in items:
-            setattr(it, "is_test", bool(m.get(int(it.id), False)))
-        return items
-
-    def _attach_is_test_for_item(self, *, item: Item | None, set_code: str = "DEFAULT") -> Item | None:
-        if item is None:
-            return None
-        m = self._get_membership_map(item_ids=[int(item.id)], set_code=set_code)
-        setattr(item, "is_test", bool(m.get(int(item.id), False)))
-        return item
-
+    # ---------- Test Set toggles（事务在这里收口） ----------
     def enable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
         obj = self.db.get(Item, int(item_id))
         if obj is None:
             raise ValueError("Item not found")
 
-        sid = self._load_test_set_id(set_code=set_code)
         try:
-            self.db.execute(
-                text(
-                    """
-                    INSERT INTO item_test_set_items(set_id, item_id)
-                    VALUES (:sid, :iid)
-                    ON CONFLICT (set_id, item_id) DO NOTHING
-                    """
-                ),
-                {"sid": int(sid), "iid": int(item_id)},
-            )
+            self._test_sets.enable(item_id=int(item_id), set_code=set_code)
             self.db.commit()
         except Exception as e:
             self.db.rollback()
             raise ValueError(f"DB error: {e}") from e
 
         self.db.refresh(obj)
-        obj = decorate_rules(obj)
-        obj = self._attach_is_test_for_item(item=obj, set_code=set_code)
-        assert obj is not None
-        return obj
+        out = self._present.present_item(item=obj)
+        assert out is not None
+        return out
 
     def disable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
         obj = self.db.get(Item, int(item_id))
         if obj is None:
             raise ValueError("Item not found")
 
-        sid = self._load_test_set_id(set_code=set_code)
         try:
-            self.db.execute(
-                text(
-                    """
-                    DELETE FROM item_test_set_items
-                     WHERE set_id = :sid
-                       AND item_id = :iid
-                    """
-                ),
-                {"sid": int(sid), "iid": int(item_id)},
-            )
+            self._test_sets.disable(item_id=int(item_id), set_code=set_code)
             self.db.commit()
         except Exception as e:
             self.db.rollback()
             raise ValueError(f"DB error: {e}") from e
 
         self.db.refresh(obj)
-        obj = decorate_rules(obj)
-        obj = self._attach_is_test_for_item(item=obj, set_code=set_code)
-        assert obj is not None
-        return obj
+        out = self._present.present_item(item=obj)
+        assert out is not None
+        return out
 
+    # ---------- CRUD ----------
     def create_item(
         self,
         *,
@@ -171,49 +85,23 @@ class ItemService:
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
     ) -> Item:
-        name = (name or "").strip()
-        if not name:
-            raise ValueError("name is required")
-
-        spec_val = spec.strip() if isinstance(spec, str) else None
-        unit_val = (uom or "PCS").strip().upper() or "PCS"
-
-        brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
-        category_val = category.strip() if isinstance(category, str) and category.strip() else None
-
-        sku_val = self.next_sku()
-
-        obj = Item(
-            sku=sku_val,
+        obj = self._write.create_item(
             name=name,
-            unit=unit_val,
-            spec=spec_val,
-            enabled=bool(enabled),
+            spec=spec,
+            uom=uom,
+            barcode=barcode,
+            brand=brand,
+            category=category,
+            enabled=enabled,
             supplier_id=supplier_id,
-            brand=brand_val,
-            category=category_val,
-            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
+            has_shelf_life=has_shelf_life,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
         )
-
-        self.db.add(obj)
-        try:
-            self.db.commit()
-        except IntegrityError as e:
-            self.db.rollback()
-            raw = str(getattr(e, "orig", e)).lower()
-            if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
-                # 理论上不会发生（sequence 保证唯一），但保留防御
-                raise ValueError("SKU duplicate") from e
-            raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
-
-        self.db.refresh(obj)
-        obj = decorate_rules(obj)
-        obj = self._attach_is_test_for_item(item=obj)
-        assert obj is not None
-        return obj
+        out = self._present.present_item(item=obj)
+        assert out is not None
+        return out
 
     def create_item_by_id(
         self,
@@ -233,71 +121,25 @@ class ItemService:
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
     ) -> Item:
-        """
-        🚫 例外通道（默认关闭）：
-        - 历史兼容/修复：允许显式 id/sku
-        - 默认必须禁止，避免被误用为“改码工具”
-        - 仅当设置环境变量 WMS_ALLOW_CREATE_ITEM_BY_ID=1 时才允许调用
-        """
-        if not _allow_create_item_by_id():
-            raise ValueError("create_item_by_id disabled: set WMS_ALLOW_CREATE_ITEM_BY_ID=1 to enable for maintenance")
-
-        if not id or id <= 0:
-            raise ValueError("id 必须为正整数")
-
-        # ✅ 若已存在：只返回，不覆盖、不改码
-        exists = self.db.get(Item, id)
-        if exists is not None:
-            exists = decorate_rules(exists)
-            exists = self._attach_is_test_for_item(item=exists)
-            assert exists is not None
-            return exists
-
-        sku_val = (sku or str(id)).strip()
-        if not sku_val:
-            raise ValueError("sku is required for create_item_by_id (maintenance path)")
-
-        name_val = (name or f"ITEM-{id}").strip()
-        spec_val = spec.strip() if isinstance(spec, str) else None
-        unit_val = (uom or "PCS").strip().upper() or "PCS"
-        enabled_val = True if enabled is None else bool(enabled)
-
-        brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
-        category_val = category.strip() if isinstance(category, str) and category.strip() else None
-
-        obj = Item(
+        obj = self._maintenance.create_item_by_id(
             id=id,
-            sku=sku_val,
-            name=name_val,
-            unit=unit_val,
-            spec=spec_val,
-            enabled=enabled_val,
+            sku=sku,
+            name=name,
+            spec=spec,
+            uom=uom,
+            barcode=barcode,
+            brand=brand,
+            category=category,
+            enabled=enabled,
             supplier_id=supplier_id,
-            brand=brand_val,
-            category=category_val,
-            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
+            has_shelf_life=has_shelf_life,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
         )
-
-        self.db.add(obj)
-        try:
-            self.db.commit()
-        except IntegrityError as e:
-            self.db.rollback()
-            raw = str(getattr(e, "orig", e)).lower()
-            if "items_pkey" in raw:
-                raise ValueError(f"Item id {id} already exists") from e
-            if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
-                raise ValueError("SKU duplicate") from e
-            raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
-
-        self.db.refresh(obj)
-        obj = decorate_rules(obj)
-        obj = self._attach_is_test_for_item(item=obj)
-        assert obj is not None
-        return obj
+        out = self._present.present_item(item=obj)
+        assert out is not None
+        return out
 
     def get_items(
         self,
@@ -307,26 +149,19 @@ class ItemService:
         q: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Item]:
-        rows = repo_get_items(self.db, supplier_id=supplier_id, enabled=enabled, q=q, limit=limit)
-        rows = [decorate_rules(r) for r in rows]
-        rows = self._attach_is_test_for_items(items=rows)
-        return rows
+        rows = self._query.get_items(supplier_id=supplier_id, enabled=enabled, q=q, limit=limit)
+        return self._present.present_items(items=rows)
 
-    # 兼容旧接口：保留原方法名
     def get_all_items(self) -> List[Item]:
         return self.get_items()
 
     def get_item_by_id(self, id: int) -> Optional[Item]:
-        obj = repo_get_item_by_id(self.db, id)
-        obj = decorate_rules(obj) if obj else None
-        obj = self._attach_is_test_for_item(item=obj)
-        return obj
+        obj = self._query.get_item_by_id(id)
+        return self._present.present_item(item=obj)
 
     def get_item_by_sku(self, sku: str) -> Optional[Item]:
-        obj = repo_get_item_by_sku(self.db, sku)
-        obj = decorate_rules(obj) if obj else None
-        obj = self._attach_is_test_for_item(item=obj)
-        return obj
+        obj = self._query.get_item_by_sku(sku)
+        return self._present.present_item(item=obj)
 
     def update_item(
         self,
@@ -346,74 +181,22 @@ class ItemService:
         brand_set: bool = False,
         category_set: bool = False,
     ) -> Item:
-        obj = self.db.get(Item, id)
-        if obj is None:
-            raise ValueError("Item not found")
-
-        changed = False
-
-        if name is not None:
-            new_name = name.strip()
-            if not new_name:
-                raise ValueError("name 不能为空")
-            obj.name = new_name
-            changed = True
-
-        if spec is not None:
-            obj.spec = spec.strip() if isinstance(spec, str) else None
-            changed = True
-
-        if uom is not None:
-            unit_val = (uom or "PCS").strip().upper() or "PCS"
-            obj.unit = unit_val
-            changed = True
-
-        if enabled is not None:
-            obj.enabled = bool(enabled)
-            changed = True
-
-        if supplier_id is not None:
-            obj.supplier_id = supplier_id
-            changed = True
-
-        if has_shelf_life is not None:
-            obj.has_shelf_life = bool(has_shelf_life)
-            changed = True
-
-        if shelf_life_value is not None:
-            obj.shelf_life_value = shelf_life_value
-            changed = True
-
-        if shelf_life_unit is not None:
-            obj.shelf_life_unit = shelf_life_unit
-            changed = True
-
-        if weight_kg is not None:
-            obj.weight_kg = weight_kg
-            changed = True
-
-        if brand_set:
-            obj.brand = brand.strip() if isinstance(brand, str) and brand.strip() else None
-            changed = True
-
-        if category_set:
-            obj.category = category.strip() if isinstance(category, str) and category.strip() else None
-            changed = True
-
-        if not changed:
-            obj = decorate_rules(obj)
-            obj = self._attach_is_test_for_item(item=obj)
-            assert obj is not None
-            return obj
-
-        try:
-            self.db.commit()
-        except IntegrityError as e:
-            self.db.rollback()
-            raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
-
-        self.db.refresh(obj)
-        obj = decorate_rules(obj)
-        obj = self._attach_is_test_for_item(item=obj)
-        assert obj is not None
-        return obj
+        obj = self._write.update_item(
+            id=id,
+            name=name,
+            spec=spec,
+            uom=uom,
+            enabled=enabled,
+            supplier_id=supplier_id,
+            has_shelf_life=has_shelf_life,
+            shelf_life_value=shelf_life_value,
+            shelf_life_unit=shelf_life_unit,
+            weight_kg=weight_kg,
+            brand=brand,
+            category=category,
+            brand_set=brand_set,
+            category_set=category_set,
+        )
+        out = self._present.present_item(item=obj)
+        assert out is not None
+        return out
