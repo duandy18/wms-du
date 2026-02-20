@@ -123,11 +123,10 @@ def register(router: APIRouter) -> None:
             return items
 
         # ================================
-        # PLAN 口径（保持原逻辑，但 line_amount 不再存在）
+        # PLAN 口径（保持原逻辑，但 supplier 自由文本已废除）
         # ================================
         supplier_name_expr = func.coalesce(
             PurchaseOrder.supplier_name,
-            PurchaseOrder.supplier,
             "",
         ).label("supplier_name")
 

@@ -28,7 +28,11 @@ class ItemBase(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+
+    # 兼容字段：历史上前端/调用方使用 barcode 表示“主条码”
+    # 本轮收敛：primary_barcode 才是唯一真相；barcode 作为 alias（输出时等同 primary_barcode）
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
+    primary_barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
     # ✅ 新增：品牌/品类
     brand: Annotated[str | None, Field(default=None, max_length=64)] = None
@@ -50,6 +54,7 @@ class ItemBase(_Base):
         "spec",
         "uom",
         "barcode",
+        "primary_barcode",
         "brand",
         "category",
         mode="before",
@@ -68,6 +73,8 @@ class ItemCreate(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+
+    # 兼容：创建时允许传入 barcode，后端会写入 item_barcodes 并设为主条码
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
     # ✅ 新增：品牌/品类
@@ -90,12 +97,14 @@ class ItemCreate(_Base):
 
 
 class ItemUpdate(_Base):
-    # 允许更新 sku 吗？——本轮先不开放（保持字段存在，但你也可以后续删掉这个字段）
+    # 允许更新 sku 吗？——本轮先不开放（router 已强制拒绝 sku）
     sku: Annotated[str | None, Field(default=None, max_length=128)] = None
 
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+
+    # 保留字段（兼容），但 router 会拒绝通过 /items 更新 barcode，要求走 /item-barcodes
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
     # ✅ 新增：品牌/品类

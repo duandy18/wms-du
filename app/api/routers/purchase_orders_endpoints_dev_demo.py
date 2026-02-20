@@ -41,7 +41,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
             raise HTTPException(status_code=400, detail="suppliers 表为空，请先创建供应商。")
 
         supplier_id = int(supplier_row["id"])
-        supplier_name = str(supplier_row.get("name") or f"SUPPLIER-{supplier_id}")
 
         item_rows = (
             (
@@ -63,7 +62,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         base_qty = 10
         for idx, row in enumerate(item_rows, start=1):
             item_id = int(row["id"])
-            item_name = row.get("name") or f"ITEM-{item_id}"
             qty_ordered = base_qty * idx
 
             is_odd = (idx % 2) == 1
@@ -74,7 +72,6 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
                 {
                     "line_no": idx,
                     "item_id": item_id,
-                    "item_name": item_name,
                     "qty_ordered": qty_ordered,
                     "category": category,
                     "spec_text": spec_text,
@@ -90,10 +87,8 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         try:
             po = await svc.create_po_v2(
                 session,
-                supplier=supplier_name,
-                warehouse_id=warehouse_id,
                 supplier_id=supplier_id,
-                supplier_name=supplier_name,
+                warehouse_id=warehouse_id,
                 purchaser="DEMO-PURCHASER",
                 purchase_time=now,
                 remark="Demo 采购单（DevConsole）",

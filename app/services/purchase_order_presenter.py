@@ -72,11 +72,10 @@ async def build_po_with_lines_out(session: AsyncSession, po: Any) -> PurchaseOrd
 
     return PurchaseOrderWithLinesOut(
         id=po.id,
-        supplier=po.supplier,
         warehouse_id=po.warehouse_id,
-        supplier_id=po.supplier_id,
-        supplier_name=po.supplier_name,
-        total_amount=po.total_amount,
+        supplier_id=int(getattr(po, "supplier_id")),
+        supplier_name=str(getattr(po, "supplier_name") or ""),
+        total_amount=getattr(po, "total_amount", None),
         purchaser=po.purchaser,
         purchase_time=po.purchase_time,
         remark=po.remark,

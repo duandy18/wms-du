@@ -36,10 +36,8 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         try:
             po = await svc.create_po_v2(
                 session,
-                supplier=payload.supplier,
-                warehouse_id=payload.warehouse_id,
                 supplier_id=payload.supplier_id,
-                supplier_name=payload.supplier_name,
+                warehouse_id=payload.warehouse_id,
                 purchaser=payload.purchaser,
                 purchase_time=payload.purchase_time,
                 remark=payload.remark,

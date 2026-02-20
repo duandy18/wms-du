@@ -138,12 +138,11 @@ class PurchaseOrderLineOut(BaseModel):
 
 class PurchaseOrderListItemOut(BaseModel):
     id: int
-    supplier: str
     warehouse_id: int
     warehouse_name: Optional[str] = None
 
-    supplier_id: Optional[int]
-    supplier_name: Optional[str]
+    supplier_id: int
+    supplier_name: str
     total_amount: Optional[Decimal]
 
     purchaser: str
@@ -174,11 +173,10 @@ class PurchaseOrderListItemOut(BaseModel):
 
 class PurchaseOrderWithLinesOut(BaseModel):
     id: int
-    supplier: str
     warehouse_id: int
 
-    supplier_id: Optional[int]
-    supplier_name: Optional[int] | Optional[str]
+    supplier_id: int
+    supplier_name: str
     total_amount: Optional[Decimal]
 
     purchaser: str
@@ -207,13 +205,8 @@ class PurchaseOrderWithLinesOut(BaseModel):
 
 
 class PurchaseOrderCreateV2(BaseModel):
-    supplier: str = Field(..., description="供应商名称（展示用）")
+    supplier_id: int = Field(..., description="供应商 ID（必填，对应 suppliers.id）")
     warehouse_id: int = Field(..., description="仓库 ID")
-
-    supplier_id: Optional[int] = Field(None, description="供应商 ID（可选，对应 suppliers.id）")
-    supplier_name: Optional[str] = Field(
-        None, description="供应商名称快照（可选，不填则用 supplier）"
-    )
 
     purchaser: str = Field(..., description="采购人姓名或编码")
     purchase_time: datetime = Field(..., description="采购时间（下单/确认时间）")

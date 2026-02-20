@@ -88,7 +88,6 @@ class ExplainPurchaseOrderLine(BaseModel):
 
 class ExplainPurchaseOrder(BaseModel):
     id: int
-    supplier: str
     supplier_id: Optional[int] = None
     supplier_name: Optional[str] = None
     warehouse_id: int

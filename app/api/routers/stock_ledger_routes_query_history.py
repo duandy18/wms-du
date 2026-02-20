@@ -155,7 +155,6 @@ def register(router: APIRouter) -> None:
             purchase_order=(
                 ExplainPurchaseOrder(
                     id=po_obj.id,
-                    supplier=po_obj.supplier,
                     supplier_id=po_obj.supplier_id,
                     supplier_name=po_obj.supplier_name,
                     warehouse_id=po_obj.warehouse_id,

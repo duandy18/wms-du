@@ -43,7 +43,7 @@ class PurchaseOrderLine(Base):
     base_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
     purchase_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
 
-    # ✅ 采购单价（按 base_uom 计价的单价快照）
+    # ✅ 采购单价（按 base_uom 计价的单价快照；允许为空，聚合金额时需按 0 处理）
     supply_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
 
     # ✅ 单位换算（方案 A）：upc 非空（默认 1），base 唯一事实

@@ -18,9 +18,7 @@ class _Base(BaseModel):
 
 class SupplierPurchaseReportItem(_Base):
     supplier_id: Annotated[int | None, Field(description="供应商 ID（可空）")]
-    supplier_name: Annotated[
-        str, Field(description="供应商名称（若 supplier_name 为空则回退 supplier）")
-    ]
+    supplier_name: Annotated[str, Field(description="供应商名称（快照/展示用）")]
     order_count: Annotated[int, Field(description="采购单数量")]
     total_qty_cases: Annotated[int, Field(description="订购件数合计（件）")]
     total_units: Annotated[int, Field(description="折算最小单位数量合计")]
