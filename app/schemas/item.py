@@ -29,6 +29,12 @@ class ItemBase(_Base):
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
 
+    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
+    # 语义：1 case_uom = case_ratio × uom（最小单位）
+    # 注意：uom 是系统事实口径；case_* 不改变事实口径，仅用于展示/输入偏好与换算
+    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
+    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
+
     # 兼容字段：历史上前端/调用方使用 barcode 表示“主条码”
     # 本轮收敛：primary_barcode 才是唯一真相；barcode 作为 alias（输出时等同 primary_barcode）
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
@@ -53,6 +59,7 @@ class ItemBase(_Base):
         "name",
         "spec",
         "uom",
+        "case_uom",
         "barcode",
         "primary_barcode",
         "brand",
@@ -74,6 +81,10 @@ class ItemCreate(_Base):
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
 
+    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
+    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
+    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
+
     # 兼容：创建时允许传入 barcode，后端会写入 item_barcodes 并设为主条码
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
@@ -90,7 +101,16 @@ class ItemCreate(_Base):
 
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
-    @field_validator("name", "spec", "uom", "barcode", "brand", "category", mode="before")
+    @field_validator(
+        "name",
+        "spec",
+        "uom",
+        "case_uom",
+        "barcode",
+        "brand",
+        "category",
+        mode="before",
+    )
     @classmethod
     def _trim_text(cls, v):
         return _norm_text(v)
@@ -103,6 +123,10 @@ class ItemUpdate(_Base):
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+
+    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
+    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
+    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
 
     # 保留字段（兼容），但 router 会拒绝通过 /items 更新 barcode，要求走 /item-barcodes
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
@@ -125,6 +149,7 @@ class ItemUpdate(_Base):
         "name",
         "spec",
         "uom",
+        "case_uom",
         "barcode",
         "brand",
         "category",
@@ -143,6 +168,8 @@ class ItemUpdate(_Base):
                 "name",
                 "spec",
                 "uom",
+                "case_ratio",
+                "case_uom",
                 "barcode",
                 "brand",
                 "category",
@@ -170,6 +197,11 @@ class ItemCreateById(_Base):
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
     uom: Annotated[str | None, Field(default=None, max_length=32)] = None
+
+    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
+    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
+    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
+
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
     # ✅ 新增：品牌/品类

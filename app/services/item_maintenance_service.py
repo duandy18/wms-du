@@ -36,6 +36,8 @@ class ItemMaintenanceService:
         name: Optional[str] = None,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
+        case_ratio: Optional[int] = None,
+        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
@@ -68,6 +70,14 @@ class ItemMaintenanceService:
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
         category_val = category.strip() if isinstance(category, str) and category.strip() else None
 
+        case_ratio_val: Optional[int] = None
+        if case_ratio is not None:
+            if int(case_ratio) < 1:
+                raise ValueError("case_ratio must be >= 1")
+            case_ratio_val = int(case_ratio)
+
+        case_uom_val = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
+
         obj = Item(
             id=int(id),
             sku=sku_val,
@@ -82,6 +92,8 @@ class ItemMaintenanceService:
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
+            case_ratio=case_ratio_val,
+            case_uom=case_uom_val,
         )
 
         self.db.add(obj)
