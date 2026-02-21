@@ -4758,6 +4758,30 @@
             ],
             "title": "Brand"
           },
+          "case_ratio": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Ratio"
+          },
+          "case_uom": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Uom"
+          },
           "category": {
             "anyOf": [
               {
@@ -5087,6 +5111,30 @@
               }
             ],
             "title": "Brand"
+          },
+          "case_ratio": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Ratio"
+          },
+          "case_uom": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Uom"
           },
           "category": {
             "anyOf": [
@@ -5456,6 +5504,30 @@
               }
             ],
             "title": "Brand"
+          },
+          "case_ratio": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Ratio"
+          },
+          "case_uom": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Uom"
           },
           "category": {
             "anyOf": [

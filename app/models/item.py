@@ -56,6 +56,20 @@ class Item(Base):
         server_default=text("'PCS'::character varying"),
     )
 
+    # ✅ Phase 1: 结构化包装字段（一层箱装）
+    # 语义：1 case_uom = case_ratio × uom（最小单位）
+    # 注意：case_uom 是展示/输入偏好标签，不改变系统事实口径；可为空（未治理）
+    case_ratio: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="箱装换算倍率（整数）；1 case_uom = case_ratio × uom（最小单位）；允许为空（未治理）",
+    )
+    case_uom: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+        comment="箱装单位名（展示/输入偏好），如“箱”；允许为空（未治理）",
+    )
+
     spec: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     enabled: Mapped[bool] = mapped_column(
@@ -131,5 +145,6 @@ class Item(Base):
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
             f"brand={self.brand!r} category={self.category!r} "
-            f"has_shelf_life={self.has_shelf_life}>"
+            f"has_shelf_life={self.has_shelf_life} "
+            f"case_ratio={self.case_ratio!r} case_uom={self.case_uom!r}>"
         )

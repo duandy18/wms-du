@@ -33,6 +33,8 @@ class ItemWriteService:
         name: str,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
+        case_ratio: Optional[int] = None,
+        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
@@ -53,6 +55,14 @@ class ItemWriteService:
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
         category_val = category.strip() if isinstance(category, str) and category.strip() else None
 
+        case_ratio_val: Optional[int] = None
+        if case_ratio is not None:
+            if int(case_ratio) < 1:
+                raise ValueError("case_ratio must be >= 1")
+            case_ratio_val = int(case_ratio)
+
+        case_uom_val = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
+
         sku_val = self.next_sku()
 
         obj = Item(
@@ -68,6 +78,8 @@ class ItemWriteService:
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
+            case_ratio=case_ratio_val,
+            case_uom=case_uom_val,
         )
 
         self.db.add(obj)
@@ -99,6 +111,10 @@ class ItemWriteService:
         name: Optional[str] = None,
         spec: Optional[str] = None,
         uom: Optional[str] = None,
+        case_ratio: Optional[int] = None,
+        case_uom: Optional[str] = None,
+        case_ratio_set: bool = False,
+        case_uom_set: bool = False,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
         has_shelf_life: Optional[bool] = None,
@@ -130,6 +146,19 @@ class ItemWriteService:
         if uom is not None:
             unit_val = (uom or "PCS").strip().upper() or "PCS"
             obj.unit = unit_val
+            changed = True
+
+        if case_ratio_set:
+            if case_ratio is None:
+                obj.case_ratio = None
+            else:
+                if int(case_ratio) < 1:
+                    raise ValueError("case_ratio must be >= 1")
+                obj.case_ratio = int(case_ratio)
+            changed = True
+
+        if case_uom_set:
+            obj.case_uom = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
             changed = True
 
         if enabled is not None:
