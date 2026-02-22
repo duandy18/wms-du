@@ -14,7 +14,7 @@ psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "
   -- 确保基线存在
   INSERT INTO warehouses(id,name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING;
   INSERT INTO locations(id,name,warehouse_id) VALUES (1,'L1',1) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO items(id,sku,name,unit) VALUES ($ITEM,'SKU-$ITEM','ITEM-$ITEM','bag') ON CONFLICT (id) DO NOTHING;
+  INSERT INTO items(id,sku,name,uom) VALUES ($ITEM,'SKU-$ITEM','ITEM-$ITEM','bag') ON CONFLICT (id) DO NOTHING;
   INSERT INTO stocks(item_id,location_id,qty) VALUES ($ITEM,$LOC,0) ON CONFLICT (item_id,location_id) DO NOTHING;
 
   -- 增加 +5 并记录台账（after_qty=更新后的 qty）

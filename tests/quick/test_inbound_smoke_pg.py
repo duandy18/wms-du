@@ -32,7 +32,7 @@ async def _ensure_min_domain_v2(
     # 商品（最小一行）
     await session.execute(
         text(
-            "INSERT INTO items(id, sku, name, unit) "
+            "INSERT INTO items(id, sku, name, uom) "
             "VALUES (:i, :sku, :name, 'bag') "
             "ON CONFLICT (id) DO NOTHING"
         ),

@@ -64,7 +64,7 @@ class ItemMaintenanceService:
 
         name_val = (name or f"ITEM-{id}").strip()
         spec_val = spec.strip() if isinstance(spec, str) else None
-        unit_val = (uom or "PCS").strip().upper() or "PCS"
+        uom_val = (uom or "PCS").strip().upper() or "PCS"
         enabled_val = True if enabled is None else bool(enabled)
 
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
@@ -82,7 +82,7 @@ class ItemMaintenanceService:
             id=int(id),
             sku=sku_val,
             name=name_val,
-            unit=unit_val,
+            uom=uom_val,
             spec=spec_val,
             enabled=enabled_val,
             supplier_id=supplier_id,

@@ -4561,7 +4561,7 @@
                 "type": "null"
               }
             ],
-            "description": "单位（items.unit）",
+            "description": "单位（items.uom）",
             "title": "Uom"
           },
           "warehouse_id": {

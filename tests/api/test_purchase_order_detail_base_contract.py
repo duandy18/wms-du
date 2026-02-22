@@ -45,6 +45,7 @@ def _extract_po_id(payload: Dict[str, Any]) -> int:
 
 
 def _assert_line_base_contract(line: Dict[str, Any]) -> None:
+    # ✅ 第一公民：事实口径（base）
     for k in ("qty_ordered_base", "qty_received_base", "qty_remaining_base"):
         assert k in line, line
         assert isinstance(line[k], int), line
@@ -58,20 +59,23 @@ def _assert_line_base_contract(line: Dict[str, Any]) -> None:
     assert remaining_base >= 0
     assert remaining_base == max(ordered_base - received_base, 0), line
 
-    for k in ("qty_ordered", "qty_received", "qty_remaining"):
+    # ✅ 第一公民：快照解释器（Phase2 合同）
+    for k in (
+        "uom_snapshot",
+        "case_ratio_snapshot",
+        "case_uom_snapshot",
+        "qty_ordered_case_input",
+    ):
         assert k in line, line
-        assert isinstance(line[k], int), line
 
-    upc = line.get("units_per_case")
-    if upc is not None:
-        assert isinstance(upc, int), line
-        assert upc >= 1, line
-
-        received_purchase = received_base // upc
-        expected_remaining_purchase = max(int(line["qty_ordered"]) - received_purchase, 0)
-
-        assert int(line["qty_received"]) == received_purchase, line
-        assert int(line["qty_remaining"]) == expected_remaining_purchase, line
+    # 一致性：若存在 case_input & ratio，则必须能解释回 base
+    case_input = line.get("qty_ordered_case_input")
+    ratio = line.get("case_ratio_snapshot")
+    if case_input is not None and ratio is not None:
+        assert isinstance(case_input, int), line
+        assert isinstance(ratio, int), line
+        assert int(ratio) > 0, line
+        assert ordered_base == int(case_input) * int(ratio), line
 
 
 def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:

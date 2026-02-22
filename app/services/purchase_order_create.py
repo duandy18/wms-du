@@ -42,6 +42,11 @@ async def _require_supplier_for_po(session: AsyncSession, supplier_id: Optional[
 
 
 def _safe_upc(v: Optional[int]) -> int:
+    """
+    兼容历史入参：units_per_case 可能缺省/非法。
+    - 默认 1
+    - 最小为 1
+    """
     try:
         n = int(v or 1)
     except Exception:
@@ -81,24 +86,32 @@ async def create_po_v2(
     """
     创建“头 + 多行”的采购单。
 
-    ✅ 数量合同（方案 A）：
-    - qty_ordered: 采购单位订购量（输入快照）
-    - units_per_case: 换算因子（每采购单位包含多少最小单位，>0，默认 1）
+    ✅ 数量合同（新：单一事实 + 输入痕迹 + 快照解释器）：
     - qty_ordered_base: 最小单位订购量（事实字段，唯一口径）
-      * 由 qty_ordered 与 units_per_case 在写入阶段计算得到（计算逻辑集中在服务层）
+      * 本服务层继续兼容旧入参：qty_ordered + units_per_case -> 计算得到 qty_ordered_base
+    - qty_ordered_case_input: 输入痕迹（可空）
+      * 仅当 units_per_case > 1（代表“按箱/按采购口径”录入）时回填为 qty_ordered
+    - uom_snapshot / case_ratio_snapshot / case_uom_snapshot: 快照解释器
+      * uom_snapshot 来自 items.uom
+      * case_ratio_snapshot：优先取“本次输入/历史行使用过的倍率”（units_per_case）；
+        否则退回 items.case_ratio（可空，未治理允许为空）
+      * case_uom_snapshot 来自 items.case_uom（可空）
+
+    🚫 立即淘汰（不再写入/不再接受作为真相）：
+    - purchase_uom / units_per_case / qty_ordered 不落库；仅兼容作为入参用于计算与快照回填
 
     ✅ 价格合同：
-    - supply_price: 按 base_uom 计价的采购单价快照（可空）
+    - supply_price: 按 uom_snapshot（最小单位）计价的采购单价快照（可空）
     - discount_amount: 整行减免金额（>=0）
     - discount_note: 折扣说明（可选）
-    - 行金额不落库；PO.total_amount 在创建时可按可计算行聚合写入
+    - 行金额不落库；PO.total_amount 在创建时按可计算行聚合写入
 
     ✅ 封板规则（关键）：
     - item_name / item_sku 必须由后端从 Item 主数据生成写入 purchase_order_lines（行快照）
     - 不允许前端传入/覆盖（避免第二真相入口）
 
     ✅ 供应商规则（关键）：
-    - 废除 supplier 自由文本列：只接受 supplier_id
+    - 只接受 supplier_id
     - supplier_name 由后端从 suppliers 表取值并写快照（必填）
     """
     if not lines:
@@ -123,6 +136,7 @@ async def create_po_v2(
         item_id = raw.get("item_id")
         qty_ordered = raw.get("qty_ordered")
         if item_id is None or qty_ordered is None:
+            # ✅ 兼容旧入参：仍要求 qty_ordered（采购口径输入）
             raise ValueError("每一行必须包含 item_id 与 qty_ordered")
         try:
             raw_item_ids.append(int(item_id))
@@ -173,6 +187,7 @@ async def create_po_v2(
         else:
             supply_price = None
 
+        # ✅ 兼容旧入参：units_per_case 仅用于计算 base 与回填快照解释器
         units_per_case = raw.get("units_per_case")
         units_per_case_int: Optional[int]
         if units_per_case is not None:
@@ -196,7 +211,7 @@ async def create_po_v2(
 
         # 如果给了折扣但没价格，无法复算金额，直接拒绝（避免脏合同）
         if discount_amount > 0 and supply_price is None:
-            raise ValueError("存在折扣时必须提供 supply_price（按 base_uom 单价）")
+            raise ValueError("存在折扣时必须提供 supply_price（按 uom_snapshot 单价）")
 
         # ✅ 计算行金额（不落库）：用于 PO.total_amount 的创建聚合
         # 规则：supply_price 为空 -> 按 0 计；保证 total_amount 永不为 NULL
@@ -205,9 +220,31 @@ async def create_po_v2(
             raise ValueError("折扣金额超出行金额，导致行金额为负")
         total_amount += line_total
 
-        # ✅ 封板：行快照字段来自 Item 主数据
+        # ✅ 封板：行快照字段来自 Item 主数据（禁止前端覆盖）
         item_name_snapshot = _trim_or_none(getattr(it, "name", None))
         item_sku_snapshot = _trim_or_none(getattr(it, "sku", None))
+
+        # ✅ 单位快照：事实单位来自 items.uom（已收敛）
+        uom_snapshot = _trim_or_none(getattr(it, "uom", None))
+        if not uom_snapshot:
+            raise ValueError(f"第 {idx} 行：商品 uom 为空，禁止创建采购单（item_id={item_id}）")
+
+        # ✅ 包装快照解释器：
+        # - 历史/输入倍率（units_per_case）优先；否则退回 items.case_ratio（可空）
+        case_ratio_it = getattr(it, "case_ratio", None)
+        case_ratio_snapshot: Optional[int]
+        if upc > 1:
+            case_ratio_snapshot = int(upc)
+        else:
+            case_ratio_snapshot = int(case_ratio_it) if case_ratio_it is not None else None
+
+        case_uom_snapshot = _trim_or_none(getattr(it, "case_uom", None))
+
+        # ✅ 输入痕迹（仅当 upc > 1 才填）
+        qty_ordered_case_input: Optional[int] = int(qty_ordered) if upc > 1 else None
+
+        # 兼容：base_uom 若未传，则回填为 uom_snapshot（避免历史字段全空）
+        base_uom_val = _trim_or_none(raw.get("base_uom")) or uom_snapshot
 
         norm_lines.append(
             {
@@ -216,11 +253,12 @@ async def create_po_v2(
                 "item_name": item_name_snapshot,
                 "item_sku": item_sku_snapshot,
                 "spec_text": _trim_or_none(raw.get("spec_text")),
-                "base_uom": _trim_or_none(raw.get("base_uom")),
-                "purchase_uom": _trim_or_none(raw.get("purchase_uom")),
+                "base_uom": base_uom_val,
+                "uom_snapshot": uom_snapshot,
+                "case_ratio_snapshot": case_ratio_snapshot,
+                "case_uom_snapshot": case_uom_snapshot,
+                "qty_ordered_case_input": qty_ordered_case_input,
                 "supply_price": supply_price,
-                "units_per_case": upc,  # ✅ 直接写非空 upc
-                "qty_ordered": qty_ordered,
                 "qty_ordered_base": qty_ordered_base,
                 "discount_amount": discount_amount,
                 "discount_note": discount_note,
@@ -250,10 +288,11 @@ async def create_po_v2(
             item_sku=nl["item_sku"],
             spec_text=nl["spec_text"],
             base_uom=nl["base_uom"],
-            purchase_uom=nl["purchase_uom"],
+            uom_snapshot=nl["uom_snapshot"],
+            case_ratio_snapshot=nl["case_ratio_snapshot"],
+            case_uom_snapshot=nl["case_uom_snapshot"],
+            qty_ordered_case_input=nl["qty_ordered_case_input"],
             supply_price=nl["supply_price"],
-            units_per_case=nl["units_per_case"],
-            qty_ordered=nl["qty_ordered"],
             qty_ordered_base=nl["qty_ordered_base"],
             discount_amount=nl["discount_amount"],
             discount_note=nl["discount_note"],

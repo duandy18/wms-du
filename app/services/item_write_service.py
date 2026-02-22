@@ -50,7 +50,7 @@ class ItemWriteService:
             raise ValueError("name is required")
 
         spec_val = spec.strip() if isinstance(spec, str) else None
-        unit_val = (uom or "PCS").strip().upper() or "PCS"
+        uom_val = (uom or "PCS").strip().upper() or "PCS"
 
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
         category_val = category.strip() if isinstance(category, str) and category.strip() else None
@@ -68,7 +68,7 @@ class ItemWriteService:
         obj = Item(
             sku=sku_val,
             name=name_val,
-            unit=unit_val,
+            uom=uom_val,
             spec=spec_val,
             enabled=bool(enabled),
             supplier_id=supplier_id,
@@ -144,8 +144,8 @@ class ItemWriteService:
             changed = True
 
         if uom is not None:
-            unit_val = (uom or "PCS").strip().upper() or "PCS"
-            obj.unit = unit_val
+            uom_val = (uom or "PCS").strip().upper() or "PCS"
+            obj.uom = uom_val
             changed = True
 
         if case_ratio_set:

@@ -29,6 +29,33 @@ async def _get_items(client: httpx.AsyncClient, headers: Dict[str, str], qs: str
     return data
 
 
+def _assert_po_line_contract_phase2(line: Dict[str, Any]) -> None:
+    """
+    Phase2 输出契约（第一公民）：
+    - qty_ordered_base（唯一事实口径）
+    - uom_snapshot / case_ratio_snapshot / case_uom_snapshot / qty_ordered_case_input（快照解释器）
+    """
+    for k in (
+        "qty_ordered_base",
+        "uom_snapshot",
+        "case_ratio_snapshot",
+        "case_uom_snapshot",
+        "qty_ordered_case_input",
+    ):
+        assert k in line, line
+
+    assert isinstance(line["qty_ordered_base"], int), line
+    assert int(line["qty_ordered_base"]) >= 0, line
+
+    case_input = line.get("qty_ordered_case_input")
+    ratio = line.get("case_ratio_snapshot")
+    if case_input is not None and ratio is not None:
+        assert isinstance(case_input, int), line
+        assert isinstance(ratio, int), line
+        assert int(ratio) > 0, line
+        assert int(line["qty_ordered_base"]) == int(case_input) * int(ratio), line
+
+
 @pytest.mark.asyncio
 async def test_items_filter_by_supplier_id_returns_only_supplier_items(client: httpx.AsyncClient) -> None:
     """
@@ -123,5 +150,10 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient) 
     assert data.get("supplier_id") == 1
     assert isinstance(data.get("lines"), list)
     assert len(data["lines"]) == 1
-    assert int(data["lines"][0]["item_id"]) == item_id
-    assert int(data["lines"][0]["qty_ordered"]) == 2
+
+    line = data["lines"][0]
+    assert int(line["item_id"]) == item_id
+
+    # ✅ Phase2：第一公民字段断言（快照解释器 + base 事实）
+    _assert_po_line_contract_phase2(line)
+    assert int(line["qty_ordered_base"]) == 2

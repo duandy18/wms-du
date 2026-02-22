@@ -16,7 +16,7 @@ from app.db.session import get_session
 from app.models.purchase_order import PurchaseOrder
 from app.models.warehouse import Warehouse
 from app.schemas.purchase_order import PurchaseOrderLineListOut, PurchaseOrderListItemOut
-from app.services.qty_base import ordered_base as _ordered_base_impl
+from app.services.purchase_order_line_mapper import build_line_base_data
 from app.services.purchase_order_service import PurchaseOrderService
 
 
@@ -116,31 +116,35 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
 
             line_out: List[PurchaseOrderLineListOut] = []
             for ln in po.lines or []:
-                ordered_base = int(_ordered_base_impl(ln) or 0)
-
                 ln_id = int(getattr(ln, "id"))
                 received_base = int(received_map.get(ln_id, 0) or 0)
-                remaining_base = max(0, ordered_base - received_base)
+
+                # ✅ 统一来源：行本体 + 执行口径（base）+ 快照解释器 由 mapper 负责
+                data = build_line_base_data(ln=ln, received_base=received_base)
 
                 line_out.append(
                     PurchaseOrderLineListOut(
-                        id=ln_id,
-                        po_id=int(getattr(ln, "po_id")),
-                        line_no=int(getattr(ln, "line_no")),
-                        item_id=int(getattr(ln, "item_id")),
-                        qty_ordered=int(getattr(ln, "qty_ordered") or 0),
-                        units_per_case=int(getattr(ln, "units_per_case", 1) or 1),
-                        qty_ordered_base=ordered_base,
-                        qty_received_base=received_base,
-                        qty_remaining_base=remaining_base,
-                        base_uom=getattr(ln, "base_uom", None),
-                        purchase_uom=getattr(ln, "purchase_uom", None),
-                        supply_price=getattr(ln, "supply_price", None),
-                        discount_amount=getattr(ln, "discount_amount", 0) or 0,
-                        discount_note=getattr(ln, "discount_note", None),
-                        remark=getattr(ln, "remark", None),
-                        created_at=getattr(ln, "created_at"),
-                        updated_at=getattr(ln, "updated_at"),
+                        id=int(data["id"]),
+                        po_id=int(data["po_id"]),
+                        line_no=int(data["line_no"]),
+                        item_id=int(data["item_id"]),
+                        # ✅ 快照解释器（第一公民）
+                        uom_snapshot=data.get("uom_snapshot"),
+                        case_ratio_snapshot=data.get("case_ratio_snapshot"),
+                        case_uom_snapshot=data.get("case_uom_snapshot"),
+                        qty_ordered_case_input=data.get("qty_ordered_case_input"),
+                        # ✅ 事实/执行口径（base）
+                        qty_ordered_base=int(data["qty_ordered_base"]),
+                        qty_received_base=int(data["qty_received_base"]),
+                        qty_remaining_base=int(data["qty_remaining_base"]),
+                        # 其他字段
+                        base_uom=data.get("base_uom"),
+                        supply_price=data.get("supply_price"),
+                        discount_amount=data.get("discount_amount") or 0,
+                        discount_note=data.get("discount_note"),
+                        remark=data.get("remark"),
+                        created_at=data["created_at"],
+                        updated_at=data["updated_at"],
                     )
                 )
 
