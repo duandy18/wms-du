@@ -33,7 +33,7 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                     s.item_id,
                     i.name      AS item_name,
                     i.sku       AS item_code,
-                    i.unit      AS uom,
+                    i.uom       AS uom,
                     i.spec      AS spec,
                     i.brand     AS brand,
                     i.category  AS category,

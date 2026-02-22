@@ -26,7 +26,7 @@ ON CONFLICT (id) DO NOTHING;
 
 # 修正点：items 需要 NOT NULL 的 sku，这里一并写入
 SQL_ENSURE_ITEM = """
-INSERT INTO items(id, sku, name, unit)
+INSERT INTO items(id, sku, name, uom)
 VALUES (:id, :sku, :name, 'bag')
 ON CONFLICT (id) DO NOTHING;
 """

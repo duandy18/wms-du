@@ -2,56 +2,43 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 from app.schemas.purchase_order import PurchaseOrderLineOut
-from app.services.purchase_order_qty import base_to_purchase, get_qty_ordered_base, safe_upc
+from app.services.purchase_order_qty import get_qty_ordered_base
 
 
-def _calc_qty_fields(*, ln: Any, received_base: int) -> Tuple[int, int, int, int, int, int]:
+def _safe_int(v: object, default: int) -> int:
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except Exception:
+        return default
+
+
+def _safe_case_ratio_snapshot(ln: Any) -> int:
     """
-    返回：
-    - ordered_purchase
-    - ordered_base
-    - received_base
-    - remaining_base
-    - received_purchase
-    - remaining_purchase
+    Phase2：倍率快照（1 采购单位 = 多少最小单位）
+    - 优先 case_ratio_snapshot
+    - 兜底为 1（避免除零/异常）
     """
-    ordered_purchase = int(getattr(ln, "qty_ordered", 0) or 0)
-    upc = safe_upc(getattr(ln, "units_per_case", None))
-
-    ordered_base = get_qty_ordered_base(ln)
-    received_base_i = max(int(received_base or 0), 0)
-    remaining_base = max(0, ordered_base - received_base_i)
-
-    received_purchase = base_to_purchase(received_base_i, upc)
-    remaining_purchase = max(0, ordered_purchase - received_purchase)
-
-    return (
-        ordered_purchase,
-        ordered_base,
-        received_base_i,
-        remaining_base,
-        received_purchase,
-        remaining_purchase,
-    )
+    ratio = getattr(ln, "case_ratio_snapshot", None)
+    r = _safe_int(ratio, 0)
+    return r if r > 0 else 1
 
 
 def build_line_base_data(*, ln: Any, received_base: int) -> Dict[str, Any]:
     """
-    只负责“行本体 + qty 口径”字段（已收来自 receipt 聚合注入）。
-    """
-    (
-        ordered_purchase,
-        ordered_base,
-        received_base_i,
-        remaining_base,
-        received_purchase,
-        remaining_purchase,
-    ) = _calc_qty_fields(ln=ln, received_base=received_base)
+    只负责“行本体 + 执行口径（base）”字段（已收来自 receipt 聚合注入）。
 
-    item_id = int(getattr(ln, "item_id"))
+    Phase2 对外契约升级后：
+    - 不再输出 qty_ordered / units_per_case / purchase_uom 等旧字段
+    - 不再输出采购口径 qty_received/qty_remaining（展示/兼容口径）
+    """
+    ordered_base = get_qty_ordered_base(ln)
+    received_base_i = max(_safe_int(received_base or 0, 0), 0)
+    remaining_base = max(0, ordered_base - received_base_i)
+
+    item_id = _safe_int(getattr(ln, "item_id"), 0)
 
     discount_amount = getattr(ln, "discount_amount", None)
     try:
@@ -60,25 +47,26 @@ def build_line_base_data(*, ln: Any, received_base: int) -> Dict[str, Any]:
         discount_amount_val = Decimal("0")
 
     return {
-        "id": int(getattr(ln, "id")),
-        "po_id": int(getattr(ln, "po_id")),
-        "line_no": int(getattr(ln, "line_no")),
+        "id": _safe_int(getattr(ln, "id"), 0),
+        "po_id": _safe_int(getattr(ln, "po_id"), 0),
+        "line_no": _safe_int(getattr(ln, "line_no"), 0),
         "item_id": item_id,
         "item_name": getattr(ln, "item_name", None),
         "item_sku": getattr(ln, "item_sku", None),
         "spec_text": getattr(ln, "spec_text", None),
         "base_uom": getattr(ln, "base_uom", None),
-        "purchase_uom": getattr(ln, "purchase_uom", None),
         "supply_price": getattr(ln, "supply_price", None),
         "discount_amount": discount_amount_val,
         "discount_note": getattr(ln, "discount_note", None),
-        "units_per_case": int(getattr(ln, "units_per_case", 1) or 1),
-        "qty_ordered": ordered_purchase,
+        # ✅ 快照解释器（Phase2 合同，第一公民）
+        "uom_snapshot": getattr(ln, "uom_snapshot", None),
+        "case_ratio_snapshot": getattr(ln, "case_ratio_snapshot", None),
+        "case_uom_snapshot": getattr(ln, "case_uom_snapshot", None),
+        "qty_ordered_case_input": getattr(ln, "qty_ordered_case_input", None),
+        # ✅ 事实/执行口径（base）
         "qty_ordered_base": ordered_base,
         "qty_received_base": received_base_i,
         "qty_remaining_base": remaining_base,
-        "qty_received": received_purchase,
-        "qty_remaining": remaining_purchase,
         "remark": getattr(ln, "remark", None),
         "created_at": getattr(ln, "created_at"),
         "updated_at": getattr(ln, "updated_at"),

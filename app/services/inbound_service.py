@@ -148,7 +148,7 @@ class InboundService:
         ins = await session.execute(
             sa.text(
                 """
-                INSERT INTO items (sku, name, unit)
+                INSERT INTO items (sku, name, uom)
                 VALUES (:s, :n, 'EA')
                 ON CONFLICT (sku) DO UPDATE SET name = EXCLUDED.name
                 RETURNING id

@@ -23,6 +23,27 @@ class PurchaseOrderLine(Base):
             "line_no",
             name="uq_purchase_order_lines_po_id_line_no",
         ),
+        # ✅ DB 已存在的约束：折扣非负
+        sa.CheckConstraint(
+            "discount_amount >= 0",
+            name="ck_po_lines_discount_amount_nonneg",
+        ),
+        # ✅ DB 已存在的约束：事实数量必须为正
+        sa.CheckConstraint(
+            "qty_ordered_base > 0",
+            name="ck_po_lines_qty_ordered_base_positive",
+        ),
+        # ✅ DB 已存在的约束：输入痕迹存在时必须可解释
+        sa.CheckConstraint(
+            """
+            qty_ordered_case_input IS NULL
+            OR (
+                case_ratio_snapshot IS NOT NULL
+                AND qty_ordered_base = (qty_ordered_case_input * case_ratio_snapshot)
+            )
+            """,
+            name="ck_po_line_case_input_valid",
+        ),
     )
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
@@ -35,32 +56,34 @@ class PurchaseOrderLine(Base):
     )
     line_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
-    item_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
+    # ✅ 与 DB 对齐：item_id 已有 fk_po_line_item -> items.id (RESTRICT)
+    item_id: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    # ✅ 快照/展示字段（历史兼容：当前仍允许为空；后续可迁移为 NOT NULL + *_snapshot 命名）
     item_name: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
     item_sku: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True, index=True)
-
     spec_text: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
+
+    # ✅ 历史遗留字段：保留但不再作为“事实单位”
     base_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
-    purchase_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
 
-    # ✅ 采购单价（按 base_uom 计价的单价快照；允许为空，聚合金额时需按 0 处理）
+    # ✅ 新合同字段：事实单位快照（唯一口径，NOT NULL）
+    uom_snapshot: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+
+    # ✅ 包装结构快照（允许为空：未治理）
+    case_ratio_snapshot: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    case_uom_snapshot: Mapped[Optional[str]] = mapped_column(sa.String(16), nullable=True)
+
+    # ✅ 输入痕迹（可空）：按“箱/采购口径”录入时保留输入数量
+    qty_ordered_case_input: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+
+    # ✅ 采购单价（允许为空，聚合金额时按 0 处理）
     supply_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-
-    # ✅ 单位换算（方案 A）：upc 非空（默认 1），base 唯一事实
-    units_per_case: Mapped[int] = mapped_column(
-        sa.Integer,
-        nullable=False,
-        default=1,
-        server_default="1",
-        comment="换算因子：每 1 采购单位包含多少最小单位（>0）",
-    )
-
-    # 采购单位订购量（输入快照/展示口径）
-    qty_ordered: Mapped[int] = mapped_column(
-        sa.Integer,
-        nullable=False,
-        comment="订购数量（采购单位口径，>0）",
-    )
 
     # ✅ 最小单位订购量（事实字段）
     qty_ordered_base: Mapped[int] = mapped_column(
@@ -108,7 +131,8 @@ class PurchaseOrderLine(Base):
         return (
             f"<POLine id={self.id} po_id={self.po_id} "
             f"line_no={self.line_no} item_id={self.item_id} "
-            f"ordered={self.qty_ordered}/{self.qty_ordered_base} "
-            f"upc={self.units_per_case} "
+            f"base={self.qty_ordered_base} "
+            f"case_in={self.qty_ordered_case_input} "
+            f"ratio={self.case_ratio_snapshot} "
             f"price={self.supply_price} discount={self.discount_amount}>"
         )

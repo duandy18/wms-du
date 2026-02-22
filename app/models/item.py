@@ -50,7 +50,8 @@ class Item(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    unit: Mapped[str] = mapped_column(
+    # ✅ 事实单位（唯一口径）：DB 列名已迁移为 items.uom
+    uom: Mapped[str] = mapped_column(
         String(8),
         nullable=False,
         server_default=text("'PCS'::character varying"),
@@ -109,8 +110,9 @@ class Item(Base):
     supplier: Mapped[Optional["Supplier"]] = relationship("Supplier", lazy="joined")
 
     @property
-    def uom(self) -> str:
-        return self.unit
+    def unit(self) -> str:
+        # ✅ 兼容旧调用：Item.unit -> Item.uom（只读）
+        return self.uom
 
     @property
     def barcode(self) -> Optional[str]:

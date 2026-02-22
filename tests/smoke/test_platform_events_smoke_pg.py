@@ -34,12 +34,12 @@ async def test_smoke_multi_platform_end2end():
         await s.execute(
             text(
                 """
-            INSERT INTO items (id, sku, name, unit)
+            INSERT INTO items (id, sku, name, uom)
             VALUES
               (1, 'SKU-1', 'ITEM-1', 'PCS'),
               (2, 'SKU-2', 'ITEM-2', 'PCS'),
               (3, 'SKU-3', 'ITEM-3', 'PCS')
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, unit = EXCLUDED.unit
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, uom = EXCLUDED.uom
         """
             )
         )

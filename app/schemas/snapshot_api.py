@@ -32,7 +32,7 @@ class InventoryRow(_Base):
     item_name: Annotated[str, Field(min_length=0, max_length=128, description="商品名称")]
 
     item_code: Optional[str] = Field(default=None, description="商品编码（items.sku）")
-    uom: Optional[str] = Field(default=None, description="单位（items.unit）")
+    uom: Optional[str] = Field(default=None, description="单位（items.uom）")
     spec: Optional[str] = Field(default=None, description="规格（items.spec）")
 
     main_barcode: Optional[str] = Field(default=None, description="主条码（单值）")

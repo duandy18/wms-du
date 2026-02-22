@@ -55,9 +55,28 @@ class PurchaseOrderLineListOut(BaseModel):
     line_no: int
     item_id: int
 
-    qty_ordered: int
-    units_per_case: int = Field(..., ge=1, description="换算因子（>=1）")
+    # -------------------------------------------------------
+    # ✅ 快照解释器（Phase2 合同，第一公民）
+    # -------------------------------------------------------
+    uom_snapshot: Optional[str] = Field(
+        None,
+        description="【快照解释器】事实单位快照（通常来自 items.uom；历史数据允许为空）",
+    )
+    case_ratio_snapshot: Optional[int] = Field(
+        None,
+        description="【快照解释器】倍率快照：1 采购单位=多少最小单位（历史/输入倍率；可空）",
+    )
+    case_uom_snapshot: Optional[str] = Field(
+        None,
+        description="【快照解释器】采购单位快照（可空；未治理允许为空）",
+    )
+    qty_ordered_case_input: Optional[int] = Field(
+        None,
+        ge=0,
+        description="【快照解释器】输入痕迹：用户按采购口径输入的数量（仅当倍率>1 时通常有值）",
+    )
 
+    # ✅ 事实字段（唯一口径）
     qty_ordered_base: int = Field(..., ge=0, description="订购数量（最小单位 base，事实字段）")
 
     # ✅ 已收/剩余不再来自 PO 行表列，而是由 Receipt(CONFIRMED) 聚合得到
@@ -66,8 +85,8 @@ class PurchaseOrderLineListOut(BaseModel):
     )
     qty_remaining_base: int = Field(..., ge=0, description="剩余可收数量（最小单位 base，派生）")
 
+    # ✅ 单据快照（展示用）
     base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
 
     supply_price: Optional[Decimal] = None
     discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
@@ -92,7 +111,6 @@ class PurchaseOrderLineOut(BaseModel):
 
     spec_text: Optional[str]
     base_uom: Optional[str]
-    purchase_uom: Optional[str]
 
     # enrich（来自 Item / Barcode，读模型字段）
     sku: Optional[str] = None
@@ -113,9 +131,28 @@ class PurchaseOrderLineOut(BaseModel):
     discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
     discount_note: Optional[str] = None
 
-    units_per_case: int = Field(..., ge=1, description="换算因子（>=1）")
-    qty_ordered: int = Field(..., gt=0, description="订购数量（采购单位，展示用）")
+    # -------------------------------------------------------
+    # ✅ 快照解释器（Phase2 合同，第一公民）
+    # -------------------------------------------------------
+    uom_snapshot: Optional[str] = Field(
+        None,
+        description="【快照解释器】事实单位快照（通常来自 items.uom；历史数据允许为空）",
+    )
+    case_ratio_snapshot: Optional[int] = Field(
+        None,
+        description="【快照解释器】倍率快照：1 采购单位=多少最小单位（历史/输入倍率；可空）",
+    )
+    case_uom_snapshot: Optional[str] = Field(
+        None,
+        description="【快照解释器】采购单位快照（可空；未治理允许为空）",
+    )
+    qty_ordered_case_input: Optional[int] = Field(
+        None,
+        ge=0,
+        description="【快照解释器】输入痕迹：用户按采购口径输入的数量（仅当倍率>1 时通常有值）",
+    )
 
+    # ✅ 事实字段（唯一口径）
     qty_ordered_base: int = Field(..., ge=0, description="订购数量（最小单位 base，事实字段）")
 
     # ✅ 执行口径（Receipt(CONFIRMED) 聚合 + 派生）
@@ -123,10 +160,6 @@ class PurchaseOrderLineOut(BaseModel):
         ..., ge=0, description="已收数量（最小单位 base，Receipt(CONFIRMED) 聚合）"
     )
     qty_remaining_base: int = Field(..., ge=0, description="剩余可收数量（最小单位 base，派生）")
-
-    # 展示/兼容口径（由 base + upc 换算，向下取整）
-    qty_received: int = Field(..., ge=0, description="已收数量（采购单位口径，展示/兼容）")
-    qty_remaining: int = Field(..., ge=0, description="剩余可收数量（采购单位口径，展示/兼容）")
 
     remark: Optional[str]
 
