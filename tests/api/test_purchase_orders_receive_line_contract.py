@@ -194,16 +194,22 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     item_has_sl = int(with_sl[0]["id"])
     item_no_sl = int(without_sl[0]["id"])
 
-    # 负例：坏草稿会导致 can_confirm=false
+    # 负例：效期商品缺 production/expiry，写入口应直接 400（封板：不允许“坏草稿”）
     po_bad = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
     po_bad_id = int(po_bad["id"])
     await _start_draft(client, headers, po_bad_id)
 
-    wb_bad = await _receive_line(client, headers, po_bad_id, line_no=1, qty=1)  # 缺 production_date
-    exp_bad = wb_bad.get("explain") or {}
-    assert bool(exp_bad.get("confirmable")) is False
-    caps_bad = wb_bad.get("caps") or {}
-    assert bool(caps_bad.get("can_confirm")) is False
+    r_bad = await client.post(
+        f"/purchase-orders/{po_bad_id}/receive-line",
+        json={"line_no": 1, "qty": 1},
+        headers=headers,
+    )
+    assert r_bad.status_code == 400, r_bad.text
+    bad = r_bad.json()
+    assert isinstance(bad, dict)
+    # 关键：错误语义要明确是“效期商品必须提供/生成 batch_code（禁止空值/伪批次）”
+    msg = str(bad.get("message") or "")
+    assert "效期商品必须提供/生成 batch_code" in msg or "效期商品必须提供" in msg, bad
 
     # 正例：新 PO，不带坏行
     po = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))

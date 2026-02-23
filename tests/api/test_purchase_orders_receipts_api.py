@@ -89,6 +89,7 @@ async def test_purchase_order_receipts_api_returns_fact_events(client: httpx.Asy
 
     po = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
     po_id = int(po["id"])
+    assert po_id > 0, po
 
     # Phase5+：先开始收货（draft）
     r0 = await client.post(f"/purchase-orders/{po_id}/receipts/draft", headers=headers)

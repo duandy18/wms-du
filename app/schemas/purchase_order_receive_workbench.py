@@ -30,7 +30,12 @@ class ReceiptSummaryOut(BaseModel):
 class WorkbenchBatchRowOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    batch_code: str
+    # ✅ 语义收敛：batch_code 允许为 None（表示“无批次槽位”，不是“未知批次”）
+    # - 禁止用空串/"None"/"N/A" 等伪码替代；应由后端归一化为 None
+    batch_code: Optional[str] = Field(
+        default=None,
+        description="批次码；None 表示无批次槽位（非批次商品合法维度）",
+    )
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
     qty_received: int

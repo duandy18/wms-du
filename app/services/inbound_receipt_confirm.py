@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.batch_code_contract import normalize_optional_batch_code
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.models.inbound_receipt import InboundReceipt
@@ -131,14 +132,12 @@ async def _maybe_auto_close_po_after_confirm(
 
     po_status = str(getattr(po_obj, "status", "") or "").upper()
     if po_status != "CREATED":
-        # 只对可执行态的计划做自动关闭；若已 CLOSED/CANCELED，保持原样
         return
 
     wb = await get_receive_workbench(session, po_id=po_id)
     if not wb.rows:
         return
 
-    # ✅ 以 workbench.remaining_qty 为准（后端已统一 base 口径）
     is_completed = all(int(getattr(r, "remaining_qty", 0) or 0) == 0 for r in wb.rows)
     if not is_completed:
         return
@@ -218,7 +217,8 @@ async def confirm_receipt(
             ref_line=ref_line,
             occurred_at=occurred_at,
             meta={"source": "inbound-receipt-confirm", "receipt_id": int(receipt_id)},
-            batch_code=str(n.batch_code),
+            # ✅ 语义收敛：禁止 str(None)/空串污染；统一归一为 Optional[str]
+            batch_code=normalize_optional_batch_code(getattr(n, "batch_code", None)),
             production_date=getattr(n, "production_date", None),
             expiry_date=None,  # 当前归一化键未纳入 expiry_date；后续如需增强再做
             trace_id=getattr(receipt, "trace_id", None),

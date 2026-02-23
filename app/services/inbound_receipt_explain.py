@@ -16,23 +16,43 @@ from app.schemas.inbound_receipt_explain import (
     ProblemItem,
 )
 
+# ✅ 内部专用：归一化分组键使用的 NULL 批次 token（只用于 key，不对外输出）
+_NULL_BATCH_KEY = "__NULL_BATCH__"
+
 
 @dataclass(frozen=True)
 class _LineKeyFields:
     po_line_id: Optional[int]
     item_id: int
-    batch_code: str
+    batch_code: Optional[str]
     production_date: Optional[date]
+
+
+def _norm_batch_code_for_key(batch_code: Optional[str]) -> str:
+    """
+    用于分组/归一化键的 batch_code 归一：
+    - None / "" / "   " -> __NULL_BATCH__（避免 str(None) => "None"）
+    - 其它：strip 后返回（保持稳定）
+    """
+    if batch_code is None:
+        return _NULL_BATCH_KEY
+    s = str(batch_code).strip()
+    return s if s else _NULL_BATCH_KEY
 
 
 def _line_key(f: _LineKeyFields) -> str:
     """
     Phase5（采购收货）归一化键（当前按生产日期口径）：
     po_line_id + item_id + batch_code + production_date
+
+    注意：
+    - batch_code 可为 NULL（非效期商品必须为 NULL）
+    - 键里用 __NULL_BATCH__ 表示 NULL，禁止出现 "None"
     """
     pol = f.po_line_id if f.po_line_id is not None else "NA"
     pd = f.production_date.isoformat() if f.production_date is not None else "NA"
-    return f"POL:{pol}|ITEM:{f.item_id}|B:{f.batch_code}|PD:{pd}"
+    bc_key = _norm_batch_code_for_key(f.batch_code)
+    return f"POL:{pol}|ITEM:{f.item_id}|B:{bc_key}|PD:{pd}"
 
 
 def _sorted_lines(receipt: object) -> List[object]:
@@ -71,8 +91,8 @@ def _validate_header(receipt: object) -> List[ProblemItem]:
 async def _load_item_has_shelf_life_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, bool]:
     """
     批量加载 items.has_shelf_life，用于校验策略分流：
-    - has_shelf_life=true：production_date 必填
-    - has_shelf_life=false：允许 production_date 为空（典型 NOEXP）
+    - has_shelf_life=true：batch_code/production_date/expiry_date 必填
+    - has_shelf_life=false：batch_code 必须为 NULL，且 production_date/expiry_date 必须为 NULL
     """
     if not item_ids:
         return {}
@@ -114,19 +134,47 @@ def _validate_lines(lines: List[object], has_shelf_life_map: Dict[int, bool]) ->
         if getattr(ln, "po_line_id", None) is None:
             errs.append(ProblemItem(scope="line", field="po_line_id", message="必须关联采购单明细", index=idx))
 
-        # batch_code 在 DB 上 NOT NULL，但仍做兜底
-        bc = str(getattr(ln, "batch_code", "") or "").strip()
-        if bc == "":
-            errs.append(ProblemItem(scope="line", field="batch_code", message="批次必填", index=idx))
-
         item_id = int(getattr(ln, "item_id"))
         has_sl = bool(has_shelf_life_map.get(item_id, False))
 
-        # ✅ 日期策略分流（关键修复）：
-        # - 有效期商品：生产日期必填
-        # - 无有效期商品：允许 production_date/expiry_date 为空（NOEXP）
-        if has_sl and getattr(ln, "production_date", None) is None:
-            errs.append(ProblemItem(scope="line", field="production_date", message="生产日期必填", index=idx))
+        bc_raw = getattr(ln, "batch_code", None)
+        bc = (str(bc_raw).strip() if bc_raw is not None else "")
+        pd = getattr(ln, "production_date", None)
+        ed = getattr(ln, "expiry_date", None)
+
+        # ✅ 批次/日期策略封板（与写入口/DB CHECK 对齐）
+        if has_sl:
+            # 有效期商品：批次 + 日期都必须齐全
+            if bc == "":
+                errs.append(ProblemItem(scope="line", field="batch_code", message="批次必填", index=idx))
+            if pd is None:
+                errs.append(ProblemItem(scope="line", field="production_date", message="生产日期必填", index=idx))
+            if ed is None:
+                errs.append(ProblemItem(scope="line", field="expiry_date", message="有效期必填", index=idx))
+        else:
+            # 非有效期商品：批次必须为 NULL，日期必须为 NULL（杜绝伪批次/伪日期）
+            if bc_raw is not None and bc != "":
+                errs.append(
+                    ProblemItem(scope="line", field="batch_code", message="非效期商品批次必须为 null", index=idx)
+                )
+            if pd is not None:
+                errs.append(
+                    ProblemItem(
+                        scope="line",
+                        field="production_date",
+                        message="非效期商品生产日期必须为 null",
+                        index=idx,
+                    )
+                )
+            if ed is not None:
+                errs.append(
+                    ProblemItem(
+                        scope="line",
+                        field="expiry_date",
+                        message="非效期商品有效期必须为 null",
+                        index=idx,
+                    )
+                )
 
     return errs
 
@@ -143,7 +191,7 @@ def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], Lis
         f = _LineKeyFields(
             po_line_id=getattr(ln, "po_line_id", None),
             item_id=int(getattr(ln, "item_id")),
-            batch_code=str(getattr(ln, "batch_code")),
+            batch_code=getattr(ln, "batch_code", None),
             production_date=getattr(ln, "production_date", None),
         )
         key = _line_key(f)
@@ -152,6 +200,7 @@ def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], Lis
             groups[key] = {
                 "po_line_id": f.po_line_id,
                 "item_id": f.item_id,
+                # ✅ 对外输出：保持真实 batch_code（可为 None），不要把 None 变成 "None"
                 "batch_code": f.batch_code,
                 "production_date": f.production_date,
                 "qty": 0,
@@ -173,7 +222,7 @@ def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], Lis
                 qty_total=qty_total,
                 item_id=item_id,
                 po_line_id=g["po_line_id"],
-                batch_code=str(g["batch_code"]),
+                batch_code=g["batch_code"],
                 production_date=g["production_date"],
                 source_line_indexes=list(g["indexes"]),
             )

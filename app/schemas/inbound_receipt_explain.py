@@ -42,7 +42,10 @@ class NormalizedLinePreviewOut(BaseModel):
     # 事实字段（对齐 InboundReceiptLine）
     item_id: int
     po_line_id: Optional[int] = None
-    batch_code: str
+    batch_code: Optional[str] = Field(
+        default=None,
+        description="批次码（canonical/snapshot 语义统一：有效期商品必填；非效期商品必须为 null）",
+    )
     production_date: Optional[date] = None
 
     # 可视化/定位信息
