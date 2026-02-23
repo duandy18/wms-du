@@ -33,7 +33,10 @@ class InboundReceiptLineOut(BaseModel):
 
     barcode: Optional[str] = None
 
-    batch_code: str
+    # ✅ 批次语义封板：
+    # - has_shelf_life=true  => batch_code 必填（由写入口/confirm 校验保障）
+    # - has_shelf_life=false => batch_code 必须为 null（禁止伪批次）
+    batch_code: Optional[str] = None
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
 

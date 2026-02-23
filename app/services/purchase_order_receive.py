@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional, Any
+from typing import Optional, Any, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
+from app.models.item import Item
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.services.purchase_order_queries import get_po_with_lines
@@ -112,14 +114,14 @@ async def _next_receipt_line_no(session: AsyncSession, *, receipt_id: int) -> in
     return mx + 1
 
 
-def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> str:
+def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> Optional[str]:
     """
-    Phase5：录入阶段必须给 batch_code（DB NOT NULL）。
-    - 若提供 production_date：用 deterministic batch_code
-    - 若未提供：先落 NOEXP（下一阶段会禁止 NOEXP for shelf-life items）
+    Phase5+（批次语义封板）：
+    - 不再允许 NOEXP 这类“伪批次码”
+    - 若 production_date 缺失，则 batch_code 返回 None（由上层根据 has_shelf_life 决定是否允许）
     """
     if production_date is None:
-        return "NOEXP"
+        return None
     return f"BATCH-PO{po_id}-L{po_line_no}-{production_date.isoformat()}"
 
 
@@ -161,6 +163,126 @@ async def _sum_draft_received_base(
         ).scalar()
         or 0
     )
+
+
+async def _get_item_shelf_life_flag(session: AsyncSession, *, item_id: int) -> bool:
+    """
+    写入口守护所需：判断该商品是否效期管理（has_shelf_life）。
+    """
+    row = await session.execute(select(Item.has_shelf_life).where(Item.id == int(item_id)))
+    val = row.scalar_one_or_none()
+    return bool(val)
+
+
+def _normalize_barcode(barcode: Optional[str]) -> Optional[str]:
+    if barcode is None:
+        return None
+    s = str(barcode).strip()
+    return s or None
+
+
+def _enforce_batch_semantics(
+    *,
+    has_shelf_life: bool,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+    batch_code: Optional[str],
+) -> Tuple[Optional[date], Optional[date], Optional[str]]:
+    """
+    ✅ Phase5+ 批次写入口封板（语义层）：
+
+    - has_shelf_life=False：
+        - 强制 batch_code=NULL
+        - 强制 production_date/expiry_date=NULL
+      目的：彻底杜绝“非效期商品被迫写入伪批次/伪日期”。
+
+    - has_shelf_life=True：
+        - batch_code 必须存在
+        - production_date / expiry_date 必须存在
+      目的：让效期商品批次事实完整可追溯。
+    """
+    if not has_shelf_life:
+        return None, None, None
+
+    # has_shelf_life=True
+    if batch_code is None or not str(batch_code).strip():
+        raise ValueError("效期商品必须提供/生成 batch_code（禁止空值/伪批次）")
+    if production_date is None:
+        raise ValueError("效期商品必须提供 production_date")
+    if expiry_date is None:
+        raise ValueError("效期商品必须提供 expiry_date")
+    return production_date, expiry_date, str(batch_code).strip()
+
+
+async def _ensure_batch_consistent(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code: str,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> None:
+    """
+    ✅ canonical（batches）一致性硬守护：
+
+    - 若 canonical 不存在：创建 batches 记录（以本次写入为准）
+    - 若 canonical 已存在：production/expiry 必须一致，否则 409
+
+    说明：
+    - batches 的唯一键是 (warehouse_id, item_id, batch_code)
+    - canonical 的日期来源必须稳定，否则 downstream 会出现“日期来源漂移”
+    """
+    # 1) 查询 canonical
+    row = await session.execute(
+        text(
+            """
+            SELECT production_date, expiry_date
+              FROM batches
+             WHERE warehouse_id = :wid
+               AND item_id = :item_id
+               AND batch_code = :batch_code
+             LIMIT 1
+            """
+        ),
+        {"wid": int(warehouse_id), "item_id": int(item_id), "batch_code": str(batch_code)},
+    )
+    existing = row.first()
+
+    # 2) 不存在 -> 创建 canonical
+    if existing is None:
+        await session.execute(
+            text(
+                """
+                INSERT INTO batches (warehouse_id, item_id, batch_code, production_date, expiry_date)
+                VALUES (:wid, :item_id, :batch_code, :pd, :ed)
+                """
+            ),
+            {
+                "wid": int(warehouse_id),
+                "item_id": int(item_id),
+                "batch_code": str(batch_code),
+                "pd": production_date,
+                "ed": expiry_date,
+            },
+        )
+        return
+
+    # 3) 已存在 -> 必须一致，否则 409
+    existing_pd = existing[0]
+    existing_ed = existing[1]
+
+    # 注意：date / None 的比较 Python 直接可比
+    if existing_pd != production_date or existing_ed != expiry_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "批次 canonical 不一致：batches 与本次写入的 snapshot 日期冲突。"
+                f" (warehouse_id={int(warehouse_id)}, item_id={int(item_id)}, batch_code={str(batch_code)}, "
+                f"canonical.production_date={existing_pd}, canonical.expiry_date={existing_ed}, "
+                f"snapshot.production_date={production_date}, snapshot.expiry_date={expiry_date})"
+            ),
+        )
 
 
 async def receive_po_line(
@@ -241,30 +363,54 @@ async def receive_po_line(
     # 2) 生成 receipt_line_no（receipt 内递增）
     next_line_no = await _next_receipt_line_no(session, receipt_id=int(draft.id))
 
-    # 3) 写入 ReceiptLine
+    # 3) 批次语义写入口守护（has_shelf_life）
+    item_id_val = int(getattr(target, "item_id"))
+    has_shelf_life = await _get_item_shelf_life_flag(session, item_id=item_id_val)
+
     units_per_case = int(getattr(target, "units_per_case", 1) or 1)
     po_line_no_val = int(getattr(target, "line_no", 0) or 0)
-    batch_code = _build_batch_code(
+    raw_batch_code = _build_batch_code(
         po_id=int(po.id),
         po_line_no=po_line_no_val,
         production_date=production_date,
     )
 
+    enforced_production_date, enforced_expiry_date, enforced_batch_code = _enforce_batch_semantics(
+        has_shelf_life=has_shelf_life,
+        production_date=production_date,
+        expiry_date=expiry_date,
+        batch_code=raw_batch_code,
+    )
+
+    # 4) canonical 一致性硬守护（仅对效期商品）
+    # - 非效期：enforced_* 全为 None，不触发 batches
+    # - 效期：必须写入/对齐 batches，冲突则 409
+    if has_shelf_life:
+        await _ensure_batch_consistent(
+            session,
+            warehouse_id=int(getattr(draft, "warehouse_id")),
+            item_id=item_id_val,
+            batch_code=str(enforced_batch_code),
+            production_date=enforced_production_date,
+            expiry_date=enforced_expiry_date,
+        )
+
+    # 5) 写入 ReceiptLine（snapshot）
     rl = InboundReceiptLine(
         receipt_id=int(draft.id),
         line_no=int(next_line_no),
         po_line_id=int(getattr(target, "id")),
-        item_id=int(getattr(target, "item_id")),
+        item_id=item_id_val,
         item_name=getattr(target, "item_name", None),
         item_sku=getattr(target, "item_sku", None),
         category=None,  # ✅ PO 行不再承载 category
         spec_text=getattr(target, "spec_text", None),
         base_uom=getattr(target, "base_uom", None),
         purchase_uom=getattr(target, "purchase_uom", None),
-        barcode=(str(barcode).strip() if barcode is not None and str(barcode).strip() else None),
-        batch_code=batch_code,
-        production_date=production_date,
-        expiry_date=expiry_date,
+        barcode=_normalize_barcode(barcode),
+        batch_code=enforced_batch_code,
+        production_date=enforced_production_date,
+        expiry_date=enforced_expiry_date,
         qty_received=int(qty),
         units_per_case=int(units_per_case),
         qty_units=int(qty),  # 继续沿用 base=units 的既有口径
