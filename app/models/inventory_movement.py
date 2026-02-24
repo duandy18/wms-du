@@ -28,10 +28,12 @@ class InventoryMovement(Base):
 
     # ---- 基础字段 ----
     item_sku: Mapped[Optional[str]] = mapped_column(String, ForeignKey("items.sku"), nullable=True)
-    from_location_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("locations.id"), nullable=True
-    )
-    to_location_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.id"), nullable=True)
+
+    # Phase 4: location worldview removed
+    # - keep columns to match DB schema / history
+    # - remove ForeignKey("locations.id") to avoid alembic metadata resolution failure
+    from_location_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    to_location_id: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -40,6 +42,4 @@ class InventoryMovement(Base):
         nullable=False,
     )
 
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

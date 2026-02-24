@@ -54,6 +54,10 @@ def _batch_key(batch_code: Optional[str]) -> str:
     return bc if bc is not None else "__NULL_BATCH__"
 
 
+def _lot_key(lot_id: Optional[int]) -> int:
+    return int(lot_id) if lot_id is not None else 0
+
+
 # ----------------------------
 # db helpers
 # ----------------------------
@@ -79,36 +83,40 @@ async def _item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
         return False
 
 
-async def _idem_hit_by_batch_key(
+async def _idem_hit_by_lot_and_batch_key(
     session: AsyncSession,
     *,
     warehouse_id: int,
     item_id: int,
     batch_code_norm: Optional[str],
+    lot_id: Optional[int],
     reason: str,
     ref: str,
     ref_line: int,
 ) -> bool:
     """
-    幂等检查（仍基于 batch_code_key）
+    Phase 4A-1:
+    幂等检查升级为 (lot_id_key + batch_code_key) 复合键，与 stock_ledger 新唯一约束一致。
     """
     idem = await session.execute(
         text(
             """
             SELECT 1
               FROM stock_ledger
-             WHERE warehouse_id = :w
-               AND item_id      = :i
+             WHERE warehouse_id   = :w
+               AND item_id        = :i
+               AND lot_id_key     = :lk
                AND batch_code_key = :ck
-               AND reason       = :r
-               AND ref          = :ref
-               AND ref_line     = :rl
+               AND reason         = :r
+               AND ref            = :ref
+               AND ref_line       = :rl
              LIMIT 1
             """
         ),
         {
             "w": int(warehouse_id),
             "i": int(item_id),
+            "lk": _lot_key(lot_id),
             "ck": _batch_key(batch_code_norm),
             "r": str(reason),
             "ref": str(ref),
@@ -255,6 +263,9 @@ async def adjust_impl(  # noqa: C901
     Phase 3:
     - lot_id 仅透传至 ledger_writer
     - 不参与幂等判断
+
+    Phase 4A-1:
+    - 幂等判断升级为 lot_id_key + batch_code_key（不改 stocks 槽位世界观）
     """
 
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
@@ -288,12 +299,13 @@ async def adjust_impl(  # noqa: C901
         expiry_date=expiry_date,
     )
 
-    # ---------- 幂等检查（仍基于 batch_code_key） ----------
-    if await _idem_hit_by_batch_key(
+    # ---------- 幂等检查（Phase 4A-1: lot_id_key + batch_code_key） ----------
+    if await _idem_hit_by_lot_and_batch_key(
         session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
         batch_code_norm=bc_norm,
+        lot_id=lot_id,
         reason=reason_val,
         ref=str(ref),
         ref_line=int(rl),
@@ -336,7 +348,6 @@ async def adjust_impl(  # noqa: C901
         if new_qty < 0:
             raise ValueError(f"insufficient stock: before={before_qty}, delta={delta}")
 
-    # ✅ Phase 3: lot_id 仅透传，不参与幂等
     await write_ledger(
         session=session,
         warehouse_id=int(warehouse_id),

@@ -12,16 +12,17 @@ from app.models.stock_ledger import StockLedger
 
 
 # ========================
-# Phase 4 prep: centralized anchors
-# (current behavior unchanged)
+# Phase 4A-1: centralized anchors
+# - idempotency key includes lot_id_key (COALESCE(lot_id,0))
+# - stocks remain batch-world (unchanged)
 # ========================
 
 
 def _idem_constraint_name() -> str:
     """
-    当前幂等唯一约束名（Phase 4 会在这里切换/扩展）。
+    当前幂等唯一约束名（Phase 4A-1 切换到 lot_id_key + batch_code_key）。
     """
-    return "uq_ledger_wh_batch_item_reason_ref_line"
+    return "uq_ledger_wh_lot_batch_item_reason_ref_line"
 
 
 def _canon_reason(reason: str) -> Optional[str]:
@@ -62,6 +63,10 @@ def _batch_key(batch_code: Optional[str]) -> str:
     return bc if bc is not None else "__NULL_BATCH__"
 
 
+def _lot_key(lot_id: Optional[int]) -> int:
+    return int(lot_id) if lot_id is not None else 0
+
+
 def _need_patch(
     *,
     reason_canon: Optional[str],
@@ -86,16 +91,20 @@ def _build_patch_where(
     warehouse_id: int,
     item_id: int,
     batch_code_norm: Optional[str],
+    lot_id: Optional[int],
     reason: str,
     ref: str,
     ref_line: int,
 ):
     """
-    当前 where 锚点仍为 batch_code_key（Phase 4 会在这里切换到 lot 主维度/复合键）。
+    Phase 4A-1:
+    where 锚点切换为 (warehouse_id, item_id, lot_id_key, batch_code_key, reason, ref, ref_line)
+    与 DB 幂等唯一约束保持 1:1 对齐。
     """
     return (
         (StockLedger.warehouse_id == int(warehouse_id)),
         (StockLedger.item_id == int(item_id)),
+        (StockLedger.lot_id_key == _lot_key(lot_id)),
         (StockLedger.batch_code_key == _batch_key(batch_code_norm)),
         (StockLedger.reason == str(reason)),
         (StockLedger.ref == str(ref)),
@@ -119,15 +128,15 @@ async def write_ledger(
     trace_id: Optional[str] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
-    lot_id: Optional[int] = None,  # Phase 3: shadow dimension
+    lot_id: Optional[int] = None,  # Phase 3+: lot shadow dimension (Phase 4A-1 participates in idempotency key)
 ) -> int:
     """
     幂等台账写入（只增不改）
 
-    Phase 3:
-    - lot_id 为影子维度
-    - 不参与幂等唯一键
-    - 不在 patch 阶段补写
+    Phase 4A-1:
+    - DB 幂等唯一键升级为 lot_id_key + batch_code_key 复合键
+    - ON CONFLICT 绑定新约束名
+    - patch where 锚点同步升级（但 patch 仍不补写 lot_id 本身）
     """
 
     reason_canon = _canon_reason(reason)
@@ -189,7 +198,17 @@ async def write_ledger(
 
     await session.execute(
         sa.update(StockLedger)
-        .where(*_build_patch_where(warehouse_id=warehouse_id, item_id=item_id, batch_code_norm=bc_norm, reason=reason, ref=ref, ref_line=ref_line))
+        .where(
+            *_build_patch_where(
+                warehouse_id=warehouse_id,
+                item_id=item_id,
+                batch_code_norm=bc_norm,
+                lot_id=lot_id,
+                reason=reason,
+                ref=ref,
+                ref_line=ref_line,
+            )
+        )
         .values(**upd_values)
     )
 
