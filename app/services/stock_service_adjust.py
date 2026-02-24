@@ -256,6 +256,7 @@ async def adjust_impl(  # noqa: C901
     - lot_id 仅透传至 ledger_writer
     - 不参与幂等判断
     """
+
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
     ts = occurred_at or utc_now()

@@ -129,6 +129,7 @@ async def write_ledger(
     - 不参与幂等唯一键
     - 不在 patch 阶段补写
     """
+
     reason_canon = _canon_reason(reason)
     bc_norm = _norm_batch_code(batch_code)
 
