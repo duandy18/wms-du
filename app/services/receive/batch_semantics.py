@@ -1,0 +1,134 @@
+# app/services/receive/batch_semantics.py
+from __future__ import annotations
+
+from datetime import date
+from typing import Optional, Tuple, Literal
+
+from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+BatchMode = Literal["REQUIRED", "NONE"]
+
+_PSEUDO_BATCH_TOKENS = {
+    "NOEXP",
+    "NONE",
+    "NULL_BATCH",
+    "__NULL_BATCH__",
+}
+
+
+def batch_mode_from_has_shelf_life(has_shelf_life: bool) -> BatchMode:
+    return "REQUIRED" if bool(has_shelf_life) else "NONE"
+
+
+def normalize_batch_code(batch_code: Optional[str]) -> Optional[str]:
+    if batch_code is None:
+        return None
+    s = str(batch_code).strip()
+    return s or None
+
+
+def is_pseudo_batch_code(batch_code: Optional[str]) -> bool:
+    s = normalize_batch_code(batch_code)
+    if s is None:
+        return False
+    return s.upper() in _PSEUDO_BATCH_TOKENS
+
+
+def enforce_batch_semantics(
+    *,
+    batch_mode: BatchMode,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+    batch_code: Optional[str],
+) -> Tuple[Optional[date], Optional[date], Optional[str]]:
+    """
+    Phase 1A 批次两态封板（语义层）：
+
+    - NONE：
+        - batch_code 必须为 NULL
+        - production_date / expiry_date 必须同时为 NULL
+
+    - REQUIRED：
+        - batch_code 必填，且禁止伪批次词（NOEXP/NONE/NULL_BATCH/__NULL_BATCH__）
+        - production_date / expiry_date：允许为空；若填写则必须成对填写（避免半事实）
+    """
+    if batch_mode == "NONE":
+        return None, None, None
+
+    norm_code = normalize_batch_code(batch_code)
+    if norm_code is None:
+        raise ValueError("批次模式 REQUIRED：batch_code 必填")
+    if is_pseudo_batch_code(norm_code):
+        raise ValueError(f"批次模式 REQUIRED：禁止伪批次码 {norm_code!r}")
+
+    # 日期允许为空；若填写则必须成对填写
+    if (production_date is None) ^ (expiry_date is None):
+        raise ValueError("批次模式 REQUIRED：production_date 与 expiry_date 必须同时提供或同时为空")
+
+    return production_date, expiry_date, norm_code
+
+
+async def ensure_batch_consistent(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code: str,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> None:
+    """
+    canonical（batches）一致性硬守护（Phase 1A 仍沿用 batches 作为 canonical）：
+
+    - 若 canonical 不存在：创建 batches 记录（以本次写入为准）
+    - 若 canonical 已存在：production/expiry 必须一致，否则 409
+
+    注意：Phase 1A 只在 REQUIRED 且 production/expiry 都齐全时调用，避免写入“半日期事实”。
+    """
+    row = await session.execute(
+        text(
+            """
+            SELECT production_date, expiry_date
+              FROM batches
+             WHERE warehouse_id = :wid
+               AND item_id = :item_id
+               AND batch_code = :batch_code
+             LIMIT 1
+            """
+        ),
+        {"wid": int(warehouse_id), "item_id": int(item_id), "batch_code": str(batch_code)},
+    )
+    existing = row.first()
+
+    if existing is None:
+        await session.execute(
+            text(
+                """
+                INSERT INTO batches (warehouse_id, item_id, batch_code, production_date, expiry_date)
+                VALUES (:wid, :item_id, :batch_code, :pd, :ed)
+                """
+            ),
+            {
+                "wid": int(warehouse_id),
+                "item_id": int(item_id),
+                "batch_code": str(batch_code),
+                "pd": production_date,
+                "ed": expiry_date,
+            },
+        )
+        return
+
+    existing_pd = existing[0]
+    existing_ed = existing[1]
+    if existing_pd != production_date or existing_ed != expiry_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "批次 canonical 不一致：batches 与本次写入的 snapshot 日期冲突。"
+                f" (warehouse_id={int(warehouse_id)}, item_id={int(item_id)}, batch_code={str(batch_code)}, "
+                f"canonical.production_date={existing_pd}, canonical.expiry_date={existing_ed}, "
+                f"snapshot.production_date={production_date}, snapshot.expiry_date={expiry_date})"
+            ),
+        )
