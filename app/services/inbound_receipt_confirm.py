@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,23 @@ from app.services.purchase_order_receive_workbench import get_receive_workbench
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
+
+# Phase 1A 红线：禁止伪批次再流入（无论从哪里来）
+_PSEUDO_BATCH_TOKENS = {
+    "NOEXP",
+    "NONE",
+    "NULL_BATCH",
+    "__NULL_BATCH__",
+}
+
+
+def _is_pseudo_batch_code(batch_code: Optional[str]) -> bool:
+    if batch_code is None:
+        return False
+    s = str(batch_code).strip()
+    if not s:
+        return False
+    return s.upper() in _PSEUDO_BATCH_TOKENS
 
 
 async def _load_receipt_for_update(session: AsyncSession, receipt_id: int) -> InboundReceipt:
@@ -161,6 +178,10 @@ async def confirm_receipt(
     Phase5：Receipt confirm（唯一库存写入口）
     - 单事务：锁 receipt → 校验（复用 explain）→ 归一化 → StockService.adjust 写 ledger → status=CONFIRMED
     - 幂等：已 CONFIRMED 直接返回（ledger_written=0）
+
+    Phase 1A（批次两态语义正确化）：
+    - NONE（batch_code=NULL）：禁止任何 production_date/expiry_date 灰区值写入台账
+    - REQUIRED（batch_code!=NULL）：禁止伪批次词；日期不在 confirm 侧“补全/推断”
     """
     _ = user_id  # 预留：未来写 confirmed_by
 
@@ -186,13 +207,45 @@ async def confirm_receipt(
         details = [e.model_dump() for e in exp.blocking_errors]
         _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=details)
 
-    stock_svc = StockService()
-
     ref = str(getattr(receipt, "ref"))
     occurred_at = getattr(receipt, "occurred_at", None) or datetime.now(UTC)
     warehouse_id = int(getattr(receipt, "warehouse_id"))
 
     normalized = list(exp.normalized_lines_preview)
+
+    # Phase 1A：在写库存前再加一道“红线”硬守护，避免上游 normalize 漂移导致灰区事实写入
+    extra_blocking_errors: list[dict] = []
+    for n in normalized:
+        bc = normalize_optional_batch_code(getattr(n, "batch_code", None))
+        pd = getattr(n, "production_date", None)
+        ed = getattr(n, "expiry_date", None)
+
+        if _is_pseudo_batch_code(bc):
+            extra_blocking_errors.append(
+                {
+                    "type": "batch",
+                    "reason": "pseudo_batch_code_forbidden",
+                    "line_key": str(getattr(n, "line_key", "")),
+                    "batch_code": bc,
+                }
+            )
+
+        # NONE：batch_code is NULL 时，日期必须同时为 NULL（杜绝 production_date=收货日 灰区写入）
+        if bc is None and (pd is not None or ed is not None):
+            extra_blocking_errors.append(
+                {
+                    "type": "batch",
+                    "reason": "none_mode_dates_must_be_null",
+                    "line_key": str(getattr(n, "line_key", "")),
+                    "production_date": str(pd) if pd is not None else None,
+                    "expiry_date": str(ed) if ed is not None else None,
+                }
+            )
+
+    if extra_blocking_errors:
+        _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=extra_blocking_errors)
+
+    stock_svc = StockService()
 
     base_ref_line = await _load_next_ref_line_base(
         session,
@@ -207,6 +260,16 @@ async def confirm_receipt(
         qty_delta = int(n.qty_total)
         ref_line = int(base_ref_line + idx)
 
+        # Phase 1A：统一按两态传递 ledger 维度字段
+        bc = normalize_optional_batch_code(getattr(n, "batch_code", None))
+        pd = getattr(n, "production_date", None)
+        ed = getattr(n, "expiry_date", None)
+
+        if bc is None:
+            # NONE：强制三空，防止灰区日期写入
+            pd = None
+            ed = None
+
         res = await stock_svc.adjust(
             session=session,
             item_id=item_id,
@@ -218,9 +281,9 @@ async def confirm_receipt(
             occurred_at=occurred_at,
             meta={"source": "inbound-receipt-confirm", "receipt_id": int(receipt_id)},
             # ✅ 语义收敛：禁止 str(None)/空串污染；统一归一为 Optional[str]
-            batch_code=normalize_optional_batch_code(getattr(n, "batch_code", None)),
-            production_date=getattr(n, "production_date", None),
-            expiry_date=None,  # 当前归一化键未纳入 expiry_date；后续如需增强再做
+            batch_code=bc,
+            production_date=pd,
+            expiry_date=ed,
             trace_id=getattr(receipt, "trace_id", None),
         )
 

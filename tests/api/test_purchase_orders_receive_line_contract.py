@@ -181,6 +181,10 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     - 显式开始收货（draft）
     - receive-line 返回 workbench，草稿数量累加
     - confirm 是唯一库存写入口：confirm 后才写 stock_ledger/stocks
+
+    Phase 1A 批次两态：
+    - REQUIRED：批次必填，禁止伪批次；错误应返回 400 且给出明确 reason
+    - NONE：batch_code=NULL 且 production/expiry=NULL（由写入口封板）
     """
     headers = await _login_admin_headers(client)
 
@@ -194,7 +198,7 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     item_has_sl = int(with_sl[0]["id"])
     item_no_sl = int(without_sl[0]["id"])
 
-    # 负例：效期商品缺 production/expiry，写入口应直接 400（封板：不允许“坏草稿”）
+    # 负例：REQUIRED 商品缺 batch_code（当前接口未提供 batch_code 入参时，至少应 400）
     po_bad = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
     po_bad_id = int(po_bad["id"])
     await _start_draft(client, headers, po_bad_id)
@@ -207,9 +211,12 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     assert r_bad.status_code == 400, r_bad.text
     bad = r_bad.json()
     assert isinstance(bad, dict)
-    # 关键：错误语义要明确是“效期商品必须提供/生成 batch_code（禁止空值/伪批次）”
-    msg = str(bad.get("message") or "")
-    assert "效期商品必须提供/生成 batch_code" in msg or "效期商品必须提供" in msg, bad
+
+    # Phase 1A：不再绑定旧中文文案，改为断言“语义关键字”与 details.reason
+    details = bad.get("details") or []
+    assert isinstance(details, list) and len(details) >= 1, bad
+    reason = str((details[0] or {}).get("reason") or "")
+    assert "REQUIRED" in reason and "batch_code" in reason and ("必填" in reason or "required" in reason.lower()), bad
 
     # 正例：新 PO，不带坏行
     po = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))

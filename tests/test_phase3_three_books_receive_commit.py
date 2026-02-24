@@ -1,7 +1,8 @@
 # tests/test_phase3_three_books_receive_commit.py
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 import pytest
 from sqlalchemy import text
@@ -45,11 +46,12 @@ async def _insert_confirmed_receipt_with_line(
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code: str,
+    batch_code: Optional[str],
     qty_received: int,
     occurred_at: datetime,
     trace_id: str,
-    expiry_date,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
 ) -> int:
     receipt_id = int(
         (
@@ -143,8 +145,8 @@ async def _insert_confirmed_receipt_with_line(
         {
             "rid": int(receipt_id),
             "iid": int(item_id),
-            "bc": str(batch_code),
-            "pd": occurred_at.date(),
+            "bc": batch_code,  # may be NULL (Phase 1A: NONE)
+            "pd": production_date,
             "ed": expiry_date,
             "q": int(qty_received),
             "q_units": int(qty_received),
@@ -163,6 +165,10 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks
     - snapshot(today) == stocks（至少对 touched keys）
     - verify_receive_commit_three_books 对 touched effects 做三账一致性校验
+
+    Phase 1A 批次两态：
+    - has_shelf_life=false（NONE）：batch_code=NULL 且 production/expiry=NULL；库存聚合到无批次槽位
+    - has_shelf_life=true（REQUIRED）：batch_code 非空；日期按测试显式填写
     """
     stock_svc = StockService()
     utc = timezone.utc
@@ -170,11 +176,17 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
 
     item_id, may_need_expiry = await _pick_test_item(session)
 
-    batch_code = "B-PH3"
     scanned_qty = 5  # base-unit
 
-    prod = now.date()
-    exp = (prod + timedelta(days=30)) if may_need_expiry else None
+    if may_need_expiry:
+        batch_code: Optional[str] = "B-PH3"
+        prod = now.date()
+        exp = prod + timedelta(days=30)
+    else:
+        # NONE：三空（Phase 1A 红线）
+        batch_code = None
+        prod = None
+        exp = None
 
     # 1) 写入 Receipt 事实（终态：CONFIRMED）
     await _insert_confirmed_receipt_with_line(
@@ -185,6 +197,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         qty_received=scanned_qty,
         occurred_at=now,
         trace_id="PH3-UT-TRACE",
+        production_date=prod,
         expiry_date=exp,
     )
 
