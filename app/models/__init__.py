@@ -22,30 +22,24 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     ("app.models.supplier", "Supplier"),
     ("app.models.supplier_contact", "SupplierContact"),
-
     # ⚠️ 关键顺序：先加载 WarehouseShippingProvider
     # 再加载 ShippingProvider / Warehouse
     ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
-
     ("app.models.shipping_provider", "ShippingProvider"),
     ("app.models.shipping_provider_contact", "ShippingProviderContact"),
-
     # ------------------------------------------------------------------
     # 仓库 / 基础库存模型
     # ------------------------------------------------------------------
     ("app.models.warehouse", "Warehouse"),
-    ("app.models.location", "Location"),
-
+    # ✅ 旧“库位维度”已从主线移除（库存主链路仅使用 warehouse_id）
     ("app.models.item", "Item"),
     ("app.models.item_test_set", "ItemTestSet"),
     ("app.models.item_test_set_item", "ItemTestSetItem"),
-
     ("app.models.batch", "Batch"),
     ("app.models.lot", "Lot"),
     ("app.models.stock", "Stock"),
     ("app.models.stock_ledger", "StockLedger"),
     ("app.models.stock_snapshot", "StockSnapshot"),
-
     # ------------------------------------------------------------------
     # 订单 & 出库
     # ------------------------------------------------------------------
@@ -54,11 +48,9 @@ MODEL_SPECS = [
     ("app.models.order_line", "OrderLine"),
     ("app.models.order_logistics", "OrderLogistics"),
     ("app.models.order_state_snapshot", "OrderStateSnapshot"),
-
     # 拣货任务
     ("app.models.pick_task", "PickTask"),
     ("app.models.pick_task_line", "PickTaskLine"),
-
     # ------------------------------------------------------------------
     # 平台 & 事件
     # ------------------------------------------------------------------
@@ -68,7 +60,6 @@ MODEL_SPECS = [
     ("app.models.event_log", "EventLog"),
     ("app.models.event_error_log", "EventErrorLog"),
     ("app.models.audit_event", "AuditEvent"),
-
     # ------------------------------------------------------------------
     # 门店 & RBAC
     # ------------------------------------------------------------------
@@ -76,31 +67,26 @@ MODEL_SPECS = [
     ("app.models.user", "User"),
     ("app.models.role", "Role"),
     ("app.models.permission", "Permission"),
-
     # ------------------------------------------------------------------
     # 采购系统
     # ------------------------------------------------------------------
     ("app.models.purchase_order", "PurchaseOrder"),
     ("app.models.purchase_order_line", "PurchaseOrderLine"),
-
     # ------------------------------------------------------------------
     # 收货事实（唯一模型）
     # ------------------------------------------------------------------
     ("app.models.inbound_receipt", "InboundReceipt"),
     ("app.models.inbound_receipt", "InboundReceiptLine"),
-
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------
     ("app.models.return_task", "ReturnTask"),
     ("app.models.return_task", "ReturnTaskLine"),
-
     # ------------------------------------------------------------------
     # 内部出库
     # ------------------------------------------------------------------
     ("app.models.internal_outbound", "InternalOutboundDoc"),
     ("app.models.internal_outbound", "InternalOutboundLine"),
-
     # ------------------------------------------------------------------
     # 运价（结构化 Pricing）
     # ------------------------------------------------------------------
@@ -116,12 +102,10 @@ MODEL_SPECS = [
 for _module, _name in MODEL_SPECS:
     _export(_module, _name)
 
-
 # 有些模型提供 table 对象
 from app.models.batch import Batch as _Batch  # noqa: E402
 
 Batches = getattr(_Batch, "__table__", None)
-
 
 __all__ = [
     # ---- Master Data ----
@@ -130,10 +114,8 @@ __all__ = [
     "WarehouseShippingProvider",
     "ShippingProvider",
     "ShippingProviderContact",
-
     # ---- Inventory ----
     "Warehouse",
-    "Location",
     "Item",
     "ItemTestSet",
     "ItemTestSetItem",
@@ -142,18 +124,15 @@ __all__ = [
     "Stock",
     "StockLedger",
     "StockSnapshot",
-
     # ---- Orders ----
     "Order",
     "OrderItem",
     "OrderLine",
     "OrderLogistics",
     "OrderStateSnapshot",
-
     # ---- Pick Tasks ----
     "PickTask",
     "PickTaskLine",
-
     # ---- Events ----
     "PlatformShop",
     "PlatformEvent",
@@ -161,35 +140,28 @@ __all__ = [
     "EventLog",
     "EventErrorLog",
     "AuditEvent",
-
     # ---- Store & RBAC ----
     "Store",
     "User",
     "Role",
     "Permission",
-
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",
-
     # ---- Inbound ----
     "InboundReceipt",
     "InboundReceiptLine",
-
     # ---- Return ----
     "ReturnTask",
     "ReturnTaskLine",
-
     # ---- Internal Outbound ----
     "InternalOutboundDoc",
     "InternalOutboundLine",
-
     # ---- Pricing ----
     "ShippingProviderPricingScheme",
     "ShippingProviderZone",
     "ShippingProviderZoneMember",
     "ShippingProviderZoneBracket",
     "ShippingProviderSurcharge",
-
     "Batches",
 ]

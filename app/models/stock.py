@@ -17,9 +17,8 @@ class Stock(Base):
     - qty 为唯一真实库存来源
     - expiry_date：从 batches 表按 (item_id, warehouse_id, batch_code) 精确映射
                  （当 batch_code 为 NULL 时，expiry_date 必然为 NULL）
-    - location_id：兼容旧时代，始终固定为 1
 
-    ✅ 本窗口演进：
+    ✅ 语义：
     - batch_code 允许为 NULL，用于表达“无批次商品”的真实槽位
     - (item_id, warehouse_id) 下只允许存在一个 NULL 槽位：
       通过生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与唯一性（见迁移）
@@ -68,7 +67,7 @@ class Stock(Base):
     item = relationship("Item", lazy="selectin")
 
     # ★ Batch v3 兼容：按 仓 + 商品 + 批次 精确取 expiry_date
-    # ✅ 主线 B：使用 IS NOT DISTINCT FROM，避免 NULL= NULL 吞数据（即使 batches 不会有 NULL 行，也让语义稳定）
+    # ✅ 使用 IS NOT DISTINCT FROM，避免 NULL= NULL 吞数据
     expiry_date: Mapped[date | None] = column_property(
         sa.select(sa.text("b.expiry_date"))
         .select_from(sa.text("batches AS b"))
@@ -79,11 +78,5 @@ class Stock(Base):
         .scalar_subquery()
     )
 
-    # 兼容旧用例：location_id 恒为 1
-    location_id: Mapped[int] = column_property(sa.literal(1, type_=sa.Integer()))
-
     def __repr__(self) -> str:
-        return (
-            f"<Stock wh={self.warehouse_id} item={self.item_id} "
-            f"code={self.batch_code} qty={self.qty}>"
-        )
+        return f"<Stock wh={self.warehouse_id} item={self.item_id} code={self.batch_code} qty={self.qty}>"

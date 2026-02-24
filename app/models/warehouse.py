@@ -76,14 +76,6 @@ class Warehouse(Base):
         nullable=True,
     )
 
-    # 若保留 locations 表，则做弱关系
-    locations: Mapped[List["Location"]] = relationship(
-        "Location",
-        back_populates="warehouse",
-        lazy="selectin",
-        passive_deletes=True,
-    )
-
     # ✅ Phase 1：仓库 × 快递公司（能力集合 / 事实绑定）
     warehouse_shipping_providers: Mapped[List["WarehouseShippingProvider"]] = relationship(
         "WarehouseShippingProvider",

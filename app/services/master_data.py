@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class MasterDataService:
     """
-    只负责：主数据最小化兜底（warehouses/locations/items）与仓库查询。
+    只负责：主数据最小化兜底（warehouses/items）与仓库查询。
     不做审计，不做业务。
     """
 

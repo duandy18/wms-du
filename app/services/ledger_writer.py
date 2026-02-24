@@ -1,3 +1,4 @@
+# app/services/ledger_writer.py
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -10,11 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.stock_ledger import StockLedger
 
 
+# ========================
+# Phase 4 prep: centralized anchors
+# (current behavior unchanged)
+# ========================
+
+
+def _idem_constraint_name() -> str:
+    """
+    当前幂等唯一约束名（Phase 4 会在这里切换/扩展）。
+    """
+    return "uq_ledger_wh_batch_item_reason_ref_line"
+
+
 def _canon_reason(reason: str) -> Optional[str]:
-    """
-    将各种 reason/alias 归一到稳定口径：
-    RECEIPT / SHIPMENT / ADJUSTMENT
-    """
     r = (reason or "").strip().upper()
     if not r:
         return None
@@ -52,6 +62,47 @@ def _batch_key(batch_code: Optional[str]) -> str:
     return bc if bc is not None else "__NULL_BATCH__"
 
 
+def _need_patch(
+    *,
+    reason_canon: Optional[str],
+    sub_reason: Optional[str],
+    trace_id: Optional[str],
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> bool:
+    return any(
+        [
+            bool((reason_canon or "").strip()) if isinstance(reason_canon, str) else reason_canon is not None,
+            bool((sub_reason or "").strip()) if isinstance(sub_reason, str) else sub_reason is not None,
+            bool((trace_id or "").strip()) if isinstance(trace_id, str) else trace_id is not None,
+            production_date is not None,
+            expiry_date is not None,
+        ]
+    )
+
+
+def _build_patch_where(
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code_norm: Optional[str],
+    reason: str,
+    ref: str,
+    ref_line: int,
+):
+    """
+    当前 where 锚点仍为 batch_code_key（Phase 4 会在这里切换到 lot 主维度/复合键）。
+    """
+    return (
+        (StockLedger.warehouse_id == int(warehouse_id)),
+        (StockLedger.item_id == int(item_id)),
+        (StockLedger.batch_code_key == _batch_key(batch_code_norm)),
+        (StockLedger.reason == str(reason)),
+        (StockLedger.ref == str(ref)),
+        (StockLedger.ref_line == int(ref_line)),
+    )
+
+
 async def write_ledger(
     session: AsyncSession,
     *,
@@ -68,15 +119,15 @@ async def write_ledger(
     trace_id: Optional[str] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
+    lot_id: Optional[int] = None,  # Phase 3: shadow dimension
 ) -> int:
     """
-    幂等台账写入（只增不改）：
-    - 幂等唯一键以 DB 约束 uq_ledger_wh_batch_item_reason_ref_line 为准
-    - 返回 0 表示命中幂等，否则返回新 id
+    幂等台账写入（只增不改）
 
-    ✅ 无批次槽位支持：
-    - batch_code 允许为 NULL（表示“无批次”）
-    - DB 侧用生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与幂等唯一性
+    Phase 3:
+    - lot_id 为影子维度
+    - 不参与幂等唯一键
+    - 不在 patch 阶段补写
     """
     reason_canon = _canon_reason(reason)
     bc_norm = _norm_batch_code(batch_code)
@@ -84,7 +135,8 @@ async def write_ledger(
     base_values = dict(
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,  # ✅ may be NULL
+        batch_code=bc_norm,
+        lot_id=lot_id,
         reason=str(reason),
         reason_canon=reason_canon,
         sub_reason=sub_reason,
@@ -98,14 +150,12 @@ async def write_ledger(
         expiry_date=expiry_date,
     )
 
-    # ✅ 关键修复：给 pg_insert 明确 Table 目标，避免 ORM class 解析歧义
     tbl = StockLedger.__table__
 
-    # 1) 先尝试插入：冲突就不插入 -> returning None -> 语义返回 0
     ins = (
         pg_insert(tbl)
         .values(**base_values)
-        .on_conflict_do_nothing(constraint="uq_ledger_wh_batch_item_reason_ref_line")
+        .on_conflict_do_nothing(constraint=_idem_constraint_name())
         .returning(tbl.c.id)
     )
 
@@ -114,21 +164,18 @@ async def write_ledger(
     if new_id is not None:
         return int(new_id)
 
-    # 2) 冲突命中：补齐缺字段（不改变核心事实字段），最终仍返回 0
+    # 幂等命中：仅补齐非核心字段（不补 lot_id）
     old_reason_canon = sa.func.nullif(StockLedger.reason_canon, "")
     old_sub_reason = sa.func.nullif(StockLedger.sub_reason, "")
     old_trace_id = sa.func.nullif(StockLedger.trace_id, "")
 
-    need_patch = any(
-        [
-            bool((reason_canon or "").strip()) if isinstance(reason_canon, str) else reason_canon is not None,
-            bool((sub_reason or "").strip()) if isinstance(sub_reason, str) else sub_reason is not None,
-            bool((trace_id or "").strip()) if isinstance(trace_id, str) else trace_id is not None,
-            production_date is not None,
-            expiry_date is not None,
-        ]
-    )
-    if not need_patch:
+    if not _need_patch(
+        reason_canon=reason_canon,
+        sub_reason=sub_reason,
+        trace_id=trace_id,
+        production_date=production_date,
+        expiry_date=expiry_date,
+    ):
         return 0
 
     upd_values = {
@@ -139,17 +186,9 @@ async def write_ledger(
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),
     }
 
-    # ✅ 用 batch_code_key 让 NULL 也能稳定命中同一幂等行
     await session.execute(
         sa.update(StockLedger)
-        .where(
-            StockLedger.warehouse_id == int(warehouse_id),
-            StockLedger.item_id == int(item_id),
-            StockLedger.batch_code_key == _batch_key(bc_norm),
-            StockLedger.reason == str(reason),
-            StockLedger.ref == str(ref),
-            StockLedger.ref_line == int(ref_line),
-        )
+        .where(*_build_patch_where(warehouse_id=warehouse_id, item_id=item_id, batch_code_norm=bc_norm, reason=reason, ref=ref, ref_line=ref_line))
         .values(**upd_values)
     )
 

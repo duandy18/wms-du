@@ -71,9 +71,6 @@ class InboundReceipt(Base):
 class InboundReceiptLine(Base):
     __tablename__ = "inbound_receipt_lines"
 
-    # ✅ 批次语义封板（结构层）：
-    # - 允许 batch_code 为 NULL（非效期商品必须为 NULL）
-    # - 若 batch_code IS NULL，则 production_date / expiry_date 必须同时为 NULL
     __table_args__ = (
         CheckConstraint(
             "(batch_code IS NOT NULL) OR (production_date IS NULL AND expiry_date IS NULL)",
@@ -111,10 +108,19 @@ class InboundReceiptLine(Base):
     base_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     purchase_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
-    # ✅ Phase5+：条码快照（DB 已新增 barcode 列）
     barcode: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     batch_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # ---------------------------
+    # Phase 3: Shadow lot dimension
+    # ---------------------------
+    lot_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("lots.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
     production_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
 
