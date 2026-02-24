@@ -16,7 +16,10 @@ class StockLedger(Base):
 
     Phase 3:
     - 新增 lot_id（影子维度）
-    - 不改变现有幂等键
+
+    Phase 4A-1:
+    - 新增 lot_id_key = COALESCE(lot_id, 0)（generated stored in DB）
+    - 幂等唯一键升级为 lot_id_key + batch_code_key 复合键
     """
 
     __tablename__ = "stock_ledger"
@@ -29,12 +32,20 @@ class StockLedger(Base):
     batch_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True, index=True)
 
     # ---------------------------
-    # Phase 3: Shadow lot dimension
+    # Phase 3+: Shadow lot dimension
     # ---------------------------
     lot_id: Mapped[int | None] = mapped_column(
         sa.Integer,
         sa.ForeignKey("lots.id", ondelete="RESTRICT"),
         nullable=True,
+    )
+
+    # Phase 4A-1: generated stored column in DB
+    lot_id_key: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.Computed("coalesce(lot_id, 0)", persisted=True),
+        nullable=False,
+        index=True,
     )
 
     batch_code_key: Mapped[str] = mapped_column(
@@ -56,9 +67,7 @@ class StockLedger(Base):
     after_qty: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
     occurred_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
-    created_at: Mapped[sa.DateTime] = mapped_column(
-        sa.DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     trace_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
@@ -71,9 +80,10 @@ class StockLedger(Base):
             "ref",
             "ref_line",
             "item_id",
-            "batch_code_key",
             "warehouse_id",
-            name="uq_ledger_wh_batch_item_reason_ref_line",
+            "lot_id_key",
+            "batch_code_key",
+            name="uq_ledger_wh_lot_batch_item_reason_ref_line",
         ),
         sa.Index("ix_ledger_dims", "item_id", "batch_code", "warehouse_id"),
         sa.Index("ix_ledger_occurred_at", "occurred_at"),
