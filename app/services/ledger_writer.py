@@ -1,3 +1,4 @@
+# app/services/ledger_writer.py
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -11,10 +12,6 @@ from app.models.stock_ledger import StockLedger
 
 
 def _canon_reason(reason: str) -> Optional[str]:
-    """
-    将各种 reason/alias 归一到稳定口径：
-    RECEIPT / SHIPMENT / ADJUSTMENT
-    """
     r = (reason or "").strip().upper()
     if not r:
         return None
@@ -68,23 +65,25 @@ async def write_ledger(
     trace_id: Optional[str] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
+    lot_id: Optional[int] = None,  # Phase 3: shadow dimension
 ) -> int:
     """
-    幂等台账写入（只增不改）：
-    - 幂等唯一键以 DB 约束 uq_ledger_wh_batch_item_reason_ref_line 为准
-    - 返回 0 表示命中幂等，否则返回新 id
+    幂等台账写入（只增不改）
 
-    ✅ 无批次槽位支持：
-    - batch_code 允许为 NULL（表示“无批次”）
-    - DB 侧用生成列 batch_code_key = COALESCE(batch_code,'__NULL_BATCH__') 参与幂等唯一性
+    Phase 3:
+    - lot_id 为影子维度
+    - 不参与幂等唯一键
+    - 不在 patch 阶段补写
     """
+
     reason_canon = _canon_reason(reason)
     bc_norm = _norm_batch_code(batch_code)
 
     base_values = dict(
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,  # ✅ may be NULL
+        batch_code=bc_norm,
+        lot_id=lot_id,
         reason=str(reason),
         reason_canon=reason_canon,
         sub_reason=sub_reason,
@@ -98,10 +97,8 @@ async def write_ledger(
         expiry_date=expiry_date,
     )
 
-    # ✅ 关键修复：给 pg_insert 明确 Table 目标，避免 ORM class 解析歧义
     tbl = StockLedger.__table__
 
-    # 1) 先尝试插入：冲突就不插入 -> returning None -> 语义返回 0
     ins = (
         pg_insert(tbl)
         .values(**base_values)
@@ -114,7 +111,7 @@ async def write_ledger(
     if new_id is not None:
         return int(new_id)
 
-    # 2) 冲突命中：补齐缺字段（不改变核心事实字段），最终仍返回 0
+    # 幂等命中：仅补齐非核心字段（不补 lot_id）
     old_reason_canon = sa.func.nullif(StockLedger.reason_canon, "")
     old_sub_reason = sa.func.nullif(StockLedger.sub_reason, "")
     old_trace_id = sa.func.nullif(StockLedger.trace_id, "")
@@ -139,7 +136,6 @@ async def write_ledger(
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),
     }
 
-    # ✅ 用 batch_code_key 让 NULL 也能稳定命中同一幂等行
     await session.execute(
         sa.update(StockLedger)
         .where(

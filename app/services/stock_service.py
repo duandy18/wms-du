@@ -21,14 +21,8 @@ class StockService:
     """
     v2 专业化库存内核（槽位维度批次粒度： (item_id, warehouse_id, batch_code)）
 
-    本版本核心增强：
-    ------------------------------------------
-    1) 正式接入 expiry_resolver（生产日期 + 保质期 → 到期日期）
-    2) 所有入库/盘盈自动推算 expiry_date
-    3) 批次主档（batches）保证日期属性不被覆盖，但缺失时补齐
-    4) 落账前做统一日期校验（exp >= prod）
-    5) ledger + stocks 始终得到合法、单一来源的日期
-    ------------------------------------------
+    Phase 3:
+    - 接入 lot_id 影子维度（不参与幂等键）
     """
 
     async def _ensure_batch_dict(
@@ -60,10 +54,6 @@ class StockService:
         item_id: int,
         batch_code: Optional[str],
     ) -> int:
-        """
-        读取当前库存槽位 qty（支持 NULL batch_code）。
-        槽位不存在时视为 0。
-        """
         row = (
             await session.execute(
                 SA(
@@ -87,26 +77,16 @@ class StockService:
             return 0
 
     def _classify_adjust_value_error(self, msg: str) -> str:
-        """
-        把底层 ValueError（历史包袱）分类为：
-        - insufficient_stock
-        - batch_required
-        - stock_adjust_reject（其它输入/约束）
-        """
         m = (msg or "").strip()
 
-        # 1) 明确的库存不足（底层使用英文固定短语）
         if "insufficient stock" in m.lower():
             return "insufficient_stock"
 
-        # 2) 批次必填/批次不合法（中英文都兜）
         if ("batch_code" in m.lower()) or ("批次" in m):
-            # 常见： "批次受控商品必须指定 batch_code。"
             if ("必须" in m) or ("required" in m.lower()):
                 return "batch_required"
             return "stock_adjust_reject"
 
-        # 3) 其它参数/约束类
         return "stock_adjust_reject"
 
     async def adjust(  # noqa: C901
@@ -125,13 +105,8 @@ class StockService:
         *,
         warehouse_id: int,
         trace_id: Optional[str] = None,
+        lot_id: Optional[int] = None,  # ✅ Phase 3 新增（影子维度）
     ) -> Dict[str, Any]:
-        """
-        统一异常语言收口（关键增强）：
-        - 底层实现（adjust_impl）可能会在扣减失败/参数不合法时抛 ValueError（历史包袱/兼容）。
-        - 在这里将其统一抬升为 Problem（HTTPException.detail=Problem），让上层不再依赖字符串判断。
-        - HTTPException(detail=Problem) 必须原样透传（避免丢失 details/next_actions）。
-        """
         try:
             return await adjust_impl(
                 session=session,
@@ -147,6 +122,7 @@ class StockService:
                 expiry_date=expiry_date,
                 warehouse_id=warehouse_id,
                 trace_id=trace_id,
+                lot_id=lot_id,  # ✅ 透传
                 utc_now=lambda: datetime.now(UTC),
                 ensure_batch_dict_fn=lambda s, w, i, c, p, e, t: self._ensure_batch_dict(
                     session=s,
@@ -159,7 +135,6 @@ class StockService:
                 ),
             )
         except HTTPException:
-            # ✅ Problem 化异常必须原样透传
             raise
         except ValueError as e:
             msg = str(e)
@@ -174,10 +149,10 @@ class StockService:
                 "batch_code": bc_norm,
                 "delta": int(delta),
                 "trace_id": trace_id,
+                "lot_id": lot_id,  # ✅ 记录在错误上下文
                 "raw_error": msg,
             }
 
-            # ✅ 库存不足：409 shortage
             if kind == "insufficient_stock":
                 if int(delta) < 0:
                     on_hand = await self._load_on_hand_qty(
@@ -189,7 +164,6 @@ class StockService:
                     required_qty = int(-int(delta))
                     short_qty = max(0, int(required_qty) - int(on_hand))
                 else:
-                    # 理论上 delta>=0 不应触发 insufficient，但做防御
                     on_hand = await self._load_on_hand_qty(
                         session,
                         warehouse_id=int(warehouse_id),
@@ -216,13 +190,8 @@ class StockService:
                             "reason": "insufficient_stock",
                         }
                     ],
-                    next_actions=[
-                        {"action": "rescan_stock", "label": "刷新库存"},
-                        {"action": "adjust_to_available", "label": "按可用库存调整数量"},
-                    ],
                 )
 
-            # ✅ 批次类错误：422 batch_required（不应被误判为库存不足）
             if kind == "batch_required":
                 raise_problem(
                     status_code=422,
@@ -240,7 +209,6 @@ class StockService:
                     ],
                 )
 
-            # ✅ 其它输入/约束：422 reject
             raise_problem(
                 status_code=422,
                 error_code="stock_adjust_reject",

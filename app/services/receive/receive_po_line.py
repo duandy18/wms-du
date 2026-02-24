@@ -18,7 +18,6 @@ from app.services.receive.batch_semantics import (
     BatchMode,
     batch_mode_from_has_shelf_life,
     enforce_batch_semantics,
-    ensure_batch_consistent,
     normalize_batch_code,
 )
 from app.services.receive.receipt_draft import (
@@ -27,6 +26,7 @@ from app.services.receive.receipt_draft import (
     sum_confirmed_received_base,
     sum_draft_received_base,
 )
+from app.services.domain.lot_service import resolve_or_create_lot
 
 
 def _ordered_base(line: Any) -> int:
@@ -41,23 +41,12 @@ def _normalize_barcode(barcode: Optional[str]) -> Optional[str]:
 
 
 def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> Optional[str]:
-    """
-    Phase 1A（入口语义正确化）：
-    - 不再使用 NOEXP / NONE 等伪批次占位
-    - 若 production_date 缺失，则返回 None（REQUIRED 场景应显式传 batch_code）
-    """
     if production_date is None:
         return None
     return f"BATCH-PO{po_id}-L{po_line_no}-{production_date.isoformat()}"
 
 
 async def _get_item_batch_mode(session: AsyncSession, *, item_id: int) -> BatchMode:
-    """
-    Phase 1A：items 当前只有 has_shelf_life。
-    映射：
-    - has_shelf_life=False -> NONE
-    - has_shelf_life=True  -> REQUIRED
-    """
     row = await session.execute(select(Item.has_shelf_life).where(Item.id == int(item_id)))
     val = row.scalar_one_or_none()
     return batch_mode_from_has_shelf_life(bool(val))
@@ -76,12 +65,7 @@ async def receive_po_line(
     barcode: Optional[str] = None,
     batch_code: Optional[str] = None,
 ) -> PurchaseOrder:
-    """
-    Phase5：对某一行执行“收货录入”（行级）。
-    - ✅ 只写 Receipt(DRAFT) 事实（InboundReceiptLine）
-    - ❌ 不写 stock_ledger / stocks（库存动作只能由 Receipt(CONFIRMED) 触发）
-    - qty 为最小单位（base）
-    """
+
     if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
     if line_id is None and line_no is None:
@@ -106,33 +90,24 @@ async def receive_po_line(
                 break
 
     if target is None:
-        raise ValueError(f"在采购单 {po_id} 中未找到匹配的行 (line_id={line_id}, line_no={line_no})")
+        raise ValueError(f"在采购单 {po_id} 中未找到匹配的行")
 
     draft = await get_latest_po_draft_receipt(session, po_id=int(po.id))
     if draft is None:
         raise ValueError(f"请先开始收货：未找到 PO 的 DRAFT 收货单 (po_id={po_id})")
 
     ordered_base = int(_ordered_base(target) or 0)
-    if ordered_base <= 0:
-        raise ValueError(f"行订购数量非法（base 口径）：ordered_base={ordered_base} (line_id={target.id})")
-
     confirmed_received_base = await sum_confirmed_received_base(session, po_id=int(po.id), po_line_id=int(target.id))
     draft_received_base = await sum_draft_received_base(session, receipt_id=int(draft.id), po_line_id=int(target.id))
 
     remaining_base = max(0, ordered_base - confirmed_received_base - draft_received_base)
     if qty > remaining_base:
-        raise ValueError(
-            f"行收货数量超出剩余数量（base 口径）：ordered_base={ordered_base}, "
-            f"confirmed_received_base={confirmed_received_base}, draft_received_base={draft_received_base}, "
-            f"remaining_base={remaining_base}, try_receive={qty}"
-        )
+        raise ValueError("行收货数量超出剩余数量")
 
     next_line_no = await next_receipt_line_no(session, receipt_id=int(draft.id))
-
     item_id_val = int(getattr(target, "item_id"))
     batch_mode = await _get_item_batch_mode(session, item_id=item_id_val)
 
-    units_per_case = int(getattr(target, "units_per_case", 1) or 1)
     po_line_no_val = int(getattr(target, "line_no", 0) or 0)
 
     raw_batch_code = normalize_batch_code(batch_code) or _build_batch_code(
@@ -151,20 +126,24 @@ async def receive_po_line(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Phase 1A：仅 REQUIRED 且日期齐全时，才写/对齐 batches canonical
-    if (
-        batch_mode == "REQUIRED"
-        and enforced_code is not None
-        and enforced_pd is not None
-        and enforced_ed is not None
-    ):
-        await ensure_batch_consistent(
-            session,
+    # Phase 3: resolve canonical lot
+    lot_id = None
+
+    if batch_mode == "REQUIRED":
+        item_obj = await session.get(Item, item_id_val)
+
+        lot_id = await resolve_or_create_lot(
+            db=session,
             warehouse_id=int(getattr(draft, "warehouse_id")),
-            item_id=item_id_val,
-            batch_code=str(enforced_code),
+            item=item_obj,
+            lot_code_source="SUPPLIER",
+            lot_code=enforced_code,
+            source_receipt_id=None,
+            source_line_no=None,
             production_date=enforced_pd,
             expiry_date=enforced_ed,
+            expiry_source="EXPLICIT" if enforced_ed else None,
+            shelf_life_days_applied=None,
         )
 
     rl = InboundReceiptLine(
@@ -180,15 +159,17 @@ async def receive_po_line(
         purchase_uom=getattr(target, "purchase_uom", None),
         barcode=_normalize_barcode(barcode),
         batch_code=enforced_code,
+        lot_id=lot_id,
         production_date=enforced_pd,
         expiry_date=enforced_ed,
         qty_received=int(qty),
-        units_per_case=int(units_per_case),
+        units_per_case=int(getattr(target, "units_per_case", 1) or 1),
         qty_units=int(qty),
         unit_cost=None,
         line_amount=None,
         remark=None,
     )
+
     session.add(rl)
     await session.flush()
 

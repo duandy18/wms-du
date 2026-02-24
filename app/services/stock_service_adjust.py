@@ -49,14 +49,6 @@ def _batch_key(batch_code: Optional[str]) -> str:
 
 
 async def _item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
-    """
-    临时事实派生（本窗口主线）：
-    - items.has_shelf_life == True  => requires_batch == True
-    - 其他（False/NULL）            => requires_batch == False
-
-    重要：item 不存在时不要在这里提前 raise，
-    让后续写库触发 FK（测试依赖此行为）。
-    """
     row = (
         await session.execute(
             text(
@@ -93,6 +85,7 @@ async def adjust_impl(  # noqa: C901
     expiry_date: Optional[date] = None,
     warehouse_id: int,
     trace_id: Optional[str],
+    lot_id: Optional[int],  # ✅ Phase 3 新增（影子维度）
     utc_now: Callable[[], datetime],
     ensure_batch_dict_fn: Callable[
         [AsyncSession, int, int, str, Optional[date], Optional[date], datetime], Awaitable[None]
@@ -101,18 +94,11 @@ async def adjust_impl(  # noqa: C901
     """
     批次增减（单一真实来源 stocks）
 
-    ✅ 无批次槽位支持（唯一主线）：
-    - requires_batch=true  => batch_code 必须非空
-    - requires_batch=false => batch_code 允许为 NULL（表示“无批次”）
-
-    ✅ 入库日期推导的兼容口径（为保持既有测试/行为）：
-    - 只要 delta>0 且 batch_code 非空，就会自动兜底并推导日期
-    - batch_code 为 NULL（无批次槽位）时不推导日期
-
-    ✅ Phase5（方案 C）：彻底删除“假批次占位符”护栏
-    - 内核不再把某些字符串（例如 NOEXP/NEAR/FAR）偷偷归一为 NULL
-    - batch_code 的语义由事实层/入口层决定：传什么就记什么；想表达“无批次”就传 NULL
+    Phase 3:
+    - lot_id 仅透传至 ledger_writer
+    - 不参与幂等判断
     """
+
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
     ts = occurred_at or utc_now()
@@ -132,7 +118,6 @@ async def adjust_impl(  # noqa: C901
     if requires_batch and not bc_norm:
         raise ValueError("批次受控商品必须指定 batch_code。")
 
-    # 入库/盘盈：只要 batch_code 非空，就推导日期（兼容原测试口径）
     if delta > 0 and bc_norm is not None:
         if production_date is None and expiry_date is None:
             production_date = production_date or date.today()
@@ -148,12 +133,11 @@ async def adjust_impl(  # noqa: C901
             if expiry_date < production_date:
                 raise ValueError(f"expiry_date({expiry_date}) < production_date({production_date})")
 
-    # 无批次槽位：不推导/不写日期
     if bc_norm is None:
         production_date = None
         expiry_date = None
 
-    # ---------- 幂等：用 batch_code_key 对齐 NULL 语义 ----------
+    # ---------- 幂等检查（仍基于 batch_code_key） ----------
     idem = await session.execute(
         text(
             """
@@ -180,7 +164,6 @@ async def adjust_impl(  # noqa: C901
     if idem.scalar_one_or_none() is not None:
         return {"idempotent": True, "applied": False}
 
-    # ---------- 入库：确保批次主档存在（仅 batch_code 非空时才有意义） ----------
     if delta > 0 and bc_norm is not None:
         await ensure_batch_dict_fn(
             session,
@@ -192,7 +175,6 @@ async def adjust_impl(  # noqa: C901
             ts,
         )
 
-    # ---------- 确保 stocks 槽位存在 ----------
     await session.execute(
         text(
             """
@@ -204,7 +186,6 @@ async def adjust_impl(  # noqa: C901
         {"i": int(item_id), "w": int(warehouse_id), "c": bc_norm},
     )
 
-    # ---------- 加锁读取当前库存（支持 NULL batch_code） ----------
     row = (
         (
             await session.execute(
@@ -236,11 +217,12 @@ async def adjust_impl(  # noqa: C901
         if new_qty < 0:
             raise ValueError(f"insufficient stock: before={before_qty}, delta={delta}")
 
+    # ✅ 仅新增 lot_id 透传，不参与幂等
     await write_ledger(
         session=session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,  # ✅ may be NULL, but we will not “auto-null” fake codes anymore
+        batch_code=bc_norm,
         reason=reason_val,
         sub_reason=sub_reason,
         delta=int(delta),
@@ -251,6 +233,7 @@ async def adjust_impl(  # noqa: C901
         trace_id=trace_id,
         production_date=production_date,
         expiry_date=expiry_date,
+        lot_id=lot_id,  # ✅ 新增
     )
 
     if delta != 0:
