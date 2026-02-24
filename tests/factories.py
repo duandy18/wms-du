@@ -2,7 +2,6 @@
 import uuid
 
 from app.models.item import Item
-from app.models.location import Location
 from app.models.stock import Stock
 from app.models.warehouse import Warehouse
 
@@ -25,13 +24,9 @@ def make_item(db, name: str = "Cat Food A") -> Item:
     return obj
 
 
-def make_location(db, wh_id: int = 1, code: str = "A-01") -> Location:
-    wh = _ensure_warehouse(db, wh_id)
-    loc = Location(name=code, warehouse_id=wh.id)
-    db.add(loc)
-    db.flush()
-    return loc
-
-
-def get_stock(db, item_id: int, location_id: int) -> Stock:
-    return db.query(Stock).filter_by(item_id=item_id, location_id=location_id).one()
+def get_stock(db, item_id: int, warehouse_id: int, batch_code=None) -> Stock:
+    return (
+        db.query(Stock)
+        .filter(Stock.item_id == item_id, Stock.warehouse_id == warehouse_id, Stock.batch_code.is_(batch_code) if batch_code is None else Stock.batch_code == batch_code)
+        .one()
+    )

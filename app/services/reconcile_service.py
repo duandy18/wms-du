@@ -18,7 +18,8 @@ class ReconcileService:
     - 结构化返回，纯业务字段；
     - 幂等与原子性由 StockService 内部的“ref + 行锁/唯一键”保障。
 
-    Phase 3（本次）：
+    ✅ 新世界观：
+    - 入口维度：warehouse_id（不再使用 location_id）
     - delta==0 也落一笔确认类台账（COUNT_CONFIRM），用于审计可追溯
     """
 
@@ -30,13 +31,12 @@ class ReconcileService:
         session: AsyncSession,
         *,
         item_id: int,
-        location_id: int,
+        warehouse_id: int,
         actual_qty: int,
         ref: str,
     ) -> Dict[str, Any]:
-        on_hand = await self.stock.get_on_hand(
-            session=session, item_id=item_id, location_id=location_id
-        )
+        # on_hand：以 warehouse 口径读取（不指定 batch_code => 汇总）
+        on_hand = await self.stock.get_on_hand(session=session, item_id=item_id, warehouse_id=warehouse_id)
         delta = int(actual_qty) - int(on_hand)
 
         result: Dict[str, Any] = {
@@ -53,7 +53,7 @@ class ReconcileService:
         adj = await self.stock.adjust(
             session=session,
             item_id=item_id,
-            location_id=location_id,
+            warehouse_id=warehouse_id,
             delta=delta,
             reason=MovementType.COUNT,
             ref=ref,
@@ -61,9 +61,6 @@ class ReconcileService:
             meta=meta,
         )
 
-        # 尾门：location 维度这里没法直接复用 verify_commit_three_books（它是 warehouse+batch 粒度）
-        # 所以这里只保证：delta==0 不报错，且对外返回一致。
-        # 三账一致性校验留给 warehouse+batch 的主链（scan count / adjust_impl）处理。
         result.update({"on_hand_after": adj.get("on_hand_after", on_hand + delta)})
 
         # 可选：如果你希望 reconcile 也刷新快照（通常不需要）
