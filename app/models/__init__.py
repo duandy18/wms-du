@@ -41,6 +41,7 @@ MODEL_SPECS = [
     ("app.models.item_test_set_item", "ItemTestSetItem"),
 
     ("app.models.batch", "Batch"),
+    ("app.models.lot", "Lot"),
     ("app.models.stock", "Stock"),
     ("app.models.stock_ledger", "StockLedger"),
     ("app.models.stock_snapshot", "StockSnapshot"),
@@ -137,6 +138,7 @@ __all__ = [
     "ItemTestSet",
     "ItemTestSetItem",
     "Batch",
+    "Lot",
     "Stock",
     "StockLedger",
     "StockSnapshot",

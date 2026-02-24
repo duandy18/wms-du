@@ -42,7 +42,9 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
     return int(v or 0)
 
 
-async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
+async def _ensure_stock_seed(
+    session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int
+) -> None:
     svc = StockService()
     now = datetime.now(UTC)
 

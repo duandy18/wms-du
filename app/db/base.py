@@ -73,6 +73,7 @@ def init_models(
     explicit_chain = [
         "app.models.item",
         "app.models.batch",
+        "app.models.lot",
         "app.models.stock",
         "app.models.stock_ledger",
         "app.models.order",
