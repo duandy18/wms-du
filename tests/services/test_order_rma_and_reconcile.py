@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from typing import Optional
 
 import pytest
 from sqlalchemy import text
@@ -15,6 +16,30 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
+async def _item_batch_mode_is_required(session: AsyncSession, *, item_id: int) -> bool:
+    """
+    Phase 1A：当前 items 用 has_shelf_life 作为 REQUIRED/NONE 的映射依据。
+    - True  -> REQUIRED
+    - False -> NONE
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT COALESCE(has_shelf_life, false)
+                  FROM items
+                 WHERE id = :iid
+                 LIMIT 1
+                """
+            ),
+            {"iid": int(item_id)},
+        )
+    ).first()
+    if row is None:
+        return False
+    return bool(row[0])
+
+
 async def _insert_confirmed_order_return_receipt(
     session: AsyncSession,
     *,
@@ -22,7 +47,9 @@ async def _insert_confirmed_order_return_receipt(
     warehouse_id: int,
     item_id: int,
     qty_received: int,
-    batch_code: str,
+    batch_code: Optional[str],
+    production_date: Optional[date],
+    expiry_date: Optional[date],
     occurred_at: datetime,
     trace_id: str,
 ) -> int:
@@ -35,6 +62,10 @@ async def _insert_confirmed_order_return_receipt(
 
     Phase5+ 护栏：
     - inbound_receipts.ref 全局唯一 → 同一订单多张 RMA receipt 必须使用唯一 ref
+
+    Phase 1A 批次两态：
+    - NONE：batch_code=NULL 且 production/expiry=NULL
+    - REQUIRED：batch_code 非空；日期可按需要填写
     """
     ref = f"RMA-ORD-{order_id}-{trace_id}-{int(occurred_at.timestamp()*1000)}"
 
@@ -116,7 +147,7 @@ async def _insert_confirmed_order_return_receipt(
                 NULL,
                 :batch_code,
                 :production_date,
-                NULL,
+                :expiry_date,
                 :qty_received,
                 1,
                 :qty_units,
@@ -131,8 +162,9 @@ async def _insert_confirmed_order_return_receipt(
         {
             "rid": int(receipt_id),
             "item_id": int(item_id),
-            "batch_code": str(batch_code),
-            "production_date": date.today(),
+            "batch_code": batch_code,  # may be NULL (NONE)
+            "production_date": production_date,
+            "expiry_date": expiry_date,
             "qty_received": int(qty_received),
             "qty_units": int(qty_received),
         },
@@ -160,6 +192,18 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     ext_order_no = "RMA-TEST-001"
     trace_id = "TRACE-RMA-TEST-001"
 
+    item_id = 1
+    required = await _item_batch_mode_is_required(session, item_id=item_id)
+
+    if required:
+        bc: Optional[str] = "RMA-BATCH-1"
+        pd = date.today()
+        ed = None
+    else:
+        bc = None
+        pd = None
+        ed = None
+
     # 1) 用服务层落一张订单（2 件 item_id=1）
     result = await OrderService.ingest(
         session,
@@ -172,7 +216,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
         order_amount=20,
         pay_amount=20,
         items=[
-            {"item_id": 1, "qty": 2},
+            {"item_id": item_id, "qty": 2},
         ],
         address=None,
         extras=None,
@@ -186,29 +230,31 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     # 2) 先做一笔入库，保证库存足够
     await stock_svc.adjust(
         session=session,
-        item_id=1,
+        item_id=item_id,
         warehouse_id=1,
         delta=2,
         reason=MovementType.INBOUND,
         ref=f"IN-{order_ref}",
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code="RMA-BATCH-1",
-        production_date=date.today(),
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
     )
 
     # 3) 模拟发货 shipped=2（只统计负数 delta，用于 shipped 计算）
     await stock_svc.adjust(
         session=session,
-        item_id=1,
+        item_id=item_id,
         warehouse_id=1,
         delta=-2,
         reason=MovementType.SHIP,
         ref=order_ref,
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code="RMA-BATCH-1",
-        production_date=date.today(),
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
     )
 
     # 4) 写入一张 confirmed Receipt：returned=2（remaining 应为 0）
@@ -216,9 +262,11 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
         session,
         order_id=order_id,
         warehouse_id=1,
-        item_id=1,
+        item_id=item_id,
         qty_received=2,
-        batch_code="RMA-BATCH-1",
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
         occurred_at=datetime.now(UTC),
         trace_id=trace_id,
     )
@@ -237,9 +285,11 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
         session,
         order_id=order_id,
         warehouse_id=1,
-        item_id=1,
+        item_id=item_id,
         qty_received=1,
-        batch_code="RMA-BATCH-1",
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
         occurred_at=datetime.now(UTC),
         trace_id=trace_id,
     )
@@ -268,11 +318,27 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
 
     说明：
       - returned 的事实源不再是旧执行层 commit，而是 confirmed InboundReceipt。
+
+    Phase 1A 批次两态：
+      - NONE：batch_code=NULL 且 production/expiry=NULL
+      - REQUIRED：batch_code 非空；日期可按需要填写
     """
     platform = "PDD"
     shop_id = "RMA_TEST_SHOP2"
     ext_order_no = "RMA-TEST-002"
     trace_id = "TRACE-RMA-TEST-002"
+
+    item_id = 1
+    required = await _item_batch_mode_is_required(session, item_id=item_id)
+
+    if required:
+        bc: Optional[str] = "RMA-BATCH-2"
+        pd = date.today()
+        ed = None
+    else:
+        bc = None
+        pd = None
+        ed = None
 
     # 1) 下单 qty=2（item_id=1）
     result = await OrderService.ingest(
@@ -286,7 +352,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
         order_amount=20,
         pay_amount=20,
         items=[
-            {"item_id": 1, "qty": 2},
+            {"item_id": item_id, "qty": 2},
         ],
         address=None,
         extras=None,
@@ -300,27 +366,29 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
     # 2) 入库 + 发货 shipped=2
     await stock_svc.adjust(
         session=session,
-        item_id=1,
+        item_id=item_id,
         warehouse_id=1,
         delta=2,
         reason=MovementType.INBOUND,
         ref=f"IN-{order_ref}",
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code="RMA-BATCH-2",
-        production_date=date.today(),
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
     )
     await stock_svc.adjust(
         session=session,
-        item_id=1,
+        item_id=item_id,
         warehouse_id=1,
         delta=-2,
         reason=MovementType.SHIP,
         ref=order_ref,
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code="RMA-BATCH-2",
-        production_date=date.today(),
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
     )
 
     # 3) 写入 returned=1 的 confirmed Receipt
@@ -328,9 +396,11 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
         session,
         order_id=order_id,
         warehouse_id=1,
-        item_id=1,
+        item_id=item_id,
         qty_received=1,
-        batch_code="RMA-BATCH-2",
+        batch_code=bc,
+        production_date=pd,
+        expiry_date=ed,
         occurred_at=datetime.now(UTC),
         trace_id=trace_id,
     )
@@ -340,7 +410,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
     result_recon = await recon.reconcile_order(order_id)
     assert len(result_recon.lines) == 1
     lf = result_recon.lines[0]
-    assert lf.item_id == 1
+    assert lf.item_id == item_id
     assert lf.qty_ordered == 2
     assert lf.qty_shipped == 2
     assert lf.qty_returned == 1
@@ -360,7 +430,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
                  LIMIT 1
                 """
             ),
-            {"oid": order_id, "iid": 1},
+            {"oid": order_id, "iid": item_id},
         )
     ).first()
     assert row is not None
