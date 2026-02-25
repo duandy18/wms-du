@@ -12,6 +12,7 @@ from app.models.enums import MovementType
 from app.services.three_books_enforcer import enforce_three_books
 
 AdjustFn = Callable[..., Awaitable[Dict[str, Any]]]
+AdjustLotFn = Callable[..., Awaitable[Dict[str, Any]]]
 
 
 def _shortage_detail(
@@ -42,14 +43,17 @@ def _shortage_detail(
 
 async def _load_total_available_qty(session: AsyncSession, *, warehouse_id: int, item_id: int) -> int:
     """
-    当 FEFO 找不到任何可用 stocks 行时，回读总可用 qty 作为 available_qty（通常为 0）。
+    当 FEFO 找不到任何可用行时，回读总可用 qty 作为 available_qty（通常为 0）。
+
+    Phase 4C/4D：
+    - 总量读取以 stocks_lot 为准（lot-world 余额）
     """
     row = (
         await session.execute(
             text(
                 """
                 SELECT COALESCE(SUM(qty), 0)
-                  FROM stocks
+                  FROM stocks_lot
                  WHERE warehouse_id=:w AND item_id=:i AND qty>0
                 """
             ),
@@ -76,14 +80,48 @@ async def ship_commit_direct_impl(
     adjust_fn: AdjustFn,
 ) -> Dict[str, Any]:
     """
-    本方法保持原有行为，但 FEFO 选择更稳定（优先 expiry_date，再按 stock_id 排序）。
+    旧实现（batch-world）：
 
-    Phase 3.10（本次）：
-    - 引入 sub_reason（业务细分）：
-      直接发货/出库链路统一标记为 ORDER_SHIP（若未来需要区分 INTERNAL_SHIP，可在调用方传 meta 覆盖）。
+    Phase 4D：
+    - 为避免执行链路口径回退，且为 Phase 4E（rename/drop stocks）铺路，
+      此 batch-world 实现被明确禁用。
+    - 正确入口：ship_commit_direct_lot_impl（lot-world）。
 
-    Phase 3（三库一致性工程化）：
-    - commit 成功的必要条件：ledger + stocks + snapshot 可观测一致（对本次 touched keys）
+    说明：
+    - 若确需回滚对照，应在独立 legacy 模块/分支中保留，不允许在主执行链路中读取 legacy stocks。
+    """
+    _ = session
+    _ = warehouse_id
+    _ = platform
+    _ = shop_id
+    _ = ref
+    _ = lines
+    _ = occurred_at
+    _ = trace_id
+    _ = utc_now
+    _ = adjust_fn
+    raise RuntimeError("ship_commit_direct_impl(batch-world) 已在 Phase 4D 禁用，请使用 ship_commit_direct_lot_impl。")
+
+
+async def ship_commit_direct_lot_impl(
+    *,
+    session: AsyncSession,
+    warehouse_id: int,
+    platform: str,
+    shop_id: str,
+    ref: str,
+    lines: list[dict[str, int]],
+    occurred_at: Optional[datetime],
+    trace_id: Optional[str],
+    utc_now: Callable[[], datetime],
+    adjust_lot_fn: AdjustLotFn,
+) -> Dict[str, Any]:
+    """
+    Phase 4C 主实现（lot-world）：
+
+    - 选槽：stocks_lot + lots（expiry_date ASC NULLS LAST, lot_id_key ASC）
+    - 扣减：adjust_lot_fn（写 stocks_lot + ledger(lot_id)；可 shadow 写 stocks，但 Phase 4D 默认关闭）
+    - 三账尾门：保持原 enforce_three_books（内部会 run_snapshot + verify）
     """
     _ = platform
     _ = shop_id
@@ -101,8 +139,6 @@ async def ship_commit_direct_impl(
 
     idempotent = True
     total = 0
-
-    # Phase 3：收集本次出库的 effects，用于三库一致性验证
     effects: list[Dict[str, Any]] = []
 
     for item_id, want in need_by_item.items():
@@ -115,105 +151,132 @@ async def ship_commit_direct_impl(
                    AND ref=:ref AND delta < 0
                 """
             ),
-            {"w": int(warehouse_id), "i": item_id, "ref": ref},
+            {"w": int(warehouse_id), "i": int(item_id), "ref": str(ref)},
         )
         already = int(existing.scalar() or 0)
-        need = want + already
+        need = int(want) + int(already)
         if need <= 0:
             continue
 
         idempotent = False
-        remain = need
+        remain = int(need)
 
-        while remain > 0:
-            row = (
-                await session.execute(
-                    text(
-                        """
-                        SELECT s.batch_code, s.qty
-                          FROM stocks s
-                          LEFT JOIN batches b
-                            ON b.item_id      = s.item_id
-                           AND b.warehouse_id = s.warehouse_id
-                           AND b.batch_code IS NOT DISTINCT FROM s.batch_code
-                         WHERE s.item_id=:i AND s.warehouse_id=:w AND s.qty>0
-                         ORDER BY b.expiry_date ASC NULLS LAST, s.id ASC
-                         LIMIT 1
-                        """
-                    ),
-                    {"i": item_id, "w": int(warehouse_id)},
-                )
-            ).first()
+        # 锁定候选 lot 槽位（强一致）
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                        s.lot_id,
+                        s.lot_id_key,
+                        s.qty,
+                        lo.lot_code,
+                        lo.expiry_date
+                    FROM stocks_lot s
+                    LEFT JOIN lots lo ON lo.id = s.lot_id
+                    WHERE s.item_id = :i
+                      AND s.warehouse_id = :w
+                      AND s.qty > 0
+                    ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id_key ASC
+                    FOR UPDATE OF s
+                    """
+                ),
+                {"i": int(item_id), "w": int(warehouse_id)},
+            )
+        ).all()
 
-            if not row:
-                available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
-                raise_problem(
-                    status_code=409,
-                    error_code="insufficient_stock",
-                    message="库存不足，禁止提交出库。",
-                    context={
-                        "warehouse_id": int(warehouse_id),
-                        "item_id": int(item_id),
-                        "ref": str(ref),
-                    },
-                    details=[
-                        _shortage_detail(
-                            item_id=int(item_id),
-                            batch_code=None,
-                            available_qty=int(available),
-                            required_qty=int(remain),
-                            path=f"ship_commit_direct[item_id={int(item_id)}]",
-                        )
-                    ],
-                    next_actions=[
-                        {"action": "rescan_stock", "label": "刷新库存"},
-                        {"action": "adjust_to_available", "label": "按可用库存调整数量"},
-                    ],
-                )
-
-            # ✅ 关键：batch_code 允许为 None（无批次槽位），绝不能 str(None) 变成 'None'
-            batch_code = row[0]
-            on_hand = int(row[1])
-            take = min(remain, on_hand)
-
-            await adjust_fn(
-                session=session,
-                item_id=item_id,
-                warehouse_id=warehouse_id,
-                delta=-take,
-                reason=MovementType.SHIP,
-                ref=ref,
-                ref_line=1,
-                occurred_at=ts,
-                batch_code=batch_code,
-                trace_id=trace_id,
-                meta={
-                    "sub_reason": "ORDER_SHIP",
-                },
+        if not rows:
+            available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
+            raise_problem(
+                status_code=409,
+                error_code="insufficient_stock",
+                message="库存不足，禁止提交出库。",
+                context={"warehouse_id": int(warehouse_id), "item_id": int(item_id), "ref": str(ref)},
+                details=[
+                    _shortage_detail(
+                        item_id=int(item_id),
+                        batch_code=None,
+                        available_qty=int(available),
+                        required_qty=int(remain),
+                        path=f"ship_commit_direct_lot[item_id={int(item_id)}]",
+                    )
+                ],
+                next_actions=[
+                    {"action": "rescan_stock", "label": "刷新库存"},
+                    {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                ],
             )
 
-            # 记录 effect（delta 为负数）
+        # 贪心扣减
+        for r in rows:
+            if remain <= 0:
+                break
+
+            lot_id = r.lot_id
+            lot_code = r.lot_code
+            on_hand = int(r.qty or 0)
+            if on_hand <= 0:
+                continue
+
+            take = min(remain, on_hand)
+            if take <= 0:
+                continue
+
+            # ref_line：每条腿递增，避免同 ref 下多腿写同 ref_line
+            ref_line = int(len(effects) + 1)
+
+            await adjust_lot_fn(
+                session=session,
+                item_id=int(item_id),
+                warehouse_id=int(warehouse_id),
+                lot_id=(int(lot_id) if lot_id is not None else None),
+                delta=-int(take),
+                reason=MovementType.SHIP,
+                ref=str(ref),
+                ref_line=int(ref_line),
+                occurred_at=ts,
+                trace_id=trace_id,
+                batch_code=(str(lot_code) if lot_code is not None else None),  # 展示码
+                meta={"sub_reason": "ORDER_SHIP"},
+            )
+
             effects.append(
                 {
                     "warehouse_id": int(warehouse_id),
                     "item_id": int(item_id),
-                    "batch_code": batch_code,
+                    "batch_code": (str(lot_code) if lot_code is not None else None),
                     "qty": -int(take),
                     "ref": str(ref),
-                    "ref_line": 1,
+                    "ref_line": int(ref_line),
                 }
             )
 
-            remain -= take
-            total += take
+            remain -= int(take)
+            total += int(take)
 
-    # Phase 3：强一致尾门（仅在本次实际扣减时执行）
+        if remain > 0:
+            available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
+            raise_problem(
+                status_code=409,
+                error_code="insufficient_stock",
+                message="库存不足，禁止提交出库。",
+                context={"warehouse_id": int(warehouse_id), "item_id": int(item_id), "ref": str(ref)},
+                details=[
+                    _shortage_detail(
+                        item_id=int(item_id),
+                        batch_code=None,
+                        available_qty=int(available),
+                        required_qty=int(remain),
+                        path=f"ship_commit_direct_lot[item_id={int(item_id)}].remain",
+                    )
+                ],
+                next_actions=[
+                    {"action": "rescan_stock", "label": "刷新库存"},
+                    {"action": "adjust_to_available", "label": "按可用库存调整数量"},
+                ],
+            )
+
     if effects:
         await enforce_three_books(session, ref=str(ref), effects=effects, at=ts)
 
-    return {
-        "idempotent": idempotent,
-        "applied": not idempotent,
-        "ref": ref,
-        "total_qty": total,
-    }
+    return {"idempotent": bool(idempotent), "applied": not bool(idempotent), "ref": str(ref), "total_qty": int(total)}

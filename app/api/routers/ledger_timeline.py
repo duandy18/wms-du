@@ -20,6 +20,7 @@ async def ledger_timeline(
     warehouse_id: int | None = None,
     item_id: int | None = None,
     batch_code: str | None = None,
+    lot_id: int | None = None,
     trace_id: str | None = None,
     ref: str | None = None,
     session: AsyncSession = Depends(get_session),
@@ -35,6 +36,7 @@ async def ledger_timeline(
         warehouse_id=warehouse_id,
         item_id=item_id,
         batch_code=batch_code_norm,
+        lot_id=lot_id,
         trace_id=trace_id,
         ref=ref,
     )

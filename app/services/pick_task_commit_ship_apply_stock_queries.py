@@ -15,19 +15,27 @@ async def load_on_hand_qty(
     batch_code: Optional[str],
 ) -> int:
     """
-    读取当前库存槽位 qty（支持 NULL batch_code）。
-    槽位不存在时视为 0。
+    Phase 4D：
+    - 只读：stocks_lot（lot-world）
+    - 禁止：fallback 读取 legacy stocks
+
+    batch_code 语义：
+    - 在 lot-world 下作为展示码 lot_code（允许 NULL）
+    - lot_id 为空时 LEFT JOIN lots 得到 lot_code=NULL，与 batch_code=NULL 精确匹配（IS NOT DISTINCT FROM）
+
+    注意：
+    - 这里的目的仅用于错误提示/可行动明细，不参与扣减原子性裁决。
     """
     row = (
         await session.execute(
             SA(
                 """
-                SELECT qty
-                  FROM stocks
-                 WHERE warehouse_id = :w
-                   AND item_id      = :i
-                   AND batch_code IS NOT DISTINCT FROM :c
-                 LIMIT 1
+                SELECT COALESCE(SUM(s.qty), 0) AS qty
+                FROM stocks_lot s
+                LEFT JOIN lots lo ON lo.id = s.lot_id
+                WHERE s.warehouse_id = :w
+                  AND s.item_id      = :i
+                  AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
                 """
             ),
             {"w": int(warehouse_id), "i": int(item_id), "c": batch_code},

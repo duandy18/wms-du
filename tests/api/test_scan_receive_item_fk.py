@@ -54,6 +54,24 @@ def _ensure_item(
     db.commit()
 
 
+def _looks_like_missing_item_fk(msg: str) -> bool:
+    """
+    Phase 4E：不再绑死 batches/约束名；只验证“items 不存在导致 FK 失败”的语义。
+
+    兼容不同错误包装/不同驱动的文本差异。
+    """
+    s = (msg or "").lower()
+    # 常见：psycopg/asyncpg 会包含这类片段
+    if 'not present in table "items"' in s:
+        return True
+    if "violates foreign key constraint" in s and "item" in s:
+        return True
+    # 更泛化兜底：出现 foreign key + items 字样
+    if ("foreign key" in s) and ("items" in s):
+        return True
+    return False
+
+
 def test_scan_receive_unknown_item_should_fail_fk() -> None:
     """
     当 item_id 在 items 表中不存在时，
@@ -82,8 +100,8 @@ def test_scan_receive_unknown_item_should_fail_fk() -> None:
     errors = data.get("errors") or []
     joined = "\n".join(e.get("error", "") for e in errors)
 
-    # 不强依赖完整错误字符串，但必须体现 FK 相关语义
-    assert "fk_batches_item" in joined or "not present in table" in joined
+    # 不强依赖约束名；必须体现“items 不存在导致 FK 失败”的语义
+    assert _looks_like_missing_item_fk(joined), joined
 
 
 def test_scan_receive_existing_item_should_succeed() -> None:
@@ -118,11 +136,10 @@ def test_scan_receive_existing_item_should_succeed() -> None:
 
     data = resp.json()
 
-    # 期望：不再出现 FK 相关错误
+    # 期望：不再出现“items 不存在导致 FK 失败”的错误
     errors = data.get("errors") or []
     joined = "\n".join(e.get("error", "") for e in errors)
-    assert "fk_batches_item" not in joined
-    assert 'not present in table "items"' not in joined
+    assert not _looks_like_missing_item_fk(joined), joined
 
     # 这里不强行要求 ok/committed=True（避免把业务逻辑绑死在一条测试上），
     # 只要确认不再 FK 炸，后续可以在别的测试里更细分地检查台账 /库存等行为。

@@ -123,24 +123,28 @@ async def _fetch_stock_qty(
     item_id: int,
     batch_code: str | None,
 ) -> int:
+    """
+    Phase 4E：lot-world 余额口径（stocks_lot 为真相）：
+
+    ✅ 关键点：
+    - batch_code 在 lot-world 下是“展示码”（lots.lot_code），允许为 NULL；
+    - 即使 batch_code 为 NULL，lot_id 也可能非空（例如 INTERNAL lot），因此不能假设落在 lot_id_key=0；
+    - 统一用 stocks_lot LEFT JOIN lots，以 lot_code IS NOT DISTINCT FROM :batch_code 来聚合。
+    """
     res = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE warehouse_id = :wid
-               AND item_id = :item_id
-               AND batch_code IS NOT DISTINCT FROM :batch_code
+            SELECT COALESCE(SUM(sl.qty), 0) AS qty
+              FROM stocks_lot sl
+              LEFT JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.warehouse_id = :wid
+               AND sl.item_id = :item_id
+               AND l.lot_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
-        {"wid": warehouse_id, "item_id": item_id, "batch_code": batch_code},
+        {"wid": int(warehouse_id), "item_id": int(item_id), "batch_code": batch_code},
     )
-    row = res.first()
-    if row is None:
-        raise AssertionError(
-            f"stocks row not found: wid={warehouse_id}, item_id={item_id}, batch_code={batch_code}"
-        )
-    return int(row[0])
+    return int(res.scalar_one() or 0)
 
 
 def _assert_refline_is_contiguous(rows: List[Dict[str, Any]]) -> None:
@@ -160,11 +164,11 @@ async def _assert_stock_matches_last_ledger(
     for (wid, item_id, batch_code), last in last_by_key.items():
         qty = await _fetch_stock_qty(session, warehouse_id=wid, item_id=item_id, batch_code=batch_code)
         assert qty == int(last["after_qty"]), {
-            "msg": "stocks.qty must equal last ledger.after_qty",
+            "msg": "stocks_lot qty must equal last ledger.after_qty",
             "wid": wid,
             "item_id": item_id,
             "batch_code": batch_code,
-            "stocks.qty": qty,
+            "stocks_lot.qty": qty,
             "ledger.after_qty": int(last["after_qty"]),
             "ledger.ref_line": int(last["ref_line"]),
         }
@@ -180,7 +184,7 @@ async def test_receive_line_multi_commits_update_qty_and_status(
 
     - 显式开始收货（draft）
     - receive-line 返回 workbench，草稿数量累加
-    - confirm 是唯一库存写入口：confirm 后才写 stock_ledger/stocks
+    - confirm 是唯一库存写入口：confirm 后才写 stock_ledger / stocks_lot
 
     Phase 1A 批次两态：
     - REQUIRED：批次必填，禁止伪批次；错误应返回 400 且给出明确 reason

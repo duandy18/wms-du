@@ -20,6 +20,11 @@ def register(router: APIRouter) -> None:
     ) -> ScanResponse:
         """
         盘点提交（warehouse 粒度）。
+
+        Phase 4E 真收口：
+        - current 余额读取统一来自 stocks_lot
+        - 需要展示 batch_code 时，统一 LEFT JOIN lots 取 lot_code
+        - 禁止任何执行路径读取 legacy stocks
         """
         svc = StockService()
 
@@ -32,11 +37,12 @@ def register(router: APIRouter) -> None:
 
         cur_sql = text(
             """
-            SELECT COALESCE(SUM(qty), 0)
-              FROM stocks
-             WHERE item_id=:i
-               AND warehouse_id=:w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(SUM(s.qty), 0)
+              FROM stocks_lot s
+              LEFT JOIN lots lo ON lo.id = s.lot_id
+             WHERE s.item_id=:i
+               AND s.warehouse_id=:w
+               AND lo.lot_code IS NOT DISTINCT FROM :c
             """
         )
         current_row = await session.execute(

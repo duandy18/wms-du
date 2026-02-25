@@ -19,7 +19,9 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
 
     - 不依赖 location_id，也不依赖 tests.utils 中的 helper。
     - 通过 InboundService.receive 使用 sku 自动建 item。
-    - 校验 stocks 表中 (warehouse_id, item_id, batch_code) 的 qty 被正确更新。
+    - Phase 4E：lot-world 口径，校验 stocks_lot 的 qty 被正确更新。
+      * 若该入库落到 lot 槽位：通过 lots.lot_code 定位
+      * 若该入库被归一到 NULL 槽位：使用 lot_id_key=0 定位
     """
 
     warehouse_id = 1
@@ -52,18 +54,40 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
     assert res["batch_code"] == batch_code
     assert res["qty"] == qty
 
-    # 验证 stocks 表中该批次库存为 qty
+    # Phase 4E：优先按 lot_code（lots）定位；如果没有 lot（lot_id 为 NULL），则落在 lot_id_key=0
     row = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :c
+            SELECT sl.qty
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id = :i
+               AND sl.warehouse_id = :w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
         {"i": item_id, "w": warehouse_id, "c": batch_code},
     )
-    db_qty = row.scalar_one()
+    v = row.scalar_one_or_none()
+    if v is None:
+        row2 = await session.execute(
+            text(
+                """
+                SELECT sl.qty
+                  FROM stocks_lot sl
+                 WHERE sl.item_id = :i
+                   AND sl.warehouse_id = :w
+                   AND sl.lot_id_key = 0
+                 LIMIT 1
+                """
+            ),
+            {"i": item_id, "w": warehouse_id},
+        )
+        v2 = row2.scalar_one_or_none()
+        assert v2 is not None, "expected stocks_lot row for NULL lot slot (lot_id_key=0)"
+        db_qty = int(v2)
+    else:
+        db_qty = int(v)
+
     assert db_qty == qty

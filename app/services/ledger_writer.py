@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.stock_ledger import StockLedger
+from app.services.lot_guard import assert_lot_belongs_to
 
 
 # ========================
@@ -137,7 +138,17 @@ async def write_ledger(
     - DB 幂等唯一键升级为 lot_id_key + batch_code_key 复合键
     - ON CONFLICT 绑定新约束名
     - patch where 锚点同步升级（但 patch 仍不补写 lot_id 本身）
+
+    Phase 4A-2a:
+    - 强化 lot 合法性：lot_id 非空时必须属于 (warehouse_id, item_id)
     """
+    # ✅ Step A: final guardrail (do not trust upstream)
+    await assert_lot_belongs_to(
+        session,
+        warehouse_id=int(warehouse_id),
+        item_id=int(item_id),
+        lot_id=lot_id,
+    )
 
     reason_canon = _canon_reason(reason)
     bc_norm = _norm_batch_code(batch_code)

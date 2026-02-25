@@ -67,13 +67,13 @@ async def load_po_confirmed_received_map(session: AsyncSession, *, po_id: int) -
     return out
 
 
-async def load_po_confirmed_batches_map(
+async def load_po_confirmed_batch_rows_map(
     session: AsyncSession, *, po_id: int
 ) -> Dict[int, List[WorkbenchBatchRowOut]]:
     """
     confirmed 批次聚合（语义收敛版）：
     - 聚合维度：po_line_id + batch_code（不再把 receipt_line 的 production/expiry 纳入 key）
-    - production_date/expiry_date 作为 canonical 字段，后续统一从 batches 回填
+    - production_date/expiry_date 作为 canonical 字段，后续统一从 lots 回填
     """
     rows = (
         (
@@ -108,9 +108,9 @@ async def load_po_confirmed_batches_map(
         bc_norm = normalize_optional_batch_code(r.get("batch_code"))
         out.setdefault(po_line_id, []).append(
             WorkbenchBatchRowOut(
-                batch_code=bc_norm,      # ✅ keep None
-                production_date=None,    # ✅ canonical later
-                expiry_date=None,        # ✅ canonical later
+                batch_code=bc_norm,
+                production_date=None,
+                expiry_date=None,
                 qty_received=int(r.get("qty") or 0),
             )
         )
@@ -124,14 +124,15 @@ def build_draft_received_aggregates(
     """
     从 draft receipt.lines 聚合：
     - draft_map: po_line_id -> sum(qty_received)
-    - draft_batches_map: po_line_id -> list[WorkbenchBatchRowOut]（按 po_line_id + batch_code_norm 聚合）
+    - batch_rows_map: po_line_id -> list[WorkbenchBatchRowOut]（按 po_line_id + batch_code_norm 聚合）
+
     注意：production_date/expiry_date 不从 receipt_line 取，统一交给 canonical 回填。
     """
     draft_map: Dict[int, int] = {}
-    draft_batches_map: Dict[int, List[WorkbenchBatchRowOut]] = {}
+    batch_rows_map: Dict[int, List[WorkbenchBatchRowOut]] = {}
 
     if draft is None or not getattr(draft, "lines", None):
-        return draft_map, draft_batches_map
+        return draft_map, batch_rows_map
 
     tmp: Dict[Tuple[int, Optional[str]], int] = {}
     for rl in draft.lines:
@@ -148,7 +149,7 @@ def build_draft_received_aggregates(
         tmp[key] = int(tmp.get(key, 0) + qty)
 
     for (po_line_id_i, bc_norm), qty in tmp.items():
-        draft_batches_map.setdefault(po_line_id_i, []).append(
+        batch_rows_map.setdefault(po_line_id_i, []).append(
             WorkbenchBatchRowOut(
                 batch_code=bc_norm,
                 production_date=None,
@@ -157,4 +158,4 @@ def build_draft_received_aggregates(
             )
         )
 
-    return draft_map, draft_batches_map
+    return draft_map, batch_rows_map

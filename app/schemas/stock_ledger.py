@@ -54,6 +54,9 @@ class LedgerQuery(_Base):
     warehouse_id: Optional[int] = Field(default=None, description="仓库 ID")
     batch_code: Optional[str] = Field(default=None, max_length=64, description="批次编码（精确）")
 
+    # Phase 4A-2a: lot 维度过滤（事实维度）
+    lot_id: Optional[int] = Field(default=None, description="Lot ID（精确，影子事实维度过滤）")
+
     reason: Optional[str] = Field(
         default=None,
         max_length=32,
@@ -113,6 +116,9 @@ class LedgerRow(_Base):
     item_id: int
     item_name: Optional[str] = None
     batch_code: str
+
+    # Phase 3+ : lot shadow dimension (Phase 4A-2a expose for query/history)
+    lot_id: Optional[int] = None
 
     trace_id: Optional[str] = None
     movement_type: Optional[str] = None

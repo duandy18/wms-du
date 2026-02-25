@@ -12,11 +12,13 @@ from app.api.batch_code_contract import normalize_optional_batch_code
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.models.inbound_receipt import InboundReceipt
+from app.models.item import Item
 from app.schemas.inbound_receipt import InboundReceiptOut
 from app.schemas.inbound_receipt_confirm import (
     InboundReceiptConfirmLedgerRef,
     InboundReceiptConfirmOut,
 )
+from app.services.domain.lot_service import resolve_or_create_lot
 from app.services.inbound_receipt_explain import explain_receipt
 from app.services.stock_service import StockService
 
@@ -100,6 +102,34 @@ def _opt_bool(res: object, key: str) -> bool | None:
     return bool(res.get(key))
 
 
+async def _load_item(session: AsyncSession, *, item_id: int) -> Item:
+    stmt = select(Item).where(Item.id == int(item_id)).limit(1)
+    obj = (await session.execute(stmt)).scalars().first()
+    if obj is None:
+        raise_problem(
+            status_code=422,
+            error_code="ITEM_NOT_FOUND",
+            message="收货行商品不存在，无法确认。",
+            context={"item_id": int(item_id)},
+            details=[{"type": "item", "reason": "item_not_found", "item_id": int(item_id)}],
+        )
+    return obj
+
+
+def _safe_int_list(v: object) -> list[int]:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        out: list[int] = []
+        for x in v:
+            try:
+                out.append(int(x))
+            except Exception:
+                continue
+        return out
+    return []
+
+
 async def confirm_receipt(
     *,
     session: AsyncSession,
@@ -135,11 +165,33 @@ async def confirm_receipt(
 
     # === Phase 3 修复点 ===
     # 构建 line_no -> lot_id 映射（实体来源）
-    line_lot_map = {}
+    line_lot_map: dict[int, Optional[int]] = {}
     for rl in receipt.lines or []:
         ln = int(getattr(rl, "line_no", 0) or 0)
         if ln not in line_lot_map:
             line_lot_map[ln] = rl.lot_id
+
+    # 构建 source_line_index(0-based) -> receipt_line_no(1-based) 映射
+    # receipt.lines 已经按 (line_no, id) 排序，index 即对应 explain 的 source_line_indexes
+    lines_sorted = list(receipt.lines or [])
+    index_to_line_no: dict[int, int] = {}
+    for i, rl in enumerate(lines_sorted):
+        index_to_line_no[int(i)] = int(getattr(rl, "line_no", 0) or 0)
+
+    def _line_no_from_normalized(n: object) -> int:
+        # NormalizedLinePreviewOut 没有 line_no，只有 source_line_indexes
+        idxs = _safe_int_list(getattr(n, "source_line_indexes", None))
+        if not idxs:
+            return 0
+        # 取第一个作为代表（同组多行后面会做一致性校验）
+        return int(index_to_line_no.get(int(idxs[0]), 0) or 0)
+
+    def _group_line_nos(n: object) -> list[int]:
+        idxs = _safe_int_list(getattr(n, "source_line_indexes", None))
+        out: list[int] = []
+        for i in idxs:
+            out.append(int(index_to_line_no.get(int(i), 0) or 0))
+        return out
 
     extra_blocking_errors: list[dict] = []
     for n in normalized:
@@ -171,6 +223,90 @@ async def confirm_receipt(
     if extra_blocking_errors:
         _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=extra_blocking_errors)
 
+    # ------------------------------------------------------------
+    # Phase 4B-0 (主目标前置)：确认收货时强制绑定 lot（INTERNAL identity: receipt_id + line_no）
+    # - 让 lot 成为真实入库事实锚点（否则 ledger 永远 lot_coverage=0）
+    # - 这里不依赖“上游是否提前创建 lot”，confirm 自己兜底生成
+    # ------------------------------------------------------------
+    lot_blocking_errors: list[dict] = []
+    for n in normalized:
+        line_no = _line_no_from_normalized(n)
+        item_id = int(getattr(n, "item_id", 0) or 0)
+
+        if line_no <= 0 or item_id <= 0:
+            lot_blocking_errors.append(
+                {
+                    "type": "lot",
+                    "reason": "invalid_line_no_or_item_id",
+                    "line_key": str(getattr(n, "line_key", "")),
+                    "line_no": int(line_no),
+                    "item_id": int(item_id),
+                }
+            )
+            continue
+
+        # 同一 normalized group 如果来自多条 receipt_line，必须保证它们的 lot_id 一致（否则库存维度会撕裂）
+        group_line_nos = [ln for ln in _group_line_nos(n) if ln > 0]
+        if group_line_nos:
+            lot_ids: set[int] = set()
+            for ln in group_line_nos:
+                lid = line_lot_map.get(int(ln))
+                if lid is not None:
+                    lot_ids.add(int(lid))
+            if len(lot_ids) > 1:
+                lot_blocking_errors.append(
+                    {
+                        "type": "lot",
+                        "reason": "inconsistent_lot_id_in_group",
+                        "line_key": str(getattr(n, "line_key", "")),
+                        "line_nos": [int(x) for x in group_line_nos],
+                        "lot_ids": [int(x) for x in sorted(lot_ids)],
+                        "item_id": int(item_id),
+                    }
+                )
+                continue
+
+        existing_lot_id = line_lot_map.get(line_no)
+        if existing_lot_id is not None:
+            continue
+
+        # 生成 INTERNAL lot：identity = (warehouse_id, item_id, lot_code_source='INTERNAL', source_receipt_id, source_line_no)
+        # dates：沿用 normalized（如果 batch_code=None，则上面已校验 dates 必须为 None）
+        bc_norm = normalize_optional_batch_code(getattr(n, "batch_code", None))
+        pd = getattr(n, "production_date", None)
+        ed = getattr(n, "expiry_date", None)
+        if bc_norm is None:
+            pd = None
+            ed = None
+
+        item_obj = await _load_item(session, item_id=item_id)
+        new_lot_id = await resolve_or_create_lot(
+            db=session,
+            warehouse_id=int(warehouse_id),
+            item=item_obj,
+            lot_code_source="INTERNAL",
+            lot_code=None,
+            source_receipt_id=int(receipt.id),
+            source_line_no=int(line_no),
+            production_date=pd,
+            expiry_date=ed,
+            expiry_source=None,
+            shelf_life_days_applied=None,
+        )
+
+        # 回填到 receipt_line（让后续再 confirm / explain / 追溯都能看到实体绑定）
+        # receipt.lines 已经 selectinload；按 line_no 找到第一条即可
+        for rl in receipt.lines or []:
+            ln = int(getattr(rl, "line_no", 0) or 0)
+            if ln == line_no:
+                rl.lot_id = int(new_lot_id)
+                break
+
+        line_lot_map[line_no] = int(new_lot_id)
+
+    if lot_blocking_errors:
+        _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=lot_blocking_errors)
+
     stock_svc = StockService()
 
     base_ref_line = await _load_next_ref_line_base(
@@ -194,8 +330,23 @@ async def confirm_receipt(
             pd = None
             ed = None
 
-        line_no = int(getattr(n, "line_no", 0) or 0)
+        line_no = _line_no_from_normalized(n)
         lot_id = line_lot_map.get(line_no)
+
+        # 最终硬校验：入库必须有 lot_id（主目标驱动）
+        if lot_id is None:
+            _raise_422_confirm_not_allowed(
+                receipt_id=receipt_id,
+                blocking_errors=[
+                    {
+                        "type": "lot",
+                        "reason": "lot_id_required_for_receipt_confirm",
+                        "line_key": str(getattr(n, "line_key", "")),
+                        "line_no": int(line_no),
+                        "item_id": int(item_id),
+                    }
+                ],
+            )
 
         res = await stock_svc.adjust(
             session=session,
@@ -211,7 +362,7 @@ async def confirm_receipt(
             production_date=pd,
             expiry_date=ed,
             trace_id=getattr(receipt, "trace_id", None),
-            lot_id=lot_id,  # ✅ 正确透传
+            lot_id=int(lot_id),  # ✅ 现在保证非空
         )
 
         ledger_refs.append(

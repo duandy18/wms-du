@@ -47,7 +47,7 @@ async def test_blueprint_insufficient_stock_returns_actionable_shortage_details(
     assert item_id > 0, f"invalid item_id in pick_task.lines[0]: {first}"
 
     # 强制该 item/warehouse 没有任何库存，确保必定触发 insufficient_stock
-    # ⚠️ 重要：这里必须 COMMIT，否则会持有 stocks 表上的锁，导致服务端 commit 时插入/查询 stocks 被锁等待
+    # ⚠️ 重要：这里必须 COMMIT，否则会持有库存/台账相关表的锁（Phase 4E：以 stocks_lot 为余额源），导致服务端 commit 时被锁等待
     await force_no_stock(db_session_like_pg, warehouse_id=WAREHOUSE_ID, item_id=item_id)
     await db_session_like_pg.commit()
 

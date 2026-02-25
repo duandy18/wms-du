@@ -1,7 +1,7 @@
 # app/services/outbound_metrics_v2_day.py
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from typing import List
 
 from sqlalchemy import text
@@ -98,7 +98,12 @@ async def _calc_fallback_rate(
 
 
 async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date, platform: str) -> float:
-    # 通过解析 ledger.ref join orders，才能拿到 shop_id 做 store 门禁
+    """
+    Phase 4E（真收口）：
+    - 禁止读取 legacy 批次表
+    - FEFO 批次信息来自 lots（以“仍有库存的 lot”为准：stocks_lot.qty>0）
+    - 避免 N+1：一次性预取 item_id -> fefo_lot_code（最早 expiry_date）
+    """
     pick_sql = text(
         f"""
         SELECT
@@ -121,28 +126,46 @@ async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date, platform: str
         """
     )
     rows = (await session.execute(pick_sql, {"day": day, "platform": platform})).fetchall()
+    if not rows:
+        return 0.0
+
+    item_ids = sorted({int(r[0]) for r in rows})
+    if not item_ids:
+        return 0.0
+
+    fefo_sql = text(
+        """
+        WITH inv AS (
+            SELECT
+                lo.item_id,
+                lo.lot_code,
+                lo.expiry_date,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lo.item_id
+                    ORDER BY lo.expiry_date ASC NULLS LAST, lo.id ASC
+                ) AS rn
+            FROM stocks_lot s
+            JOIN lots lo ON lo.id = s.lot_id
+            WHERE lo.item_id = ANY(:item_ids)
+              AND lo.expiry_date IS NOT NULL
+              AND s.qty > 0
+        )
+        SELECT item_id, lot_code
+        FROM inv
+        WHERE rn = 1
+        """
+    )
+    fefo_rows = (await session.execute(fefo_sql, {"item_ids": item_ids})).fetchall()
+    fefo_map = {int(r[0]): r[1] for r in fefo_rows}
 
     fefo_correct = 0
     fefo_total = 0
 
-    for item_id, batch_code, wh_id, qty, occurred_at in rows:
-        bsql = text(
-            """
-            SELECT batch_code, expiry_date
-            FROM batches
-            WHERE item_id = :item_id
-            """
-        )
-        br = (await session.execute(bsql, {"item_id": item_id})).fetchall()
-        if not br:
+    for item_id, batch_code, _wh_id, _qty, _occurred_at in rows:
+        iid = int(item_id)
+        fefo_batch = fefo_map.get(iid)
+        if not fefo_batch:
             continue
-
-        sorted_batches = sorted(
-            [(b.batch_code, b.expiry_date) for b in br],
-            key=lambda x: x[1] or datetime.max.replace(tzinfo=None),
-        )
-        fefo_batch = sorted_batches[0][0]
-
         fefo_total += 1
         if batch_code == fefo_batch:
             fefo_correct += 1

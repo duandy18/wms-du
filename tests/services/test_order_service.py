@@ -113,18 +113,22 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     该用例覆盖：
     - enter_pickable（OrderService.reserve）生成 pick_task + pick_task_lines
     - commit_ship 唯一裁决点：扣库存 + 写 ledger + 写 outbound_commits_v2
+
+    Phase 4D：
+    - 测试造数必须走 lot-world：库存余额写入 stocks_lot（lot_id=NULL 槽位）
+    - 不再写 legacy stocks（为 Phase 4E drop stocks 铺路）
     """
     wh, item = 1, 3003
 
     await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 
-    # 非批次库存槽位：qty=10
+    # 非批次库存槽位：qty=10（lot-world：lot_id=NULL → lot_id_key=0 槽位）
     await session.execute(
         text(
             """
-            INSERT INTO stocks(item_id, warehouse_id, batch_id, batch_code, qty)
-            VALUES (:item_id, :wid, NULL, NULL, 10)
-            ON CONFLICT (item_id, warehouse_id, batch_code_key)
+            INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
+            VALUES (:item_id, :wid, NULL, 10)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),

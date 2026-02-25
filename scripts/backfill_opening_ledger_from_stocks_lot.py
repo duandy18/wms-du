@@ -9,7 +9,6 @@ from sqlalchemy import text
 
 from app.db.session import async_session_maker
 
-
 OPEN_REASON = "ADJUST"
 OPEN_SUB_REASON = "OPENING_BALANCE"
 OPEN_REF_PREFIX = "OPEN:"
@@ -35,17 +34,18 @@ def _batch_key(bc: Optional[str]) -> str:
 
 async def main() -> None:
     """
-    目标：让每个 (warehouse_id,item_id,batch_code_key) 满足：
-      SUM(stock_ledger.delta) == stocks.qty
+    Phase 4E 目标：让每个 (warehouse_id, item_id, lot_id_key, batch_code_key) 满足：
+      SUM(stock_ledger.delta) == stocks_lot.qty
 
     做法：
-    - diff = stocks.qty - SUM(ledger.delta)
+    - diff = stocks_lot.qty - SUM(ledger.delta)
     - 若 diff != 0，则写入一条 opening ledger（append-only）
     - 幂等：以 (reason, ref, ref_line) 唯一，ref 设计为每个 key 唯一
 
     注意：
-    - join 统一走 batch_code_key（NULL 语义稳定）
-    - 绝不允许把 NULL batch_code 写成字符串 "None"
+    - 以 lot-world 为锚：stocks_lot + (LEFT JOIN lots 得到展示码 lot_code)
+    - batch_code 作为展示码 lot_code（允许 NULL）
+    - ledger 的 batch_code_key / lot_id_key 是生成列：写入时只需写 batch_code/lot_id
     """
     ts = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -54,29 +54,46 @@ async def main() -> None:
             await session.execute(
                 text(
                     """
-                    WITH ledger_sum AS (
-                      SELECT warehouse_id,
-                             item_id,
-                             batch_code_key,
-                             COALESCE(SUM(delta),0) AS sum_delta
-                        FROM stock_ledger
-                       GROUP BY warehouse_id, item_id, batch_code_key
+                    WITH stock_slots AS (
+                      SELECT
+                        sl.warehouse_id,
+                        sl.item_id,
+                        sl.lot_id,
+                        sl.lot_id_key,
+                        lo.lot_code AS batch_code,
+                        COALESCE(lo.lot_code, '__NULL_BATCH__') AS batch_code_key,
+                        sl.qty AS stock_qty
+                      FROM stocks_lot sl
+                      LEFT JOIN lots lo ON lo.id = sl.lot_id
+                    ),
+                    ledger_sum AS (
+                      SELECT
+                        warehouse_id,
+                        item_id,
+                        lot_id_key,
+                        batch_code_key,
+                        COALESCE(SUM(delta), 0) AS sum_delta
+                      FROM stock_ledger
+                      GROUP BY warehouse_id, item_id, lot_id_key, batch_code_key
                     )
                     SELECT
                       s.warehouse_id,
                       s.item_id,
+                      s.lot_id,
+                      s.lot_id_key,
                       s.batch_code,
                       s.batch_code_key,
-                      s.qty AS stock_qty,
+                      s.stock_qty,
                       COALESCE(l.sum_delta, 0) AS ledger_qty,
-                      (s.qty - COALESCE(l.sum_delta, 0)) AS diff
-                    FROM stocks s
+                      (s.stock_qty - COALESCE(l.sum_delta, 0)) AS diff
+                    FROM stock_slots s
                     LEFT JOIN ledger_sum l
                       ON l.warehouse_id   = s.warehouse_id
                      AND l.item_id        = s.item_id
+                     AND l.lot_id_key     = s.lot_id_key
                      AND l.batch_code_key = s.batch_code_key
-                    WHERE (s.qty - COALESCE(l.sum_delta, 0)) <> 0
-                    ORDER BY ABS(s.qty - COALESCE(l.sum_delta, 0)) DESC
+                    WHERE (s.stock_qty - COALESCE(l.sum_delta, 0)) <> 0
+                    ORDER BY ABS(s.stock_qty - COALESCE(l.sum_delta, 0)) DESC
                     """
                 )
             )
@@ -96,14 +113,17 @@ async def main() -> None:
         for r in rows:
             w = int(r["warehouse_id"])
             i = int(r["item_id"])
-            bc = _norm_bc(r["batch_code"])
-            ck = str(r["batch_code_key"] or _batch_key(bc))
+            lot_id = r.get("lot_id")
+            lot_id_int = int(lot_id) if lot_id is not None else None
+            lk = int(r["lot_id_key"])
+            bc = _norm_bc(r.get("batch_code"))
+            ck = str(r.get("batch_code_key") or _batch_key(bc))
 
             stock_qty = int(r["stock_qty"])
             diff = int(r["diff"])
 
-            # 对每个 key 唯一：ref 使用 batch_code_key，避免 None 字符串污染
-            ref = f"{OPEN_REF_PREFIX}{w}:{i}:{ck}"
+            # 对每个 key 唯一：ref 使用 (lot_id_key, batch_code_key)，避免 None 字符串污染
+            ref = f"{OPEN_REF_PREFIX}{w}:{i}:{lk}:{ck}"
 
             exists = (
                 await session.execute(
@@ -132,12 +152,14 @@ async def main() -> None:
                       reason, sub_reason, after_qty, delta,
                       occurred_at, ref, ref_line,
                       item_id, warehouse_id, batch_code,
+                      lot_id,
                       created_at
                     )
                     VALUES (
                       :reason, :sub_reason, :after, :delta,
                       :occurred_at, :ref, 1,
                       :item_id, :warehouse_id, :batch_code,
+                      :lot_id,
                       NOW()
                     )
                     """
@@ -151,7 +173,8 @@ async def main() -> None:
                     "ref": ref,
                     "item_id": i,
                     "warehouse_id": w,
-                    "batch_code": bc,  # ✅ may be NULL
+                    "batch_code": bc,  # may be NULL
+                    "lot_id": lot_id_int,  # may be NULL (lot_id_key=0)
                 },
             )
             inserted += 1

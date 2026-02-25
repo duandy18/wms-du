@@ -69,6 +69,48 @@ async def create_doc(
     return await get_with_lines(session, doc.id)
 
 
+async def _resolve_supplier_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+) -> Optional[int]:
+    """
+    Phase 4C：
+    - 显式 batch_code 将逐步演进为 SUPPLIER lot_code（lot-world）
+    - 但测试/历史造数可能只写了 stocks（batch-world）而未创建 lots
+    - 因此这里返回 Optional[int]：
+        * 找到 lot -> 返回 id（走 lot-world 扣减）
+        * 找不到 -> 返回 None（上层 fallback 到 batch-world 扣减）
+    """
+    code = (lot_code or "").strip()
+    if not code:
+        raise ValueError("lot_code 不能为空")
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :c
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "c": str(code)},
+        )
+    ).first()
+
+    if not row:
+        return None
+
+    return int(row[0])
+
+
 async def fefo_deduct_internal(
     session: AsyncSession,
     *,
@@ -80,7 +122,12 @@ async def fefo_deduct_internal(
     base_ref_line: int,
     trace_id: Optional[str],
 ) -> None:
-    remain = total_qty
+    """
+    Phase 4C：internal_outbound FEFO 扣减切到 lot-world：
+    - 选槽：stocks_lot + lots（expiry_date ASC, lot_id ASC）
+    - 扣减：StockService.adjust_lot（写 stocks_lot + ledger(lot_id)；可 shadow 写 stocks）
+    """
+    remain = int(total_qty)
     idx = 0
     now = datetime.now(UTC)
 
@@ -89,43 +136,41 @@ async def fefo_deduct_internal(
             await session.execute(
                 text(
                     """
-                    SELECT s.batch_code, s.qty
-                      FROM stocks s
-                      LEFT JOIN batches b
-                        ON b.item_id      = s.item_id
-                       AND b.warehouse_id = s.warehouse_id
-                       AND b.batch_code IS NOT DISTINCT FROM s.batch_code
+                    SELECT s.lot_id, s.qty
+                      FROM stocks_lot s
+                      LEFT JOIN lots lo ON lo.id = s.lot_id
                      WHERE s.item_id = :i
                        AND s.warehouse_id = :w
                        AND s.qty > 0
-                     ORDER BY b.expiry_date ASC NULLS LAST, s.id ASC
+                     ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id_key ASC
                      LIMIT 1
                     """
                 ),
-                {"i": item_id, "w": int(warehouse_id)},
+                {"i": int(item_id), "w": int(warehouse_id)},
             )
         ).first()
 
         if not row:
             raise ValueError(f"内部出库 FEFO 扣减失败：库存不足 item_id={item_id}, remain={remain}")
 
-        # ✅ 关键：batch_code 允许为 None（无批次槽位），绝不能 str(None) 变成 'None'
-        batch_code = row[0]
-        on_hand = int(row[1])
+        lot_id = row[0]
+        on_hand = int(row[1] or 0)
         take = min(remain, on_hand)
         idx += 1
 
-        await stock_svc.adjust(
+        await stock_svc.adjust_lot(
             session=session,
-            item_id=item_id,
-            warehouse_id=warehouse_id,
-            delta=-take,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_id=(int(lot_id) if lot_id is not None else None),
+            delta=-int(take),
             reason="INTERNAL_OUT",
-            ref=ref,
-            ref_line=base_ref_line * 100 + idx,
+            ref=str(ref),
+            ref_line=int(base_ref_line) * 100 + int(idx),
             occurred_at=now,
-            batch_code=batch_code,
             trace_id=trace_id,
+            batch_code=None,
+            meta={"sub_reason": "INT_OUT_FEFO"},
         )
 
         remain -= take
@@ -162,27 +207,52 @@ async def confirm(
 
         if line.batch_code:
             bc = str(line.batch_code).strip()
-            await stock_svc.adjust(
-                session=session,
-                item_id=line.item_id,
-                warehouse_id=doc.warehouse_id,
-                delta=-qty,
-                reason="INTERNAL_OUT",
-                ref=ref,
-                ref_line=line.line_no,
-                occurred_at=now,
-                batch_code=bc or None,
-                trace_id=trace_id,
+            lot_id = await _resolve_supplier_lot_id_by_lot_code(
+                session,
+                warehouse_id=int(doc.warehouse_id),
+                item_id=int(line.item_id),
+                lot_code=bc,
             )
+
+            if lot_id is not None:
+                await stock_svc.adjust_lot(
+                    session=session,
+                    item_id=int(line.item_id),
+                    warehouse_id=int(doc.warehouse_id),
+                    lot_id=int(lot_id),
+                    delta=-int(qty),
+                    reason="INTERNAL_OUT",
+                    ref=str(ref),
+                    ref_line=int(line.line_no),
+                    occurred_at=now,
+                    trace_id=trace_id,
+                    batch_code=bc,
+                    meta={"sub_reason": "INT_OUT_EXPL"},
+                )
+            else:
+                # ✅ fallback：lot 不存在，回退 batch-world（sub_reason 必须短 <=32）
+                await stock_svc.adjust(
+                    session=session,
+                    item_id=int(line.item_id),
+                    warehouse_id=int(doc.warehouse_id),
+                    delta=-int(qty),
+                    reason="INTERNAL_OUT",
+                    ref=str(ref),
+                    ref_line=int(line.line_no),
+                    occurred_at=now,
+                    batch_code=(bc or None),
+                    trace_id=trace_id,
+                    meta={"sub_reason": "INT_OUT_FB"},
+                )
         else:
             await fefo_deduct_internal(
                 session=session,
                 stock_svc=stock_svc,
-                warehouse_id=doc.warehouse_id,
-                item_id=line.item_id,
-                total_qty=qty,
-                ref=ref,
-                base_ref_line=line.line_no,
+                warehouse_id=int(doc.warehouse_id),
+                item_id=int(line.item_id),
+                total_qty=int(qty),
+                ref=str(ref),
+                base_ref_line=int(line.line_no),
                 trace_id=trace_id,
             )
 

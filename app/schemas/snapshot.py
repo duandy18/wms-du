@@ -9,6 +9,7 @@ class _Base(BaseModel):
     """
     snapshot 相关模型的通用基类。
     """
+
     model_config = ConfigDict(
         from_attributes=True,
         extra="ignore",
@@ -21,7 +22,7 @@ class TrendPoint(_Base):
     库存趋势图数据点（按日聚合）。
 
     ✅ Stage C.2：对外契约统一使用 qty
-    - qty            : 当日库存事实（与 stocks.qty / stock_snapshots.qty 语义一致）
+    - qty            : 当日库存事实（与 stocks_lot.qty / stock_snapshots.qty 语义一致）
     - qty_available  : 可用量（当前阶段等同 qty，后续可引入分配逻辑）
     """
 

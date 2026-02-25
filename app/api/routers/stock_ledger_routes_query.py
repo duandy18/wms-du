@@ -9,20 +9,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.routers.stock_ledger_helpers import (
+    build_base_ids_stmt,
+    infer_movement_type,
+    normalize_time_range,
+)
 from app.db.session import get_session
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import (
     LedgerEnums,
     LedgerList,
-    LedgerRow,
     LedgerQuery,
+    LedgerRow,
     ReasonCanon,
     SubReason,
-)
-from app.api.routers.stock_ledger_helpers import (
-    build_base_ids_stmt,
-    infer_movement_type,
-    normalize_time_range,
 )
 
 UTC = timezone.utc
@@ -113,6 +113,7 @@ def register(router: APIRouter) -> None:
                     item_name=item_name_map.get(int(r.item_id)) if r.item_id is not None else None,
                     warehouse_id=r.warehouse_id,
                     batch_code=r.batch_code,
+                    lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,
                     movement_type=infer_movement_type(r.reason),
                 )

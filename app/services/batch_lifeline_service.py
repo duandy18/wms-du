@@ -16,9 +16,9 @@ class BatchLifelineService:
     批次生命周期：
     inbound → adjust → pick → ship → count → ledger → stocks/snapshot
 
-    ✅ 主线 B：统一维度使用 batch_code_key（COALESCE(batch_code,'__NULL_BATCH__')）
-    - 允许 batch_code 为 NULL（无批次槽位）
-    - 禁止 'None' 字符串回潮（入口归一）
+    Phase 4E（真收口）：
+    - 主读：stocks_lot（lot-world，展示码 lots.lot_code 对齐 batch_code）
+    - 禁止读取 legacy stocks（不做 shadow fallback，不允许双余额源）
     """
 
     @staticmethod
@@ -32,11 +32,11 @@ class BatchLifelineService:
         norm_bc = normalize_optional_batch_code(batch_code)
         batch_code_key = _NULL_BATCH_KEY if norm_bc is None else norm_bc
 
-        base = {
-            "warehouse_id": warehouse_id,
-            "item_id": item_id,
+        base: Dict[str, Any] = {
+            "warehouse_id": int(warehouse_id),
+            "item_id": int(item_id),
             "batch_code": norm_bc,
-            "batch_code_key": batch_code_key,
+            "batch_code_key": str(batch_code_key),
         }
 
         # ledger timeline（按 batch_code_key 维度对齐 NULL 语义）
@@ -48,24 +48,31 @@ class BatchLifelineService:
                 FROM stock_ledger
                 WHERE warehouse_id=:w AND item_id=:i AND batch_code_key=:ck
                 ORDER BY occurred_at ASC, id ASC
-            """
+                """
             ),
             {"w": int(warehouse_id), "i": int(item_id), "ck": str(batch_code_key)},
         )
         base["ledger"] = [dict(r) for r in rs.mappings().all()]
 
-        # current stock（按 batch_code_key 维度对齐 NULL 语义）
+        # current stock：主读 stocks_lot（lot_code==batch_code）
         rs = await session.execute(
             text(
                 """
-                SELECT qty
-                FROM stocks
-                WHERE warehouse_id=:w AND item_id=:i AND batch_code_key=:ck
-            """
+                SELECT COALESCE(SUM(s.qty), 0) AS qty, COUNT(*) AS n
+                FROM stocks_lot s
+                LEFT JOIN lots lo ON lo.id = s.lot_id
+                WHERE s.warehouse_id=:w
+                  AND s.item_id=:i
+                  AND lo.lot_code IS NOT DISTINCT FROM :c
+                """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "ck": str(batch_code_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "c": norm_bc},
         )
-        row = rs.mappings().first()
-        base["current_stock"] = int(row["qty"]) if row else 0
+        r = rs.mappings().first()
+        if r and int(r["n"] or 0) > 0:
+            base["current_stock"] = int(r["qty"] or 0)
+        else:
+            # Phase 4E：不允许 fallback 到 legacy stocks；缺失即视为 0
+            base["current_stock"] = 0
 
         return base

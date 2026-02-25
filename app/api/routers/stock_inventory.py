@@ -50,6 +50,11 @@ async def stock_recount(
 ) -> Dict[str, Any]:
     """
     运维盘点：把 item@warehouse@batch_code 的 qty 校正为 actual。
+
+    Phase 4E 真收口：
+    - 禁止读取 legacy stocks
+    - current 余额统一来自 stocks_lot
+    - batch_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM
     """
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
     occurred_at = datetime.now(timezone.utc)
@@ -66,11 +71,13 @@ async def stock_recount(
         row = await session.execute(
             text(
                 """
-                SELECT COALESCE(SUM(qty), 0) AS on_hand
-                  FROM stocks
-                 WHERE item_id=:i
-                   AND warehouse_id=:w
-                   AND batch_code IS NOT DISTINCT FROM :c
+                SELECT COALESCE(SUM(s.qty), 0) AS on_hand
+                  FROM stocks_lot s
+                  LEFT JOIN lots lo
+                    ON lo.id = s.lot_id
+                 WHERE s.item_id=:i
+                   AND s.warehouse_id=:w
+                   AND lo.lot_code IS NOT DISTINCT FROM :c
                 """
             ),
             {"i": int(req.item_id), "w": int(req.warehouse_id), "c": req.batch_code},

@@ -21,11 +21,11 @@ class _Base(BaseModel):
 # ========= SnapshotPage：inventory 列表（事实切片行） =========
 class InventoryRow(_Base):
     """
-    ✅ Phase 2：事实口径（不可被破坏）
+    ✅ Phase 4E：事实口径（不可被破坏）
 
     每一行都是一个库存事实切片：
-    - warehouse_id + item_id + batch_code
-    - qty 为该切片在库数量（stocks.qty）
+    - warehouse_id + item_id + batch_code（batch_code 为展示码：lots.lot_code，可为 NULL）
+    - qty 为该切片在库数量（来自 stocks_lot.qty 的聚合口径）
     """
 
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
@@ -43,9 +43,9 @@ class InventoryRow(_Base):
     warehouse_id: Annotated[int, Field(ge=1, description="仓库 ID")]
     batch_code: Optional[str] = Field(default=None, description="批次编码（可为空，前端展示 NO-BATCH）")
 
-    qty: Annotated[int, Field(description="该切片数量（来自 stocks.qty）")]
+    qty: Annotated[int, Field(description="该切片数量（来自 stocks_lot.qty）")]
 
-    expiry_date: date | None = Field(default=None, description="该批次到期日（来自 batches.expiry_date）")
+    expiry_date: date | None = Field(default=None, description="该批次到期日（来自 lots.expiry_date）")
     near_expiry: bool = Field(default=False, description="该批次是否临期（未来 30 天内到期）")
     days_to_expiry: Optional[int] = Field(
         default=None, description="到期剩余天数（expiry_date - today；后端算，前端不推导）"

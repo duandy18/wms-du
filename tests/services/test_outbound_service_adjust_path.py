@@ -9,24 +9,31 @@ from app.services.outbound_service import OutboundService
 
 async def _pick_one_stock_slot(session: AsyncSession):
     """
-    从 stocks 中挑一个 (item_id, warehouse_id, batch_code, sum_qty)。
-    强护栏下可能存在 batch_code=NULL 的真实槽位，因此不再排除 NULL。
+    从 stocks_lot 中挑一个 (item_id, warehouse_id, lot_code, sum_qty)。
+
+    - lot_code 来自 lots.lot_code（可能为 NULL：lot_id=NULL 槽位）
+    - 只选 qty > 0 的槽位
     """
     row = await session.execute(
         text(
             """
-            SELECT item_id, warehouse_id, batch_code, SUM(qty) AS qty
-            FROM stocks
-            WHERE qty > 0
-            GROUP BY item_id, warehouse_id, batch_code
-            ORDER BY item_id, warehouse_id, batch_code NULLS FIRST
+            SELECT
+                sl.item_id,
+                sl.warehouse_id,
+                lo.lot_code AS batch_code,
+                SUM(sl.qty) AS qty
+            FROM stocks_lot sl
+            LEFT JOIN lots lo ON lo.id = sl.lot_id
+            WHERE sl.qty > 0
+            GROUP BY sl.item_id, sl.warehouse_id, lo.lot_code
+            ORDER BY sl.item_id, sl.warehouse_id, lo.lot_code NULLS FIRST
             LIMIT 1
             """
         )
     )
     r = row.first()
     if not r:
-        pytest.skip("当前基线中没有 qty>0 的 stocks 记录")
+        pytest.skip("当前基线中没有 qty>0 的 stocks_lot 记录")
     return int(r[0]), int(r[1]), r[2], int(r[3])
 
 
@@ -71,7 +78,7 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM :batch_code
+              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {
@@ -93,7 +100,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     """
     item_id, warehouse_id, batch_code, qty_sum = await _pick_one_stock_slot(session)
     if qty_sum < 3:
-        pytest.skip(f"库存太少 qty_sum={qty_sum}, 不适合测试")
+        pytest.skip("库存太少 qty_sum={qty_sum}, 不适合测试")
 
     order_id = "OUT-TEST-2"
     lines = [
@@ -116,7 +123,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM :batch_code
+              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {
@@ -143,7 +150,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
               AND reason = 'OUTBOUND_SHIP'
               AND item_id = :item_id
               AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM :batch_code
+              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {

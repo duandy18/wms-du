@@ -4,20 +4,17 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
-
-from app.api.batch_code_contract import normalize_optional_batch_code
-from app.models.batch import Batch
 
 
 class BatchService:
     """
     批次服务（同步 Session）
 
-    ✅ 当前世界观（与 DB 对齐）：
-    - 批次唯一维度：(item_id, warehouse_id, batch_code)
-    - batches.batch_code NOT NULL（因此 norm_code=None 时，本服务不创建批次）
+    Phase 4E（真收口）：
+    - 禁止读取/写入 legacy 批次表
+    - 批次 canonical 已迁移到 lots（AsyncSession 路径）
+    - 同步 Session 下的 BatchService 作为 legacy API，必须禁用以避免暗中回退
     """
 
     def __init__(self, db_session: Session) -> None:
@@ -31,36 +28,16 @@ class BatchService:
         batch_code: Optional[str] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
-    ) -> Batch:
-        norm_code = normalize_optional_batch_code(batch_code)
-        if norm_code is None:
-            raise ValueError("batches.batch_code is NOT NULL; batch_code must be provided for BatchService.ensure_batch")
-
-        q = self.db.query(Batch).filter(
-            Batch.item_id == item_id,
-            Batch.warehouse_id == warehouse_id,
-            Batch.batch_code == norm_code,
+    ):
+        _ = item_id
+        _ = warehouse_id
+        _ = batch_code
+        _ = production_date
+        _ = expiry_date
+        raise RuntimeError(
+            "Phase 4E: BatchService(legacy batch API) 已禁用。"
+            "请改用 lots（lot-world）路径：在 AsyncSession 执行链路中 ensure SUPPLIER lot，并使用 stocks_lot 作为余额源。"
         )
-
-        row: Optional[Batch] = q.limit(1).first()
-        if row:
-            return row
-
-        b = Batch(
-            item_id=item_id,
-            warehouse_id=warehouse_id,
-            batch_code=norm_code,
-            production_date=production_date,
-            expiry_date=expiry_date,
-        )
-        # qty 字段在很多环境已废弃/不存在，别硬写
-        if hasattr(Batch, "qty"):
-            setattr(b, "qty", 0)
-
-        self.db.add(b)
-        self.db.flush()
-        self.db.refresh(b)
-        return b
 
     def list_fefo(
         self,
@@ -68,17 +45,14 @@ class BatchService:
         item_id: int,
         warehouse_id: Optional[int] = None,
         include_zero: bool = False,
-    ) -> list[Batch]:
-        conds = [Batch.item_id == item_id]
-        if warehouse_id is not None:
-            conds.append(Batch.warehouse_id == warehouse_id)
-
-        q = self.db.query(Batch).filter(and_(*conds)).order_by(Batch.expiry_date.asc().nulls_last(), Batch.id.asc())
-        # include_zero 仅在 Batch 有 qty 且你仍维护它时有意义
-        if not include_zero and hasattr(Batch, "qty"):
-            q = q.filter((Batch.qty.isnot(None)) & (Batch.qty > 0))
-
-        return q.all()
+    ):
+        _ = item_id
+        _ = warehouse_id
+        _ = include_zero
+        raise RuntimeError(
+            "Phase 4E: BatchService.list_fefo(legacy batch API) 已禁用。"
+            "请改用 lots + stocks_lot（expiry_date ASC + qty>0）。"
+        )
 
     def latest_expired(
         self,
@@ -86,19 +60,11 @@ class BatchService:
         item_id: int,
         on_day: Optional[date] = None,
         warehouse_id: Optional[int] = None,
-    ) -> Optional[Batch]:
-        today = on_day or date.today()
-        conds = [
-            Batch.item_id == item_id,
-            Batch.expiry_date.isnot(None),
-            Batch.expiry_date < today,
-        ]
-        if warehouse_id is not None:
-            conds.append(Batch.warehouse_id == warehouse_id)
-
-        q = self.db.query(Batch).filter(and_(*conds)).order_by(Batch.id.desc())
-
-        if hasattr(Batch, "qty"):
-            q = q.filter((Batch.qty.isnot(None)) & (Batch.qty > 0))
-
-        return q.first()
+    ):
+        _ = item_id
+        _ = on_day
+        _ = warehouse_id
+        raise RuntimeError(
+            "Phase 4E: BatchService.latest_expired(legacy batch API) 已禁用。"
+            "请改用 lots（expiry_date）+ stocks_lot（qty>0）。"
+        )

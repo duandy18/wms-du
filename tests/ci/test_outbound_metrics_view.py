@@ -16,32 +16,12 @@ async def test_metrics_view_basic(session):
     shop_id = "METRICS-SHOP"
     ref = f"ORD:{platform}:{shop_id}:UT-METRICS-001"
 
-    # 1) 保障依赖数据存在：items → batches → stocks
+    # 1) 保障依赖数据存在：items（Phase 4E：lot-world（lots + stocks_lot）为真相）
     await session.execute(
         text(
             """
         INSERT INTO items (id, sku, name)
         VALUES (1001, 'UT-1001', 'UT ITEM')
-        ON CONFLICT (id) DO NOTHING
-    """
-        )
-    )
-    # 先造一个批次
-    await session.execute(
-        text(
-            """
-        INSERT INTO batches (id, item_id, warehouse_id, batch_code)
-        VALUES (1, 1001, 1, 'AUTO-1001-1')
-        ON CONFLICT (id) DO NOTHING
-    """
-        )
-    )
-    # 再造 stocks，引用上面的 (item_id, warehouse_id, batch_code)
-    await session.execute(
-        text(
-            """
-        INSERT INTO stocks (id, item_id, warehouse_id, batch_code, qty)
-        VALUES (1, 1001, 1, 'AUTO-1001-1', 0)
         ON CONFLICT (id) DO NOTHING
     """
         )
@@ -74,7 +54,7 @@ async def test_metrics_view_basic(session):
     #    occurred_at = now()
     #    warehouse_id = 1
     #    item_id = 1001
-    #    batch_code = 'AUTO-1001-1'
+    #    batch_code = 'AUTO-1001-1'（Phase 4E：该字段承载 lot_code 展示码，不再需要 legacy batches/stocks 作为前置）
     #    after_qty 随便给个合理值（例如 -3），metrics 视图不依赖它
     await session.execute(
         text(

@@ -52,7 +52,7 @@ def build_receipt_summary(r: InboundReceipt) -> ReceiptSummaryOut:
     )
 
 
-def sort_batches(xs: List[WorkbenchBatchRowOut]) -> None:
+def sort_batch_rows(xs: List[WorkbenchBatchRowOut]) -> None:
     xs.sort(
         key=lambda x: (
             (getattr(x, "batch_code", None) or ""),
@@ -62,14 +62,16 @@ def sort_batches(xs: List[WorkbenchBatchRowOut]) -> None:
     )
 
 
-def merge_batches(
+def merge_batch_rows(
     *,
     confirmed: List[WorkbenchBatchRowOut],
     draft: List[WorkbenchBatchRowOut],
 ) -> List[WorkbenchBatchRowOut]:
     """
     合并 confirmed + draft，按 (batch_code, production_date, expiry_date) 聚合 qty_received。
-    注意：production_date/expiry_date 必须为 canonical（来自 batches），不能用 receipt_line 快照。
+
+    注意：
+    - production_date/expiry_date 必须为 canonical（来自 lots），不能用 receipt_line 快照。
     """
     merged: Dict[Tuple[Optional[str], Optional[object], Optional[object]], int] = {}
 
@@ -90,7 +92,7 @@ def merge_batches(
         )
         for k, q in merged.items()
     ]
-    sort_batches(out)
+    sort_batch_rows(out)
     return out
 
 

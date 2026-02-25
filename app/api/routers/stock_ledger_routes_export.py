@@ -27,7 +27,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
 
     列：
     id, delta, reason, sub_reason, ref, ref_line, occurred_at, created_at, after_qty,
-    item_id, warehouse_id, batch_code, batch_code_key, trace_id
+    item_id, warehouse_id, batch_code, batch_code_key, lot_id, trace_id
     """
     sio = StringIO()
     writer = csv.writer(sio)
@@ -47,6 +47,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
             "warehouse_id",
             "batch_code",
             "batch_code_key",
+            "lot_id",
             "trace_id",
         ]
     )
@@ -67,6 +68,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger]) -> tuple[BytesIO,
                 r.warehouse_id,
                 r.batch_code,
                 r.batch_code_key,
+                getattr(r, "lot_id", None),
                 r.trace_id or "",
             ]
         )

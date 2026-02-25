@@ -80,25 +80,32 @@ async def ensure_batch_consistent(
     expiry_date: Optional[date],
 ) -> None:
     """
-    canonical（batches）一致性硬守护（Phase 1A 仍沿用 batches 作为 canonical）：
+    canonical（lots）一致性硬守护（Phase 4E 真收口）：
 
-    - 若 canonical 不存在：创建 batches 记录（以本次写入为准）
-    - 若 canonical 已存在：production/expiry 必须一致，否则 409
+    - canonical 不存在：创建 SUPPLIER lot（以本次写入为准）
+    - canonical 已存在：production/expiry 必须一致，否则 409
 
-    注意：Phase 1A 只在 REQUIRED 且 production/expiry 都齐全时调用，避免写入“半日期事实”。
+    注意：
+    - 仅在 REQUIRED 且 production/expiry 都齐全时调用
+    - 批次主档已统一迁移至 lots（lot-world）
     """
+    code = str(batch_code).strip()
+    if not code:
+        raise ValueError("batch_code empty")
+
     row = await session.execute(
         text(
             """
             SELECT production_date, expiry_date
-              FROM batches
+              FROM lots
              WHERE warehouse_id = :wid
-               AND item_id = :item_id
-               AND batch_code = :batch_code
+               AND item_id      = :item_id
+               AND lot_code_source = 'SUPPLIER'
+               AND lot_code     = :code
              LIMIT 1
             """
         ),
-        {"wid": int(warehouse_id), "item_id": int(item_id), "batch_code": str(batch_code)},
+        {"wid": int(warehouse_id), "item_id": int(item_id), "code": code},
     )
     existing = row.first()
 
@@ -106,14 +113,27 @@ async def ensure_batch_consistent(
         await session.execute(
             text(
                 """
-                INSERT INTO batches (warehouse_id, item_id, batch_code, production_date, expiry_date)
-                VALUES (:wid, :item_id, :batch_code, :pd, :ed)
+                INSERT INTO lots (
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    production_date,
+                    expiry_date,
+                    expiry_source
+                )
+                VALUES (:wid, :item_id, 'SUPPLIER', :code, :pd, :ed, 'EXPLICIT')
+                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+                WHERE lot_code_source = 'SUPPLIER'
+                DO UPDATE SET
+                    production_date = lots.production_date,
+                    expiry_date     = lots.expiry_date
                 """
             ),
             {
                 "wid": int(warehouse_id),
                 "item_id": int(item_id),
-                "batch_code": str(batch_code),
+                "code": code,
                 "pd": production_date,
                 "ed": expiry_date,
             },
@@ -126,8 +146,8 @@ async def ensure_batch_consistent(
         raise HTTPException(
             status_code=409,
             detail=(
-                "批次 canonical 不一致：batches 与本次写入的 snapshot 日期冲突。"
-                f" (warehouse_id={int(warehouse_id)}, item_id={int(item_id)}, batch_code={str(batch_code)}, "
+                "批次 canonical 不一致：lots 与本次写入的日期冲突。"
+                f" (warehouse_id={int(warehouse_id)}, item_id={int(item_id)}, batch_code={code}, "
                 f"canonical.production_date={existing_pd}, canonical.expiry_date={existing_ed}, "
                 f"snapshot.production_date={production_date}, snapshot.expiry_date={expiry_date})"
             ),
