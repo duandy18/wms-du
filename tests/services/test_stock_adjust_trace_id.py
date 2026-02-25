@@ -23,12 +23,12 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
     svc = StockService()
     now = datetime.now(UTC)
 
-    # 1) 取一个已经存在的 item_id，避免触发 batches.item_id 外键错误
+    # 1) 取一个已经存在的 item_id，避免触发 items 外键错误（Phase 4E：批次主档已迁移到 lots）
     row = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
     item_id = row.scalar_one()
     assert item_id is not None
 
-    # 2) 入库：让 adjust 帮我们建 batch + stocks + ledger
+    # 2) 入库：让 adjust 写入 lot-world：lots + stocks_lot + ledger
     ref = "UT-ADJUST-1"
     trace_id = "TR-UNIT-1"
 

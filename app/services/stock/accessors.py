@@ -3,30 +3,34 @@ from __future__ import annotations
 
 from sqlalchemy import literal
 
-from app.models.batch import Batch
-from app.models.stock import Stock
+
+def _phase4e_legacy_disabled(name: str) -> None:
+    raise RuntimeError(
+        f"Phase 4E: legacy stocks accessor '{name}' 已禁用。"
+        "禁止读取 legacy stocks 或 legacy 批次表；请改用 lot-world（stocks_lot + lots）口径。"
+    )
 
 
 def stock_qty_col():
-    col = getattr(Stock, "qty", None)
-    if col is None:
-        raise AssertionError("stocks 缺少 qty 列")
-    return col
+    """
+    旧时代：返回 Stock.qty 列（stocks 世界）。
+    Phase 4E：禁用（禁止任何执行路径触碰 legacy stocks）。
+    """
+    _phase4e_legacy_disabled("stock_qty_col")
 
 
 def batch_qty_col():
     """
-    兼容：若 Batch 没有 qty 列，则返回常量 0（仅用于查询/表达式场景）。
-    注意：INSERT/UPDATE 时请先判断 hasattr(Batch, 'qty') 再写入。
+    旧时代：返回批次数量列（表达式场景）。
+    Phase 4E：禁用（批次实体已迁移到 lots，数量来自 stocks_lot）。
     """
-    col = getattr(Batch, "qty", None)
-    if col is None:
-        return literal(0).label("qty")
-    return col
+    _phase4e_legacy_disabled("batch_qty_col")
+    return literal(0).label("qty")
 
 
 def batch_code_attr():
-    col = getattr(Batch, "batch_code", None)
-    if col is None:
-        raise AssertionError("batches 缺少 batch_code 列")
-    return col
+    """
+    旧时代：返回批次编码属性。
+    Phase 4E：禁用（批次 canonical 已迁移到 lots）。
+    """
+    _phase4e_legacy_disabled("batch_code_attr")

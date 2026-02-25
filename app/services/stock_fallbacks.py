@@ -72,29 +72,32 @@ class FefoAllocator:
         warehouse_id: Optional[int],
         allow_expired: bool,
     ) -> List[dict]:
-        params = {"item_id": item_id}
+        """
+        Phase 4D：
+        - 只读 lot-world：stocks_lot + lots
+        - 禁止回退 legacy stocks（避免口径回退，避免 rename/drop stocks 时执行期炸裂）
+        """
+        params: dict[str, object] = {"item_id": int(item_id)}
 
         sql = """
             SELECT
-                s.id          AS stock_id,
-                s.batch_code  AS batch_code,
+                COALESCE(s.lot_id, 0) AS stock_id,
+                l.lot_code  AS batch_code,
                 GREATEST(COALESCE(s.qty, 0), 0) AS avail,
-                b.expiry_date AS expiry_date
-            FROM   stocks s
-            LEFT   JOIN batches b
-              ON  b.item_id      = s.item_id
-             AND b.warehouse_id  = s.warehouse_id
-             AND b.batch_code IS NOT DISTINCT FROM s.batch_code
+                l.expiry_date AS expiry_date
+            FROM   stocks_lot s
+            LEFT   JOIN lots l
+              ON  l.id = s.lot_id
             WHERE  s.item_id = :item_id
               AND  GREATEST(COALESCE(s.qty, 0), 0) > 0
         """
 
         if warehouse_id is not None:
             sql += " AND s.warehouse_id = :warehouse_id"
-            params["warehouse_id"] = warehouse_id
+            params["warehouse_id"] = int(warehouse_id)
 
         if not allow_expired:
-            sql += " AND (b.expiry_date IS NULL OR b.expiry_date > NOW())"
+            sql += " AND (l.expiry_date IS NULL OR l.expiry_date > NOW())"
 
         res: Result = await session.execute(text(sql), params)
         return [dict(r._mapping) for r in res]
@@ -111,8 +114,8 @@ class FefoAllocator:
         allow = self.allow_expired if allow_expired is None else bool(allow_expired)
         rows = await self._fetch_stocks(
             session,
-            item_id=item_id,
+            item_id=int(item_id),
             warehouse_id=warehouse_id,
             allow_expired=allow,
         )
-        return self._plan(self._rank(rows), need_qty)
+        return self._plan(self._rank(rows), int(need_qty))

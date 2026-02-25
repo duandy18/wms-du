@@ -38,7 +38,13 @@ class SnapshotV3Service:
             {"at": at},
         )
         summary = (
-            (await session.execute(text("SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty FROM snapshot_cut_result")))
+            (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS slots, COALESCE(SUM(qty),0) AS total_qty FROM snapshot_cut_result"
+                    )
+                )
+            )
             .mappings()
             .first()
         )
@@ -108,21 +114,22 @@ class SnapshotV3Service:
         *,
         snapshot_date: datetime,
     ) -> Dict[str, Any]:
+        """
+        Phase 4E 审计对账（真收口）：
+
+        - ledger_qty：来自 stock_ledger（<= cut）
+        - snapshot_qty：来自 stock_snapshots（当日）
+        - stocks_lot_qty：来自 stocks_lot（主余额源，lot-world）
+
+        规则：
+        - 不允许读取 legacy stocks
+        - diff 以 ledger 为锚，对 snapshot 与 stocks_lot 同时给出差异
+        """
         cut_ts: datetime = snapshot_date
         d: date = snapshot_date.date()
 
         sql = """
-        SELECT
-            x.warehouse_id,
-            x.item_id,
-            x.batch_code,
-            x.batch_code_key,
-            x.ledger_qty,
-            COALESCE(s.qty, 0) AS snapshot_qty,
-            COALESCE(st.qty, 0) AS stock_qty,
-            (x.ledger_qty - COALESCE(s.qty, 0)) AS diff_snapshot,
-            (x.ledger_qty - COALESCE(st.qty, 0)) AS diff_stock
-        FROM (
+        WITH x AS (
             SELECT
                 warehouse_id,
                 item_id,
@@ -132,16 +139,37 @@ class SnapshotV3Service:
             FROM stock_ledger
             WHERE occurred_at <= :cut
             GROUP BY warehouse_id, item_id, batch_code
-        ) AS x
-        LEFT JOIN stock_snapshots s
-            ON s.snapshot_date   = :date
-           AND s.warehouse_id    = x.warehouse_id
-           AND s.item_id         = x.item_id
-           AND s.batch_code_key  = x.batch_code_key
-        LEFT JOIN stocks st
-            ON st.warehouse_id   = x.warehouse_id
-           AND st.item_id        = x.item_id
-           AND st.batch_code_key = x.batch_code_key
+        ),
+        lot_agg AS (
+            SELECT
+                s.warehouse_id,
+                s.item_id,
+                COALESCE(lo.lot_code, '__NULL_BATCH__') AS batch_code_key,
+                COALESCE(SUM(s.qty), 0) AS qty
+            FROM stocks_lot s
+            LEFT JOIN lots lo ON lo.id = s.lot_id
+            GROUP BY 1,2,3
+        )
+        SELECT
+            x.warehouse_id,
+            x.item_id,
+            x.batch_code,
+            x.batch_code_key,
+            x.ledger_qty,
+            COALESCE(sn.qty, 0) AS snapshot_qty,
+            COALESCE(la.qty, 0) AS stocks_lot_qty,
+            (x.ledger_qty - COALESCE(sn.qty, 0)) AS diff_snapshot,
+            (x.ledger_qty - COALESCE(la.qty, 0)) AS diff_stocks_lot
+        FROM x
+        LEFT JOIN stock_snapshots sn
+            ON sn.snapshot_date   = :date
+           AND sn.warehouse_id    = x.warehouse_id
+           AND sn.item_id         = x.item_id
+           AND sn.batch_code_key  = x.batch_code_key
+        LEFT JOIN lot_agg la
+            ON la.warehouse_id   = x.warehouse_id
+           AND la.item_id        = x.item_id
+           AND la.batch_code_key = x.batch_code_key
         ORDER BY x.warehouse_id, x.item_id, x.batch_code_key;
         """
 

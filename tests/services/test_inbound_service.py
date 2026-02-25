@@ -2,6 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 测试辅助：按项目实际路径导入
@@ -21,8 +22,11 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     事务边界：造数→commit；读后→commit；业务→begin
     审计契约：入库必须提供 batch_code 且 production_date 或 expiry_date 至少其一
 
-    v2 版本下，库存粒度为 (warehouse_id, item_id, batch_code)，
-    因此这里用 wh 作为唯一的仓库维度；loc 仍然保留给测试工具 ensure_wh_loc_item/qty_by_code 使用。
+    Phase 4D：
+    - 库存真相在 stocks_lot（lot-world），因此本用例改为：
+      * 先创建 SUPPLIER lot（lot_code=code, expiry_date=exp）
+      * 再用 StockService.adjust_lot 入库（写 stocks_lot + ledger(lot_id)）
+      * 最终用 qty_by_code（lot-world 口径）断言 qty=6
     """
     wh, loc, item, code = 1, 1, 5001, "INB-DEMO-BATCH"
 
@@ -34,17 +38,45 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     ref = f"IN-{int(datetime.now(UTC).timestamp())}"
     exp = date.today() + timedelta(days=365)
 
+    # Phase 4D：确保 lot 存在（SUPPLIER：lot_code 必须非空，source_receipt/source_line 必须为 NULL）
+    lot_row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    production_date,
+                    expiry_date,
+                    expiry_source
+                )
+                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, :exp, 'EXPLICIT')
+                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+                WHERE lot_code_source = 'SUPPLIER'
+                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                RETURNING id
+                """
+            ),
+            {"w": int(wh), "i": int(item), "code": str(code), "exp": exp},
+        )
+    ).first()
+    assert lot_row is not None, "failed to ensure lot"
+    lot_id = int(lot_row[0])
+
     await session.commit()  # 防止外层隐式事务
     async with session.begin():
-        _ = await StockService().adjust(
+        _ = await StockService().adjust_lot(
             session=session,
             item_id=item,
-            warehouse_id=wh,  # ✅ v2：以仓库为主维度，不再传 location_id
+            warehouse_id=wh,  # ✅ v2：以仓库为主维度
+            lot_id=lot_id,
             delta=6,
             reason=MovementType.RECEIPT,
             ref=ref,
             occurred_at=datetime.now(UTC),
-            batch_code=code,
+            batch_code=code,  # 展示码（lot_code）
             expiry_date=exp,  # 传有效期（或传 production_date 亦可）
         )
 

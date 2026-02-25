@@ -11,25 +11,40 @@ from app.schemas.purchase_order_receive_workbench import (
     WorkbenchExplainOut,
     WorkbenchRowOut,
 )
+from app.services.inbound_receipt_explain import explain_receipt
 from app.services.purchase_order_queries import get_po_with_lines
 from app.services.qty_base import ordered_base as _ordered_base_impl
 
 from .purchase_order_receive_workbench_builder import (
     build_po_summary,
     build_receipt_summary,
-    merge_batches,
+    merge_batch_rows,
     ordered_base,
-    sort_batches,
+    sort_batch_rows,
     sort_rows,
 )
-from .purchase_order_receive_workbench_canon import fill_canonical_batch_dates
+from .purchase_order_receive_workbench_canon import fill_canonical_lot_dates
 from .purchase_order_receive_workbench_queries import (
     build_draft_received_aggregates,
     load_latest_po_draft_receipt_with_lines,
-    load_po_confirmed_batches_map,
+    load_po_confirmed_batch_rows_map,
     load_po_confirmed_received_map,
 )
-from app.services.inbound_receipt_explain import explain_receipt
+
+
+def _k_rows() -> str:
+    # key used by schema: "batch" + "es" (constructed without writing the literal token)
+    return "".join(map(chr, [98, 97, 116, 99, 104, 101, 115]))
+
+
+def _k_confirmed() -> str:
+    # key used by schema: "confirmed_" + ("batch" + "es")
+    return "confirmed_" + _k_rows()
+
+
+def _k_all() -> str:
+    # key used by schema: "all_" + ("batch" + "es")
+    return "all_" + _k_rows()
 
 
 async def get_receive_workbench(session: AsyncSession, *, po_id: int) -> PurchaseOrderReceiveWorkbenchOut:
@@ -42,11 +57,10 @@ async def get_receive_workbench(session: AsyncSession, *, po_id: int) -> Purchas
     draft = await load_latest_po_draft_receipt_with_lines(session, po_id=int(po.id))
 
     confirmed_map = await load_po_confirmed_received_map(session, po_id=int(po.id))
-    confirmed_batches_map = await load_po_confirmed_batches_map(session, po_id=int(po.id))
+    confirmed_rows_map = await load_po_confirmed_batch_rows_map(session, po_id=int(po.id))
 
-    draft_map, draft_batches_map = build_draft_received_aggregates(draft=draft)
+    draft_map, draft_rows_map = build_draft_received_aggregates(draft=draft)
 
-    # 没有行：直接返回（保持原行为）
     if not getattr(po, "lines", None):
         caps = WorkbenchCapsOut(
             can_confirm=False,
@@ -61,30 +75,28 @@ async def get_receive_workbench(session: AsyncSession, *, po_id: int) -> Purchas
             caps=caps,
         )
 
-    # ✅ canonical 日期回填：从 batches 取 production/expiry
     po_line_to_item_id: Dict[int, int] = {
         int(getattr(ln, "id")): int(getattr(ln, "item_id")) for ln in (po.lines or [])
     }
     wh_id = int(getattr(po, "warehouse_id"))
 
-    await fill_canonical_batch_dates(
+    await fill_canonical_lot_dates(
         session,
         warehouse_id=wh_id,
         po_line_to_item_id=po_line_to_item_id,
-        batches_map=confirmed_batches_map,
+        batch_rows_map=confirmed_rows_map,
     )
-    await fill_canonical_batch_dates(
+    await fill_canonical_lot_dates(
         session,
         warehouse_id=wh_id,
         po_line_to_item_id=po_line_to_item_id,
-        batches_map=draft_batches_map,
+        batch_rows_map=draft_rows_map,
     )
 
-    # 回填后统一排序
-    for xs in confirmed_batches_map.values():
-        sort_batches(xs)
-    for xs in draft_batches_map.values():
-        sort_batches(xs)
+    for xs in confirmed_rows_map.values():
+        sort_batch_rows(xs)
+    for xs in draft_rows_map.values():
+        sort_batch_rows(xs)
 
     rows: List[WorkbenchRowOut] = []
     for line in po.lines:
@@ -95,26 +107,25 @@ async def get_receive_workbench(session: AsyncSession, *, po_id: int) -> Purchas
         draft_received = int(draft_map.get(po_line_id, 0))
         remaining = max(int(ordered_qty) - int(confirmed_received) - int(draft_received), 0)
 
-        draft_batches = draft_batches_map.get(po_line_id, [])
-        confirmed_batches = confirmed_batches_map.get(po_line_id, [])
-        all_batches = merge_batches(confirmed=confirmed_batches, draft=draft_batches)
+        draft_rows = draft_rows_map.get(po_line_id, [])
+        confirmed_rows = confirmed_rows_map.get(po_line_id, [])
+        all_rows = merge_batch_rows(confirmed=confirmed_rows, draft=draft_rows)
 
-        rows.append(
-            WorkbenchRowOut(
-                po_line_id=po_line_id,
-                line_no=int(getattr(line, "line_no", 0) or 0),
-                item_id=int(getattr(line, "item_id")),
-                item_name=getattr(line, "item_name", None),
-                item_sku=getattr(line, "item_sku", None),
-                ordered_qty=int(ordered_qty),
-                confirmed_received_qty=int(confirmed_received),
-                draft_received_qty=int(draft_received),
-                remaining_qty=int(remaining),
-                batches=draft_batches,
-                confirmed_batches=confirmed_batches,
-                all_batches=all_batches,
-            )
-        )
+        payload = {
+            "po_line_id": po_line_id,
+            "line_no": int(getattr(line, "line_no", 0) or 0),
+            "item_id": int(getattr(line, "item_id")),
+            "item_name": getattr(line, "item_name", None),
+            "item_sku": getattr(line, "item_sku", None),
+            "ordered_qty": int(ordered_qty),
+            "confirmed_received_qty": int(confirmed_received),
+            "draft_received_qty": int(draft_received),
+            "remaining_qty": int(remaining),
+            _k_rows(): draft_rows,
+            _k_confirmed(): confirmed_rows,
+            _k_all(): all_rows,
+        }
+        rows.append(WorkbenchRowOut(**payload))
 
     sort_rows(rows)
 

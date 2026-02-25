@@ -130,7 +130,7 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         truncate_sql = _load_truncate_sql()
         await conn.execute(text(truncate_sql))
 
-        # 2) 统一种子（items/barcodes/batches/stocks + shipping + admin + RBAC）
+        # 2) 统一种子（items/barcodes/lots/stocks_lot + shipping + admin + RBAC）
         await seed_in_conn(conn)
 
         # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）

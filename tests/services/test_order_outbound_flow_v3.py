@@ -5,8 +5,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.enums import MovementType
 from app.services.order_service import OrderService
 from app.services.outbound_service import OutboundService
+from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 
@@ -17,21 +19,38 @@ BATCH_CODE: str | None = None
 ORDER_NO = "P3-ORDER-001"
 
 
-async def _read_stocks(session: AsyncSession) -> int:
-    row = (
-        await session.execute(
+async def _read_qty_lot(session: AsyncSession) -> int:
+    if BATCH_CODE is None:
+        val = await session.execute(
             text(
                 """
-                SELECT qty
-                FROM stocks
-                WHERE item_id=:i AND warehouse_id=:w AND batch_code IS NOT DISTINCT FROM :b
-                LIMIT 1
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                   AND lot_id_key = 0
+                 LIMIT 1
                 """
             ),
-            {"i": ITEM_ID, "w": WAREHOUSE_ID, "b": BATCH_CODE},
+            {"i": ITEM_ID, "w": WAREHOUSE_ID},
         )
-    ).first()
-    return int(row[0]) if row else 0
+        return int(val.scalar_one_or_none() or 0)
+
+    val = await session.execute(
+        text(
+            """
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
+            """
+        ),
+        {"i": ITEM_ID, "w": WAREHOUSE_ID, "c": str(BATCH_CODE)},
+    )
+    return int(val.scalar_one_or_none() or 0)
 
 
 async def _sum_ledger(session: AsyncSession) -> int:
@@ -122,9 +141,35 @@ async def _ship_once(session: AsyncSession, qty: int):
     )
 
 
-async def test_outbound_from_baseline_10_to_7(session: AsyncSession):
-    qty0 = await _read_stocks(session)
-    assert qty0 == 10, f"baseline stocks must be 10, got {qty0}"
+async def _ensure_seed_to_10(session: AsyncSession) -> None:
+    """
+    Phase 4E：不再依赖 legacy baseline(stocks)，测试自给自足 seed 到 qty=10（lot-world 余额）。
+    """
+    svc = StockService()
+    before = await _read_qty_lot(session)
+    if before >= 10:
+        return
+
+    need = 10 - before
+    await svc.adjust(
+        session=session,
+        item_id=ITEM_ID,
+        warehouse_id=WAREHOUSE_ID,
+        delta=int(need),
+        reason=MovementType.INBOUND,
+        ref=f"UT-SEED-OUTFLOW-{ITEM_ID}-{WAREHOUSE_ID}-NULL",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+        batch_code=None,
+    )
+    await session.commit()
+
+
+async def test_outbound_from_seed_10_to_7(session: AsyncSession):
+    await _ensure_seed_to_10(session)
+
+    qty0 = await _read_qty_lot(session)
+    assert qty0 == 10, f"seed qty must be 10, got {qty0}"
     led0 = await _sum_ledger(session)
     assert led0 == 0, f"baseline ledger must be 0, got {led0}"
 
@@ -134,8 +179,8 @@ async def test_outbound_from_baseline_10_to_7(session: AsyncSession):
     await _ship_once(session, 3)
     await _ship_once(session, 3)
 
-    qty_now = await _read_stocks(session)
+    qty_now = await _read_qty_lot(session)
     led_now = await _sum_ledger(session)
-    assert qty_now == 7, f"stocks should be 7 after ship, got {qty_now}"
+    assert qty_now == 7, f"qty should be 7 after ship, got {qty_now}"
     assert led_now == -3, f"ledger sum should be -3, got {led_now}"
     assert qty0 + led_now == qty_now, f"qty0({qty0}) + ledger({led_now}) != qty_now({qty_now})"

@@ -4,7 +4,7 @@ from .accessors import batch_code_attr, batch_qty_col, stock_qty_col
 from .ensure import ensure_item
 from .slots import ensure_stock_row, ensure_stock_slot
 from .mutate import bump_stock, bump_stock_by_stock_id, get_current_qty
-from .batches import ensure_batch_full
+from .lots import ensure_batch_full
 
 __all__ = [
     "exec_retry",

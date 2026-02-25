@@ -119,47 +119,55 @@ async def _seed_minimal_order_for_outbound(
     return order_ref, wh_id, item_id, trace_id
 
 
-async def _pick_one_stock_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
+async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
     """
-    从 stocks 中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，返回 batch_code（可能为 NULL）。
-    强护栏下，非批次商品一般是 NULL 槽位。
+    从 lot-world 余额（stocks_lot）中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，
+    返回 lot_code（映射到服务/台账中的 batch_code 字段，可能为 NULL）。
+
+    强护栏下，非批次商品一般是 lot_id_key=0（返回 None 槽位）。
     """
     row = (
         await session.execute(
             text(
                 """
-                SELECT batch_code, qty
-                  FROM stocks
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND qty > 0
-                 ORDER BY id ASC
-                 LIMIT 1
+                SELECT
+                  CASE
+                    WHEN sl.lot_id_key = 0 THEN NULL
+                    ELSE l.lot_code
+                  END AS lot_code,
+                  sl.qty
+                FROM stocks_lot sl
+                LEFT JOIN lots l ON l.id = sl.lot_id
+                WHERE sl.warehouse_id = :w
+                  AND sl.item_id = :i
+                  AND sl.qty > 0
+                ORDER BY sl.id ASC
+                LIMIT 1
                 """
             ),
             {"w": int(warehouse_id), "i": int(item_id)},
         )
     ).first()
     if not row:
-        pytest.skip("no stock slot with qty>0 for item/warehouse in baseline")
+        pytest.skip("no lot slot with qty>0 for item/warehouse in baseline")
     return row[0]
 
 
 @pytest.mark.asyncio
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
-    验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 stocks 槽位一致。
+    验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 lot-world 槽位一致。
 
     这里不关心完整业务流程（soft reserve / audit / platform events），只关心：
     - OutboundService.commit 能在当前 schema 下正常运行；
     - 写出来的 stock_ledger 行：
         * reason = 'OUTBOUND_SHIP'
-        * warehouse_id / item_id / batch_code|NULL 维度正确
+        * warehouse_id / item_id / batch_code|NULL 维度正确（batch_code 字段承载 lot_code 展示码）
         * delta < 0（出库）
     """
     order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 
-    batch_code = await _pick_one_stock_slot_for_item(session, warehouse_id=wh_id, item_id=item_id)
+    batch_code = await _pick_one_lot_slot_for_item(session, warehouse_id=wh_id, item_id=item_id)
     qty_to_ship = 3
 
     svc = OutboundService()

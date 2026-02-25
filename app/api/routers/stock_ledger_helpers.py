@@ -109,6 +109,10 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if q.warehouse_id is not None:
         conditions.append(StockLedger.warehouse_id == q.warehouse_id)
 
+    # Phase 4A-2a: lot 维度过滤（精确）
+    if getattr(q, "lot_id", None) is not None:
+        conditions.append(StockLedger.lot_id == getattr(q, "lot_id"))
+
     # ✅ 主线 A：batch_code 过滤合同（查询级）统一切 batch_code_key
     # - 不传 batch_code：不加过滤
     # - 传 "" / "None"：归一为 None -> batch_code_key='__NULL_BATCH__'（无批次槽位）
@@ -187,7 +191,7 @@ def build_base_ids_stmt(q: LedgerQuery, time_from: datetime, time_to: datetime):
     """
     按查询条件构造基础 SQL（只选中符合条件的 id 列表）：
 
-    - 支持按 item_id / warehouse_id / batch_code / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
+    - 支持按 item_id / warehouse_id / lot_id / batch_code / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
     - 支持按 item_keyword 模糊匹配 items.name / items.sku；
     - 不再依赖 stock_id / batch_id，完全对齐当前 StockLedger 模型。
     """

@@ -28,17 +28,35 @@ async def _ensure_wh(session: AsyncSession, name: str) -> int:
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        row = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                   AND lot_id_key = 0
+                 LIMIT 1
+                """
+            ),
+            {"i": item_id, "w": wh},
+        )
+        return int(row.scalar_one_or_none() or 0)
+
     row = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id=:i
-               AND warehouse_id=:w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
-        {"i": item_id, "w": wh, "c": code},
+        {"i": item_id, "w": wh, "c": str(code)},
     )
     return int(row.scalar_one_or_none() or 0)
 

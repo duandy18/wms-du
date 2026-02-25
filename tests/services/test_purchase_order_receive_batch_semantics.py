@@ -44,7 +44,10 @@ async def test_non_shelf_life_item_forces_null_batch(async_session_maker):
     非效期商品：
     - 即使传 production/expiry
     - receipt_line 中 batch_code/production_date/expiry_date 必须全部为 NULL
-    - batches 表不得新增记录
+
+    Phase 4E（lot-world）：
+    - 该用例不得触碰 legacy batches；
+    - 并且不应为该商品创建 lots（因为 batch 语义被强制归一为 NULL 槽位）。
     """
     async with async_session_maker() as session:
         item_id = await _create_item(session, has_shelf_life=False)
@@ -67,7 +70,7 @@ async def test_non_shelf_life_item_forces_null_batch(async_session_maker):
         row = await session.execute(
             text(
                 """
-                SELECT batch_code, production_date, expiry_date
+                SELECT batch_code, production_date, expiry_date, lot_id
                   FROM inbound_receipt_lines
                  WHERE po_line_id = :lid
                  ORDER BY id DESC
@@ -81,13 +84,17 @@ async def test_non_shelf_life_item_forces_null_batch(async_session_maker):
         assert r[0] is None
         assert r[1] is None
         assert r[2] is None
+        # lot-world：非效期商品强制 NULL 槽位，不应绑定 lot
+        assert r[3] is None
 
+        # ✅ lots 不得新增记录（该 item_id 在本测试中是新建的，断言可严格为 0）
         row2 = await session.execute(
             text(
                 """
                 SELECT COUNT(*)::int
-                  FROM batches
-                 WHERE warehouse_id=:wid AND item_id=:item_id
+                  FROM lots
+                 WHERE warehouse_id = :wid
+                   AND item_id = :item_id
                 """
             ),
             {"wid": int(world.warehouse_id), "item_id": int(item_id)},

@@ -44,9 +44,9 @@ async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
 async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
     """
     Phase 3 合同测试（出库链路）：
-    - 先用 StockService.adjust(delta>0) 造库存（写 ledger + stocks）
-    - 再用 OutboundService.commit 出库（写 ledger + stocks + snapshot 尾门）
-    - 最后用三账校验器兜底复验：ledger(ref/ref_line) + stocks + snapshot(today) 一致
+    - 先用 StockService.adjust(delta>0) 造库存（写 ledger + stocks_lot）
+    - 再用 OutboundService.commit 出库（写 ledger + stocks_lot + snapshot 尾门）
+    - 最后用三账校验器兜底复验：ledger(ref/ref_line) + stocks_lot + snapshot(today) 一致
     """
     utc = timezone.utc
     now = datetime.now(utc)

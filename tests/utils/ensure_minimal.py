@@ -18,7 +18,7 @@ async def ensure_warehouse(session: AsyncSession, *, id: int, name: Optional[str
             ON CONFLICT (id) DO NOTHING
         """
         ),
-        {"id": id, "name": name},
+        {"id": int(id), "name": str(name)},
     )
 
 
@@ -39,61 +39,129 @@ async def ensure_item(session: AsyncSession, *, id: int, sku: Optional[str] = No
             SET sku = EXCLUDED.sku, name = EXCLUDED.name
         """
         ),
-        {"id": id, "sku": sku, "name": name},
+        {"id": int(id), "sku": str(sku), "name": str(name)},
     )
 
 
-# ---------- batches / stocks ----------
-async def ensure_batch(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str) -> None:
+# ---------- lots / stocks_lot ----------
+async def ensure_supplier_lot(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    warehouse_id: int,
+    lot_code: str,
+) -> int:
     """
-    基于当前口径创建批次主档：
-    - batches 唯一维度： (item_id, warehouse_id, batch_code)
+    Phase 4D：创建/获取一个最小合法 SUPPLIER lot，并返回 lot_id。
+
+    注意：
+    - lots 的 SUPPLIER 唯一性是 partial unique index，不是 constraint
+    - 使用 ON CONFLICT (cols) WHERE predicate 形式
     """
-    await session.execute(
-        text(
-            """
-            INSERT INTO batches (item_id, warehouse_id, batch_code)
-            VALUES (:item, :wid, :code)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
-        """
-        ),
-        {"item": int(item_id), "wid": int(warehouse_id), "code": str(batch_code)},
-    )
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    production_date,
+                    expiry_date,
+                    expiry_source
+                )
+                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, CURRENT_DATE + INTERVAL '365 day', 'EXPLICIT')
+                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+                WHERE lot_code_source = 'SUPPLIER'
+                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                RETURNING id
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    if not row:
+        raise ValueError(f"failed to ensure lot for wh={warehouse_id}, item={item_id}, code={lot_code}")
+    return int(row[0])
 
 
 async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None) -> None:
     """
-    创建 stocks 槽位（测试工具）：
-    唯一约束 uq_stocks_item_wh_batch（item_id, warehouse_id, batch_code_key）
+    Phase 4D：创建 stocks_lot 槽位（测试工具）。
+
+    batch_code 语义：
+    - None：lot_id=NULL（lot_id_key=0 槽位）
+    - 非空：作为 SUPPLIER lot_code，映射到 lots.id
     """
+    if batch_code is None:
+        await session.execute(
+            text(
+                """
+                INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
+                VALUES (:i, :w, NULL, 0)
+                ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+                DO NOTHING
+                """
+            ),
+            {"i": int(item_id), "w": int(warehouse_id)},
+        )
+        return
+
+    lot_id = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
     await session.execute(
         text(
             """
-            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
-            VALUES (:item, :wid, :code, 0)
-            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
-        """
+            INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
+            VALUES (:i, :w, :lot, 0)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+            DO NOTHING
+            """
         ),
-        {"item": int(item_id), "wid": int(warehouse_id), "code": batch_code},
+        {"i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
     )
 
 
 async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None, qty: int) -> None:
     """
-    把 stocks 槽位的 qty 设置为特定值（幂等重置，用于测试）
+    Phase 4D：把 stocks_lot 槽位的 qty 设置为特定值（幂等重置，用于测试）。
     """
+    if batch_code is None:
+        await session.execute(
+            text(
+                """
+                UPDATE stocks_lot
+                   SET qty = :q
+                 WHERE item_id = :i
+                   AND warehouse_id = :w
+                   AND lot_id IS NULL
+                """
+            ),
+            {"q": int(qty), "i": int(item_id), "w": int(warehouse_id)},
+        )
+        return
+
+    lot_id = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
     await session.execute(
         text(
             """
-            UPDATE stocks
+            UPDATE stocks_lot
                SET qty = :q
-             WHERE item_id=:item
-               AND warehouse_id=:wid
-               AND batch_code IS NOT DISTINCT FROM :code
-        """
+             WHERE item_id = :i
+               AND warehouse_id = :w
+               AND lot_id = :lot
+            """
         ),
-        {"q": int(qty), "item": int(item_id), "wid": int(warehouse_id), "code": batch_code},
+        {"q": int(qty), "i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
     )
+
+
+# ---------- legacy-named helpers (kept for compatibility) ----------
+async def ensure_batch(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str) -> None:
+    """
+    兼容旧测试命名：ensure_batch -> 现在等价于 ensure_supplier_lot（lot-world）。
+    """
+    _ = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
 
 
 async def ensure_batch_with_stock(
@@ -105,10 +173,10 @@ async def ensure_batch_with_stock(
     qty: int,
 ) -> None:
     """
-    组合式工具：补齐依赖 → item / warehouse / batch / stock 槽位，然后把 qty 设置到目标值。
+    组合式工具：补齐依赖 → item / warehouse / lot / stocks_lot 槽位，然后把 qty 设置到目标值。
     """
-    await ensure_item(session, id=item_id)
-    await ensure_warehouse(session, id=warehouse_id)
-    await ensure_batch(session, item_id=item_id, warehouse_id=warehouse_id, batch_code=batch_code)
-    await ensure_stock_slot(session, item_id=item_id, warehouse_id=warehouse_id, batch_code=batch_code)
-    await set_stock_qty(session, item_id=item_id, warehouse_id=warehouse_id, batch_code=batch_code, qty=qty)
+    await ensure_item(session, id=int(item_id))
+    await ensure_warehouse(session, id=int(warehouse_id))
+    await ensure_batch(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code))
+    await ensure_stock_slot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code))
+    await set_stock_qty(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code), qty=int(qty))

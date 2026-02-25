@@ -93,42 +93,75 @@ async def seed_batch_slot(
     qty: int,
     days: int = 365,
 ) -> None:
+    """
+    Phase 4E 测试造数：
+    - 主事实：lots + stocks_lot（lot-world）
+    - 禁止写 legacy batches + stocks（避免双余额源 / 口径回退）
+
+    code 语义：
+    - 作为 lot_code（SUPPLIER）展示码
+    """
     wh = await _resolve_wh_by_loc(session, loc)
     expiry = date.today() + timedelta(days=days)
 
-    await session.execute(
-        SA(
-            """
-            INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
-            VALUES (:i, :w, :code, :exp)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
-            """
-        ),
-        {"i": item, "w": wh, "code": code, "exp": expiry},
-    )
+    # --- lot-world：确保 lots 存在（SUPPLIER 要求 lot_code 非空，source_receipt/source_line 必须为 NULL） ---
+    lot_row = (
+        await session.execute(
+            SA(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    production_date,
+                    expiry_date,
+                    expiry_source
+                )
+                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, :exp, 'EXPLICIT')
+                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+                WHERE lot_code_source = 'SUPPLIER'
+                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                RETURNING id
+                """
+            ),
+            {"w": int(wh), "i": int(item), "code": str(code), "exp": expiry},
+        )
+    ).first()
+
+    lot_id: Optional[int] = int(lot_row[0]) if lot_row else None
+    if lot_id is None:
+        row2 = (
+            await session.execute(
+                SA(
+                    """
+                    SELECT id
+                      FROM lots
+                     WHERE warehouse_id = :w
+                       AND item_id      = :i
+                       AND lot_code_source = 'SUPPLIER'
+                       AND lot_code     = :code
+                     LIMIT 1
+                    """
+                ),
+                {"w": int(wh), "i": int(item), "code": str(code)},
+            )
+        ).first()
+        lot_id = int(row2[0]) if row2 else None
+
+    if lot_id is None:
+        raise ValueError(f"failed to ensure lot for wh={wh}, item={item}, code={code}")
 
     await session.execute(
         SA(
             """
-            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
-            VALUES (:i, :w, :code, 0)
-            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch DO NOTHING
+            INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
+            VALUES (:i, :w, :lot, :q)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+            DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
-        {"i": item, "w": wh, "code": code},
-    )
-
-    await session.execute(
-        SA(
-            """
-            UPDATE stocks
-               SET qty = :q
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :code
-            """
-        ),
-        {"q": qty, "i": item, "w": wh, "code": code},
+        {"i": int(item), "w": int(wh), "lot": int(lot_id), "q": int(qty)},
     )
 
 
@@ -138,37 +171,43 @@ async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str
 
 
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
+    """
+    Phase 4D：测试口径以 lot-world 为准（stocks_lot）。
+    """
     wh = await _resolve_wh_by_loc(session, loc)
     row = await session.execute(
-        SA("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND warehouse_id=:w"),
-        {"i": item, "w": wh},
+        SA("SELECT COALESCE(SUM(qty),0) FROM stocks_lot WHERE item_id=:i AND warehouse_id=:w"),
+        {"i": int(item), "w": int(wh)},
     )
     return int(row.scalar_one() or 0)
 
 
 async def available(session: AsyncSession, *, item: int, loc: int) -> int:
     """
-    测试口径：当前可售与在库一致（只看 stocks）。
+    测试口径：当前可售与在库一致（以 stocks_lot 为准）。
     """
     return await sum_on_hand(session, item=item, loc=loc)
 
 
 async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:
+    """
+    Phase 4D：按 lot_code 汇总 qty（stocks_lot + lots）。
+    """
     wh = await _resolve_wh_by_loc(session, loc)
     row = await session.execute(
         SA(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :code
-             LIMIT 1
+            SELECT COALESCE(SUM(s.qty), 0)
+              FROM stocks_lot s
+              LEFT JOIN lots lo ON lo.id = s.lot_id
+             WHERE s.item_id = :i
+               AND s.warehouse_id = :w
+               AND lo.lot_code = :code
             """
         ),
-        {"i": item, "w": wh, "code": code},
+        {"i": int(item), "w": int(wh), "code": str(code)},
     )
-    return int(row.scalar_one_or_none() or 0)
+    return int(row.scalar_one() or 0)
 
 
 async def insert_snapshot(

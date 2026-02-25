@@ -1,8 +1,8 @@
 -- tests/fixtures/base_seed.sql
 -- 说明：
--- - 测试基线主数据（items + item_barcodes）与最小库存事实（batches + stocks）
--- - 被 tests/conftest.py 在每个 test function 的 TRUNCATE 后执行
--- - 目标：让测试数据“可重复、可解释、可维护”，避免把种子硬编码在 conftest.py
+-- - 测试基线主数据（items + item_barcodes）与最小库存事实
+-- - Phase 4E：lot-world 为真相：lots + stocks_lot 作为主事实
+-- - baseline 禁止再写 legacy batches + stocks（避免双余额源 / 口径回退）
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name)
@@ -85,37 +85,63 @@ SELECT setval(
   true
 );
 
--- ===== batches =====
+-- ===== Phase 4D lots (SUPPLIER) =====
+-- 目的：
+-- - lot-world 为真相：用与 batch_code 同名的 lot_code 构造 lot
+-- - SUPPLIER 约束：lot_code 必须非空，source_receipt/source_line 必须为 NULL
+--
 -- 注意：
--- - batches 用于“批次受控商品”的主档；非批次商品不应强行塞假批次（例如 NEAR）
-INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
+-- - uq_lots_supplier_wh_item_lot_code 是 partial unique index（不是 constraint）
+-- - 需要用 ON CONFLICT (cols) WHERE predicate 形式匹配
+INSERT INTO lots (
+  warehouse_id,
+  item_id,
+  lot_code_source,
+  lot_code,
+  production_date,
+  expiry_date,
+  expiry_source
+)
 VALUES
-  (3001, 1, 'B-CONC-1',  CURRENT_DATE + INTERVAL '7 day'),
-  (3002, 1, 'B-OOO-1',   CURRENT_DATE + INTERVAL '7 day'),
-  (4001, 1, 'B-MERGE-1', CURRENT_DATE + INTERVAL '10 day'),
-  (4002, 1, 'B-PO-1',    CURRENT_DATE + INTERVAL '20 day');
+  (1, 3001, 'SUPPLIER', 'B-CONC-1',  CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT'),
+  (1, 3002, 'SUPPLIER', 'B-OOO-1',   CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT'),
+  (1, 4001, 'SUPPLIER', 'B-MERGE-1', CURRENT_DATE, CURRENT_DATE + INTERVAL '10 day', 'EXPLICIT'),
+  (1, 4002, 'SUPPLIER', 'B-PO-1',    CURRENT_DATE, CURRENT_DATE + INTERVAL '20 day', 'EXPLICIT')
+ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+WHERE lot_code_source = 'SUPPLIER'
+DO UPDATE SET expiry_date = EXCLUDED.expiry_date;
 
--- ===== stocks =====
--- 重要：
--- - 单宇宙回归后，stocks 表不再含 scope 列
--- - 非批次商品走 NULL 槽位（与 StockService.adjust 的护栏口径一致）
-INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
+-- ===== Phase 4D stocks_lot =====
+-- 非批次商品：lot_id=NULL 槽位（lot_id_key=0）
+INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
 VALUES
-  (1,    1, NULL,        10),
-  (3001, 1, 'B-CONC-1',   3),
-  (3002, 1, 'B-OOO-1',    3),
-  (3003, 1, NULL,        10),
-  (4001, 1, 'B-MERGE-1', 10),
-  (4002, 1, 'B-PO-1',     0);
+  (1,    1, NULL, 10),
+  (3003, 1, NULL, 10)
+ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+DO UPDATE SET qty = EXCLUDED.qty;
+
+-- 批次商品：lot_id 指向 lots（按 lot_code 精确定位）
+INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
+SELECT x.item_id, x.warehouse_id, l.id AS lot_id, x.qty
+FROM (
+  VALUES
+    (3001, 1, 'B-CONC-1',  3),
+    (3002, 1, 'B-OOO-1',   3),
+    (4001, 1, 'B-MERGE-1', 10),
+    (4002, 1, 'B-PO-1',    0)
+) AS x(item_id, warehouse_id, lot_code, qty)
+JOIN lots l
+  ON l.warehouse_id = x.warehouse_id
+ AND l.item_id      = x.item_id
+ AND l.lot_code_source = 'SUPPLIER'
+ AND l.lot_code     = x.lot_code
+ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+DO UPDATE SET qty = EXCLUDED.qty;
 
 -- =========================
 -- ✅ 采购入库测试基线：供应商-商品绑定（合同化）
 -- 说明：
 -- - items 表当前 insert 仅覆盖最小字段；这里用 UPDATE 给出采购所需事实字段
--- - 目标：
---   * supplier_id=1：至少 2 个可采购商品（3001/3002/4002）
---   * 其中 3001：has_shelf_life=true（用于补录/日期强约束测试）
---   * supplier_id=3：至少 1 个商品（item_id=1，错配断言用）
 -- =========================
 
 -- 供应商 1：绑定采购基线商品（用于采购创建/入库链路）

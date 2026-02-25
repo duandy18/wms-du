@@ -4,13 +4,16 @@
 """
 
 import os
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.models.enums import MovementType
 from app.services.platform_events import handle_event_batch
+from app.services.stock_service import StockService
 
 ASYNC_URL = (
     os.getenv("WMS_TEST_DATABASE_URL")
@@ -52,18 +55,45 @@ async def test_smoke_multi_platform_end2end():
         """
             )
         )
-        # v2 stocks：按 (warehouse_id, item_id, batch_code) 建唯一槽位
-        await s.execute(
-            text(
-                """
-            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty) VALUES
-              (1, 1, 'B-1', 10),
-              (1, 2, 'B-2', 20),
-              (1, 3, 'B-3',  5)
-            ON CONFLICT ON CONSTRAINT uq_stocks_item_wh_batch
-            DO UPDATE SET qty = EXCLUDED.qty
-        """
-            )
+
+        # Phase 4E：不再直写 legacy stocks，统一走 ledger 写入口 seed
+        svc = StockService()
+        now = datetime.now(timezone.utc)
+        await svc.adjust(
+            session=s,
+            warehouse_id=1,
+            item_id=1,
+            delta=10,
+            reason=MovementType.INBOUND,
+            ref="SMOKE-SEED-1",
+            ref_line=1,
+            occurred_at=now,
+            batch_code="B-1",
+            production_date=date.today(),
+        )
+        await svc.adjust(
+            session=s,
+            warehouse_id=1,
+            item_id=2,
+            delta=20,
+            reason=MovementType.INBOUND,
+            ref="SMOKE-SEED-2",
+            ref_line=1,
+            occurred_at=now,
+            batch_code="B-2",
+            production_date=date.today(),
+        )
+        await svc.adjust(
+            session=s,
+            warehouse_id=1,
+            item_id=3,
+            delta=5,
+            reason=MovementType.INBOUND,
+            ref="SMOKE-SEED-3",
+            ref_line=1,
+            occurred_at=now,
+            batch_code="B-3",
+            production_date=date.today(),
         )
         await s.commit()
 
@@ -114,21 +144,22 @@ async def test_smoke_multi_platform_end2end():
         await handle_event_batch(events, session=s)
         await s.commit()
 
-        # ---------- 3) 校验 stocks 槽位存在 ----------
+        # ---------- 3) 校验 lot-world 余额存在 ----------
         rows = (
             await s.execute(
                 text(
                     """
-                SELECT item_id, qty
-                  FROM stocks
+                SELECT item_id, COALESCE(SUM(qty), 0) AS qty
+                  FROM stocks_lot
                  WHERE warehouse_id = 1
                    AND item_id IN (1,2,3)
+                 GROUP BY item_id
                  ORDER BY item_id
                 """
                 )
             )
         ).all()
-        qtys = {r[0]: r[1] for r in rows}
+        qtys = {int(r[0]): int(r[1]) for r in rows}
         assert set(qtys.keys()) == {1, 2, 3}
         assert all(q >= 0 for q in qtys.values())
 

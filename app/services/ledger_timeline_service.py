@@ -36,6 +36,7 @@ class LedgerTimelineService:
         warehouse_id: int | None = None,
         item_id: int | None = None,
         batch_code: str | None = None,
+        lot_id: int | None = None,
         trace_id: str | None = None,
         ref: str | None = None,
     ) -> List[Dict[str, Any]]:
@@ -45,6 +46,7 @@ class LedgerTimelineService:
         - movement_type
         - reason / ref / ref_line / trace_id
         - warehouse_id / item_id / batch_code / batch_code_key
+        - lot_id
         - delta / after_qty
         """
         cond = ["occurred_at >= :t1", "occurred_at <= :t2"]
@@ -57,6 +59,10 @@ class LedgerTimelineService:
         if item_id is not None:
             cond.append("item_id = :i")
             params["i"] = item_id
+
+        if lot_id is not None:
+            cond.append("lot_id = :lot")
+            params["lot"] = int(lot_id)
 
         # ✅ 主线 B：batch_code 过滤统一映射到 batch_code_key
         # - 不传：不加过滤
@@ -89,6 +95,7 @@ class LedgerTimelineService:
                 item_id,
                 batch_code,
                 batch_code_key,
+                lot_id,
                 delta,
                 after_qty,
                 CASE

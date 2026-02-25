@@ -1,70 +1,38 @@
 # app/services/stock/mutate.py
 from __future__ import annotations
 
-from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.stock import Stock
 
-from .accessors import stock_qty_col
-from .retry import exec_retry
+def _phase4e_legacy_disabled(name: str) -> None:
+    raise RuntimeError(
+        f"Phase 4E: legacy stock mutate '{name}' 已禁用。"
+        "禁止使用 legacy stocks 表的任何维度/ID 进行加减或查询；"
+        "请改用 lot-world（stocks_lot + lots）并通过 StockService/lot 口径实现。"
+    )
 
 
 async def bump_stock_by_stock_id(session: AsyncSession, *, stock_id: int, delta: float) -> None:
-    """按 stocks.id 精确加减。"""
-    qcol = stock_qty_col()
-    await exec_retry(
-        session,
-        update(Stock).where(Stock.id == stock_id).values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
-    )
+    """旧时代：按 legacy stocks.id 精确加减。Phase 4E 禁用。"""
+    _ = session
+    _ = stock_id
+    _ = delta
+    _phase4e_legacy_disabled("bump_stock_by_stock_id")
 
 
 async def bump_stock(session: AsyncSession, *, item_id: int, warehouse_id: int, delta: float) -> None:
-    """
-    无 location 版本：对该 warehouse 下该 item 的所有批次行做汇总更新。
-
-    如果该 item 在该 warehouse 下没有任何 stocks 行，则创建一个 “无批次(NULL) 槽位” 来承接 delta。
-    """
-    qcol = stock_qty_col()
-
-    any_sid = (
-        await session.execute(
-            select(Stock.id).where(Stock.item_id == int(item_id), Stock.warehouse_id == int(warehouse_id)).limit(1)
-        )
-    ).scalar_one_or_none()
-
-    if any_sid is None:
-        await exec_retry(
-            session,
-            insert(Stock).values(
-                {
-                    "item_id": int(item_id),
-                    "warehouse_id": int(warehouse_id),
-                    "batch_code": None,
-                    qcol.key: float(delta),
-                }
-            ),
-        )
-        return
-
-    await exec_retry(
-        session,
-        update(Stock)
-        .where(Stock.item_id == int(item_id), Stock.warehouse_id == int(warehouse_id))
-        .values({qcol.key: func.coalesce(qcol, 0) + float(delta)}),
-    )
+    """旧时代：按 item+warehouse 粗粒度更新 legacy stocks。Phase 4E 禁用。"""
+    _ = session
+    _ = item_id
+    _ = warehouse_id
+    _ = delta
+    _phase4e_legacy_disabled("bump_stock")
 
 
 async def get_current_qty(session: AsyncSession, *, item_id: int, warehouse_id: int) -> float:
-    """
-    无 location 版本：汇总该 warehouse 下该 item 的 qty。
-    """
-    qcol = stock_qty_col()
-    val = (
-        await session.execute(
-            select(func.coalesce(func.sum(qcol), 0)).where(
-                Stock.item_id == int(item_id), Stock.warehouse_id == int(warehouse_id)
-            )
-        )
-    ).scalar_one()
-    return float(val or 0.0)
+    """旧时代：汇总 legacy stocks qty。Phase 4E 禁用。"""
+    _ = session
+    _ = item_id
+    _ = warehouse_id
+    _phase4e_legacy_disabled("get_current_qty")
+    return 0.0

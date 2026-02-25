@@ -79,6 +79,7 @@ class StockBatchRow(_Base):
     batch_code: str
     production_date: date | None = None
     expiry_date: date | None = None
+    qty: int  # ✅ Phase 4B-3: 返回余额数量（来自 stocks_lot 聚合）
 
 
 class StockBatchQueryOut(_Base):

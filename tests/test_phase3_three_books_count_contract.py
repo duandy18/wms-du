@@ -78,7 +78,7 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
         expiry_date=exp,
         trace_id="PH3-UT-TRACE-CNT",
     )
-    assert payload["delta"] == 0
+    assert int(payload["delta"]) == 0
 
     await run_snapshot(session)
     await verify_commit_three_books(
@@ -141,7 +141,7 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
         expiry_date=exp,
         trace_id="PH3-UT-TRACE-CNT2",
     )
-    assert payload["delta"] == 2
+    assert int(payload["delta"]) == 2
 
     await run_snapshot(session)
     await verify_commit_three_books(

@@ -70,6 +70,10 @@ async def seed_ledger_test(
 
     注意：
     - 这里显式调用 session.commit()，确保写入持久化到 DB。
+
+    Phase 4E 真收口要求：
+    - 禁止读取 legacy stocks
+    - current 余额读取统一改为 stocks_lot（必要时 LEFT JOIN lots 取展示码）
     """
 
     wh_id, item_id = await _pick_one_warehouse_and_item(session)
@@ -118,16 +122,19 @@ async def seed_ledger_test(
         results.append({"step": "SHIP -4", "result": r2})
 
         # 3) 盘点：把库存调整到 5
+        # Phase 4E：current 余额必须来自 stocks_lot（展示码来自 lots.lot_code）
         slot_row = (
             (
                 await session.execute(
                     text(
                         """
-                    SELECT qty FROM stocks
-                    WHERE warehouse_id = :w
-                      AND item_id = :i
-                      AND batch_code = :b
-                    """
+                        SELECT COALESCE(SUM(s.qty), 0) AS qty
+                          FROM stocks_lot s
+                          LEFT JOIN lots lo ON lo.id = s.lot_id
+                         WHERE s.warehouse_id = :w
+                           AND s.item_id      = :i
+                           AND lo.lot_code IS NOT DISTINCT FROM :b
+                        """
                     ),
                     {"w": wh_id, "i": item_id, "b": batch_code},
                 )

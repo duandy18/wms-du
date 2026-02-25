@@ -9,11 +9,11 @@ class StockAvailabilityService:
     """
     ✅ 真实库存可售（事实层）唯一入口：单仓可售 raw 值
 
-    口径（当前主线）：
-        available_raw = Σ stocks.qty
+    Phase 4B-3（切读）：
+        available_raw = Σ stocks_lot.qty
 
     特性：
-    - 返回值允许为负数（用于 UT/对账场景；实际 stocks.qty 可能因历史或并发产生负值）
+    - 返回值允许为负数（用于 UT/对账场景；实际 qty 可能因历史或并发产生负值）
     - 展示层 / UI 若要“可理解值”，再自行 max(available_raw, 0)
 
     注意：
@@ -32,7 +32,7 @@ class StockAvailabilityService:
         sql = text(
             """
             SELECT COALESCE(SUM(s.qty), 0) AS available
-            FROM stocks AS s
+            FROM stocks_lot AS s
             WHERE s.item_id = :item_id
               AND s.warehouse_id = :warehouse_id
             """
@@ -80,7 +80,7 @@ class StockAvailabilityService:
             """
             WITH stocks_agg AS (
                 SELECT s.item_id, COALESCE(SUM(s.qty), 0) AS qty
-                FROM stocks AS s
+                FROM stocks_lot AS s
                 WHERE s.warehouse_id = :warehouse_id
                   AND s.item_id = ANY(:item_ids)
                 GROUP BY s.item_id

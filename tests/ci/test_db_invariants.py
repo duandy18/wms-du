@@ -9,25 +9,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 pytestmark = pytest.mark.grp_snapshot  # 分组标记，可按需调整
 
 
-async def _seed_wh_item_stock(
+async def _seed_wh_item_lot_stock(
     session: AsyncSession,
     *,
     wh_id: int,
     item_id: int,
-    batch_code: str = "LEDGER-TEST-BATCH",
-) -> None:
+    lot_code: str = "LEDGER-TEST-LOT",
+) -> int:
     """
-    v2 口径下的最小种子数据：
+    Phase 4D 最小种子数据（lot-world）：
 
-    - 保证有一个 warehouses 行；
-    - 保证有一个 items 行；
-    - 保证有一个 batches 行（按 (item_id, warehouse_id, batch_code) 口径）；
-    - 保证有一个 stocks 槽位 (warehouse_id, item_id, batch_code)。
+    - warehouses：确保存在
+    - items：确保存在
+    - lots：插入 SUPPLIER lot（lot_code 非空）
+    - stocks_lot：插入对应槽位（qty=0）
 
-    不再使用 location / stock_id 维度。
+    返回 lot_id。
     """
-
-    # 1) 仓库（幂等）
     await session.execute(
         text(
             """
@@ -36,10 +34,9 @@ async def _seed_wh_item_stock(
             ON CONFLICT (id) DO NOTHING
             """
         ),
-        {"wh_id": wh_id},
+        {"wh_id": int(wh_id)},
     )
 
-    # 2) 货品（幂等）
     await session.execute(
         text(
             """
@@ -49,59 +46,68 @@ async def _seed_wh_item_stock(
             """
         ),
         {
-            "item_id": item_id,
-            "sku": f"SKU-{item_id}",
-            "name": f"Item-{item_id}",
+            "item_id": int(item_id),
+            "sku": f"SKU-{int(item_id)}",
+            "name": f"Item-{int(item_id)}",
         },
     )
 
-    # 3) 批次（按 v2 约定：item_id + warehouse_id + batch_code）
-    await session.execute(
-        text(
-            """
-            INSERT INTO batches (item_id, warehouse_id, batch_code)
-            VALUES (:item_id, :wh_id, :batch_code)
-            """
-        ),
-        {"item_id": item_id, "wh_id": wh_id, "batch_code": batch_code},
-    )
+    lot_row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    production_date,
+                    expiry_date,
+                    expiry_source
+                )
+                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, CURRENT_DATE + INTERVAL '365 day', 'EXPLICIT')
+                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
+                WHERE lot_code_source = 'SUPPLIER'
+                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                RETURNING id
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    assert lot_row is not None, "failed to ensure lot"
+    lot_id = int(lot_row[0])
 
-    # 4) stocks 槽位：v2 唯一口径 (warehouse_id, item_id, batch_code)
     await session.execute(
         text(
             """
-            INSERT INTO stocks (warehouse_id, item_id, batch_code, qty)
-            VALUES (:wh_id, :item_id, :batch_code, 0)
+            INSERT INTO stocks_lot (warehouse_id, item_id, lot_id, qty)
+            VALUES (:w, :i, :lot, 0)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+            DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
-        {"item_id": item_id, "wh_id": wh_id, "batch_code": batch_code},
+        {"w": int(wh_id), "i": int(item_id), "lot": int(lot_id)},
     )
 
     await session.commit()
+    return int(lot_id)
 
 
 @pytest.mark.asyncio
 async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     """
-    v2 行为验证（无 stock_id 版）：
+    lot-world 行为验证：
 
-    - 先造一个 stocks 槽位 (warehouse_id, item_id, batch_code, qty)
-    - 再往 stock_ledger 写一条 COUNT 记录，写入相同的 warehouse_id/item_id/batch_code
-    - 然后通过 (warehouse_id, item_id, batch_code) JOIN stocks，
-      验证 ledger 维度与 stocks 槽位完全一致。
+    - 先造一个 stocks_lot 槽位 (warehouse_id, item_id, lot_id, qty)
+    - 再往 stock_ledger 写一条 COUNT 记录（显式写 lot_id 与 batch_code=lot_code）
+    - 通过 JOIN stocks_lot/lots 校验 ledger 的维度与 lot-world 槽位一致
     """
     wh_id, item_id = 1, 99901
-    batch_code = "LEDGER-TEST-BATCH"
+    lot_code = "LEDGER-TEST-LOT"
 
-    # 1) 准备 stocks 槽位
-    await _seed_wh_item_stock(
-        session,
-        wh_id=wh_id,
-        item_id=item_id,
-        batch_code=batch_code,
-    )
+    lot_id = await _seed_wh_item_lot_stock(session, wh_id=wh_id, item_id=item_id, lot_code=lot_code)
 
-    # 2) 往 stock_ledger 插入一条记录，显式写入维度字段
     now = datetime.now(timezone.utc)
     row = await session.execute(
         text(
@@ -109,6 +115,7 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
             INSERT INTO stock_ledger (
                 warehouse_id,
                 item_id,
+                lot_id,
                 batch_code,
                 reason,
                 ref,
@@ -120,6 +127,7 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
             VALUES (
                 :wh_id,
                 :item_id,
+                :lot_id,
                 :batch_code,
                 'COUNT',
                 'TRG-TEST',
@@ -132,38 +140,42 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
             """
         ),
         {
-            "wh_id": wh_id,
-            "item_id": item_id,
-            "batch_code": batch_code,
+            "wh_id": int(wh_id),
+            "item_id": int(item_id),
+            "lot_id": int(lot_id),
+            "batch_code": str(lot_code),
             "ts": now,
         },
     )
     ledger_id = int(row.scalar_one())
 
-    # 3) 通过 JOIN stocks 校验 ledger 与 stocks 的维度一致性
     row2 = await session.execute(
         text(
             """
             SELECT
               l.warehouse_id AS l_wh,
               l.item_id      AS l_item,
-              l.batch_code   AS l_batch,
-              s.warehouse_id AS s_wh,
-              s.item_id      AS s_item,
-              s.batch_code   AS s_batch
+              l.lot_id       AS l_lot,
+              l.batch_code   AS l_code,
+              sl.warehouse_id AS s_wh,
+              sl.item_id      AS s_item,
+              sl.lot_id       AS s_lot,
+              lo.lot_code     AS s_code
             FROM stock_ledger AS l
-            JOIN stocks AS s
-              ON s.warehouse_id = l.warehouse_id
-             AND s.item_id      = l.item_id
-             AND s.batch_code   = l.batch_code
+            JOIN stocks_lot AS sl
+              ON sl.warehouse_id = l.warehouse_id
+             AND sl.item_id      = l.item_id
+             AND sl.lot_id_key   = COALESCE(l.lot_id, 0)
+            LEFT JOIN lots lo ON lo.id = sl.lot_id
            WHERE l.id = :lid
             """
         ),
-        {"lid": ledger_id},
+        {"lid": int(ledger_id)},
     )
     r = row2.mappings().first()
-    assert r is not None, "ledger row not found via join to stocks"
+    assert r is not None, "ledger row not found via join to stocks_lot"
 
-    assert int(r["l_wh"]) == int(r["s_wh"]) == wh_id
-    assert int(r["l_item"]) == int(r["s_item"]) == item_id
-    assert r["l_batch"] == r["s_batch"] == batch_code
+    assert int(r["l_wh"]) == int(r["s_wh"]) == int(wh_id)
+    assert int(r["l_item"]) == int(r["s_item"]) == int(item_id)
+    assert int(r["l_lot"]) == int(r["s_lot"]) == int(lot_id)
+    assert str(r["l_code"]) == str(r["s_code"]) == str(lot_code)

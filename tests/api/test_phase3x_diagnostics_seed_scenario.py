@@ -33,11 +33,11 @@ async def _seed_ledger(client) -> Dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_seed_ledger_creates_stocks_and_ledger(client):
+async def test_seed_ledger_creates_stocks_lot_and_ledger(client):
     """
-    场景 1：种子接口能正确落库：
-      - stocks 中有 B-TEST-LEDGER 这一槽位且 qty=5
-      - ledger 中能查到 3 条事件，movement_type 正常映射
+    场景 1：种子接口能正确落库（Phase 4E lot-world）：
+      - stocks_lot 中有 B-TEST-LEDGER 对应 lot 的槽位且最终 qty=5（通过一入一出一盘）
+      - ledger 中能查到 >=3 条事件，movement_type 正常映射
     """
     seed = await _seed_ledger(client)
 

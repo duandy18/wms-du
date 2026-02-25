@@ -162,8 +162,8 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     Phase 3 合同测试（终态口径）：
 
     - 以 Receipt(CONFIRMED) 作为事实锚点（终态不再有旧执行层）
-    - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks
-    - snapshot(today) == stocks（至少对 touched keys）
+    - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks_lot
+    - snapshot(today) == stocks_lot（至少对 touched keys）
     - verify_receive_commit_three_books 对 touched effects 做三账一致性校验
 
     Phase 1A 批次两态：
@@ -201,7 +201,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         expiry_date=exp,
     )
 
-    # 2) 写入入库动作（ledger+stocks）
+    # 2) 写入入库动作（ledger+stocks_lot）
     ref = "RCPT-PH3-UT"
     await stock_svc.adjust(
         session=session,

@@ -27,17 +27,36 @@ async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        row = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id = :i
+                   AND warehouse_id = :w
+                   AND lot_id_key = 0
+                 LIMIT 1
+                """
+            ),
+            {"i": int(item_id), "w": int(wh)},
+        )
+        v = row.scalar_one_or_none()
+        return int(v or 0)
+
     row = await session.execute(
         text(
             """
-            SELECT COALESCE(qty, 0)
-              FROM stocks
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id = :i
+               AND sl.warehouse_id = :w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
-        {"i": int(item_id), "w": int(wh), "c": code},
+        {"i": int(item_id), "w": int(wh), "c": str(code)},
     )
     v = row.scalar_one_or_none()
     return int(v or 0)
@@ -46,8 +65,8 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
 async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
     """
     强护栏下不要依赖 conftest 的“隐式基线库存”，测试自己把目标槽位 seed 到 qty。
-    - code=None  => NULL 槽位
-    - code=str   => 批次槽位（入库需日期）
+    - code=None  => lot_id_key=0 槽位
+    - code=str   => 批次槽位（lot_code 展示码），入库需日期
     """
     svc = StockService()
     now = datetime.now(UTC)
@@ -130,7 +149,7 @@ async def test_outbound_idempotency(session: AsyncSession):
 async def test_outbound_insufficient_stock(session: AsyncSession):
     """
     库存不足时的出库行为（v2）：
-    - 把目标槽位 qty 清到 0；
+    - 把目标槽位 qty 清到 0（通过 ledger 写入口，不直写余额表）；
     - 申请出库 1 件；
     - 结果中至少有一条行状态为 INSUFFICIENT；
     - 库存保持为 0。
@@ -142,19 +161,23 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
     # 先确保槽位存在，再把 qty 清到 0
     await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=1)
 
-    await session.execute(
-        text(
-            """
-            UPDATE stocks
-               SET qty = 0
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code IS NOT DISTINCT FROM :c
-            """
-        ),
-        {"i": int(item_id), "w": int(wh), "c": code},
-    )
-    await session.commit()
+    cur = await _qty(session, item_id, wh, code)
+    if cur != 0:
+        svc = StockService()
+        await svc.adjust(
+            session=session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            delta=int(-cur),
+            reason=MovementType.COUNT,
+            ref=f"UT-ZERO-{item_id}-{wh}-{code or 'NULL'}",
+            ref_line=1,
+            occurred_at=datetime.now(UTC),
+            batch_code=code,
+            production_date=date.today() if code is not None else None,
+            expiry_date=None,
+        )
+        await session.commit()
 
     order_id = "SO-INS-001"
     lines = [

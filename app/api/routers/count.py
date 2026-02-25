@@ -80,14 +80,16 @@ async def count_inventory(
             detail="shelf-life controlled item requires production_date or expiry_date (at least one).",
         )
 
-    # 读 current：以 (item_id, warehouse_id, batch_code|NULL) 定位
+    # Phase 4E：读 current 以 lot-world 为准（stocks_lot + lots.lot_code）
+    # ✅ psycopg 对 NULL 参数类型推断敏感：显式 CAST(:c AS TEXT)
     cur_sql = text(
         """
-        SELECT COALESCE(SUM(qty), 0)
-          FROM stocks
-         WHERE item_id=:i
-           AND warehouse_id=:w
-           AND batch_code IS NOT DISTINCT FROM :c
+        SELECT COALESCE(SUM(s.qty), 0)
+          FROM stocks_lot s
+          LEFT JOIN lots lo ON lo.id = s.lot_id
+         WHERE s.item_id = :i
+           AND s.warehouse_id = :w
+           AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
         """
     )
     current_row = await session.execute(cur_sql, {"i": int(req.item_id), "w": int(req.warehouse_id), "c": batch_code})

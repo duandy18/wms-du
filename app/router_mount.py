@@ -57,6 +57,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.snapshot_v3 import router as snapshot_v3_router
     from app.api.routers.stock_batch import router as stock_batch_router
     from app.api.routers.stock_ledger import router as stock_ledger_router
+    from app.api.routers.stock_lot import router as stock_lot_router
 
     from app.api.routers.internal_outbound import router as internal_outbound_router
 
@@ -163,6 +164,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(snapshot_router)
 
     app.include_router(stock_batch_router)
+    app.include_router(stock_lot_router)
     app.include_router(stock_ledger_router)
 
     app.include_router(orders_stats_router)

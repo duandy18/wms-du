@@ -232,6 +232,7 @@ def register(router: APIRouter) -> None:
                     item_name=getattr(r, "item_name", None),
                     warehouse_id=r.warehouse_id,
                     batch_code=r.batch_code,
+                    lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,
                     movement_type=infer_movement_type(r.reason),
                 )
