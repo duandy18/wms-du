@@ -98,14 +98,26 @@ async def test_purchase_order_receipts_api_returns_fact_events(client: httpx.Asy
     # 三次收货（receive-line 返回 workbench）
     r1 = await client.post(
         f"/purchase-orders/{po_id}/receive-line",
-        json={"line_no": 1, "qty": 1, "production_date": "2026-01-01", "expiry_date": "2026-01-31"},
+        json={
+            "line_no": 1,
+            "qty": 1,
+            "batch_code": "UT-BATCH-1",
+            "production_date": "2026-01-01",
+            "expiry_date": "2026-01-31",
+        },
         headers=headers,
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.post(
         f"/purchase-orders/{po_id}/receive-line",
-        json={"line_no": 1, "qty": 1, "production_date": "2026-01-01", "expiry_date": "2026-01-31"},
+        json={
+            "line_no": 1,
+            "qty": 1,
+            "batch_code": "UT-BATCH-1",
+            "production_date": "2026-01-01",
+            "expiry_date": "2026-01-31",
+        },
         headers=headers,
     )
     assert r2.status_code == 200, r2.text

@@ -59,6 +59,7 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
                 line_id=payload.line_id,
                 line_no=payload.line_no,
                 qty=payload.qty,
+                batch_code=getattr(payload, "batch_code", None),
                 production_date=getattr(payload, "production_date", None),
                 expiry_date=getattr(payload, "expiry_date", None),
                 barcode=getattr(payload, "barcode", None),

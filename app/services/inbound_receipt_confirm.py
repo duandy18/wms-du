@@ -24,11 +24,12 @@ from app.services.stock_service import StockService
 
 UTC = timezone.utc
 
+# Phase L：
+# - “无批次”应当由 batch_code=None 表达（并由 lot_id 作为身份锚点），而不是让用户输入 NULL_BATCH token。
+# - 仍然禁止人为伪码（如 NOEXP/NONE）作为批次。
 _PSEUDO_BATCH_TOKENS = {
     "NOEXP",
     "NONE",
-    "NULL_BATCH",
-    "__NULL_BATCH__",
 }
 
 

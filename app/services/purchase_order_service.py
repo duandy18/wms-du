@@ -124,6 +124,7 @@ class PurchaseOrderService:
         occurred_at: Optional[datetime] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
+        batch_code: Optional[str] = None,
         barcode: Optional[str] = None,
     ) -> PurchaseOrderReceiveWorkbenchOut:
         # 1) 写入 Receipt(DRAFT) 事实（Phase5+：内部已禁止隐式创建 draft）
@@ -136,6 +137,7 @@ class PurchaseOrderService:
             occurred_at=occurred_at,
             production_date=production_date,
             expiry_date=expiry_date,
+            batch_code=batch_code,
             barcode=barcode,
         )
 

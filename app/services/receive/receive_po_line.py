@@ -40,12 +40,6 @@ def _normalize_barcode(barcode: Optional[str]) -> Optional[str]:
     return s or None
 
 
-def _build_batch_code(*, po_id: int, po_line_no: int, production_date: Optional[date]) -> Optional[str]:
-    if production_date is None:
-        return None
-    return f"BATCH-PO{po_id}-L{po_line_no}-{production_date.isoformat()}"
-
-
 async def _get_item_batch_mode(session: AsyncSession, *, item_id: int) -> BatchMode:
     row = await session.execute(select(Item.has_shelf_life).where(Item.id == int(item_id)))
     val = row.scalar_one_or_none()
@@ -108,13 +102,10 @@ async def receive_po_line(
     item_id_val = int(getattr(target, "item_id"))
     batch_mode = await _get_item_batch_mode(session, item_id=item_id_val)
 
-    po_line_no_val = int(getattr(target, "line_no", 0) or 0)
-
-    raw_batch_code = normalize_batch_code(batch_code) or _build_batch_code(
-        po_id=int(po.id),
-        po_line_no=po_line_no_val,
-        production_date=production_date,
-    )
+    # ✅ Phase L（统一槽位身份层）：不再自动构造 batch_code。
+    # - REQUIRED：调用方必须提供 batch_code（供应商批次码）
+    # - NONE：batch_code 必须为 NULL（无批次商品），但仍然必须生成 INTERNAL lot 作为槽位身份
+    raw_batch_code = normalize_batch_code(batch_code)
 
     try:
         enforced_pd, enforced_ed, enforced_code = enforce_batch_semantics(
@@ -126,12 +117,13 @@ async def receive_po_line(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Phase 3: resolve canonical lot
-    lot_id = None
+    # Phase L：resolve canonical lot（无批次商品也必须有 lot 身份）
+    item_obj = await session.get(Item, item_id_val)
+    if item_obj is None:
+        raise ValueError(f"Item not found: id={item_id_val}")
 
-    if batch_mode == "REQUIRED":
-        item_obj = await session.get(Item, item_id_val)
-
+    if enforced_code is not None:
+        # SUPPLIER lot：identity = (warehouse_id, item_id, lot_code_source='SUPPLIER', lot_code)
         lot_id = await resolve_or_create_lot(
             db=session,
             warehouse_id=int(getattr(draft, "warehouse_id")),
@@ -140,6 +132,21 @@ async def receive_po_line(
             lot_code=enforced_code,
             source_receipt_id=None,
             source_line_no=None,
+            production_date=enforced_pd,
+            expiry_date=enforced_ed,
+            expiry_source="EXPLICIT" if enforced_ed else None,
+            shelf_life_days_applied=None,
+        )
+    else:
+        # INTERNAL lot：identity = (warehouse_id, item_id, lot_code_source='INTERNAL', source_receipt_id, source_line_no)
+        lot_id = await resolve_or_create_lot(
+            db=session,
+            warehouse_id=int(getattr(draft, "warehouse_id")),
+            item=item_obj,
+            lot_code_source="INTERNAL",
+            lot_code=None,
+            source_receipt_id=int(draft.id),
+            source_line_no=int(next_line_no),
             production_date=enforced_pd,
             expiry_date=enforced_ed,
             expiry_source="EXPLICIT" if enforced_ed else None,

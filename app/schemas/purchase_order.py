@@ -256,8 +256,17 @@ class PurchaseOrderReceiveLineIn(BaseModel):
     line_no: Optional[int] = Field(None, description="行号（可选，line_id 缺失时用）")
     qty: int = Field(..., gt=0, description="本次收货数量（最小单位 base，>0）")
 
+    # Phase L：batch_code 仅为展示/输入字段，身份锚点是 lot_id
+    # - REQUIRED 商品：batch_code 必填
+    # - NONE 商品：batch_code 必须为 null
+    batch_code: Optional[str] = Field(
+        None,
+        description="本次收货批次码（有效期商品必填；非效期商品必须为 null）",
+    )
+
     barcode: Optional[str] = Field(
-        None, description="本次收货条码（快照，写入 receipt_lines.barcode，可选）"
+        None,
+        description="本次收货【商品条码】快照（写入 receipt_lines.barcode，可选；不是批次码）",
     )
 
     production_date: Optional[date] = Field(None, description="生产日期（有效期商品必填）")

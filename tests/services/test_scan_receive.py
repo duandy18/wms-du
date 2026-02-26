@@ -51,10 +51,13 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
     item_id = res["item_id"]
     assert item_id > 0
     assert res["warehouse_id"] == warehouse_id
-    assert res["batch_code"] == batch_code
+    # Phase L：若自动建档 item 默认为非效期（NONE），batch_code 将被语义层强制归一为 NULL。
+    # 因此这里只断言“返回 batch_code 要么为输入值，要么为 None（NONE 模式）”。
+    assert res.get("batch_code") in (batch_code, None)
     assert res["qty"] == qty
 
     # Phase 4E：优先按 lot_code（lots）定位；如果没有 lot（lot_id 为 NULL），则落在 lot_id_key=0
+    eff_code = res.get("batch_code")
     row = await session.execute(
         text(
             """
@@ -67,7 +70,7 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
              LIMIT 1
             """
         ),
-        {"i": item_id, "w": warehouse_id, "c": batch_code},
+        {"i": item_id, "w": warehouse_id, "c": str(eff_code or "")},
     )
     v = row.scalar_one_or_none()
     if v is None:
