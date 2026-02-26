@@ -75,7 +75,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
               :oid,
               NULL,
               1,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )

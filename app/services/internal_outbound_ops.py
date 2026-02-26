@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.problem import raise_problem
 from app.models.internal_outbound import InternalOutboundDoc
 from app.services.audit_writer import AuditEventWriter
 from app.services.stock_service import StockService
@@ -75,14 +76,13 @@ async def _resolve_supplier_lot_id_by_lot_code(
     warehouse_id: int,
     item_id: int,
     lot_code: str,
-) -> Optional[int]:
+) -> int:
     """
-    Phase 4C：
-    - 显式 batch_code 将逐步演进为 SUPPLIER lot_code（lot-world）
-    - 但测试/历史造数可能只写了 stocks（batch-world）而未创建 lots
-    - 因此这里返回 Optional[int]：
-        * 找到 lot -> 返回 id（走 lot-world 扣减）
-        * 找不到 -> 返回 None（上层 fallback 到 batch-world 扣减）
+    Phase 5 第一刀（执行域收紧）：
+
+    - 显式 batch_code 已演进为 SUPPLIER lot_code（lot-world）
+    - 执行域禁止 fallback 到 batch-world（不允许双真相）
+    - 找不到 lot 直接硬拦（409）
     """
     code = (lot_code or "").strip()
     if not code:
@@ -106,7 +106,16 @@ async def _resolve_supplier_lot_id_by_lot_code(
     ).first()
 
     if not row:
-        return None
+        raise_problem(
+            status_code=409,
+            error_code="lot_not_found",
+            message="批次不存在（lot-world），禁止执行出库。",
+            context={"warehouse_id": int(warehouse_id), "item_id": int(item_id), "lot_code": str(code)},
+            details=[],
+            next_actions=[{"action": "create_lot", "label": "补录批次/入库以生成 lot"}],
+        )
+        # raise_problem 会抛异常；这里 return 只是类型补全
+        return 0
 
     return int(row[0])
 
@@ -125,7 +134,7 @@ async def fefo_deduct_internal(
     """
     Phase 4C：internal_outbound FEFO 扣减切到 lot-world：
     - 选槽：stocks_lot + lots（expiry_date ASC, lot_id ASC）
-    - 扣减：StockService.adjust_lot（写 stocks_lot + ledger(lot_id)；可 shadow 写 stocks）
+    - 扣减：StockService.adjust_lot（写 stocks_lot + ledger(lot_id)）
     """
     remain = int(total_qty)
     idx = 0
@@ -214,36 +223,20 @@ async def confirm(
                 lot_code=bc,
             )
 
-            if lot_id is not None:
-                await stock_svc.adjust_lot(
-                    session=session,
-                    item_id=int(line.item_id),
-                    warehouse_id=int(doc.warehouse_id),
-                    lot_id=int(lot_id),
-                    delta=-int(qty),
-                    reason="INTERNAL_OUT",
-                    ref=str(ref),
-                    ref_line=int(line.line_no),
-                    occurred_at=now,
-                    trace_id=trace_id,
-                    batch_code=bc,
-                    meta={"sub_reason": "INT_OUT_EXPL"},
-                )
-            else:
-                # ✅ fallback：lot 不存在，回退 batch-world（sub_reason 必须短 <=32）
-                await stock_svc.adjust(
-                    session=session,
-                    item_id=int(line.item_id),
-                    warehouse_id=int(doc.warehouse_id),
-                    delta=-int(qty),
-                    reason="INTERNAL_OUT",
-                    ref=str(ref),
-                    ref_line=int(line.line_no),
-                    occurred_at=now,
-                    batch_code=(bc or None),
-                    trace_id=trace_id,
-                    meta={"sub_reason": "INT_OUT_FB"},
-                )
+            await stock_svc.adjust_lot(
+                session=session,
+                item_id=int(line.item_id),
+                warehouse_id=int(doc.warehouse_id),
+                lot_id=int(lot_id),
+                delta=-int(qty),
+                reason="INTERNAL_OUT",
+                ref=str(ref),
+                ref_line=int(line.line_no),
+                occurred_at=now,
+                trace_id=trace_id,
+                batch_code=bc,
+                meta={"sub_reason": "INT_OUT_EXPL"},
+            )
         else:
             await fefo_deduct_internal(
                 session=session,

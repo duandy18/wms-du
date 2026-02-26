@@ -101,7 +101,7 @@ async def _seed_minimal_order_for_outbound(
               :oid,
               NULL,
               :awid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )

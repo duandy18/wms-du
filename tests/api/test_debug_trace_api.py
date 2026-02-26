@@ -74,7 +74,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
               :oid,
               :wid,
               :wid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )

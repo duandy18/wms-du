@@ -12,6 +12,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.count import router as count_router
     from app.api.routers.debug_trace import router as debug_trace_router
     from app.api.routers.dev_seed_ledger import router as dev_seed_ledger_router
+    from app.api.routers.dev_stock_adjust import router as dev_stock_adjust_router  # ✅ NEW
     from app.api.routers.devconsole_orders import router as devconsole_orders_router
     from app.api.routers.fake_platform import router as fake_platform_router
     from app.api.routers.finance_overview import router as finance_overview_router
@@ -187,5 +188,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     if enable_dev_routes:
         app.include_router(devconsole_orders_router)
         app.include_router(dev_seed_ledger_router)
+        app.include_router(dev_stock_adjust_router)  # ✅ NEW
         app.include_router(fake_platform_router)
         app.include_router(dev_fake_orders_router)

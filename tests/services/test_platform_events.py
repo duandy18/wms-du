@@ -92,7 +92,7 @@ async def _ensure_order_for_event(
                 :oid,
                 :wid,
                 :wid,
-                'READY_TO_FULFILL',
+                'SERVICE_ASSIGNED',
                 NULL,
                 now()
             )

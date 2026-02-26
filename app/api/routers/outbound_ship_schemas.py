@@ -119,6 +119,11 @@ class ShipPrepareResponse(BaseModel):
     weight_kg: Optional[float] = None
     trace_id: Optional[str] = None
 
+    # ✅ 执行域展示字段（路 A：阶段真相 + 出库事实）
+    execution_stage: Optional[str] = None
+    ship_committed_at: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+
     # ✅ 不预设、不兜底：不直接给 warehouse_id
     warehouse_id: Optional[int] = None
     warehouse_reason: Optional[str] = None
@@ -129,8 +134,8 @@ class ShipPrepareResponse(BaseModel):
     # ✅ 扫描报告：每个候选仓的 OK/缺口
     fulfillment_scan: List[FulfillmentScanWarehouseOut] = Field(default_factory=list)
 
-    # ✅ 不可履约事实（用于“智能退货/取消”）
-    fulfillment_status: Optional[str] = None  # OK / FULFILLMENT_BLOCKED
+    # ✅ 路由/阻断字段（非阶段）：OK / FULFILLMENT_BLOCKED
+    fulfillment_status: Optional[str] = None
     blocked_reasons: List[str] = Field(default_factory=list)
 
 

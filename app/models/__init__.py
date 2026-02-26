@@ -35,9 +35,9 @@ MODEL_SPECS = [
     ("app.models.item", "Item"),
     ("app.models.item_test_set", "ItemTestSet"),
     ("app.models.item_test_set_item", "ItemTestSetItem"),
-    ("app.models.batch", "Batch"),
     ("app.models.lot", "Lot"),
-    ("app.models.stock", "Stock"),
+    # ✅ Phase 5：lot-world 成为唯一库存余额真相（stocks_lot + lots）
+    ("app.models.stock_lot", "StockLot"),
     ("app.models.stock_ledger", "StockLedger"),
     ("app.models.stock_snapshot", "StockSnapshot"),
     # ------------------------------------------------------------------
@@ -48,6 +48,8 @@ MODEL_SPECS = [
     ("app.models.order_line", "OrderLine"),
     ("app.models.order_logistics", "OrderLogistics"),
     ("app.models.order_state_snapshot", "OrderStateSnapshot"),
+    # ✅ Phase 5：执行域 authority（order_fulfillment）
+    ("app.models.order_fulfillment", "OrderFulfillment"),
     # 拣货任务
     ("app.models.pick_task", "PickTask"),
     ("app.models.pick_task_line", "PickTaskLine"),
@@ -102,11 +104,6 @@ MODEL_SPECS = [
 for _module, _name in MODEL_SPECS:
     _export(_module, _name)
 
-# 有些模型提供 table 对象
-from app.models.batch import Batch as _Batch  # noqa: E402
-
-Batches = getattr(_Batch, "__table__", None)
-
 __all__ = [
     # ---- Master Data ----
     "Supplier",
@@ -119,9 +116,8 @@ __all__ = [
     "Item",
     "ItemTestSet",
     "ItemTestSetItem",
-    "Batch",
     "Lot",
-    "Stock",
+    "StockLot",
     "StockLedger",
     "StockSnapshot",
     # ---- Orders ----
@@ -130,6 +126,7 @@ __all__ = [
     "OrderLine",
     "OrderLogistics",
     "OrderStateSnapshot",
+    "OrderFulfillment",
     # ---- Pick Tasks ----
     "PickTask",
     "PickTaskLine",
@@ -163,5 +160,4 @@ __all__ = [
     "ShippingProviderZoneMember",
     "ShippingProviderZoneBracket",
     "ShippingProviderSurcharge",
-    "Batches",
 ]

@@ -14,7 +14,7 @@ from app.services.platform_events_error_log import log_error_isolated
 from app.services.platform_events_extractors import extract_ref, extract_shop_id, extract_state
 from app.services.platform_events_metrics import inc_error_metric, inc_event_metric
 
-from app.services.platform_events_actions import do_cancel, do_reserve, do_ship
+from app.services.platform_events_actions import do_cancel, do_pick, do_ship
 
 
 def _assert_no_legacy_payload(obj: Any) -> None:
@@ -45,11 +45,11 @@ async def handle_event_batch(
     session: Optional[AsyncSession] = None,
 ) -> None:
     """
-    平台事件编排（当前主线语义）：
+    平台事件编排（Phase 5 主线语义）：
 
-      - RESERVE：进入仓内执行态（生成拣货任务/打印队列，不做库存裁决）
-      - CANCEL ：取消订单执行态
-      - SHIP   ：直接进入硬出库链路（库存裁决点在 commit）
+      - PICK  ：进入拣货主线（生成拣货任务/打印队列，不做库存裁决）
+      - CANCEL：取消订单执行态
+      - SHIP  ：直接进入硬出库链路（库存裁决点在 commit）
     """
     audit = EventWriter(source="platform-events")
 
@@ -107,9 +107,9 @@ async def handle_event_batch(
                 )
                 continue
 
-            # ---------------- RESERVE ----------------
-            if action == "RESERVE":
-                n = await do_reserve(session=session, platform=platform, task=task, trace_id=trace.trace_id)
+            # ---------------- PICK ----------------
+            if action == "PICK":
+                n = await do_pick(session=session, platform=platform, task=task, trace_id=trace.trace_id)
                 await audit.write_json(
                     session,
                     level="INFO",

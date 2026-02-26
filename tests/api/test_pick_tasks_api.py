@@ -77,7 +77,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
                 :oid,
                 :wid,
                 :wid,
-                'READY_TO_FULFILL',
+                'SERVICE_ASSIGNED',
                 NULL,
                 now()
             )

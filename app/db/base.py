@@ -19,6 +19,14 @@ class Base(DeclarativeBase):
 
 _INITIALIZED: bool = False  # 防重复初始化
 
+# Phase 5：这些 legacy 模型对应的表在当前 DB/主线迁移中不存在，
+# 若被导入会污染 Base.metadata，触发 alembic-check 误报 add_table。
+# ✅ 规则：主线 metadata 禁止加载它们（不允许双真相 / 不复活旧表）。
+_DEFAULT_EXCLUDE: Set[str] = {
+    "app.models.batch",
+    "app.models.stock",
+}
+
 
 def _iter_model_modules_recursive(pkg_name: str = "app.models") -> Iterator[str]:
     """递归发现 app.models.* 下的所有模块（排除以下划线开头的内部模块）"""
@@ -61,25 +69,33 @@ def init_models(
       1) 先显式导入关键模型（保证字符串关系目标类已注册）
       2) 再递归导入 app.models.* 补齐遗漏
       3) 最后统一 configure_mappers()
+
+    Phase 5 约束（硬）：
+    - 主线 metadata 禁止加载 legacy 的 batch/stock（对应表不存在），避免 alembic-check 误报。
     """
     global _INITIALIZED
     if _INITIALIZED and not force:
         log.debug("init_models() called again; already initialized, skipping.")
         return
 
+    # 合并 exclude：调用方 exclude + 默认排除（Phase 5 legacy）
     ex: Set[str] = set(exclude or [])
+    ex |= set(_DEFAULT_EXCLUDE)
+
     loaded: List[str] = []
 
+    # ✅ 显式加载链：只放“主线真相表”的模型（避免把 legacy 表带进 metadata）
     explicit_chain = [
         "app.models.item",
-        "app.models.batch",
         "app.models.lot",
-        "app.models.stock",
+        "app.models.stock_lot",
         "app.models.stock_ledger",
+        "app.models.stock_snapshot",
         "app.models.order",
         "app.models.order_item",
         "app.models.order_address",
         "app.models.order_logistics",
+        "app.models.order_fulfillment",
         "app.models.store",
         "app.models.warehouse",
         "app.models.platform_shops",
@@ -88,6 +104,7 @@ def init_models(
         if _safe_import(mod):
             loaded.append(mod)
 
+    # ✅ 递归补齐：仍然允许导入其它模型，但要尊重 ex（避免 batch/stock 被扫进来）
     for mod in _iter_model_modules_recursive("app.models"):
         if mod in ex or mod in loaded:
             continue

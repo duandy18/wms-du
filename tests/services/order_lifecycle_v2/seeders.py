@@ -14,7 +14,7 @@ async def _upsert_order_and_fulfillment(
     trace_id: str,
     wh_id: int,
     status: str = "CREATED",
-    fulfillment_status: str = "READY_TO_FULFILL",
+    fulfillment_status: str = "SERVICE_ASSIGNED",
 ) -> int:
     """
     Phase 5+ 事实边界：
@@ -134,7 +134,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     # outbound_commits_v2
@@ -258,7 +258,7 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     await session.execute(
@@ -311,7 +311,7 @@ async def seed_created_only_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     await session.commit()

@@ -32,7 +32,7 @@ async def insert_min_order(
     shop_id: str,
     ext_order_no: str,
     warehouse_id: Optional[int] = None,
-    fulfillment_status: str = "READY_TO_FULFILL",
+    fulfillment_status: str = "SERVICE_ASSIGNED",
     status: str = "CREATED",
     trace_id: Optional[str] = None,
 ) -> int:
@@ -124,7 +124,7 @@ async def insert_orders_bulk(
             shop_id=str(o.get("shop_id") or SHOP_ID),
             ext_order_no=str(o.get("ext_order_no") or ""),
             warehouse_id=(int(o["warehouse_id"]) if o.get("warehouse_id") is not None else None),
-            fulfillment_status=str(o.get("fulfillment_status") or "READY_TO_FULFILL"),
+            fulfillment_status=str(o.get("fulfillment_status") or "SERVICE_ASSIGNED"),
             status=str(o.get("status") or "CREATED"),
             trace_id=(str(o["trace_id"]) if o.get("trace_id") else None),
         )
