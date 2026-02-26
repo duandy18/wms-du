@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.three_books_enforcer import enforce_three_books
+from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
 
 AdjustFn = Callable[..., Awaitable[Dict[str, Any]]]
 AdjustLotFn = Callable[..., Awaitable[Dict[str, Any]]]
@@ -80,15 +80,7 @@ async def ship_commit_direct_impl(
     adjust_fn: AdjustFn,
 ) -> Dict[str, Any]:
     """
-    旧实现（batch-world）：
-
-    Phase 4D：
-    - 为避免执行链路口径回退，且为 Phase 4E（rename/drop stocks）铺路，
-      此 batch-world 实现被明确禁用。
-    - 正确入口：ship_commit_direct_lot_impl（lot-world）。
-
-    说明：
-    - 若确需回滚对照，应在独立 legacy 模块/分支中保留，不允许在主执行链路中读取 legacy stocks。
+    旧实现（batch-world）已禁用（Phase 4D+）。
     """
     _ = session
     _ = warehouse_id
@@ -117,11 +109,11 @@ async def ship_commit_direct_lot_impl(
     adjust_lot_fn: AdjustLotFn,
 ) -> Dict[str, Any]:
     """
-    Phase 4C 主实现（lot-world）：
+    Phase 5 第一刀（执行域收紧）：
 
     - 选槽：stocks_lot + lots（expiry_date ASC NULLS LAST, lot_id_key ASC）
-    - 扣减：adjust_lot_fn（写 stocks_lot + ledger(lot_id)；可 shadow 写 stocks，但 Phase 4D 默认关闭）
-    - 三账尾门：保持原 enforce_three_books（内部会 run_snapshot + verify）
+    - 扣减：adjust_lot_fn（写 stocks_lot + ledger(lot_id)）
+    - 执行尾门：不再 run_snapshot；改为 Invariant Guard（局部可证明一致）
     """
     _ = platform
     _ = shop_id
@@ -214,6 +206,7 @@ async def ship_commit_direct_lot_impl(
 
             lot_id = r.lot_id
             lot_code = r.lot_code
+            lot_id_key = int(r.lot_id_key or 0)
             on_hand = int(r.qty or 0)
             if on_hand <= 0:
                 continue
@@ -240,11 +233,14 @@ async def ship_commit_direct_lot_impl(
                 meta={"sub_reason": "ORDER_SHIP"},
             )
 
+            # 注意：这里的 batch_code_key 在 lot-world 下不再是证明核心；
+            # 我们把 lot_id_key 作为最终锚点（Phase 5 目标）。
             effects.append(
                 {
                     "warehouse_id": int(warehouse_id),
                     "item_id": int(item_id),
                     "batch_code": (str(lot_code) if lot_code is not None else None),
+                    "batch_code_key": (str(lot_id_key) if lot_id_key > 0 else ""),
                     "qty": -int(take),
                     "ref": str(ref),
                     "ref_line": int(ref_line),
@@ -276,7 +272,8 @@ async def ship_commit_direct_lot_impl(
                 ],
             )
 
+    # ✅ Phase 5：执行尾门改为 Invariant Guard（不触 snapshot）
     if effects:
-        await enforce_three_books(session, ref=str(ref), effects=effects, at=ts)
+        await enforce_outbound_invariant_guard(session, ref=str(ref), effects=effects, at=ts)
 
     return {"idempotent": bool(idempotent), "applied": not bool(idempotent), "ref": str(ref), "total_qty": int(total)}

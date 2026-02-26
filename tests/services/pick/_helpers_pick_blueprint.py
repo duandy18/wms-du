@@ -59,7 +59,7 @@ async def ensure_pickable_order(
         shop_id=shop_id,
         ext_order_no=ext,
         warehouse_id=int(warehouse_id),
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
         status="CREATED",
         trace_id=trace_id,
     )

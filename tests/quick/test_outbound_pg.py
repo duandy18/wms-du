@@ -2,6 +2,7 @@
 from datetime import date, datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -121,7 +122,7 @@ async def test_outbound_idempotency(session: AsyncSession):
     before = await _qty(session, item_id, wh, code)
     assert before >= 1
 
-    order_id = "SO-IDEM-001"
+    order_id = "UT:PH3:SO-IDEM-001"
     lines = [
         {
             "item_id": item_id,
@@ -151,7 +152,7 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
     库存不足时的出库行为（v2）：
     - 把目标槽位 qty 清到 0（通过 ledger 写入口，不直写余额表）；
     - 申请出库 1 件；
-    - 结果中至少有一条行状态为 INSUFFICIENT；
+    - 抛 409(outbound_commit_reject)，details.results 至少有一条行状态为 INSUFFICIENT；
     - 库存保持为 0。
     """
     item_id = 1
@@ -179,7 +180,7 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
         )
         await session.commit()
 
-    order_id = "SO-INS-001"
+    order_id = "UT:PH3:SO-INS-001"
     lines = [
         {
             "item_id": item_id,
@@ -188,9 +189,20 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
             "warehouse_id": wh,
         }
     ]
-    r = await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
-    assert r["status"] == "OK"
-    assert any(x.get("status") == "INSUFFICIENT" for x in r.get("results", []))
+
+    with pytest.raises(HTTPException) as ei:
+        await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
+
+    e = ei.value
+    assert e.status_code == 409
+    detail = e.detail
+    assert isinstance(detail, dict)
+    assert detail.get("error_code") == "outbound_commit_reject"
+
+    details = detail.get("details") or []
+    assert details and isinstance(details[0], dict)
+    results = details[0].get("results") or []
+    assert any(x.get("status") == "INSUFFICIENT" for x in results)
 
     qty = await _qty(session, item_id, wh, code)
     assert qty == 0

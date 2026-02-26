@@ -97,8 +97,25 @@ async def test_smoke_multi_platform_end2end():
         )
         await s.commit()
 
-        # ---------- 2) 多平台“已发货”事件 ----------
+        # ---------- 2) Phase 5：预置 orders（使 ship commit 可解析到 orders.id） ----------
+        # 注意：事件里用的是 ext_order_no-only（如 P-SMOKE-001），Phase 5 第二刀要求先能解析到 orders.id。
         ref_p, ref_t, ref_j = "P-SMOKE-001", "T-SMOKE-002", "J-SMOKE-003"
+        await s.execute(
+            text(
+                """
+                INSERT INTO orders(platform, shop_id, ext_order_no)
+                VALUES
+                  ('PDD',    'SMOKE', :p),
+                  ('TAOBAO', 'SMOKE', :t),
+                  ('JD',     'SMOKE', :j)
+                ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
+                """
+            ),
+            {"p": ref_p, "t": ref_t, "j": ref_j},
+        )
+        await s.commit()
+
+        # ---------- 3) 多平台“已发货”事件 ----------
         events = [
             {
                 "platform": "pdd",
@@ -144,7 +161,7 @@ async def test_smoke_multi_platform_end2end():
         await handle_event_batch(events, session=s)
         await s.commit()
 
-        # ---------- 3) 校验 lot-world 余额存在 ----------
+        # ---------- 4) 校验 lot-world 余额存在 ----------
         rows = (
             await s.execute(
                 text(
@@ -163,6 +180,6 @@ async def test_smoke_multi_platform_end2end():
         assert set(qtys.keys()) == {1, 2, 3}
         assert all(q >= 0 for q in qtys.values())
 
-        # ---------- 4) 重放相同事件 → 应该仍然不抛异常 ----------
+        # ---------- 5) 重放相同事件 → 应该仍然不抛异常 ----------
         await handle_event_batch(events, session=s)
         await s.commit()

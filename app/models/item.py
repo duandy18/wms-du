@@ -12,7 +12,6 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from .order import Order
     from .order_item import OrderItem
-    from .stock import Stock
     from .supplier import Supplier
 
 
@@ -23,13 +22,16 @@ class Item(Base):
     关键区分：
     - has_shelf_life（开关）：是否需要有效期管理（= 入库是否强制日期）
       * True  -> 入库必须填写生产日期；到期日期可直接填，或由保质期参数推算
-      * False -> 入库不需要日期；库存核算层走“无批次槽位”（batch_code=NULL）
+      * False -> 入库不需要日期；库存核算层走“无批次槽位”（lot 维度为空/或系统默认槽位）
+
     - shelf_life_value/unit（参数）：可选保质期参数，用于 production_date + 参数 => 推算 expiry_date
       * 注意：参数不是必须；若缺参数，则入库必须直接填 expiry_date
 
-    库存说明（重要）：
-    - items 表不承载可用库存的真实事实。
-    - 库存真实来源：stocks / stock_ledger / stock_snapshots（以及三账一致性校验）。
+    库存说明（重要，Phase 5）：
+    - items 表不承载库存事实，也不通过 ORM relationship 挂接库存表，避免影子语义。
+    - 库存余额真相：stocks_lot + lots（lot-world）
+    - 库存变动事实：stock_ledger
+    - snapshot 仅作为读模型：stock_snapshots
     """
 
     __tablename__ = "items"
@@ -135,12 +137,6 @@ class Item(Base):
         viewonly=True,
         lazy="selectin",
         back_populates="items",
-    )
-
-    stocks: Mapped[List["Stock"]] = relationship(
-        "Stock",
-        back_populates="item",
-        lazy="selectin",
     )
 
     def __repr__(self) -> str:

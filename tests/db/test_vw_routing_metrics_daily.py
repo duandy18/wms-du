@@ -99,7 +99,7 @@ async def _insert_order(
               :oid,
               NULL,
               :awid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               :at
             )

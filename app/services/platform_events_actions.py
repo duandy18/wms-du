@@ -19,7 +19,7 @@ except Exception:
         MAIN = "MAIN"
 
 
-def _build_lines_for_reserve_or_cancel(task: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _build_lines_for_pick_or_cancel(task: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         {"item_id": int(x["item_id"]), "qty": int(x["qty"])}
         for x in (task.get("lines") or [])
@@ -27,7 +27,7 @@ def _build_lines_for_reserve_or_cancel(task: Dict[str, Any]) -> List[Dict[str, A
     ]
 
 
-async def do_reserve(
+async def do_pick(
     *,
     session: Optional[AsyncSession],
     platform: str,
@@ -35,15 +35,15 @@ async def do_reserve(
     trace_id: str,
 ) -> int:
     """
-    RESERVE：当前语义为 enter_pickable（生成拣货任务/打印队列，不做预占）
+    PICK：进入拣货主线（生成拣货任务/打印队列，不做预占）
     返回 lines 数量（便于 audit 记录）
     """
     if not task.get("ref"):
-        raise ValueError("Missing ref for RESERVE")
+        raise ValueError("Missing ref for PICK")
 
-    lines = _build_lines_for_reserve_or_cancel(task)
+    lines = _build_lines_for_pick_or_cancel(task)
 
-    await OrderService.reserve(
+    await OrderService.enter_pickable(
         session,
         platform=platform,
         shop_id=task.get("shop_id"),
@@ -68,7 +68,7 @@ async def do_cancel(
     if not task.get("ref"):
         raise ValueError("Missing ref for CANCEL")
 
-    lines = _build_lines_for_reserve_or_cancel(task)
+    lines = _build_lines_for_pick_or_cancel(task)
 
     await OrderService.cancel(
         session,

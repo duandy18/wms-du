@@ -88,7 +88,7 @@ async def _ensure_order_row(
               :oid,
               NULL,
               :awid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               :at
             )

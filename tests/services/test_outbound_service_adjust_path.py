@@ -49,7 +49,7 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
     if qty_sum < 5:
         pytest.skip(f"库存太少 qty_sum={qty_sum}, 不适合测试总扣减为 5")
 
-    order_id = "OUT-TEST-1"
+    order_id = "UT:PH3:OUT-TEST-1"
     lines = [
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 2},
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 3},
@@ -102,7 +102,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     if qty_sum < 3:
         pytest.skip("库存太少 qty_sum={qty_sum}, 不适合测试")
 
-    order_id = "OUT-TEST-2"
+    order_id = "UT:PH3:OUT-TEST-2"
     lines = [
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 3},
     ]

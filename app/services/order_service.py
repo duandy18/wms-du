@@ -8,7 +8,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_ingest_service import OrderIngestService
-from app.services.order_reserve_flow import OrderReserveFlow
+from app.services.order_reserve_flow import OrderPickFlow  # Phase 5：已收口为 enter_pickable / cancel
 from app.services.order_trace_helper import get_trace_id_for_order_ref
 
 
@@ -18,9 +18,13 @@ class OrderService:
 
     - 实际业务逻辑拆分在：
         * OrderIngestService：ingest_raw / ingest / 路由
-        * OrderReserveFlow：reserve / cancel
+        * OrderPickFlow：enter_pickable / cancel（进入拣货主线与取消；不做预占）
         * OrderTraceHelper：get_trace_id_for_order_ref
-    - 对外保持兼容：路由 / tests / platform_events 继续 import OrderService 即可。
+    - 对外保持兼容：tests / platform_events 继续 import OrderService 即可。
+
+    Phase 5 约束（硬）：
+    - 彻底消除“预占”概念：系统不做订单预占，不存在 reserve 作为阶段机。
+    - 若外部仍调用 reserve()，语义等同于 enter_pickable（兼容别名）。
     """
 
     # -------- Ingest -------- #
@@ -92,10 +96,10 @@ class OrderService:
             ref=ref,
         )
 
-    # -------- Reserve / Cancel -------- #
+    # -------- Enter Pickable / Cancel -------- #
 
     @staticmethod
-    async def reserve(
+    async def enter_pickable(
         session: AsyncSession,
         *,
         platform: str,
@@ -104,7 +108,10 @@ class OrderService:
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,
     ) -> dict:
-        return await OrderReserveFlow.reserve(
+        """
+        Phase 5：进入拣货主线（生成 pick task + 入队拣货单打印），不做库存裁决/不做预占。
+        """
+        return await OrderPickFlow.enter_pickable(
             session,
             platform=platform,
             shop_id=shop_id,
@@ -123,7 +130,33 @@ class OrderService:
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,
     ) -> dict:
-        return await OrderReserveFlow.cancel(
+        return await OrderPickFlow.cancel(
+            session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=ref,
+            lines=lines,
+            trace_id=trace_id,
+        )
+
+    # -------- Compatibility Alias (legacy) -------- #
+
+    @staticmethod
+    async def reserve(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+        ref: str,
+        lines: Sequence[Mapping[str, Any]],
+        trace_id: Optional[str] = None,
+    ) -> dict:
+        """
+        兼容别名：历史调用点的 reserve() 语义等同于 enter_pickable()。
+
+        注意：此处不引入“预占”概念，仅为兼容外部事件/旧测试命名。
+        """
+        return await OrderService.enter_pickable(
             session,
             platform=platform,
             shop_id=shop_id,

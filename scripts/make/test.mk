@@ -52,6 +52,26 @@ test-snapshot: venv audit-all upgrade-dev-test-db
 	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_snapshot -s
 
 # ---------------------------------
+# ✅ Phase 5：seed-opening-ledger-test（按 stocks_lot 补齐 opening ledger，使 Σledger == stocks_lot）
+# ---------------------------------
+.PHONY: seed-opening-ledger-test
+seed-opening-ledger-test: venv audit-all upgrade-dev-test-db
+	@echo ">>> seed-opening-ledger-test: reconcile opening ledger on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 \
+	  WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	  $(PY) scripts/seed_opening_ledger_test.py
+
+# ---------------------------------
+# ✅ Phase 5：audit-three-books（TEST DB 上验证 Σledger == stocks_lot）
+# ---------------------------------
+.PHONY: audit-three-books
+audit-three-books: venv audit-all upgrade-dev-test-db
+	@echo ">>> audit-three-books: verify Σ(stock_ledger.delta) == stocks_lot.qty on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 \
+	  WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	  $(PY) scripts/audit_three_books_test.py
+
+# ---------------------------------
 # 通用 pytest 入口（支持 TESTS=...）
 # ---------------------------------
 .PHONY: test
