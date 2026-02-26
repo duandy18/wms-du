@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,43 +15,25 @@ from app.schemas.inbound_receipt_explain import (
     ProblemItem,
 )
 
-# ✅ 内部专用：归一化分组键使用的 NULL 批次 token（只用于 key，不对外输出）
-_NULL_BATCH_KEY = "__NULL_BATCH__"
-
 
 @dataclass(frozen=True)
 class _LineKeyFields:
-    po_line_id: Optional[int]
-    item_id: int
-    batch_code: Optional[str]
-    production_date: Optional[date]
-
-
-def _norm_batch_code_for_key(batch_code: Optional[str]) -> str:
     """
-    用于分组/归一化键的 batch_code 归一：
-    - None / "" / "   " -> __NULL_BATCH__（避免 str(None) => "None"）
-    - 其它：strip 后返回（保持稳定）
+    Phase L：归一化分组键使用 lot_id 作为身份键（Lot 已成为库存统一身份层）。
     """
-    if batch_code is None:
-        return _NULL_BATCH_KEY
-    s = str(batch_code).strip()
-    return s if s else _NULL_BATCH_KEY
+
+    lot_id: int
 
 
 def _line_key(f: _LineKeyFields) -> str:
     """
-    Phase5（采购收货）归一化键（当前按生产日期口径）：
-    po_line_id + item_id + batch_code + production_date
+    Phase L：归一化键迁移为 lot_id（Lot 已成为库存统一身份层）
 
-    注意：
-    - batch_code 可为 NULL（非效期商品必须为 NULL）
-    - 键里用 __NULL_BATCH__ 表示 NULL，禁止出现 "None"
+    约束：
+    - batch_code / production_date / expiry_date 仅作为展示字段，不参与 identity
+    - 不再生成任何 NULL_BATCH / __NULL_BATCH__ 之类的 token
     """
-    pol = f.po_line_id if f.po_line_id is not None else "NA"
-    pd = f.production_date.isoformat() if f.production_date is not None else "NA"
-    bc_key = _norm_batch_code_for_key(f.batch_code)
-    return f"POL:{pol}|ITEM:{f.item_id}|B:{bc_key}|PD:{pd}"
+    return f"LOT:{int(f.lot_id)}"
 
 
 def _sorted_lines(receipt: object) -> List[object]:
@@ -134,6 +115,10 @@ def _validate_lines(lines: List[object], has_shelf_life_map: Dict[int, bool]) ->
         if getattr(ln, "po_line_id", None) is None:
             errs.append(ProblemItem(scope="line", field="po_line_id", message="必须关联采购单明细", index=idx))
 
+        # Phase L：Lot 身份硬要求（DB 已 NOT NULL，这里做 explain 防脏兜底）
+        if getattr(ln, "lot_id", None) is None:
+            errs.append(ProblemItem(scope="line", field="lot_id", message="lot_id 不能为空", index=idx))
+
         item_id = int(getattr(ln, "item_id"))
         has_sl = bool(has_shelf_life_map.get(item_id, False))
 
@@ -184,25 +169,33 @@ def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], Lis
     返回：
     - normalized line preview
     - ledger preview seeds: (line_key, item_id, qty_total)
+
+    Phase L 变化：
+    - 归一化分组键迁移为 lot_id
+    - line_key 输出为 LOT:<lot_id>
+    - 输出 lot_id 字段（schema 已支持 optional）
+    - 不再生成 __NULL_BATCH__ / NULL_BATCH 之类的 token
     """
     groups: Dict[str, Dict[str, object]] = {}
 
     for idx, ln in enumerate(lines):
-        f = _LineKeyFields(
-            po_line_id=getattr(ln, "po_line_id", None),
-            item_id=int(getattr(ln, "item_id")),
-            batch_code=getattr(ln, "batch_code", None),
-            production_date=getattr(ln, "production_date", None),
-        )
+        lot_id_raw = getattr(ln, "lot_id", None)
+        # 正常情况下 DB NOT NULL；这里作为 explain 兜底：若缺失则跳过归一化（错误已在 _validate_lines 报）
+        if lot_id_raw is None:
+            continue
+
+        lot_id_i = int(lot_id_raw)
+        f = _LineKeyFields(lot_id=lot_id_i)
         key = _line_key(f)
 
         if key not in groups:
             groups[key] = {
-                "po_line_id": f.po_line_id,
-                "item_id": f.item_id,
+                "po_line_id": getattr(ln, "po_line_id", None),
+                "item_id": int(getattr(ln, "item_id")),
+                "lot_id": lot_id_i,
                 # ✅ 对外输出：保持真实 batch_code（可为 None），不要把 None 变成 "None"
-                "batch_code": f.batch_code,
-                "production_date": f.production_date,
+                "batch_code": getattr(ln, "batch_code", None),
+                "production_date": getattr(ln, "production_date", None),
                 "qty": 0,
                 "indexes": [],
             }
@@ -220,6 +213,7 @@ def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], Lis
             NormalizedLinePreviewOut(
                 line_key=key,
                 qty_total=qty_total,
+                lot_id=int(g["lot_id"]),
                 item_id=item_id,
                 po_line_id=g["po_line_id"],
                 batch_code=g["batch_code"],

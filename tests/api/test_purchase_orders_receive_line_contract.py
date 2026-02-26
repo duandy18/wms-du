@@ -63,10 +63,13 @@ async def _receive_line(
     *,
     line_no: int,
     qty: int,
+    batch_code: str | None = None,
     production_date: str | None = None,
     expiry_date: str | None = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"line_no": line_no, "qty": qty}
+    if batch_code is not None:
+        payload["batch_code"] = batch_code
     if production_date is not None:
         payload["production_date"] = production_date
     if expiry_date is not None:
@@ -228,12 +231,26 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     await _start_draft(client, headers, po_id)
 
     wb1 = await _receive_line(
-        client, headers, po_id, line_no=1, qty=1, production_date="2026-01-01", expiry_date="2026-01-31"
+        client,
+        headers,
+        po_id,
+        line_no=1,
+        qty=1,
+        batch_code="UT-BATCH-1",
+        production_date="2026-01-01",
+        expiry_date="2026-01-31",
     )
     assert int(_find_row(wb1, 1).get("draft_received_qty") or 0) == 1
 
     wb2 = await _receive_line(
-        client, headers, po_id, line_no=1, qty=1, production_date="2026-01-01", expiry_date="2026-01-31"
+        client,
+        headers,
+        po_id,
+        line_no=1,
+        qty=1,
+        batch_code="UT-BATCH-1",
+        production_date="2026-01-01",
+        expiry_date="2026-01-31",
     )
     assert int(_find_row(wb2, 1).get("draft_received_qty") or 0) == 2
 

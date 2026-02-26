@@ -36,8 +36,16 @@ class InboundReceiptSummaryOut(BaseModel):
 class NormalizedLinePreviewOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    line_key: str = Field(..., description="归一化后的行键（可用于 explain 展示/合并提示）")
+    line_key: str = Field(..., description="归一化后的行键（Phase L：LOT:<lot_id>）")
     qty_total: int = Field(..., description="归一化汇总数量")
+
+    # Phase L：Lot 成为库存统一身份层
+    # - lot_id 为 explain 层 identity 键（optional 以兼容旧前端）
+    # - 不再使用 batch_code 参与分组
+    lot_id: Optional[int] = Field(
+        default=None,
+        description="Lot ID（库存统一身份键）；Phase L 迁移期为 optional",
+    )
 
     # 事实字段（对齐 InboundReceiptLine）
     item_id: int

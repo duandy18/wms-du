@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Tuple, Literal
+from typing import Literal, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 BatchMode = Literal["REQUIRED", "NONE"]
 
+# Phase L：
+# - “无批次”必须用 batch_code=None 表达（并由 lot_id 作为事实锚点），不鼓励/不接受 NULL_BATCH token 作为业务输入。
+# - 仍然禁止 NOEXP/NONE 这种人为伪码作为批次。
 _PSEUDO_BATCH_TOKENS = {
     "NOEXP",
     "NONE",
-    "NULL_BATCH",
-    "__NULL_BATCH__",
 }
 
 
@@ -51,7 +52,7 @@ def enforce_batch_semantics(
         - production_date / expiry_date 必须同时为 NULL
 
     - REQUIRED：
-        - batch_code 必填，且禁止伪批次词（NOEXP/NONE/NULL_BATCH/__NULL_BATCH__）
+        - batch_code 必填，且禁止伪批次词（NOEXP/NONE）
         - production_date / expiry_date：允许为空；若填写则必须成对填写（避免半事实）
     """
     if batch_mode == "NONE":

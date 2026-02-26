@@ -12,7 +12,6 @@ from app.services.stock_service import StockService
 from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
 UTC = timezone.utc
-NOEXP_BATCH_CODE = "NOEXP"
 
 
 class InboundService:
@@ -81,13 +80,15 @@ class InboundService:
         policy = await self._load_item_policy(session, iid)
         has_sl = bool(policy.get("has_shelf_life") or False)
 
-        # batch_code
-        code = str(batch_code).strip() if batch_code and str(batch_code).strip() else ""
-        if not code:
-            code = NOEXP_BATCH_CODE if not has_sl else f"AUTO-{iid}-1"
+        # Phase L：不再默认填充 NOEXP/AUTO 批次码。
+        # - has_sl=true（有效期管理商品）：必须显式提供 batch_code（供应商批次码）
+        # - has_sl=false（无有效期/无批次商品）：允许 batch_code=None（展示码为空）
+        code = (str(batch_code).strip() if batch_code is not None else "") or None
 
         # 日期规则
         if has_sl:
+            if code is None:
+                raise ValueError("该商品需要有效期管理：必须提供 batch_code（供应商批次码）")
             if production_date is None:
                 raise ValueError("该商品需要有效期管理：必须提供生产日期")
 
@@ -106,9 +107,8 @@ class InboundService:
         else:
             production_date = None
             expiry_date = None
-            # 无有效期：强制归 NOEXP（如果调用方传了别的 batch_code 也允许保留，但默认 NOEXP）
-            if not (batch_code and str(batch_code).strip()):
-                code = NOEXP_BATCH_CODE
+            # 无有效期商品：batch_code 允许为空（不再强制 NOEXP）
+            code = None
 
         meta = {"sub_reason": sub_reason} if (sub_reason and str(sub_reason).strip()) else None
 

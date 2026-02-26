@@ -30,6 +30,14 @@ class ReceiptSummaryOut(BaseModel):
 class WorkbenchBatchRowOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    # Phase L：Lot 已成为库存统一身份层
+    # - lot_id 是 workbench 聚合/解释层的身份键（可选：为兼容旧前端）
+    # - batch_code 仅作为展示字段，不参与 identity
+    lot_id: Optional[int] = Field(
+        default=None,
+        description="Lot ID（库存统一身份键）；Phase L 迁移期为 optional 以兼容旧前端",
+    )
+
     # ✅ 语义收敛：batch_code 允许为 None（表示“无批次槽位”，不是“未知批次”）
     # - 禁止用空串/"None"/"N/A" 等伪码替代；应由后端归一化为 None
     batch_code: Optional[str] = Field(
