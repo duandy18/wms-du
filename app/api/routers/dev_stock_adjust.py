@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.batch_code_contract import fetch_item_expiry_policy_map, validate_batch_code_contract
 from app.api.deps import get_session
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
@@ -36,19 +36,20 @@ async def dev_stock_adjust(
     payload: DevStockAdjustIn,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    # 合同：batch_code 对 shelf-life item 必须合法；对非 shelf-life 必须为 null
-    has_map = await fetch_item_has_shelf_life_map(session, {int(payload.item_id)})
-    if int(payload.item_id) not in has_map:
+    # 合同：batch_code 对 expiry-policy REQUIRED 的商品必须合法；对 NONE 必须为 null
+    pol_map = await fetch_item_expiry_policy_map(session, {int(payload.item_id)})
+    if int(payload.item_id) not in pol_map:
         raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
-    requires_batch = has_map[int(payload.item_id)] is True
+
+    requires_batch = str(pol_map[int(payload.item_id)]).upper() == "REQUIRED"
     norm_batch = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
 
-    # 对 shelf-life 商品：正向入库/加库存时，必须提供日期（让库存引擎能建 lot）
+    # 对 REQUIRED 商品：正向入库/加库存时，必须提供日期（让库存引擎能建 lot）
     if requires_batch and int(payload.delta) > 0:
         if payload.production_date is None or payload.expiry_date is None:
             raise HTTPException(
                 status_code=422,
-                detail="production_date and expiry_date are required for shelf-life items when delta > 0",
+                detail="production_date and expiry_date are required for expiry-policy REQUIRED items when delta > 0",
             )
 
     ts = payload.occurred_at or datetime.now(timezone.utc)

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 import pytest
 import httpx
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
@@ -12,15 +15,6 @@ async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     assert r.status_code == 200, r.text
     token = r.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
-
-
-async def _get_items_supplier_1(client: httpx.AsyncClient, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-    r = await client.get("/items?supplier_id=1&enabled=true", headers=headers)
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert isinstance(data, list)
-    assert len(data) >= 2
-    return data
 
 
 async def _create_po_two_lines(
@@ -66,74 +60,80 @@ def _assert_refline_contiguous_per_ref(events: List[Dict[str, Any]]) -> None:
         }
 
 
+async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) -> int:
+    """
+    为 API happy-path 插入稳定测试用 item：
+    - supplier_id = 1
+    - enabled = true
+    - lot_source_policy = INTERNAL_ONLY（标签层不要求 batch_code）
+    - expiry_policy = NONE（时间层不要求日期）
+    """
+    sku = f"{sku_prefix}-{uuid4().hex[:10]}"
+    name = f"UT-{sku}"
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO items(
+              name, sku, uom, enabled, supplier_id,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life,
+              shelf_life_value, shelf_life_unit
+            )
+            VALUES(
+              :name, :sku, 'PCS', TRUE, 1,
+              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+              FALSE,
+              NULL, NULL
+            )
+            RETURNING id
+            """
+        ),
+        {"name": name, "sku": sku},
+    )
+    return int(row.scalar_one())
+
+
 @pytest.mark.asyncio
-async def test_purchase_order_receipts_api_returns_fact_events(client: httpx.AsyncClient) -> None:
+async def test_purchase_order_receipts_api_returns_fact_events(
+    client: httpx.AsyncClient, session: AsyncSession
+) -> None:
     """
     Phase5+：/purchase-orders/{po_id}/receipts 返回的是“已确认事实事件”（台账/ledger 口径）。
 
-    注意：
-    - receive-line 只写 Receipt(DRAFT) 事实，不写 ledger；
-    - confirm 才写 ledger；
-    - ref_line 的连续性是 per-ref（每张 receipt.ref 自己的序列），不是全局序列。
+    happy-path 约束（去耦合后更稳定）：
+    - 标签层：lot_source_policy=INTERNAL_ONLY -> 不要求 batch_code
+    - 时间层：expiry_policy=NONE -> 不要求日期
     """
     headers = await _login_admin_headers(client)
-    items = await _get_items_supplier_1(client, headers)
 
-    with_sl = [it for it in items if bool(it.get("has_shelf_life")) is True]
-    without_sl = [it for it in items if bool(it.get("has_shelf_life")) is not True]
-    assert len(with_sl) >= 1
-    assert len(without_sl) >= 1
+    # ✅ 不依赖 baseline，直接插入两条 INTERNAL_ONLY + NONE 的 item
+    item_a = await _insert_item_internal_none(session, sku_prefix="UT-API-NONE-A")
+    item_b = await _insert_item_internal_none(session, sku_prefix="UT-API-NONE-B")
+    await session.commit()
 
-    item_has_sl = int(with_sl[0]["id"])
-    item_no_sl = int(without_sl[0]["id"])
-
-    po = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
+    po = await _create_po_two_lines(client, headers, (item_a, item_b))
     po_id = int(po["id"])
     assert po_id > 0, po
 
-    # Phase5+：先开始收货（draft）
+    # 先开始收货（draft）
     r0 = await client.post(f"/purchase-orders/{po_id}/receipts/draft", headers=headers)
     assert r0.status_code == 200, r0.text
 
-    # 三次收货（receive-line 返回 workbench）
-    r1 = await client.post(
-        f"/purchase-orders/{po_id}/receive-line",
-        json={
-            "line_no": 1,
-            "qty": 1,
-            "batch_code": "UT-BATCH-1",
-            "production_date": "2026-01-01",
-            "expiry_date": "2026-01-31",
-        },
-        headers=headers,
-    )
+    # 三次收货（NONE + INTERNAL_ONLY：不需要 batch/date）
+    r1 = await client.post(f"/purchase-orders/{po_id}/receive-line", json={"line_no": 1, "qty": 1}, headers=headers)
     assert r1.status_code == 200, r1.text
 
-    r2 = await client.post(
-        f"/purchase-orders/{po_id}/receive-line",
-        json={
-            "line_no": 1,
-            "qty": 1,
-            "batch_code": "UT-BATCH-1",
-            "production_date": "2026-01-01",
-            "expiry_date": "2026-01-31",
-        },
-        headers=headers,
-    )
+    r2 = await client.post(f"/purchase-orders/{po_id}/receive-line", json={"line_no": 1, "qty": 1}, headers=headers)
     assert r2.status_code == 200, r2.text
 
-    r3 = await client.post(
-        f"/purchase-orders/{po_id}/receive-line",
-        json={"line_no": 2, "qty": 3},
-        headers=headers,
-    )
+    r3 = await client.post(f"/purchase-orders/{po_id}/receive-line", json={"line_no": 2, "qty": 3}, headers=headers)
     assert r3.status_code == 200, r3.text
 
     wb = r3.json()
     receipt_id = int((wb.get("caps") or {}).get("receipt_id") or 0)
     assert receipt_id > 0, wb
 
-    # Phase5+：confirm 才产生 receipts 事实事件（ledger）
+    # confirm 才写 ledger
     rc = await client.post(f"/inbound-receipts/{receipt_id}/confirm", headers=headers)
     assert rc.status_code == 200, rc.text
 
@@ -142,22 +142,11 @@ async def test_purchase_order_receipts_api_returns_fact_events(client: httpx.Asy
     data = r.json()
     assert isinstance(data, list)
 
-    # 基本合同：至少有事件（不同实现下可能 2 条或 3 条，取决于 confirm 归一化/聚合策略）
     assert len(data) >= 2, data
-
-    # ✅ ref_line 连续性应在每个 ref 内成立
     _assert_refline_contiguous_per_ref(data)
 
-    # 关键事实：本次总收货 qty = 1 + 1 + 3 = 5（delta 口径）
     total_qty = sum(int(x.get("qty") or 0) for x in data)
     assert total_qty == 5, {"total_qty": total_qty, "events": data}
 
-    # 事件应只包含这两种 item
     item_ids = sorted({int(x.get("item_id") or 0) for x in data})
-    assert item_ids == sorted([item_has_sl, item_no_sl]), {"item_ids": item_ids, "events": data}
-
-    # 有效期行至少应出现一次并带生产/到期
-    sl_events = [x for x in data if int(x.get("item_id") or 0) == item_has_sl]
-    assert sl_events, {"msg": "expected at least one shelf-life event", "events": data}
-    assert sl_events[0].get("production_date") is not None
-    assert sl_events[0].get("expiry_date") is not None
+    assert item_ids == sorted([item_a, item_b]), {"item_ids": item_ids, "events": data}

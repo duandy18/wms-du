@@ -15,38 +15,28 @@ from app.schemas.inbound_receipt_explain import (
     ProblemItem,
 )
 
+# 标签层伪码（仅用于 lot_code 校验；与时间层无关）
+_PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
+
 
 @dataclass(frozen=True)
-class _LineKeyFields:
-    """
-    Phase L：归一化分组键使用 lot_id 作为身份键（Lot 已成为库存统一身份层）。
-    """
-
-    lot_id: int
-
-
-def _line_key(f: _LineKeyFields) -> str:
-    """
-    Phase L：归一化键迁移为 lot_id（Lot 已成为库存统一身份层）
-
-    约束：
-    - batch_code / production_date / expiry_date 仅作为展示字段，不参与 identity
-    - 不再生成任何 NULL_BATCH / __NULL_BATCH__ 之类的 token
-    """
-    return f"LOT:{int(f.lot_id)}"
+class _ItemRules:
+    expiry_policy: str  # NONE / REQUIRED
+    derivation_allowed: bool
+    shelf_life_value: int | None
+    shelf_life_unit: str | None
+    lot_source_policy: str  # INTERNAL_ONLY / SUPPLIER_ONLY
 
 
 def _sorted_lines(receipt: object) -> List[object]:
     lines = list(getattr(receipt, "lines", []) or [])
-    # 稳定输出：按 (line_no, id) 排序
-    lines.sort(key=lambda x: (int(getattr(x, "line_no", 0)), int(getattr(x, "id", 0))))
+    lines.sort(key=lambda x: (int(getattr(x, "line_no", 0) or 0), int(getattr(x, "id", 0) or 0)))
     return lines
 
 
 def _validate_header(receipt: object) -> List[ProblemItem]:
     errs: List[ProblemItem] = []
 
-    # 这些在 DB 上是 NOT NULL，但 explain 作为“防脏数据/历史数据兜底”仍保留校验
     if getattr(receipt, "occurred_at", None) is None:
         errs.append(ProblemItem(scope="header", field="occurred_at", message="收货日期不能为空"))
 
@@ -57,32 +47,48 @@ def _validate_header(receipt: object) -> List[ProblemItem]:
     if st is None or str(st).strip() == "":
         errs.append(ProblemItem(scope="header", field="source_type", message="来源类型不能为空"))
 
-    # source_id 在模型允许为空（Optional[int]），这里作为 Phase5 采购收货建议硬要求（来源要可追溯）
     if getattr(receipt, "source_id", None) is None:
         errs.append(ProblemItem(scope="header", field="source_id", message="来源编号不能为空"))
 
-    # Phase5：只允许 DRAFT/CONFIRMED（模型里还有 CANCELLED）
-    status = str(getattr(receipt, "status", "")).upper()
+    status = str(getattr(receipt, "status", "") or "").upper()
     if status not in ("DRAFT", "CONFIRMED"):
         errs.append(ProblemItem(scope="header", field="status", message="收货单状态非法"))
 
     return errs
 
 
-async def _load_item_has_shelf_life_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, bool]:
+def _is_required_policy(v: object) -> bool:
+    return str(v or "").strip().upper() == "REQUIRED"
+
+
+def _normalize_lot_code(v: object) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+async def _load_item_rules_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, _ItemRules]:
     """
-    批量加载 items.has_shelf_life，用于校验策略分流：
-    - has_shelf_life=true：batch_code/production_date/expiry_date 必填
-    - has_shelf_life=false：batch_code 必须为 NULL，且 production_date/expiry_date 必须为 NULL
+    Phase M-2（去耦合版）：
+    - 标签层：items.lot_source_policy 决定 lot_code(batch_code) 是否必填
+    - 时间层：items.expiry_policy + derivation_allowed + shelf_life_* 决定日期是否必填/是否可推导
     """
     if not item_ids:
         return {}
+
     rows = (
         (
             await session.execute(
                 sa.text(
                     """
-                    SELECT id, has_shelf_life
+                    SELECT
+                        id,
+                        expiry_policy,
+                        derivation_allowed,
+                        shelf_life_value,
+                        shelf_life_unit,
+                        lot_source_policy
                       FROM items
                      WHERE id = ANY(:ids)
                     """
@@ -93,16 +99,31 @@ async def _load_item_has_shelf_life_map(session: AsyncSession, item_ids: List[in
         .mappings()
         .all()
     )
-    m: Dict[int, bool] = {}
+
+    out: Dict[int, _ItemRules] = {}
     for r in rows:
         iid = int(r["id"])
-        m[iid] = bool(r.get("has_shelf_life") or False)
-    return m
+        out[iid] = _ItemRules(
+            expiry_policy=str(r.get("expiry_policy") or "NONE"),
+            derivation_allowed=bool(r.get("derivation_allowed") or False),
+            shelf_life_value=(int(r["shelf_life_value"]) if r.get("shelf_life_value") is not None else None),
+            shelf_life_unit=(str(r["shelf_life_unit"]) if r.get("shelf_life_unit") is not None else None),
+            lot_source_policy=str(r.get("lot_source_policy") or "INTERNAL_ONLY"),
+        )
+    return out
 
 
-def _validate_lines(lines: List[object], has_shelf_life_map: Dict[int, bool]) -> List[ProblemItem]:
+def _validate_lines(lines: List[object], rules_map: Dict[int, _ItemRules]) -> List[ProblemItem]:
+    """
+    ✅ Explain 只检查两类错误：
+    1) 标签层：lot_source_policy 决定 batch_code(lot_code) 是否必填
+    2) 时间层：expiry_policy REQUIRED 采用方案 B（expiry_date 或 production_date 推导）
+
+    ❌ 不检查 lot_id（draft 阶段可不存在）
+    ❌ 不做 lot_code × 日期冲突预检（伪命题）
+    """
     errs: List[ProblemItem] = []
-    if len(lines) == 0:
+    if not lines:
         errs.append(ProblemItem(scope="header", field="lines", message="收货明细不能为空"))
         return errs
 
@@ -111,137 +132,110 @@ def _validate_lines(lines: List[object], has_shelf_life_map: Dict[int, bool]) ->
         if qty <= 0:
             errs.append(ProblemItem(scope="line", field="qty_received", message="数量必须大于 0", index=idx))
 
-        # Phase5 合同锚点硬要求（当前字段名：po_line_id）
         if getattr(ln, "po_line_id", None) is None:
             errs.append(ProblemItem(scope="line", field="po_line_id", message="必须关联采购单明细", index=idx))
 
-        # Phase L：Lot 身份硬要求（DB 已 NOT NULL，这里做 explain 防脏兜底）
-        if getattr(ln, "lot_id", None) is None:
-            errs.append(ProblemItem(scope="line", field="lot_id", message="lot_id 不能为空", index=idx))
+        item_id = int(getattr(ln, "item_id", 0) or 0)
+        rules = rules_map.get(item_id)
+        if rules is None:
+            errs.append(ProblemItem(scope="line", field="item_id", message="商品规则缺失，无法确认", index=idx))
+            continue
 
-        item_id = int(getattr(ln, "item_id"))
-        has_sl = bool(has_shelf_life_map.get(item_id, False))
+        # -------- 标签层（lot_code）--------
+        lot_code = _normalize_lot_code(getattr(ln, "batch_code", None))
 
-        bc_raw = getattr(ln, "batch_code", None)
-        bc = (str(bc_raw).strip() if bc_raw is not None else "")
+        if rules.lot_source_policy == "SUPPLIER_ONLY":
+            if lot_code is None:
+                errs.append(ProblemItem(scope="line", field="batch_code", message="供应商批次码必填", index=idx))
+            elif lot_code.upper() in _PSEUDO_LOT_CODE_TOKENS:
+                errs.append(ProblemItem(scope="line", field="batch_code", message="批次码禁止伪码（NOEXP/NONE）", index=idx))
+        else:
+            # INTERNAL_ONLY：可不填；但若填了伪码仍禁止
+            if lot_code is not None and lot_code.upper() in _PSEUDO_LOT_CODE_TOKENS:
+                errs.append(ProblemItem(scope="line", field="batch_code", message="批次码禁止伪码（NOEXP/NONE）", index=idx))
+
+        # -------- 时间层（方案 B）--------
         pd = getattr(ln, "production_date", None)
         ed = getattr(ln, "expiry_date", None)
 
-        # ✅ 批次/日期策略封板（与写入口/DB CHECK 对齐）
-        if has_sl:
-            # 有效期商品：批次 + 日期都必须齐全
-            if bc == "":
-                errs.append(ProblemItem(scope="line", field="batch_code", message="批次必填", index=idx))
-            if pd is None:
-                errs.append(ProblemItem(scope="line", field="production_date", message="生产日期必填", index=idx))
+        if _is_required_policy(rules.expiry_policy):
+            # 必须能得到确定 expiry_date：直接给 expiry_date 或 production_date 推导
             if ed is None:
-                errs.append(ProblemItem(scope="line", field="expiry_date", message="有效期必填", index=idx))
+                if not rules.derivation_allowed:
+                    errs.append(ProblemItem(scope="line", field="expiry_date", message="有效期必填（未开启推导）", index=idx))
+                else:
+                    if pd is None:
+                        errs.append(
+                            ProblemItem(
+                                scope="line",
+                                field="production_date",
+                                message="未填写有效期：请填写生产日期以便推导",
+                                index=idx,
+                            )
+                        )
+                    if rules.shelf_life_value is None or rules.shelf_life_unit is None:
+                        errs.append(
+                            ProblemItem(
+                                scope="line",
+                                field="shelf_life",
+                                message="未配置保质期参数，无法推导有效期",
+                                index=idx,
+                            )
+                        )
         else:
-            # 非有效期商品：批次必须为 NULL，日期必须为 NULL（杜绝伪批次/伪日期）
-            if bc_raw is not None and bc != "":
-                errs.append(
-                    ProblemItem(scope="line", field="batch_code", message="非效期商品批次必须为 null", index=idx)
-                )
+            # NONE：日期必须为 NULL（保持系统干净）
             if pd is not None:
-                errs.append(
-                    ProblemItem(
-                        scope="line",
-                        field="production_date",
-                        message="非效期商品生产日期必须为 null",
-                        index=idx,
-                    )
-                )
+                errs.append(ProblemItem(scope="line", field="production_date", message="非效期商品生产日期必须为 null", index=idx))
             if ed is not None:
-                errs.append(
-                    ProblemItem(
-                        scope="line",
-                        field="expiry_date",
-                        message="非效期商品有效期必须为 null",
-                        index=idx,
-                    )
-                )
+                errs.append(ProblemItem(scope="line", field="expiry_date", message="非效期商品有效期必须为 null", index=idx))
 
     return errs
 
 
 def _normalize(lines: List[object]) -> Tuple[List[NormalizedLinePreviewOut], List[Tuple[str, int, int]]]:
     """
-    返回：
-    - normalized line preview
-    - ledger preview seeds: (line_key, item_id, qty_total)
-
-    Phase L 变化：
-    - 归一化分组键迁移为 lot_id
-    - line_key 输出为 LOT:<lot_id>
-    - 输出 lot_id 字段（schema 已支持 optional）
-    - 不再生成 __NULL_BATCH__ / NULL_BATCH 之类的 token
+    Phase M-2：draft 允许没有 lot_id，因此归一化不使用 lot_id 作为 identity。
+    - 每条 receipt_line 产出一条 normalized（line_key=LINE:<line_no>）
+    - 不做跨行聚合，避免“无身份锚点的假聚合”
     """
-    groups: Dict[str, Dict[str, object]] = {}
+    normalized: List[NormalizedLinePreviewOut] = []
+    seeds: List[Tuple[str, int, int]] = []
 
     for idx, ln in enumerate(lines):
-        lot_id_raw = getattr(ln, "lot_id", None)
-        # 正常情况下 DB NOT NULL；这里作为 explain 兜底：若缺失则跳过归一化（错误已在 _validate_lines 报）
-        if lot_id_raw is None:
-            continue
+        line_no = int(getattr(ln, "line_no", 0) or 0)
+        item_id = int(getattr(ln, "item_id", 0) or 0)
+        qty = int(getattr(ln, "qty_received", 0) or 0)
 
-        lot_id_i = int(lot_id_raw)
-        f = _LineKeyFields(lot_id=lot_id_i)
-        key = _line_key(f)
+        key = f"LINE:{line_no}" if line_no > 0 else f"IDX:{idx}"
 
-        if key not in groups:
-            groups[key] = {
-                "po_line_id": getattr(ln, "po_line_id", None),
-                "item_id": int(getattr(ln, "item_id")),
-                "lot_id": lot_id_i,
-                # ✅ 对外输出：保持真实 batch_code（可为 None），不要把 None 变成 "None"
-                "batch_code": getattr(ln, "batch_code", None),
-                "production_date": getattr(ln, "production_date", None),
-                "qty": 0,
-                "indexes": [],
-            }
-
-        groups[key]["qty"] = int(groups[key]["qty"]) + int(getattr(ln, "qty_received", 0) or 0)
-        groups[key]["indexes"].append(idx)
-
-    normalized: List[NormalizedLinePreviewOut] = []
-    ledger_seeds: List[Tuple[str, int, int]] = []
-
-    for key, g in groups.items():
-        qty_total = int(g["qty"])
-        item_id = int(g["item_id"])
         normalized.append(
             NormalizedLinePreviewOut(
                 line_key=key,
-                qty_total=qty_total,
-                lot_id=int(g["lot_id"]),
+                qty_total=qty,
+                lot_id=getattr(ln, "lot_id", None),  # draft 可能为 None
                 item_id=item_id,
-                po_line_id=g["po_line_id"],
-                batch_code=g["batch_code"],
-                production_date=g["production_date"],
-                source_line_indexes=list(g["indexes"]),
+                po_line_id=getattr(ln, "po_line_id", None),
+                batch_code=getattr(ln, "batch_code", None),
+                production_date=getattr(ln, "production_date", None),
+                source_line_indexes=[idx],
             )
         )
-        ledger_seeds.append((key, item_id, qty_total))
+        seeds.append((key, item_id, qty))
 
     normalized.sort(key=lambda x: x.line_key)
-    ledger_seeds.sort(key=lambda x: x[0])
-    return normalized, ledger_seeds
+    seeds.sort(key=lambda x: x[0])
+    return normalized, seeds
 
 
 async def explain_receipt(*, session: AsyncSession, receipt: object) -> InboundReceiptExplainOut:
-    """
-    Preflight explain：
-    - 不写库
-    - 输出 confirmable + blocking_errors + 归一化预览 + ledger 预览
-    """
     lines = _sorted_lines(receipt)
 
     header_errs = _validate_header(receipt)
 
     item_ids = sorted({int(getattr(x, "item_id")) for x in lines}) if lines else []
-    has_sl_map = await _load_item_has_shelf_life_map(session, item_ids)
+    rules_map = await _load_item_rules_map(session, item_ids)
 
-    line_errs = _validate_lines(lines, has_shelf_life_map=has_sl_map)
+    line_errs = _validate_lines(lines, rules_map=rules_map)
     blocking = header_errs + line_errs
 
     normalized_lines_preview, ledger_seeds = _normalize(lines)
@@ -250,19 +244,11 @@ async def explain_receipt(*, session: AsyncSession, receipt: object) -> InboundR
         id=int(getattr(receipt, "id")),
         status=str(getattr(receipt, "status")),
         occurred_at=getattr(receipt, "occurred_at", None),
-        warehouse_id=int(getattr(receipt, "warehouse_id"))
-        if getattr(receipt, "warehouse_id", None) is not None
-        else None,
-        source_type=str(getattr(receipt, "source_type", None))
-        if getattr(receipt, "source_type", None) is not None
-        else None,
-        source_id=int(getattr(receipt, "source_id", None))
-        if getattr(receipt, "source_id", None) is not None
-        else None,
+        warehouse_id=int(getattr(receipt, "warehouse_id")) if getattr(receipt, "warehouse_id", None) is not None else None,
+        source_type=str(getattr(receipt, "source_type", None)) if getattr(receipt, "source_type", None) is not None else None,
+        source_id=int(getattr(receipt, "source_id", None)) if getattr(receipt, "source_id", None) is not None else None,
         ref=str(getattr(receipt, "ref", None)) if getattr(receipt, "ref", None) is not None else None,
-        trace_id=str(getattr(receipt, "trace_id", None))
-        if getattr(receipt, "trace_id", None) is not None
-        else None,
+        trace_id=str(getattr(receipt, "trace_id", None)) if getattr(receipt, "trace_id", None) is not None else None,
     )
 
     warehouse_id = int(getattr(receipt, "warehouse_id"))

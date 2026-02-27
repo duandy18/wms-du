@@ -29,20 +29,28 @@ async def test_smoke_multi_platform_end2end():
 
     async with Session() as s:
         # ---------- 1) 维度与初始库存 ----------
-        await s.execute(
-            text(
-                "INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"
-            )
-        )
+        await s.execute(text("INSERT INTO warehouses (id, name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING"))
         await s.execute(
             text(
                 """
-            INSERT INTO items (id, sku, name, uom)
+            INSERT INTO items (
+              id, sku, name, uom,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life
+            )
             VALUES
-              (1, 'SKU-1', 'ITEM-1', 'PCS'),
-              (2, 'SKU-2', 'ITEM-2', 'PCS'),
-              (3, 'SKU-3', 'ITEM-3', 'PCS')
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, uom = EXCLUDED.uom
+              (1, 'SKU-1', 'ITEM-1', 'PCS',
+               'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+               FALSE),
+              (2, 'SKU-2', 'ITEM-2', 'PCS',
+               'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+               FALSE),
+              (3, 'SKU-3', 'ITEM-3', 'PCS',
+               'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+               FALSE)
+            ON CONFLICT (id) DO UPDATE
+              SET name = EXCLUDED.name,
+                  uom = EXCLUDED.uom
         """
             )
         )
@@ -121,40 +129,19 @@ async def test_smoke_multi_platform_end2end():
                 "platform": "pdd",
                 "order_sn": ref_p,
                 "status": "SHIPPED",
-                "lines": [
-                    {
-                        "item_id": 1,
-                        "warehouse_id": 1,
-                        "batch_code": "B-1",
-                        "qty": 2,
-                    }
-                ],
+                "lines": [{"item_id": 1, "warehouse_id": 1, "batch_code": "B-1", "qty": 2}],
             },
             {
                 "platform": "taobao",
                 "tid": ref_t,
                 "trade_status": "WAIT_BUYER_CONFIRM_GOODS",
-                "lines": [
-                    {
-                        "item_id": 2,
-                        "warehouse_id": 1,
-                        "batch_code": "B-2",
-                        "qty": 5,
-                    }
-                ],
+                "lines": [{"item_id": 2, "warehouse_id": 1, "batch_code": "B-2", "qty": 5}],
             },
             {
                 "platform": "jd",
                 "orderId": ref_j,
                 "orderStatus": "DELIVERED",
-                "lines": [
-                    {
-                        "item_id": 3,
-                        "warehouse_id": 1,
-                        "batch_code": "B-3",
-                        "qty": 1,
-                    }
-                ],
+                "lines": [{"item_id": 3, "warehouse_id": 1, "batch_code": "B-3", "qty": 1}],
             },
         ]
 

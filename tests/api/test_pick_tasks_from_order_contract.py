@@ -16,14 +16,23 @@ from app.services.stock_service import StockService
 pytestmark = pytest.mark.asyncio
 
 
-async def _get_item_has_shelf_life(session: AsyncSession, item_id: int) -> bool:
+async def _get_item_expiry_policy(session: AsyncSession, item_id: int) -> str:
     row = (
         await session.execute(
-            text("SELECT has_shelf_life FROM items WHERE id = :id LIMIT 1"),
+            text("SELECT expiry_policy FROM items WHERE id = :id LIMIT 1"),
             {"id": int(item_id)},
         )
     ).scalar_one_or_none()
-    return bool(row is True)
+    return str(row or "")
+
+
+async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
+    pol = await _get_item_expiry_policy(session, item_id)
+    return pol.strip().upper() == "REQUIRED"
 
 
 async def _seed_order_and_stock(session: AsyncSession) -> int:
@@ -89,7 +98,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         {"oid": int(order_id)},
     )
 
-    requires_batch = await _get_item_has_shelf_life(session, 1)
+    requires_batch = await _item_requires_batch(session, 1)
     batch_code = "BATCH-TEST-FROM-ORDER" if requires_batch else None
 
     stock = StockService()
@@ -106,8 +115,8 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         ref_line=1,
         occurred_at=now,
         batch_code=batch_code,
-        production_date=prod,
-        expiry_date=exp,
+        production_date=(prod if requires_batch else None),
+        expiry_date=(exp if requires_batch else None),
         trace_id=trace_id,
     )
 

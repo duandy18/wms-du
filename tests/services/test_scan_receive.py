@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.inbound_service import InboundService
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
@@ -33,10 +34,15 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
 
     svc = InboundService()
 
+    # ✅ Phase M：items policy NOT NULL；InboundService 的“自动建档”旧 insert 可能不补齐 policy
+    # 测试侧预先建好 item（用固定 id，避免每次跑序列不同）
+    await ensure_item(session, id=4003, sku=sku, name=sku, uom="EA", expiry_required=False)
+    await session.commit()
+
     # 不再显式 session.begin()，session fixture 已经管理事务
     res = await svc.receive(
         session=session,
-        # 不提供 item_id，改用 sku，由 InboundService._ensure_item_id 自动建档
+        # 不提供 item_id，改用 sku，由 InboundService._ensure_item_id 查找已有记录
         item_id=None,
         sku=sku,
         qty=qty,
@@ -51,7 +57,7 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
     item_id = res["item_id"]
     assert item_id > 0
     assert res["warehouse_id"] == warehouse_id
-    # Phase L：若自动建档 item 默认为非效期（NONE），batch_code 将被语义层强制归一为 NULL。
+    # Phase L：若 item 默认为非效期（NONE），batch_code 将被语义层强制归一为 NULL。
     # 因此这里只断言“返回 batch_code 要么为输入值，要么为 None（NONE 模式）”。
     assert res.get("batch_code") in (batch_code, None)
     assert res["qty"] == qty

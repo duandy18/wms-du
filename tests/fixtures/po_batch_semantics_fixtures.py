@@ -10,6 +10,10 @@ from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 
 
+def _is_required_expiry_policy(expiry_policy: str) -> bool:
+    return str(expiry_policy or "").strip().upper() == "REQUIRED"
+
+
 # ---------------------------------------------------------
 # 内部辅助：创建一个最小可运行 PO + 一行
 # ---------------------------------------------------------
@@ -17,13 +21,17 @@ from app.models.purchase_order_line import PurchaseOrderLine
 async def _create_po_with_one_line(
     session: AsyncSession,
     *,
-    has_shelf_life: bool,
+    expiry_policy: str,
 ):
     # 1️⃣ 创建商品
+    exp = str(expiry_policy or "").strip().upper() or "NONE"
     item = Item(
         name="UT-Item",
         sku="UT-SKU",
-        has_shelf_life=has_shelf_life,
+        # Phase M 真相源
+        expiry_policy=exp,
+        # 镜像字段：保持与 expiry_policy 一致（DB CHECK 会锁死等价）
+        has_shelf_life=_is_required_expiry_policy(exp),
         base_uom="EA",
     )
     session.add(item)
@@ -69,28 +77,28 @@ async def _create_po_with_one_line(
 
 
 # ---------------------------------------------------------
-# 1️⃣ 非效期商品
+# 1️⃣ 非效期商品（expiry_policy=NONE）
 # ---------------------------------------------------------
 
 @pytest.fixture
 async def seeded_po_with_one_line_non_shelf_life(async_session: AsyncSession):
     po = await _create_po_with_one_line(
         async_session,
-        has_shelf_life=False,
+        expiry_policy="NONE",
     )
     await async_session.commit()
     return po
 
 
 # ---------------------------------------------------------
-# 2️⃣ 效期商品
+# 2️⃣ 效期商品（expiry_policy=REQUIRED）
 # ---------------------------------------------------------
 
 @pytest.fixture
 async def seeded_po_with_one_line_shelf_life(async_session: AsyncSession):
     po = await _create_po_with_one_line(
         async_session,
-        has_shelf_life=True,
+        expiry_policy="REQUIRED",
     )
     await async_session.commit()
     return po

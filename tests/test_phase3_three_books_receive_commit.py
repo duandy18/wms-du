@@ -17,7 +17,7 @@ from app.services.three_books_consistency import verify_receive_commit_three_boo
 async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:
     """
     尽量挑一个不需要有效期管理的商品（避免被业务校验噪音卡住）。
-    若找不到，则退回任意一个 item（has_shelf_life=True 也行，测试会显式填 expiry_date）。
+    若找不到，则退回任意一个 item（expiry_policy=REQUIRED 也行，测试会显式填 expiry_date）。
     """
     row = (
         await session.execute(
@@ -25,7 +25,7 @@ async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:
                 """
                 SELECT id
                   FROM items
-                 WHERE COALESCE(has_shelf_life, false) = false
+                 WHERE COALESCE(expiry_policy::text, 'NONE') <> 'REQUIRED'
                  ORDER BY id ASC
                  LIMIT 1
                 """
@@ -166,9 +166,9 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     - snapshot(today) == stocks_lot（至少对 touched keys）
     - verify_receive_commit_three_books 对 touched effects 做三账一致性校验
 
-    Phase 1A 批次两态：
-    - has_shelf_life=false（NONE）：batch_code=NULL 且 production/expiry=NULL；库存聚合到无批次槽位
-    - has_shelf_life=true（REQUIRED）：batch_code 非空；日期按测试显式填写
+    Phase 1A 批次两态（真相源：items.expiry_policy）：
+    - expiry_policy=NONE：batch_code=NULL 且 production/expiry=NULL；库存聚合到无批次槽位
+    - expiry_policy=REQUIRED：batch_code 非空；日期按测试显式填写
     """
     stock_svc = StockService()
     utc = timezone.utc

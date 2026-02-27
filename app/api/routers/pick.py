@@ -7,7 +7,10 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.batch_code_contract import (
+    fetch_item_expiry_policy_map,
+    validate_batch_code_contract,
+)
 from app.api.problem import raise_409, raise_422
 from app.db.session import get_session
 from app.services.pick_service import PickService
@@ -15,45 +18,26 @@ from app.services.pick_service import PickService
 router = APIRouter(prefix="/pick", tags=["pick"])
 
 
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
+
+
 class PickIn(BaseModel):
-    """
-    v2 拣货请求体（与 PickService.record_pick 对齐）：
+    item_id: int = Field(..., ge=1)
+    qty: int = Field(..., ge=1)
+    warehouse_id: int = Field(..., ge=1)
+    batch_code: Optional[str] = None
+    ref: str = Field(..., min_length=1)
 
-    - 必填：
-        * item_id: 商品 ID
-        * qty: 本次拣货数量（>0）
-        * warehouse_id: 仓库 ID
-        * batch_code: 扣减的批次编码（主线 A：将语义前置到 API 合同）
-        * ref: 拣货引用（用于台账幂等，如 SCAN-xxx）
-    - 可选：
-        * occurred_at: 拣货时间，默认当前时间（UTC）
-        * task_line_id: 若有拣货任务行，可用于后续扩展 remain 计算
-        * location_id / device_id / operator: 仅作为审计/扩展信息，当前不影响扣减逻辑
-    """
+    occurred_at: Optional[datetime] = None
 
-    item_id: int = Field(..., ge=1, description="商品 ID")
-    qty: int = Field(..., ge=1, description="拣货数量")
-    warehouse_id: int = Field(..., ge=1, description="仓库 ID")
-    batch_code: Optional[str] = Field(default=None, description="批次编码（批次商品必填；非批次商品必须为 null）")
-    ref: str = Field(..., min_length=1, description="拣货引用（如扫描号）")
-
-    occurred_at: Optional[datetime] = Field(default=None, description="拣货时间（缺省为当前 UTC 时间）")
-
-    task_line_id: Optional[int] = Field(default=None, description="可选：拣货任务行 ID，用于后续扩展 remain 计算")
-    location_id: Optional[int] = Field(default=None, ge=0, description="拣货库位 ID（当前不参与扣减，仅作记录）")
-    device_id: Optional[str] = Field(default=None, description="设备 ID（扫描枪等）")
-    operator: Optional[str] = Field(default=None, description="操作人 ID 或姓名")
+    task_line_id: Optional[int] = None
+    location_id: Optional[int] = None
+    device_id: Optional[str] = None
+    operator: Optional[str] = None
 
 
 class PickOut(BaseModel):
-    """
-    拣货结果（与前端展示需求对齐）：
-    - picked: 本次实际扣减数量
-    - stock_after: 扣减后库存余额（如果 StockService 有返回）
-    - warehouse_id / batch_code / item_id: 标识拣货槽位
-    - status: OK / IDEMPOTENT / ERROR
-    """
-
     item_id: int
     warehouse_id: int
     batch_code: Optional[str]
@@ -68,27 +52,28 @@ async def pick_commit(
     body: PickIn,
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    拣货动作：调用 PickService.record_pick 立即扣减库存（原子 + 幂等）。
-
-    当前版本暂不直接更新 pick_task_lines / remain，仅返回本次拣货结果；
-    后续可在此基础上增加任务维度的 picked/remain 统计。
-    """
     svc = PickService()
     occurred_at = body.occurred_at or datetime.now(timezone.utc)
 
-    # ✅ 主线 A：API 合同收紧（422 拦假码）
+    # ✅ Phase M：使用 expiry_policy 真相源
     item_ids: Set[int] = {int(body.item_id)}
-    has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
-    if body.item_id not in has_shelf_life_map:
+    expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
+
+    if body.item_id not in expiry_policy_map:
         raise_422(
             "unknown_item",
             f"未知商品 item_id={body.item_id}。",
             details=[{"type": "validation", "path": "item_id", "item_id": int(body.item_id), "reason": "unknown"}],
         )
 
-    requires_batch = has_shelf_life_map.get(body.item_id, False) is True
-    batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=body.batch_code)
+    requires_batch = _requires_batch_from_expiry_policy(
+        expiry_policy_map.get(body.item_id)
+    )
+
+    batch_code = validate_batch_code_contract(
+        requires_batch=requires_batch,
+        batch_code=body.batch_code,
+    )
 
     try:
         result = await svc.record_pick(
@@ -103,7 +88,6 @@ async def pick_commit(
         )
         await session.commit()
     except ValueError as e:
-        # 典型业务错误（库存不足 / 批次不合法等）
         await session.rollback()
         raise_409(
             "pick_commit_reject",

@@ -19,6 +19,10 @@ def _norm_text(v):
     return v.strip() if isinstance(v, str) else v
 
 
+def _is_required_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
+
+
 class NextSkuOut(_Base):
     sku: str
 
@@ -47,6 +51,15 @@ class ItemBase(_Base):
     enabled: bool = True
     supplier_id: Annotated[int | None, Field(default=None)] = None
 
+    # -------------------------
+    # Phase M Rule layer
+    # -------------------------
+    lot_source_policy: Annotated[Literal["INTERNAL_ONLY", "SUPPLIER_ONLY"] | None, Field(default=None)] = None
+    expiry_policy: Annotated[Literal["NONE", "REQUIRED"] | None, Field(default=None)] = None
+    derivation_allowed: Annotated[bool | None, Field(default=None)] = None
+    uom_governance_enabled: Annotated[bool | None, Field(default=None)] = None
+
+    # 旧字段（仍保留输出，DB 已锁死与 expiry_policy 一致）
     has_shelf_life: Annotated[bool | None, Field(default=None)] = None
 
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
@@ -95,6 +108,13 @@ class ItemCreate(_Base):
     enabled: bool = True
     supplier_id: int | None = None
 
+    # Phase M：允许显式传 policy（不给也行，后端可有默认）
+    lot_source_policy: Literal["INTERNAL_ONLY", "SUPPLIER_ONLY"] | None = None
+    expiry_policy: Literal["NONE", "REQUIRED"] | None = None
+    derivation_allowed: bool | None = None
+    uom_governance_enabled: bool | None = None
+
+    # 旧字段（保留兼容，但最终以 expiry_policy 为准；DB 已锁死一致性）
     has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
     shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
@@ -138,6 +158,13 @@ class ItemUpdate(_Base):
     enabled: bool | None = None
     supplier_id: int | None = None
 
+    # Phase M policy：允许更新（测试环境一步到位）
+    lot_source_policy: Literal["INTERNAL_ONLY", "SUPPLIER_ONLY"] | None = None
+    expiry_policy: Literal["NONE", "REQUIRED"] | None = None
+    derivation_allowed: bool | None = None
+    uom_governance_enabled: bool | None = None
+
+    # 旧字段（兼容；但 DB 已锁死与 expiry_policy 一致）
     has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
     shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
@@ -175,6 +202,10 @@ class ItemUpdate(_Base):
                 "category",
                 "enabled",
                 "supplier_id",
+                "lot_source_policy",
+                "expiry_policy",
+                "derivation_allowed",
+                "uom_governance_enabled",
                 "has_shelf_life",
                 "shelf_life_value",
                 "shelf_life_unit",
@@ -211,6 +242,12 @@ class ItemCreateById(_Base):
     enabled: bool | None = True
     supplier_id: int | None = None
 
+    # Phase M policy
+    lot_source_policy: Literal["INTERNAL_ONLY", "SUPPLIER_ONLY"] | None = None
+    expiry_policy: Literal["NONE", "REQUIRED"] | None = None
+    derivation_allowed: bool | None = None
+    uom_governance_enabled: bool | None = None
+
     has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
     shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
@@ -231,6 +268,14 @@ class ItemOut(ItemBase):
 
     # ✅ 新增：是否为 DEFAULT Test Set 商品（由后端投影，前端可显性化）
     is_test: bool = False
+
+    @model_validator(mode="after")
+    def _derive_require_flags(self):
+        # Phase M：由 expiry_policy 投影
+        req = _is_required_expiry_policy(self.expiry_policy)
+        self.requires_batch = bool(req)
+        self.requires_dates = bool(req)
+        return self
 
 
 __all__ = [

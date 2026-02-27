@@ -5,11 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.batch_code_contract import (
+    fetch_item_expiry_policy_map,
+    validate_batch_code_contract,
+)
 from app.api.deps import get_session
 from app.models.enums import MovementType
 from app.api.routers.scan_schemas import ScanCountCommitRequest, ScanResponse
 from app.services.stock_service import StockService
+
+
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
 
 
 def register(router: APIRouter) -> None:
@@ -21,19 +28,26 @@ def register(router: APIRouter) -> None:
         """
         盘点提交（warehouse 粒度）。
 
-        Phase 4E 真收口：
-        - current 余额读取统一来自 stocks_lot
-        - 需要展示 batch_code 时，统一 LEFT JOIN lots 取 lot_code
-        - 禁止任何执行路径读取 legacy stocks
+        Phase M：
+        - 策略真相源：items.expiry_policy
+        - NONE → batch_code 必须为 null
+        - REQUIRED → batch_code 必填
         """
+
         svc = StockService()
 
-        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, {int(req.item_id)})
-        if req.item_id not in has_shelf_life_map:
+        expiry_policy_map = await fetch_item_expiry_policy_map(session, {int(req.item_id)})
+        if req.item_id not in expiry_policy_map:
             raise HTTPException(status_code=422, detail=f"unknown item_id: {req.item_id}")
 
-        requires_batch = has_shelf_life_map.get(req.item_id, False) is True
-        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=req.batch_code)
+        requires_batch = _requires_batch_from_expiry_policy(
+            expiry_policy_map.get(req.item_id)
+        )
+
+        batch_code = validate_batch_code_contract(
+            requires_batch=requires_batch,
+            batch_code=req.batch_code,
+        )
 
         cur_sql = text(
             """
@@ -72,6 +86,7 @@ def register(router: APIRouter) -> None:
             raise HTTPException(status_code=500, detail=f"scan(count) failed: {e}")
 
         scan_ref = f"scan:count:api:{req.occurred_at.isoformat(timespec='minutes')}"
+
         return ScanResponse(
             ok=True,
             committed=True,

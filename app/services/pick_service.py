@@ -39,9 +39,11 @@ class PickService:
 
     async def _item_requires_batch(self, session: AsyncSession, *, item_id: int) -> bool:
         """
-        临时事实派生：
-        - items.has_shelf_life == True  => requires_batch == True
-        - 其他（False/NULL）            => requires_batch == False
+        Phase M 第一阶段：执行层禁止读取 items.has_shelf_life。
+
+        批次受控唯一真相源：items.expiry_policy
+        - expiry_policy='REQUIRED' => requires_batch=True
+        - 其他（False/NULL/NONE）  => requires_batch=False
 
         重要：item 不存在时不要在这里提前 raise，
         让后续写库触发 FK（测试依赖此行为）。
@@ -50,7 +52,7 @@ class PickService:
             await session.execute(
                 SA(
                     """
-                    SELECT has_shelf_life
+                    SELECT expiry_policy
                       FROM items
                      WHERE id = :item_id
                      LIMIT 1
@@ -61,7 +63,7 @@ class PickService:
         ).first()
         if not row:
             return False
-        return bool(row[0] is True)
+        return str(row[0] or "").upper() == "REQUIRED"
 
     async def _resolve_lot_id_by_lot_code(
         self,

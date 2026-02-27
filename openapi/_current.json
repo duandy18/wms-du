@@ -672,7 +672,7 @@
         "type": "object"
       },
       "CountRequest": {
-        "description": "盘点校正请求（批次级）：\n  - 必填：item_id, location_id, qty(绝对量), ref\n  - batch_code：主线 A 收紧合同后：\n      * has_shelf_life=true 的商品：必须提供（非空且禁止 'none'）\n      * has_shelf_life is not true：必须为 null（禁止传任何值/假码）\n  - production_date / expiry_date：由 API 合同层按 item.has_shelf_life 决定是否必须\n  - occurred_at 使用 UTC 时间戳（时区感知），默认当前时间",
+        "description": "盘点校正请求（批次级）：\n\n✅ 新世界观：\n  - 必填：item_id, warehouse_id, qty(绝对量), ref\n  - batch_code：按 expiry_policy 语义收紧（Phase M 真相源）\n  - production_date / expiry_date：仅对批次商品要求至少其一",
         "properties": {
           "batch_code": {
             "anyOf": [
@@ -704,11 +704,6 @@
             "title": "Item Id",
             "type": "integer"
           },
-          "location_id": {
-            "description": "库位ID",
-            "title": "Location Id",
-            "type": "integer"
-          },
           "occurred_at": {
             "description": "盘点发生时间（UTC）；默认当前时间",
             "format": "date-time",
@@ -738,11 +733,17 @@
             "description": "业务参考号（用于台账幂等）",
             "title": "Ref",
             "type": "string"
+          },
+          "warehouse_id": {
+            "description": "仓库ID",
+            "minimum": 1.0,
+            "title": "Warehouse Id",
+            "type": "integer"
           }
         },
         "required": [
           "item_id",
-          "location_id",
+          "warehouse_id",
           "qty",
           "ref"
         ],
@@ -770,10 +771,6 @@
             "title": "Item Id",
             "type": "integer"
           },
-          "location_id": {
-            "title": "Location Id",
-            "type": "integer"
-          },
           "occurred_at": {
             "format": "date-time",
             "title": "Occurred At",
@@ -787,13 +784,17 @@
           "ref": {
             "title": "Ref",
             "type": "string"
+          },
+          "warehouse_id": {
+            "title": "Warehouse Id",
+            "type": "integer"
           }
         },
         "required": [
           "after",
           "ref",
           "item_id",
-          "location_id",
+          "warehouse_id",
           "batch_code",
           "occurred_at"
         ],
@@ -1742,6 +1743,95 @@
           "count"
         ],
         "title": "DevReconcileRangeResult",
+        "type": "object"
+      },
+      "DevStockAdjustIn": {
+        "properties": {
+          "batch_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code"
+          },
+          "delta": {
+            "description": "库存变化量，正数=加库存，负数=减库存",
+            "title": "Delta",
+            "type": "integer"
+          },
+          "expiry_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Date"
+          },
+          "item_id": {
+            "minimum": 1.0,
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "production_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Date"
+          },
+          "reason": {
+            "default": "RECEIPT",
+            "title": "Reason",
+            "type": "string"
+          },
+          "ref": {
+            "default": "dev:stock_adjust",
+            "title": "Ref",
+            "type": "string"
+          },
+          "ref_line": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Ref Line",
+            "type": "integer"
+          },
+          "warehouse_id": {
+            "minimum": 1.0,
+            "title": "Warehouse Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "warehouse_id",
+          "item_id",
+          "delta"
+        ],
+        "title": "DevStockAdjustIn",
         "type": "object"
       },
       "ExplainAnchor": {
@@ -3676,8 +3766,15 @@
             "title": "Barcode"
           },
           "batch_code": {
-            "title": "Batch Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code"
           },
           "created_at": {
             "format": "date-time",
@@ -3813,7 +3910,6 @@
           "receipt_id",
           "line_no",
           "item_id",
-          "batch_code",
           "qty_received",
           "units_per_case",
           "qty_units",
@@ -4020,90 +4116,6 @@
           "status"
         ],
         "title": "InboundReceiptSummaryOut",
-        "type": "object"
-      },
-      "InternalOutboundConfirmIn": {
-        "properties": {
-          "trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Trace Id"
-          }
-        },
-        "title": "InternalOutboundConfirmIn",
-        "type": "object"
-      },
-      "InternalOutboundCreateDocIn": {
-        "properties": {
-          "doc_type": {
-            "title": "Doc Type",
-            "type": "string"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "recipient_name": {
-            "title": "Recipient Name",
-            "type": "string"
-          },
-          "recipient_note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recipient Note"
-          },
-          "recipient_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recipient Type"
-          },
-          "trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Trace Id"
-          },
-          "warehouse_id": {
-            "title": "Warehouse Id",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "warehouse_id",
-          "doc_type",
-          "recipient_name"
-        ],
-        "title": "InternalOutboundCreateDocIn",
         "type": "object"
       },
       "InternalOutboundDocOut": {
@@ -4429,7 +4441,7 @@
         "type": "object"
       },
       "InventoryRow": {
-        "description": "✅ Phase 2：事实口径（不可被破坏）\n\n每一行都是一个库存事实切片：\n- warehouse_id + item_id + batch_code\n- qty 为该切片在库数量（stocks.qty）",
+        "description": "✅ Phase 4E：事实口径（不可被破坏）\n\n每一行都是一个库存事实切片：\n- warehouse_id + item_id + batch_code（batch_code 为展示码：lots.lot_code，可为 NULL）\n- qty 为该切片在库数量（来自 stocks_lot.qty 的聚合口径）",
         "properties": {
           "batch_code": {
             "anyOf": [
@@ -4489,7 +4501,7 @@
                 "type": "null"
               }
             ],
-            "description": "该批次到期日（来自 batches.expiry_date）",
+            "description": "该批次到期日（来自 lots.expiry_date）",
             "title": "Expiry Date"
           },
           "item_code": {
@@ -4536,7 +4548,7 @@
             "type": "boolean"
           },
           "qty": {
-            "description": "该切片数量（来自 stocks.qty）",
+            "description": "该切片数量（来自 stocks_lot.qty）",
             "title": "Qty",
             "type": "integer"
           },
@@ -4794,10 +4806,36 @@
             ],
             "title": "Category"
           },
+          "derivation_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation Allowed"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "expiry_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NONE",
+                  "REQUIRED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Policy"
           },
           "has_shelf_life": {
             "anyOf": [
@@ -4809,6 +4847,21 @@
               }
             ],
             "title": "Has Shelf Life"
+          },
+          "lot_source_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "INTERNAL_ONLY",
+                  "SUPPLIER_ONLY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Source Policy"
           },
           "name": {
             "maxLength": 128,
@@ -4877,6 +4930,17 @@
               }
             ],
             "title": "Uom"
+          },
+          "uom_governance_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom Governance Enabled"
           },
           "weight_kg": {
             "anyOf": [
@@ -5171,10 +5235,36 @@
             ],
             "title": "Default Batch Code"
           },
+          "derivation_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation Allowed"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "expiry_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NONE",
+                  "REQUIRED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Policy"
           },
           "has_shelf_life": {
             "anyOf": [
@@ -5195,6 +5285,21 @@
             "default": false,
             "title": "Is Test",
             "type": "boolean"
+          },
+          "lot_source_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "INTERNAL_ONLY",
+                  "SUPPLIER_ONLY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Source Policy"
           },
           "name": {
             "maxLength": 128,
@@ -5302,6 +5407,17 @@
               }
             ],
             "title": "Uom"
+          },
+          "uom_governance_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom Governance Enabled"
           },
           "updated_at": {
             "anyOf": [
@@ -5541,6 +5657,17 @@
             ],
             "title": "Category"
           },
+          "derivation_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation Allowed"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -5552,6 +5679,21 @@
             ],
             "title": "Enabled"
           },
+          "expiry_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NONE",
+                  "REQUIRED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Policy"
+          },
           "has_shelf_life": {
             "anyOf": [
               {
@@ -5562,6 +5704,21 @@
               }
             ],
             "title": "Has Shelf Life"
+          },
+          "lot_source_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "INTERNAL_ONLY",
+                  "SUPPLIER_ONLY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Source Policy"
           },
           "name": {
             "anyOf": [
@@ -5648,6 +5805,17 @@
               }
             ],
             "title": "Uom"
+          },
+          "uom_governance_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom Governance Enabled"
           },
           "weight_kg": {
             "anyOf": [
@@ -5829,6 +5997,18 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lot ID（精确，影子事实维度过滤）",
+            "title": "Lot Id"
           },
           "offset": {
             "default": 0,
@@ -6051,6 +6231,17 @@
             ],
             "title": "Item Name"
           },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Id"
+          },
           "movement_type": {
             "anyOf": [
               {
@@ -6161,6 +6352,216 @@
           "net_delta"
         ],
         "title": "LedgerSummary",
+        "type": "object"
+      },
+      "LotShadowAggRow": {
+        "properties": {
+          "first_occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Occurred At"
+          },
+          "last_occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Occurred At"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Id"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sum_delta": {
+            "title": "Sum Delta",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row_count",
+          "sum_delta"
+        ],
+        "title": "LotShadowAggRow",
+        "type": "object"
+      },
+      "LotShadowCoverage": {
+        "properties": {
+          "receipt_rows": {
+            "default": 0,
+            "title": "Receipt Rows",
+            "type": "integer"
+          },
+          "receipt_rows_with_lot": {
+            "default": 0,
+            "title": "Receipt Rows With Lot",
+            "type": "integer"
+          },
+          "rows_with_lot": {
+            "default": 0,
+            "title": "Rows With Lot",
+            "type": "integer"
+          },
+          "total_rows": {
+            "default": 0,
+            "title": "Total Rows",
+            "type": "integer"
+          }
+        },
+        "title": "LotShadowCoverage",
+        "type": "object"
+      },
+      "LotShadowDateMismatchRow": {
+        "properties": {
+          "ledger_expiry_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ledger Expiry Date"
+          },
+          "ledger_id": {
+            "title": "Ledger Id",
+            "type": "integer"
+          },
+          "ledger_production_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ledger Production Date"
+          },
+          "lot_expiry_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Expiry Date"
+          },
+          "lot_id": {
+            "title": "Lot Id",
+            "type": "integer"
+          },
+          "lot_production_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Production Date"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ledger_id",
+          "lot_id",
+          "occurred_at"
+        ],
+        "title": "LotShadowDateMismatchRow",
+        "type": "object"
+      },
+      "LotShadowReconcileOut": {
+        "properties": {
+          "batch_code_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code Key"
+          },
+          "by_lot": {
+            "items": {
+              "$ref": "#/components/schemas/LotShadowAggRow"
+            },
+            "title": "By Lot",
+            "type": "array"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/LotShadowCoverage"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "mismatch_count": {
+            "default": 0,
+            "title": "Mismatch Count",
+            "type": "integer"
+          },
+          "mismatches": {
+            "items": {
+              "$ref": "#/components/schemas/LotShadowDateMismatchRow"
+            },
+            "title": "Mismatches",
+            "type": "array"
+          },
+          "time_from": {
+            "format": "date-time",
+            "title": "Time From",
+            "type": "string"
+          },
+          "time_to": {
+            "format": "date-time",
+            "title": "Time To",
+            "type": "string"
+          },
+          "warehouse_id": {
+            "title": "Warehouse Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "warehouse_id",
+          "item_id",
+          "time_from",
+          "time_to"
+        ],
+        "title": "LotShadowReconcileOut",
         "type": "object"
       },
       "ManualAssignRequest": {
@@ -6875,17 +7276,37 @@
       "NormalizedLinePreviewOut": {
         "properties": {
           "batch_code": {
-            "title": "Batch Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "批次码（canonical/snapshot 语义统一：有效期商品必填；非效期商品必须为 null）",
+            "title": "Batch Code"
           },
           "item_id": {
             "title": "Item Id",
             "type": "integer"
           },
           "line_key": {
-            "description": "归一化后的行键（可用于 explain 展示/合并提示）",
+            "description": "归一化后的行键（Phase L：LOT:<lot_id>）",
             "title": "Line Key",
             "type": "string"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lot ID（库存统一身份键）；Phase L 迁移期为 optional",
+            "title": "Lot Id"
           },
           "po_line_id": {
             "anyOf": [
@@ -6927,8 +7348,7 @@
         "required": [
           "line_key",
           "qty_total",
-          "item_id",
-          "batch_code"
+          "item_id"
         ],
         "title": "NormalizedLinePreviewOut",
         "type": "object"
@@ -7297,7 +7717,7 @@
         "type": "object"
       },
       "OrderFulfillmentOut": {
-        "description": "Phase 5.2：履约事实快照（产品化输出）\n\n兼容字段名（对外）：\n- service_warehouse_id：服务归属仓（planned_warehouse_id）\n- warehouse_id：执行出库仓（actual_warehouse_id）\n- fulfillment_status：履约状态（SERVICE_ASSIGNED / READY_TO_FULFILL / MANUALLY_ASSIGNED / BLOCKED）\n\n✅ 系统事实来源：order_fulfillment",
+        "description": "Phase 5（路 A）：履约事实快照（产品化输出）\n\n对外字段名：\n- service_warehouse_id：服务归属仓（planned_warehouse_id）\n- warehouse_id：执行出库仓（actual_warehouse_id）\n- execution_stage：✅ 显式执行阶段真相（PICK / SHIP；NULL=未进入执行链路）\n- ship_committed_at：✅ 进入出库裁决链路锚点（事实）\n- shipped_at：✅ 出库完成时间（事实）\n- fulfillment_status：降级字段，仅路由/阻断/人工干预语义（禁止承载 SHIP_COMMITTED/SHIPPED）\n\n✅ 系统事实来源：order_fulfillment",
         "properties": {
           "auto_assign_status": {
             "anyOf": [
@@ -7309,6 +7729,17 @@
               }
             ],
             "title": "Auto Assign Status"
+          },
+          "execution_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Stage"
           },
           "fulfillment_status": {
             "anyOf": [
@@ -7353,6 +7784,30 @@
               }
             ],
             "title": "Service Warehouse Id"
+          },
+          "ship_committed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ship Committed At"
+          },
+          "shipped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped At"
           },
           "warehouse_id": {
             "anyOf": [
@@ -7697,6 +8152,17 @@
             "title": "Created At",
             "type": "string"
           },
+          "execution_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Stage"
+          },
           "ext_order_no": {
             "title": "Ext Order No",
             "type": "string"
@@ -7763,6 +8229,30 @@
               }
             ],
             "title": "Service Warehouse Id"
+          },
+          "ship_committed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ship Committed At"
+          },
+          "shipped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped At"
           },
           "shop_id": {
             "title": "Shop Id",
@@ -8684,7 +9174,6 @@
         "type": "object"
       },
       "PickIn": {
-        "description": "v2 拣货请求体（与 PickService.record_pick 对齐）：\n\n- 必填：\n    * item_id: 商品 ID\n    * qty: 本次拣货数量（>0）\n    * warehouse_id: 仓库 ID\n    * batch_code: 扣减的批次编码（主线 A：将语义前置到 API 合同）\n    * ref: 拣货引用（用于台账幂等，如 SCAN-xxx）\n- 可选：\n    * occurred_at: 拣货时间，默认当前时间（UTC）\n    * task_line_id: 若有拣货任务行，可用于后续扩展 remain 计算\n    * location_id / device_id / operator: 仅作为审计/扩展信息，当前不影响扣减逻辑",
         "properties": {
           "batch_code": {
             "anyOf": [
@@ -8695,7 +9184,6 @@
                 "type": "null"
               }
             ],
-            "description": "批次编码（批次商品必填；非批次商品必须为 null）",
             "title": "Batch Code"
           },
           "device_id": {
@@ -8707,11 +9195,9 @@
                 "type": "null"
               }
             ],
-            "description": "设备 ID（扫描枪等）",
             "title": "Device Id"
           },
           "item_id": {
-            "description": "商品 ID",
             "minimum": 1.0,
             "title": "Item Id",
             "type": "integer"
@@ -8719,14 +9205,12 @@
           "location_id": {
             "anyOf": [
               {
-                "minimum": 0.0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "拣货库位 ID（当前不参与扣减，仅作记录）",
             "title": "Location Id"
           },
           "occurred_at": {
@@ -8739,7 +9223,6 @@
                 "type": "null"
               }
             ],
-            "description": "拣货时间（缺省为当前 UTC 时间）",
             "title": "Occurred At"
           },
           "operator": {
@@ -8751,17 +9234,14 @@
                 "type": "null"
               }
             ],
-            "description": "操作人 ID 或姓名",
             "title": "Operator"
           },
           "qty": {
-            "description": "拣货数量",
             "minimum": 1.0,
             "title": "Qty",
             "type": "integer"
           },
           "ref": {
-            "description": "拣货引用（如扫描号）",
             "minLength": 1,
             "title": "Ref",
             "type": "string"
@@ -8775,11 +9255,9 @@
                 "type": "null"
               }
             ],
-            "description": "可选：拣货任务行 ID，用于后续扩展 remain 计算",
             "title": "Task Line Id"
           },
           "warehouse_id": {
-            "description": "仓库 ID",
             "minimum": 1.0,
             "title": "Warehouse Id",
             "type": "integer"
@@ -8815,7 +9293,6 @@
         "type": "object"
       },
       "PickOut": {
-        "description": "拣货结果（与前端展示需求对齐）：\n- picked: 本次实际扣减数量\n- stock_after: 扣减后库存余额（如果 StockService 有返回）\n- warehouse_id / batch_code / item_id: 标识拣货槽位\n- status: OK / IDEMPOTENT / ERROR",
         "properties": {
           "batch_code": {
             "anyOf": [
@@ -8882,7 +9359,7 @@
                 "type": "null"
               }
             ],
-            "description": "批次编码：批次商品必填且非空；非批次商品必须为 null（合同校验在 API 层完成）",
+            "description": "批次编码：expiry-policy REQUIRED 的商品必填且非空；expiry-policy NONE 的商品必须为 null（合同校验在 API 层完成）",
             "title": "Batch Code"
           },
           "lines": {
@@ -12306,6 +12783,30 @@
             ],
             "title": "Base Uom"
           },
+          "case_ratio_snapshot": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】倍率快照：1 采购单位=多少最小单位（历史/输入倍率；可空）",
+            "title": "Case Ratio Snapshot"
+          },
+          "case_uom_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】采购单位快照（可空；未治理允许为空）",
+            "title": "Case Uom Snapshot"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -12344,26 +12845,24 @@
             "title": "Po Id",
             "type": "integer"
           },
-          "purchase_uom": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Purchase Uom"
-          },
-          "qty_ordered": {
-            "title": "Qty Ordered",
-            "type": "integer"
-          },
           "qty_ordered_base": {
             "description": "订购数量（最小单位 base，事实字段）",
             "minimum": 0.0,
             "title": "Qty Ordered Base",
             "type": "integer"
+          },
+          "qty_ordered_case_input": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】输入痕迹：用户按采购口径输入的数量（仅当倍率>1 时通常有值）",
+            "title": "Qty Ordered Case Input"
           },
           "qty_received_base": {
             "description": "已收数量（最小单位 base，Receipt(CONFIRMED) 聚合）",
@@ -12400,11 +12899,17 @@
             ],
             "title": "Supply Price"
           },
-          "units_per_case": {
-            "description": "换算因子（>=1）",
-            "minimum": 1.0,
-            "title": "Units Per Case",
-            "type": "integer"
+          "uom_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】事实单位快照（通常来自 items.uom；历史数据允许为空）",
+            "title": "Uom Snapshot"
           },
           "updated_at": {
             "format": "date-time",
@@ -12417,8 +12922,6 @@
           "po_id",
           "line_no",
           "item_id",
-          "qty_ordered",
-          "units_per_case",
           "qty_ordered_base",
           "qty_received_base",
           "qty_remaining_base",
@@ -12451,6 +12954,30 @@
               }
             ],
             "title": "Brand"
+          },
+          "case_ratio_snapshot": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】倍率快照：1 采购单位=多少最小单位（历史/输入倍率；可空）",
+            "title": "Case Ratio Snapshot"
+          },
+          "case_uom_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】采购单位快照（可空；未治理允许为空）",
+            "title": "Case Uom Snapshot"
           },
           "category": {
             "anyOf": [
@@ -12556,45 +13083,29 @@
             ],
             "title": "Primary Barcode"
           },
-          "purchase_uom": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Purchase Uom"
-          },
-          "qty_ordered": {
-            "description": "订购数量（采购单位，展示用）",
-            "exclusiveMinimum": 0.0,
-            "title": "Qty Ordered",
-            "type": "integer"
-          },
           "qty_ordered_base": {
             "description": "订购数量（最小单位 base，事实字段）",
             "minimum": 0.0,
             "title": "Qty Ordered Base",
             "type": "integer"
           },
-          "qty_received": {
-            "description": "已收数量（采购单位口径，展示/兼容）",
-            "minimum": 0.0,
-            "title": "Qty Received",
-            "type": "integer"
+          "qty_ordered_case_input": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】输入痕迹：用户按采购口径输入的数量（仅当倍率>1 时通常有值）",
+            "title": "Qty Ordered Case Input"
           },
           "qty_received_base": {
             "description": "已收数量（最小单位 base，Receipt(CONFIRMED) 聚合）",
             "minimum": 0.0,
             "title": "Qty Received Base",
-            "type": "integer"
-          },
-          "qty_remaining": {
-            "description": "剩余可收数量（采购单位口径，展示/兼容）",
-            "minimum": 0.0,
-            "title": "Qty Remaining",
             "type": "integer"
           },
           "qty_remaining_base": {
@@ -12692,12 +13203,6 @@
             ],
             "title": "Supply Price"
           },
-          "units_per_case": {
-            "description": "换算因子（>=1）",
-            "minimum": 1.0,
-            "title": "Units Per Case",
-            "type": "integer"
-          },
           "uom": {
             "anyOf": [
               {
@@ -12708,6 +13213,18 @@
               }
             ],
             "title": "Uom"
+          },
+          "uom_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "【快照解释器】事实单位快照（通常来自 items.uom；历史数据允许为空）",
+            "title": "Uom Snapshot"
           },
           "updated_at": {
             "format": "date-time",
@@ -12736,15 +13253,10 @@
           "item_sku",
           "spec_text",
           "base_uom",
-          "purchase_uom",
           "supply_price",
-          "units_per_case",
-          "qty_ordered",
           "qty_ordered_base",
           "qty_received_base",
           "qty_remaining_base",
-          "qty_received",
-          "qty_remaining",
           "remark",
           "created_at",
           "updated_at"
@@ -13053,8 +13565,20 @@
                 "type": "null"
               }
             ],
-            "description": "本次收货条码（快照，写入 receipt_lines.barcode，可选）",
+            "description": "本次收货【商品条码】快照（写入 receipt_lines.barcode，可选；不是批次码）",
             "title": "Barcode"
+          },
+          "batch_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本次收货批次码（有效期商品必填；非效期商品必须为 null）",
+            "title": "Batch Code"
           },
           "expiry_date": {
             "anyOf": [
@@ -14547,7 +15071,7 @@
         "type": "object"
       },
       "ScanCountCommitRequest": {
-        "description": "LEGACY：基于 location 的盘点请求。\n当前 /scan/count/commit 仍按旧合同工作，未来可并入 /scan + ScanRequest(mode='count')。",
+        "description": "盘点提交（warehouse 粒度）。",
         "properties": {
           "batch_code": {
             "anyOf": [
@@ -14576,10 +15100,6 @@
             "title": "Item Id",
             "type": "integer"
           },
-          "location_id": {
-            "title": "Location Id",
-            "type": "integer"
-          },
           "occurred_at": {
             "format": "date-time",
             "title": "Occurred At",
@@ -14606,11 +15126,15 @@
           "ref": {
             "title": "Ref",
             "type": "string"
+          },
+          "warehouse_id": {
+            "title": "Warehouse Id",
+            "type": "integer"
           }
         },
         "required": [
           "item_id",
-          "location_id",
+          "warehouse_id",
           "qty",
           "ref"
         ],
@@ -14618,7 +15142,7 @@
         "type": "object"
       },
       "ScanRequest": {
-        "description": "v2 通用 Scan 请求体（与前端 ScanRequest 对齐）：\n\n- mode: \"receive\" | \"pick\" | \"count\"\n- item_id + qty: 主参数\n- warehouse_id: 仓库维度（当前版本已无 scan-level location 概念）\n- batch_code / production_date / expiry_date: 猫粮批次/保质期信息\n- task_line_id: 拣货任务行（mode=pick 时可用）\n- probe: 探针模式，只试算不落账\n- ctx: 扩展上下文（device_id / operator 等），用于生成 scan_ref 与审计",
+        "description": "v2 通用 Scan 请求体（与前端 ScanRequest 对齐）：\n- warehouse_id: 仓库维度（当前版本已无 scan-level location 概念）",
         "properties": {
           "barcode": {
             "anyOf": [
@@ -14881,17 +15405,6 @@
               }
             ],
             "title": "Item Id"
-          },
-          "location_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Location Id"
           },
           "ok": {
             "default": true,
@@ -16357,6 +16870,17 @@
             ],
             "title": "District"
           },
+          "execution_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Stage"
+          },
           "ext_order_no": {
             "title": "Ext Order No",
             "type": "string"
@@ -16435,6 +16959,30 @@
           "ref": {
             "title": "Ref",
             "type": "string"
+          },
+          "ship_committed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ship Committed At"
+          },
+          "shipped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped At"
           },
           "shop_id": {
             "title": "Shop Id",
@@ -17396,78 +17944,6 @@
         "title": "ShippingProviderContactCreateIn",
         "type": "object"
       },
-      "ShippingProviderContactOut": {
-        "properties": {
-          "active": {
-            "title": "Active",
-            "type": "boolean"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "format": "email",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "is_primary": {
-            "title": "Is Primary",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "shipping_provider_id": {
-            "title": "Shipping Provider Id",
-            "type": "integer"
-          },
-          "wechat": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wechat"
-          }
-        },
-        "required": [
-          "id",
-          "shipping_provider_id",
-          "name",
-          "role",
-          "is_primary",
-          "active"
-        ],
-        "title": "ShippingProviderContactOut",
-        "type": "object"
-      },
       "ShippingProviderContactUpdateIn": {
         "properties": {
           "active": {
@@ -17781,7 +18257,7 @@
           },
           "contacts": {
             "items": {
-              "$ref": "#/components/schemas/ShippingProviderContactOut"
+              "$ref": "#/components/schemas/app__api__routers__shipping_providers__common__ShippingProviderContactOut"
             },
             "title": "Contacts",
             "type": "array"
@@ -18426,7 +18902,6 @@
         "type": "object"
       },
       "StockBatchQueryIn": {
-        "description": "POST /stock/batch/query 入参",
         "properties": {
           "expiry_date_from": {
             "anyOf": [
@@ -18494,7 +18969,6 @@
         "type": "object"
       },
       "StockBatchQueryOut": {
-        "description": "批次查询结果",
         "properties": {
           "items": {
             "items": {
@@ -18525,7 +18999,6 @@
         "type": "object"
       },
       "StockBatchRow": {
-        "description": "批次行",
         "properties": {
           "batch_code": {
             "title": "Batch Code",
@@ -18534,18 +19007,6 @@
           "batch_id": {
             "title": "Batch Id",
             "type": "integer"
-          },
-          "days_to_expiry": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "到期天数(负数=已过期)",
-            "title": "Days To Expiry"
           },
           "expiry_date": {
             "anyOf": [
@@ -18592,6 +19053,150 @@
           "qty"
         ],
         "title": "StockBatchRow",
+        "type": "object"
+      },
+      "StockLotQueryIn": {
+        "properties": {
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "物料ID（可选）",
+            "title": "Item Id"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "lot_id（可选）",
+            "title": "Lot Id"
+          },
+          "qty_nonzero_only": {
+            "default": true,
+            "description": "是否只返回 qty!=0 的行（默认 true）",
+            "title": "Qty Nonzero Only",
+            "type": "boolean"
+          },
+          "warehouse_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "仓库ID（可选）",
+            "title": "Warehouse Id"
+          }
+        },
+        "title": "StockLotQueryIn",
+        "type": "object"
+      },
+      "StockLotQueryOut": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/StockLotRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "StockLotQueryOut",
+        "type": "object"
+      },
+      "StockLotRow": {
+        "properties": {
+          "expiry_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Date"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "lot_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Code"
+          },
+          "lot_code_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Code Source"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Id"
+          },
+          "production_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Date"
+          },
+          "qty": {
+            "title": "Qty",
+            "type": "integer"
+          },
+          "warehouse_id": {
+            "title": "Warehouse Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item_id",
+          "warehouse_id",
+          "qty"
+        ],
+        "title": "StockLotRow",
         "type": "object"
       },
       "StoreCreateIn": {
@@ -19023,78 +19628,6 @@
         "title": "SupplierContactCreateIn",
         "type": "object"
       },
-      "SupplierContactOut": {
-        "properties": {
-          "active": {
-            "title": "Active",
-            "type": "boolean"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "format": "email",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "is_primary": {
-            "title": "Is Primary",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "supplier_id": {
-            "title": "Supplier Id",
-            "type": "integer"
-          },
-          "wechat": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wechat"
-          }
-        },
-        "required": [
-          "id",
-          "supplier_id",
-          "name",
-          "role",
-          "is_primary",
-          "active"
-        ],
-        "title": "SupplierContactOut",
-        "type": "object"
-      },
       "SupplierContactUpdateIn": {
         "properties": {
           "active": {
@@ -19233,7 +19766,7 @@
           },
           "contacts": {
             "items": {
-              "$ref": "#/components/schemas/SupplierContactOut"
+              "$ref": "#/components/schemas/app__api__routers__suppliers_schemas__SupplierContactOut"
             },
             "title": "Contacts",
             "type": "array"
@@ -20028,13 +20561,6 @@
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -21049,8 +21575,16 @@
       "WorkbenchBatchRowOut": {
         "properties": {
           "batch_code": {
-            "title": "Batch Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "批次码；None 表示无批次槽位（非批次商品合法维度）",
+            "title": "Batch Code"
           },
           "expiry_date": {
             "anyOf": [
@@ -21063,6 +21597,18 @@
               }
             ],
             "title": "Expiry Date"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lot ID（库存统一身份键）；Phase L 迁移期为 optional 以兼容旧前端",
+            "title": "Lot Id"
           },
           "production_date": {
             "anyOf": [
@@ -21082,7 +21628,6 @@
           }
         },
         "required": [
-          "batch_code",
           "qty_received"
         ],
         "title": "WorkbenchBatchRowOut",
@@ -21876,6 +22421,150 @@
         },
         "title": "ZoneUpdateIn",
         "type": "object"
+      },
+      "app__api__routers__shipping_providers__common__ShippingProviderContactOut": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_primary": {
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "shipping_provider_id": {
+            "title": "Shipping Provider Id",
+            "type": "integer"
+          },
+          "wechat": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wechat"
+          }
+        },
+        "required": [
+          "id",
+          "shipping_provider_id",
+          "name",
+          "role",
+          "is_primary",
+          "active"
+        ],
+        "title": "ShippingProviderContactOut",
+        "type": "object"
+      },
+      "app__api__routers__suppliers_schemas__SupplierContactOut": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_primary": {
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "supplier_id": {
+            "title": "Supplier Id",
+            "type": "integer"
+          },
+          "wechat": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wechat"
+          }
+        },
+        "required": [
+          "id",
+          "supplier_id",
+          "name",
+          "role",
+          "is_primary",
+          "active"
+        ],
+        "title": "SupplierContactOut",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -21918,7 +22607,6 @@
     },
     "/count": {
       "post": {
-        "description": "将 (item_id, location_id, batch_id[由 batch_code 解析]) 的库存 **校正为** 给定 qty（绝对量）。\n\n流程：\n  1) 通过内核规则幂等解析/创建批次，得到 batch_id（与内核粒度一致）；\n  2) 以 (item_id, location_id, batch_id) 精确读取 current qty；\n  3) 计算 delta = qty - current，调用 StockService.adjust(reason=COUNT) 落一条台账\n     （即使 delta==0 也落账，便于审计）。",
         "operationId": "count_inventory_count_post",
         "requestBody": {
           "content": {
@@ -22673,7 +23361,7 @@
     },
     "/dev/seed-ledger-test": {
       "post": {
-        "description": "dev 用测试初始化接口：\n\n复用库里已有的 1 个 warehouse + 1 个 item，生成以下三笔台账：\n\n1) 入库：  +10（RECEIPT，batch=B-TEST-LEDGER）\n2) 出库：   -4（SHIPMENT）\n3) 盘点：   调整到 5（ADJUSTMENT/COUNT）\n\n幂等设计：\n- 所有调用都用固定 ref / ref_line / batch_code\n- StockService.adjust + ledger 唯一约束保障幂等\n- 重复调用不会重复扣减，只会返回 idempotent=True。\n\n注意：\n- 这里显式调用 session.commit()，确保写入持久化到 DB。",
+        "description": "dev 用测试初始化接口：\n\n复用库里已有的 1 个 warehouse + 1 个 item，生成以下三笔台账：\n\n1) 入库：  +10（RECEIPT，batch=B-TEST-LEDGER）\n2) 出库：   -4（SHIPMENT）\n3) 盘点：   调整到 5（ADJUSTMENT/COUNT）\n\n幂等设计：\n- 所有调用都用固定 ref / ref_line / batch_code\n- StockService.adjust + ledger 唯一约束保障幂等\n- 重复调用不会重复扣减，只会返回 idempotent=True。\n\n注意：\n- 这里显式调用 session.commit()，确保写入持久化到 DB。\n\nPhase 4E 真收口要求：\n- 禁止读取 legacy stocks\n- current 余额读取统一改为 stocks_lot（必要时 LEFT JOIN lots 取展示码）",
         "operationId": "seed_ledger_test_dev_seed_ledger_test_post",
         "responses": {
           "200": {
@@ -22692,6 +23380,49 @@
         "summary": "Seed Ledger Test",
         "tags": [
           "dev-seed"
+        ]
+      }
+    },
+    "/dev/stock/adjust": {
+      "post": {
+        "operationId": "dev_stock_adjust_dev_stock_adjust_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevStockAdjustIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dev Stock Adjust Dev Stock Adjust Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dev Stock Adjust",
+        "tags": [
+          "dev-stock"
         ]
       }
     },
@@ -24349,281 +25080,8 @@
         ]
       }
     },
-    "/internal-outbound/docs": {
-      "get": {
-        "description": "列出内部出库单（简单列表）：\n\n- 可按 status / warehouse_id 过滤；\n- 默认按 id 倒序。",
-        "operationId": "list_internal_outbound_docs_internal_outbound_docs_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "skip",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Skip",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
-            }
-          },
-          {
-            "in": "query",
-            "name": "warehouse_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Warehouse Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/InternalOutboundDocOut"
-                  },
-                  "title": "Response List Internal Outbound Docs Internal Outbound Docs Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Internal Outbound Docs",
-        "tags": [
-          "internal-outbound"
-        ]
-      },
-      "post": {
-        "description": "创建内部出库单（只建头，不带行）：\n\n- 必须指定 warehouse_id / doc_type / recipient_name；\n- 初始状态为 DRAFT。",
-        "operationId": "create_internal_outbound_doc_internal_outbound_docs_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InternalOutboundCreateDocIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalOutboundDocOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Internal Outbound Doc",
-        "tags": [
-          "internal-outbound"
-        ]
-      }
-    },
-    "/internal-outbound/docs/{doc_id}": {
-      "get": {
-        "description": "获取内部出库单详情（头 + 行）。",
-        "operationId": "get_internal_outbound_doc_internal_outbound_docs__doc_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "doc_id",
-            "required": true,
-            "schema": {
-              "title": "Doc Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalOutboundDocOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Internal Outbound Doc",
-        "tags": [
-          "internal-outbound"
-        ]
-      }
-    },
-    "/internal-outbound/docs/{doc_id}/cancel": {
-      "post": {
-        "description": "取消内部出库单：\n\n- 仅 DRAFT 状态可取消；\n- 不回滚库存（因为还没扣库存），只改状态 + 写审计事件。",
-        "operationId": "cancel_internal_outbound_doc_internal_outbound_docs__doc_id__cancel_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "doc_id",
-            "required": true,
-            "schema": {
-              "title": "Doc Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalOutboundDocOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Cancel Internal Outbound Doc",
-        "tags": [
-          "internal-outbound"
-        ]
-      }
-    },
-    "/internal-outbound/docs/{doc_id}/confirm": {
-      "post": {
-        "description": "确认内部出库：\n\n- 仅 DRAFT 状态可确认；\n- 必须已经填写 recipient_name；\n- 按行扣库存（指定批次或 FEFO），写入 ledger + audit。",
-        "operationId": "confirm_internal_outbound_doc_internal_outbound_docs__doc_id__confirm_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "doc_id",
-            "required": true,
-            "schema": {
-              "title": "Doc Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InternalOutboundConfirmIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalOutboundDocOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Confirm Internal Outbound Doc",
-        "tags": [
-          "internal-outbound"
-        ]
-      }
-    },
     "/internal-outbound/docs/{doc_id}/lines": {
       "post": {
-        "description": "在内部出库单上新增/累加一行：\n\n- 若存在相同 (item_id, batch_code) 行则累加 requested_qty；\n- 否则新建一行（line_no = 当前最大 + 1）。",
         "operationId": "upsert_internal_outbound_line_internal_outbound_docs__doc_id__lines_post",
         "parameters": [
           {
@@ -27560,6 +28018,7 @@
             }
           },
           {
+            "description": "路由/阻断字段（非阶段）；如 SERVICE_ASSIGNED / FULFILLMENT_BLOCKED",
             "in": "query",
             "name": "fulfillment_status",
             "required": false,
@@ -27572,7 +28031,26 @@
                   "type": "null"
                 }
               ],
+              "description": "路由/阻断字段（非阶段）；如 SERVICE_ASSIGNED / FULFILLMENT_BLOCKED",
               "title": "Fulfillment Status"
+            }
+          },
+          {
+            "description": "PICK / SHIP（NULL=未进入执行链路）",
+            "in": "query",
+            "name": "execution_stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "PICK / SHIP（NULL=未进入执行链路）",
+              "title": "Execution Stage"
             }
           },
           {
@@ -27814,7 +28292,7 @@
     },
     "/orders/{platform}/{shop_id}/{ext_order_no}/fulfillment/manual-assign": {
       "post": {
-        "description": "Phase 5.1：人工指定执行仓（执行期唯一合法写入路径）\n\n✅ 新世界观（一步到位迁移后）：\n- 实际出库仓写入 order_fulfillment.actual_warehouse_id（执行仓事实）\n- planned/service 归属仓仍由 routing 写入 order_fulfillment.planned_warehouse_id\n- 写 fulfillment_status=MANUALLY_ASSIGNED\n- 写审计事件：MANUAL_WAREHOUSE_ASSIGNED\n\n❌ 禁止回潮：\n- 不允许写 orders.warehouse_id（该列迁移后将被删除/不再承载事实）",
+        "description": "Phase 5.1：人工指定执行仓（执行期唯一合法写入路径）\n\n✅ 新世界观（一步到位迁移后）：\n- 实际出库仓写入 order_fulfillment.actual_warehouse_id（执行仓事实）\n- planned/service 归属仓仍由 routing 写入 order_fulfillment.planned_warehouse_id\n- 写 fulfillment_status=MANUALLY_ASSIGNED\n- 写审计事件：MANUAL_WAREHOUSE_ASSIGNED\n\n❌ 禁止回潮：\n- 不允许写 orders.warehouse_id（该列迁移后将被删除/不再承载事实）\n\n注意：\n- manual-assign 是“决策入口”，库存不足应作为 soft-check 记录（审计/提示），不应 409 阻断；\n  真正的库存裁判在 pick/ship 执行点。",
         "operationId": "fulfillment_manual_assign_orders__platform___shop_id___ext_order_no__fulfillment_manual_assign_post",
         "parameters": [
           {
@@ -28315,7 +28793,7 @@
     },
     "/outbound/ship/commit": {
       "post": {
-        "description": "出库入口（统一版，真正扣库存）：\n\n- 每次调用都会生成一个 trace_id，用于串联订单 / 预占 / 出库 / ledger；\n- 实际库存扣减与台账写入统一走 OutboundService → StockService.adjust；\n- 幂等：以 (platform, shop_id, ref) 组成的 order_id 作为业务键，\n  OutboundService 会通过 stock_ledger 中已有 delta 判断“已扣数量”，\n  只扣“剩余需要扣”的部分；若 total_qty=0，则视为完全幂等。",
+        "description": "出库入口（统一版，真正扣库存）：\n\n- 每次调用都会生成一个 trace_id，用于串联订单 / 预占 / 出库 / ledger；\n- 实际库存扣减与台账写入统一走 OutboundService → StockService.adjust；\n- 幂等：以 (platform, shop_id, ref) 组成的 order_id 作为业务键，\n  OutboundService 会通过 stock_ledger 中已有 delta 判断“已扣数量”，\n  只扣“剩余需要扣”的部分；若 total_qty=0，则视为完全幂等。\n\nPhase M：\n- 策略真相源：items.expiry_policy（NONE/REQUIRED）\n- requires_batch 由 expiry_policy 投影",
         "operationId": "outbound_ship_commit_outbound_ship_commit_post",
         "requestBody": {
           "content": {
@@ -28576,7 +29054,6 @@
     },
     "/pick": {
       "post": {
-        "description": "拣货动作：调用 PickService.record_pick 立即扣减库存（原子 + 幂等）。\n\n当前版本暂不直接更新 pick_task_lines / remain，仅返回本次拣货结果；\n后续可在此基础上增加任务维度的 picked/remain 统计。",
         "operationId": "pick_commit_pick_post",
         "requestBody": {
           "content": {
@@ -32434,7 +32911,7 @@
     },
     "/scan/count/commit": {
       "post": {
-        "description": "LEGACY：基于 location 的盘点接口。\n当前仍按旧实现工作，未来可迁移到 /scan + ScanRequest(mode='count')，并改用 warehouse_id 粒度。",
+        "description": "盘点提交（warehouse 粒度）。\n\nPhase M：\n- 策略真相源：items.expiry_policy\n- NONE → batch_code 必须为 null\n- REQUIRED → batch_code 必填",
         "operationId": "scan_count_commit_scan_count_commit_post",
         "requestBody": {
           "content": {
@@ -33140,7 +33617,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShippingProviderContactOut"
+                  "$ref": "#/components/schemas/app__api__routers__shipping_providers__common__ShippingProviderContactOut"
                 }
               }
             },
@@ -33424,7 +33901,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShippingProviderContactOut"
+                  "$ref": "#/components/schemas/app__api__routers__shipping_providers__common__ShippingProviderContactOut"
                 }
               }
             },
@@ -35222,7 +35699,7 @@
     },
     "/stock/batch/query": {
       "post": {
-        "description": "批次视图（v2）——**以 stocks 为唯一真相**：\n\n- 先从 stocks 聚合 (item_id, warehouse_id, batch_code) 的当前库存 qty；\n- 再 LEFT JOIN batches 取生产/有效期等 FEFO 信息；\n- 完全忽略 batches.qty 字段，不再依赖旧时代的冗余数量。\n\n过滤维度：\n- item_id（必选或可选，视前端而定）\n- warehouse_id（可选）\n- expiry_date_from / expiry_date_to（基于 batches.expiry_date）",
+        "description": "批次视图（Phase 4B-3 已切读到 stocks_lot）：\n\n- 以 stocks_lot 为余额来源（qty）\n- LEFT JOIN lots 补充批次展示信息\n- 不再从 stocks 读取 qty\n- batch_code 语义来自 lots.lot_code\n\n输出保持 StockBatchQueryOut 契约（total/page/page_size/items），并在每行返回 qty。",
         "operationId": "query_batches_stock_batch_query_post",
         "requestBody": {
           "content": {
@@ -35487,7 +35964,7 @@
     },
     "/stock/ledger/reconcile": {
       "post": {
-        "description": "台账对账接口：\n\n在指定时间窗口内（基于 occurred_at），对比：\n\n  SUM(delta)  vs  stocks.qty\n\n找出 (warehouse_id, item_id, batch_code_key) 维度上“不平”的记录：\n- ledger_sum_delta != stock_qty\n\n过滤条件：\n- 复用 LedgerQuery 中的 warehouse_id / item_id / batch_code（查询级归一后映射到 batch_code_key）；\n- 其它过滤（reason/ref/trace_id）对对账没有意义，此处忽略。",
+        "description": "台账对账接口（Phase 4E 真收口）：\n\n在指定时间窗口内（基于 occurred_at），对比：\n\n  SUM(stock_ledger.delta)  vs  SUM(stocks_lot.qty by batch_code_key)\n\n找出 (warehouse_id, item_id, batch_code_key) 维度上“不平”的记录。\n\n规则：\n- current 余额读取统一来自 stocks_lot\n- batch_code 仅为展示码（lots.lot_code），维度事实为 batch_code_key\n- 禁止任何执行路径读取 legacy stocks",
         "operationId": "reconcile_ledger_stock_ledger_reconcile_post",
         "requestBody": {
           "content": {
@@ -35607,6 +36084,48 @@
         ]
       }
     },
+    "/stock/ledger/shadow-reconcile-lot": {
+      "post": {
+        "description": "Phase 4A-2a / Step C:\nlot 维度影子对账（只读验证，不改 stocks 槽位）\n\n最小约束（避免全库扫）：\n- 必须指定 warehouse_id + item_id\n- 时间窗使用 normalize_time_range（<=90 天）\n- 可选 batch_code / lot_id 进一步缩小范围",
+        "operationId": "shadow_reconcile_lot_stock_ledger_shadow_reconcile_lot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotShadowReconcileOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shadow Reconcile Lot",
+        "tags": [
+          "stock_ledger"
+        ]
+      }
+    },
     "/stock/ledger/summary": {
       "post": {
         "description": "台账统计接口（供前端直接渲染统计表/图）：\n\n- 使用与明细查询相同的过滤条件（LedgerQuery）；\n- 按 reason 聚合 count / sum(delta)；\n- ✅ 统计口径 PROD-only：排除 DEFAULT Test Set 商品。",
@@ -35723,6 +36242,22 @@
           },
           {
             "in": "query",
+            "name": "lot_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lot Id"
+            }
+          },
+          {
+            "in": "query",
             "name": "trace_id",
             "required": false,
             "schema": {
@@ -35777,6 +36312,48 @@
         "summary": "Ledger Timeline",
         "tags": [
           "ledger_timeline"
+        ]
+      }
+    },
+    "/stock/lot/query": {
+      "post": {
+        "description": "lot 视图（Phase 4B-3 切读）——以 stocks_lot 为读取来源（ORM 版）：\n\n- 从 stocks_lot 读取 (item_id, warehouse_id, lot_id_key) 的余额 qty\n- LEFT JOIN lots 补充 lot_code / 生产日期 / 失效日期等展示字段\n- 允许 lot_id 为空（lot_id_key=0 槽位）",
+        "operationId": "query_lots_stock_lot_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockLotQueryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockLotQueryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Lots",
+        "tags": [
+          "stock"
         ]
       }
     },
@@ -37264,7 +37841,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SupplierContactOut"
+                  "$ref": "#/components/schemas/app__api__routers__suppliers_schemas__SupplierContactOut"
                 }
               }
             },
@@ -37581,7 +38158,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SupplierContactOut"
+                  "$ref": "#/components/schemas/app__api__routers__suppliers_schemas__SupplierContactOut"
                 }
               }
             },

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
 from app.services.stock_service import StockService
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
@@ -32,13 +33,13 @@ async def _ensure_item_row(
     """
     直接用 SQL 确保 items 表中存在给定 item_id 的记录。
 
-    - 不依赖 ORM Item 构造（避免 uom 等 property 限制）；
-    - 仅插入主键 id + sku + name + enabled，其他列走默认值/可空。
+    旧实现曾假设 items 只需要 (id, sku, name, enabled)；
+    Phase M 起 items policy 字段 NOT NULL + has_shelf_life CHECK 锁死，
+    因此这里必须走“最小但合法”的插入。
 
-    假设 items 表至少包含：
-        id (PK), sku, name, enabled
+    统一收敛到 tests/utils/ensure_minimal.ensure_item()，避免各处散落裸 SQL。
     """
-    # 先查一遍，避免重复 insert
+    # 先查一遍，避免重复 insert（保持语义：已存在就不改动）
     row = await session.execute(
         sa.text("SELECT 1 FROM items WHERE id = :id LIMIT 1"),
         {"id": item_id},
@@ -49,17 +50,7 @@ async def _ensure_item_row(
     sku = f"IDEM-SKU-{item_id}"
     name = f"IDEM-ITEM-{item_id}"
 
-    # 显式插入最小字段集合；ON CONFLICT 保证重复调用安全
-    await session.execute(
-        sa.text(
-            """
-            INSERT INTO items (id, sku, name, enabled)
-            VALUES (:id, :sku, :name, TRUE)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"id": item_id, "sku": sku, "name": name},
-    )
+    await ensure_item(session, id=int(item_id), sku=sku, name=name)
     await session.commit()
 
 

@@ -44,6 +44,10 @@ def _extract_po_id(payload: Dict[str, Any]) -> int:
     return 0
 
 
+def _is_required_expiry_policy(v: Any) -> bool:
+    return str(v or "").strip().upper() == "REQUIRED"
+
+
 def _assert_line_base_contract(line: Dict[str, Any]) -> None:
     # ✅ 第一公民：事实口径（base）
     for k in ("qty_ordered_base", "qty_received_base", "qty_remaining_base"):
@@ -88,10 +92,25 @@ def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
     assert name, f"item_name must be non-empty (backend-generated snapshot), line={line}"
     assert sku, f"item_sku must be non-empty (backend-generated snapshot), line={line}"
 
+    # ✅ Phase M：真相源为 expiry_policy；has_shelf_life 仅镜像输出（兼容字段）
+    expiry_policy = line.get("expiry_policy")
+    has_sl = bool(line.get("has_shelf_life") or False)
+    if expiry_policy is not None:
+        assert has_sl == _is_required_expiry_policy(expiry_policy), {
+            "msg": "has_shelf_life must mirror expiry_policy",
+            "expiry_policy": expiry_policy,
+            "has_shelf_life": has_sl,
+            "line": line,
+        }
+
 
 def _pick_line_for_receive(lines: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    优先挑 expiry_policy!=REQUIRED 的行，避免受控批次/日期约束带来噪音。
+    若找不到，则退回任意一个行（REQUIRED 也行，测试会显式填日期）。
+    """
     for ln in lines:
-        if not bool(ln.get("has_shelf_life") or False):
+        if not _is_required_expiry_policy(ln.get("expiry_policy")):
             return ln
     return lines[0]
 
@@ -102,8 +121,8 @@ def _build_receive_payload(line: Dict[str, Any]) -> Dict[str, Any]:
 
     payload: Dict[str, Any] = {"line_id": line_id, "qty": 1}
 
-    has_sl = bool(line.get("has_shelf_life") or False)
-    if not has_sl:
+    requires_batch = _is_required_expiry_policy(line.get("expiry_policy"))
+    if not requires_batch:
         return payload
 
     today = date.today()

@@ -5,6 +5,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.utils.ensure_minimal import ensure_item
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -26,20 +28,12 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     item_id = 3003
     order_ref = trace_id
 
-    # items：满足 ledger FK
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {
-            "item_id": item_id,
-            "sku": f"UT-SKU-{item_id}",
-            "name": f"UT-Item-{item_id}",
-        },
+    # items：满足 ledger FK（Phase M：items policy NOT NULL，必须最小合法插入）
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"UT-SKU-{item_id}",
+        name=f"UT-Item-{item_id}",
     )
 
     # orders：最小订单头（只保证 trace 聚合能看到）
@@ -185,14 +179,8 @@ async def test_debug_trace_basic(client, session: AsyncSession):
     # 校验 ORDER.CREATED（如果 event_store 存在）
     if "event_store" in sources:
         assert any(
-            e["source"] == "event_store"
-            and e["kind"] == "ORDER.CREATED"
-            and e.get("ref") == "ORD-UT-1"
-            for e in events
+            e["source"] == "event_store" and e["kind"] == "ORDER.CREATED" and e.get("ref") == "ORD-UT-1" for e in events
         )
 
     # 校验 SHIPMENT ledger
-    assert any(
-        e["source"] == "ledger" and e["kind"] == "SHIPMENT" and e["raw"].get("delta") == -2
-        for e in events
-    )
+    assert any(e["source"] == "ledger" and e["kind"] == "SHIPMENT" and e["raw"].get("delta") == -2 for e in events)

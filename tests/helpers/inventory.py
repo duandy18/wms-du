@@ -7,6 +7,8 @@ from typing import Iterable, List, Optional, Tuple
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.utils.ensure_minimal import ensure_item
+
 UTC = timezone.utc
 
 __all__ = [
@@ -64,13 +66,9 @@ async def ensure_wh_loc_item(
         ),
         {"l": loc, "w": wh, "code": code or f"LOC-{loc}", "name": name or code or f"LOC-{loc}"},
     )
-    await session.execute(
-        SA(
-            "INSERT INTO items (id, sku, name) VALUES (:i, :s, :n) "
-            "ON CONFLICT (id) DO UPDATE SET sku=EXCLUDED.sku, name=EXCLUDED.name"
-        ),
-        {"i": item, "s": f"SKU-{item}", "n": f"ITEM-{item}"},
-    )
+
+    # Phase M：items policy NOT NULL + has_shelf_life CHECK → 统一走最小合法 helper
+    await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
 
 
 async def _resolve_wh_by_loc(session: AsyncSession, loc: int) -> int:
@@ -114,11 +112,46 @@ async def seed_batch_slot(
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
                 )
-                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, :exp, 'EXPLICIT')
+                SELECT
+                    :w,
+                    :i,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    CURRENT_DATE,
+                    :exp,
+                    'EXPLICIT',
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM items it
+                 WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET expiry_date = EXCLUDED.expiry_date

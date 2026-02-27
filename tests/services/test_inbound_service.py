@@ -38,7 +38,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     ref = f"IN-{int(datetime.now(UTC).timestamp())}"
     exp = date.today() + timedelta(days=365)
 
-    # Phase 4D：确保 lot 存在（SUPPLIER：lot_code 必须非空，source_receipt/source_line 必须为 NULL）
+    # Phase 4D/Phase M：lots 必须冻结 item_*_snapshot（NOT NULL）→ 必须从 items 真相源读取
     lot_row = (
         await session.execute(
             text(
@@ -48,11 +48,46 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
                 )
-                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, :exp, 'EXPLICIT')
+                SELECT
+                    :w,
+                    :i,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    CURRENT_DATE,
+                    :exp,
+                    'EXPLICIT',
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM items it
+                 WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET expiry_date = EXCLUDED.expiry_date

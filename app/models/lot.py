@@ -5,9 +5,11 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
+    Enum,
     ForeignKey,
     Index,
     Integer,
@@ -34,6 +36,9 @@ class Lot(Base):
     Snapshot 规则：
       - lot 是库存维度事实锚点，必须冻结 item 侧关键主数据，避免主数据漂移污染历史解释链。
       - 本模型不使用 mapped_column(index=True) 生成隐式索引，索引以 migration 为准。
+
+    Phase M：
+      - 冻结 items.policy 到 lots（防漂移封板）
     """
 
     __tablename__ = "lots"
@@ -76,6 +81,7 @@ class Lot(Base):
     # Item snapshots (frozen at lot creation time)
     # ------------------------------------------------------------------
 
+    # 旧字段（已被 Phase M 迁移锁死为 expiry_policy 的镜像字段）
     item_has_shelf_life_snapshot: Mapped[Optional[bool]] = mapped_column(nullable=True)
 
     item_shelf_life_value_snapshot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -84,6 +90,18 @@ class Lot(Base):
     item_uom_snapshot: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     item_case_ratio_snapshot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     item_case_uom_snapshot: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    # Phase M：规则层 snapshot（DB 已 NOT NULL）
+    item_lot_source_policy_snapshot: Mapped[str] = mapped_column(
+        Enum("INTERNAL_ONLY", "SUPPLIER_ONLY", name="lot_source_policy"),
+        nullable=False,
+    )
+    item_expiry_policy_snapshot: Mapped[str] = mapped_column(
+        Enum("NONE", "REQUIRED", name="expiry_policy"),
+        nullable=False,
+    )
+    item_derivation_allowed_snapshot: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    item_uom_governance_enabled_snapshot: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -114,9 +132,7 @@ class Lot(Base):
             name="ck_lots_internal_requires_source",
         ),
         CheckConstraint(
-            "("
-            "expiry_source IS NULL OR expiry_source IN ('EXPLICIT', 'DERIVED')"
-            ")",
+            "(" "expiry_source IS NULL OR expiry_source IN ('EXPLICIT', 'DERIVED')" ")",
             name="ck_lots_expiry_source_enum",
         ),
         # ---------------------------
