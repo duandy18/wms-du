@@ -104,7 +104,8 @@ class Item(Base):
         Boolean,
         nullable=False,
         server_default=text("false"),
-        comment="是否需要有效期管理（镜像字段；真相源为 expiry_policy）",
+        # ✅ 与当前 DB 列注释保持一致，避免 alembic-check comment drift
+        comment="是否需要有效期管理（入库是否强制日期）",
     )
 
     weight_kg: Mapped[Optional[float]] = mapped_column(
