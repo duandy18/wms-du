@@ -11,6 +11,17 @@ from app.services.item_barcode_service import ItemBarcodeService
 from app.services.item_sku import next_sku
 
 
+def _norm_policy_str(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip().upper()
+    return s if s else None
+
+
+def _is_required_expiry_policy(v: Optional[str]) -> bool:
+    return _norm_policy_str(v) == "REQUIRED"
+
+
 class ItemWriteService:
     """
     写入层（Write）：
@@ -40,10 +51,16 @@ class ItemWriteService:
         category: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
+        # legacy mirror + params
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
+        # Phase M policy (truth)
+        lot_source_policy: Optional[str] = None,
+        expiry_policy: Optional[str] = None,
+        derivation_allowed: Optional[bool] = None,
+        uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
         name_val = (name or "").strip()
         if not name_val:
@@ -65,6 +82,29 @@ class ItemWriteService:
 
         sku_val = self.next_sku()
 
+        # -------------------------
+        # Phase M: resolve policy
+        # -------------------------
+        lot_policy = _norm_policy_str(lot_source_policy) or "SUPPLIER_ONLY"
+
+        # expiry_policy is truth; if absent, fall back to legacy has_shelf_life mapping
+        exp_policy = _norm_policy_str(expiry_policy)
+        if exp_policy is None:
+            exp_policy = "REQUIRED" if bool(has_shelf_life) else "NONE"
+
+        deriv_allowed = True if derivation_allowed is None else bool(derivation_allowed)
+        uom_gov = False if uom_governance_enabled is None else bool(uom_governance_enabled)
+
+        # mirror field (DB check locked)
+        has_sl = _is_required_expiry_policy(exp_policy)
+
+        # if NONE, shelf_life params must be null (DB check ck_items_expiry_policy_vs_shelf_life)
+        sl_value = shelf_life_value
+        sl_unit = shelf_life_unit
+        if not has_sl:
+            sl_value = None
+            sl_unit = None
+
         obj = Item(
             sku=sku_val,
             name=name_val,
@@ -74,9 +114,15 @@ class ItemWriteService:
             supplier_id=supplier_id,
             brand=brand_val,
             category=category_val,
-            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
-            shelf_life_value=shelf_life_value,
-            shelf_life_unit=shelf_life_unit,
+            # Phase M rule layer
+            lot_source_policy=lot_policy,
+            expiry_policy=exp_policy,
+            derivation_allowed=deriv_allowed,
+            uom_governance_enabled=uom_gov,
+            # legacy mirror + params
+            has_shelf_life=has_sl,
+            shelf_life_value=sl_value,
+            shelf_life_unit=sl_unit,
             weight_kg=weight_kg,
             case_ratio=case_ratio_val,
             case_uom=case_uom_val,
@@ -117,6 +163,7 @@ class ItemWriteService:
         case_uom_set: bool = False,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
+        # legacy mirror + params
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
@@ -125,6 +172,11 @@ class ItemWriteService:
         category: Optional[str] = None,
         brand_set: bool = False,
         category_set: bool = False,
+        # Phase M policy
+        lot_source_policy: Optional[str] = None,
+        expiry_policy: Optional[str] = None,
+        derivation_allowed: Optional[bool] = None,
+        uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
         obj = self.db.get(Item, int(id))
         if obj is None:
@@ -169,16 +221,60 @@ class ItemWriteService:
             obj.supplier_id = supplier_id
             changed = True
 
-        if has_shelf_life is not None:
-            obj.has_shelf_life = bool(has_shelf_life)
+        # -------------------------
+        # Phase M policy updates
+        # -------------------------
+        if lot_source_policy is not None:
+            obj.lot_source_policy = _norm_policy_str(lot_source_policy) or obj.lot_source_policy
             changed = True
 
+        # expiry_policy takes precedence; if absent but has_shelf_life provided, derive it
+        exp_policy = _norm_policy_str(expiry_policy)
+        if exp_policy is None and has_shelf_life is not None:
+            exp_policy = "REQUIRED" if bool(has_shelf_life) else "NONE"
+
+        if exp_policy is not None:
+            obj.expiry_policy = exp_policy
+            # mirror
+            obj.has_shelf_life = _is_required_expiry_policy(exp_policy)
+            # enforce param clearing when NONE
+            if not obj.has_shelf_life:
+                obj.shelf_life_value = None
+                obj.shelf_life_unit = None
+            changed = True
+        else:
+            # no expiry_policy change; still allow updating mirror (but keep it consistent)
+            if has_shelf_life is not None:
+                # derive policy from mirror to satisfy DB CHECK
+                derived = "REQUIRED" if bool(has_shelf_life) else "NONE"
+                obj.expiry_policy = derived
+                obj.has_shelf_life = _is_required_expiry_policy(derived)
+                if not obj.has_shelf_life:
+                    obj.shelf_life_value = None
+                    obj.shelf_life_unit = None
+                changed = True
+
+        if derivation_allowed is not None:
+            obj.derivation_allowed = bool(derivation_allowed)
+            changed = True
+
+        if uom_governance_enabled is not None:
+            obj.uom_governance_enabled = bool(uom_governance_enabled)
+            changed = True
+
+        # shelf_life params updates (only meaningful when REQUIRED)
         if shelf_life_value is not None:
-            obj.shelf_life_value = shelf_life_value
+            if _is_required_expiry_policy(getattr(obj, "expiry_policy", None)):
+                obj.shelf_life_value = shelf_life_value
+            else:
+                obj.shelf_life_value = None
             changed = True
 
         if shelf_life_unit is not None:
-            obj.shelf_life_unit = shelf_life_unit
+            if _is_required_expiry_policy(getattr(obj, "expiry_policy", None)):
+                obj.shelf_life_unit = shelf_life_unit
+            else:
+                obj.shelf_life_unit = None
             changed = True
 
         if weight_kg is not None:

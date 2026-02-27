@@ -72,9 +72,10 @@ class InboundReceiptLine(Base):
     __tablename__ = "inbound_receipt_lines"
 
     __table_args__ = (
+        # Phase M：移除 batch_code 日期门禁；仅保留“行内一致性”约束
         CheckConstraint(
-            "(batch_code IS NOT NULL) OR (production_date IS NULL AND expiry_date IS NULL)",
-            name="ck_inbound_receipt_lines_batch_null_dates_null",
+            "(production_date IS NULL) OR (expiry_date IS NULL) OR (production_date <= expiry_date)",
+            name="ck_inbound_receipt_lines_prod_le_exp",
         ),
     )
 

@@ -19,11 +19,11 @@ class PickLineIn(BaseModel):
 
 class PickRequest(BaseModel):
     warehouse_id: conint(gt=0) = Field(..., description="拣货仓库 ID（>0，允许 1）")
-    # ✅ 主线 A：API 合同收紧需要支持“非批次商品 batch_code 必须为 null”
-    # 业务判断（has_shelf_life）在 router 中完成，schema 只负责类型承载。
+    # ✅ 主线 A：API 合同收紧需要支持“expiry_policy=NONE 的商品 batch_code 必须为 null”
+    # 业务判断在 router/handler 中完成（真相源：items.expiry_policy），schema 只负责类型承载。
     batch_code: Optional[str] = Field(
         default=None,
-        description="批次编码：批次商品必填且非空；非批次商品必须为 null（合同校验在 API 层完成）",
+        description="批次编码：expiry-policy REQUIRED 的商品必填且非空；expiry-policy NONE 的商品必须为 null（合同校验在 API 层完成）",
     )
     lines: List[PickLineIn] = Field(default_factory=list)
     occurred_at: Optional[datetime] = Field(default=None, description="拣货时间（缺省为当前 UTC 时间）")
@@ -32,7 +32,7 @@ class PickRequest(BaseModel):
 class PickResponse(BaseModel):
     item_id: int
     warehouse_id: int
-    # ✅ 返回也允许 null：非批次商品的真实槽位语义就是 NULL
+    # ✅ 返回也允许 null：expiry-policy NONE 的真实槽位语义就是 NULL（lot-world 展示码为空）
     batch_code: Optional[str]
     picked: int
     stock_after: Optional[int] = None

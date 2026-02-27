@@ -82,10 +82,16 @@ class ItemService:
         category: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
+        # legacy mirror
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
+        # Phase M policy (optional for backward compatibility)
+        lot_source_policy: Optional[str] = None,
+        expiry_policy: Optional[str] = None,
+        derivation_allowed: Optional[bool] = None,
+        uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
         obj = self._write.create_item(
             name=name,
@@ -102,6 +108,10 @@ class ItemService:
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
+            lot_source_policy=lot_source_policy,
+            expiry_policy=expiry_policy,
+            derivation_allowed=derivation_allowed,
+            uom_governance_enabled=uom_governance_enabled,
         )
         out = self._present.present_item(item=obj)
         assert out is not None
@@ -184,6 +194,7 @@ class ItemService:
         case_uom_set: bool = False,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
+        # legacy mirror
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
@@ -192,6 +203,11 @@ class ItemService:
         category: Optional[str] = None,
         brand_set: bool = False,
         category_set: bool = False,
+        # Phase M policy (optional)
+        lot_source_policy: Optional[str] = None,
+        expiry_policy: Optional[str] = None,
+        derivation_allowed: Optional[bool] = None,
+        uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
         obj = self._write.update_item(
             id=id,
@@ -212,6 +228,10 @@ class ItemService:
             category=category,
             brand_set=brand_set,
             category_set=category_set,
+            lot_source_policy=lot_source_policy,
+            expiry_policy=expiry_policy,
+            derivation_allowed=derivation_allowed,
+            uom_governance_enabled=uom_governance_enabled,
         )
         out = self._present.present_item(item=obj)
         assert out is not None

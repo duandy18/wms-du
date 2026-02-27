@@ -28,14 +28,24 @@ async def _ensure_min_domain_v2(
         {"w": warehouse_id, "name": f"WH-{warehouse_id}"},
     )
 
-    # 商品（最小一行）
+    # 商品（最小一行，Phase M：policy NOT NULL + has_shelf_life CHECK）
     await session.execute(
         text(
-            "INSERT INTO items(id, sku, name, uom) "
-            "VALUES (:i, :sku, :name, 'bag') "
-            "ON CONFLICT (id) DO NOTHING"
+            """
+            INSERT INTO items(
+              id, sku, name, uom,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life
+            )
+            VALUES(
+              :i, :sku, :name, 'bag',
+              'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+              FALSE
+            )
+            ON CONFLICT (id) DO NOTHING
+            """
         ),
-        {"i": item_id, "sku": f"SKU-{item_id}", "name": f"ITEM-{item_id}"},
+        {"i": int(item_id), "sku": f"SKU-{item_id}", "name": f"ITEM-{item_id}"},
     )
 
     await session.commit()

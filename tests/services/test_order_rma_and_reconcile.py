@@ -18,15 +18,14 @@ UTC = timezone.utc
 
 async def _item_batch_mode_is_required(session: AsyncSession, *, item_id: int) -> bool:
     """
-    Phase 1A：当前 items 用 has_shelf_life 作为 REQUIRED/NONE 的映射依据。
-    - True  -> REQUIRED
-    - False -> NONE
+    Phase M 第一阶段：测试不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
     """
     row = (
         await session.execute(
             text(
                 """
-                SELECT COALESCE(has_shelf_life, false)
+                SELECT expiry_policy
                   FROM items
                  WHERE id = :iid
                  LIMIT 1
@@ -37,7 +36,7 @@ async def _item_batch_mode_is_required(session: AsyncSession, *, item_id: int) -
     ).first()
     if row is None:
         return False
-    return bool(row[0])
+    return str(row[0] or "").strip().upper() == "REQUIRED"
 
 
 async def _insert_confirmed_order_return_receipt(

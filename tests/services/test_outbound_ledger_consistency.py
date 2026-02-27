@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
@@ -35,16 +36,8 @@ async def _seed_minimal_order_for_outbound(
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
     trace_id = "TRACE-LEDGER-OUT-1"
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": "SKU-0001", "name": "UT-ITEM-1"},
-    )
+    # Phase M：items 有 NOT NULL policy 护栏，必须走合法插入（helper 统一兜底）
+    await ensure_item(session, id=int(item_id), sku="SKU-0001", name="UT-ITEM-1")
 
     # orders（不再包含 warehouse_id）
     row = await session.execute(

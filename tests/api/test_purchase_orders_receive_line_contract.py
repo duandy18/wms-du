@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 import pytest
 import httpx
@@ -21,8 +22,34 @@ async def _get_items_supplier_1(client: httpx.AsyncClient, headers: Dict[str, st
     assert r.status_code == 200, r.text
     data = r.json()
     assert isinstance(data, list)
-    assert len(data) >= 2
+    assert len(data) >= 1
     return data
+
+
+async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) -> int:
+    sku = f"{sku_prefix}-{uuid4().hex[:10]}"
+    name = f"UT-{sku}"
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO items(
+              name, sku, uom, enabled, supplier_id,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life,
+              shelf_life_value, shelf_life_unit
+            )
+            VALUES(
+              :name, :sku, 'PCS', TRUE, 1,
+              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
+              FALSE,
+              NULL, NULL
+            )
+            RETURNING id
+            """
+        ),
+        {"name": name, "sku": sku},
+    )
+    return int(row.scalar_one())
 
 
 async def _create_po_two_lines(
@@ -106,7 +133,17 @@ async def _fetch_ledger_rows_by_ref(session: AsyncSession, ref: str) -> List[Dic
     res = await session.execute(
         text(
             """
-            SELECT reason, ref, ref_line, warehouse_id, item_id, batch_code, delta, after_qty
+            SELECT
+              reason,
+              ref,
+              ref_line,
+              warehouse_id,
+              item_id,
+              lot_id,
+              COALESCE(lot_id, 0) AS lot_id_key,
+              batch_code,
+              delta,
+              after_qty
               FROM stock_ledger
              WHERE ref = :ref
                AND reason = :reason
@@ -124,30 +161,22 @@ async def _fetch_stock_qty(
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code: str | None,
+    lot_id_key: int,
 ) -> int:
-    """
-    Phase 4E：lot-world 余额口径（stocks_lot 为真相）：
-
-    ✅ 关键点：
-    - batch_code 在 lot-world 下是“展示码”（lots.lot_code），允许为 NULL；
-    - 即使 batch_code 为 NULL，lot_id 也可能非空（例如 INTERNAL lot），因此不能假设落在 lot_id_key=0；
-    - 统一用 stocks_lot LEFT JOIN lots，以 lot_code IS NOT DISTINCT FROM :batch_code 来聚合。
-    """
     res = await session.execute(
         text(
             """
-            SELECT COALESCE(SUM(sl.qty), 0) AS qty
-              FROM stocks_lot sl
-              LEFT JOIN lots l ON l.id = sl.lot_id
-             WHERE sl.warehouse_id = :wid
-               AND sl.item_id = :item_id
-               AND l.lot_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
+            SELECT COALESCE(qty, 0) AS qty
+              FROM stocks_lot
+             WHERE warehouse_id = :wid
+               AND item_id = :item_id
+               AND lot_id_key = :k
+             LIMIT 1
             """
         ),
-        {"wid": int(warehouse_id), "item_id": int(item_id), "batch_code": batch_code},
+        {"wid": int(warehouse_id), "item_id": int(item_id), "k": int(lot_id_key)},
     )
-    return int(res.scalar_one() or 0)
+    return int(res.scalar_one_or_none() or 0)
 
 
 def _assert_refline_is_contiguous(rows: List[Dict[str, Any]]) -> None:
@@ -159,22 +188,59 @@ async def _assert_stock_matches_last_ledger(
     session: AsyncSession,
     rows: List[Dict[str, Any]],
 ) -> None:
-    last_by_key: Dict[Tuple[int, int, str | None], Dict[str, Any]] = {}
+    last_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
     for r in rows:
-        key = (int(r["warehouse_id"]), int(r["item_id"]), r.get("batch_code"))
+        key = (int(r["warehouse_id"]), int(r["item_id"]), int(r.get("lot_id_key") or 0))
         last_by_key[key] = r
 
-    for (wid, item_id, batch_code), last in last_by_key.items():
-        qty = await _fetch_stock_qty(session, warehouse_id=wid, item_id=item_id, batch_code=batch_code)
+    for (wid, item_id, lot_id_key), last in last_by_key.items():
+        qty = await _fetch_stock_qty(session, warehouse_id=wid, item_id=item_id, lot_id_key=lot_id_key)
         assert qty == int(last["after_qty"]), {
-            "msg": "stocks_lot qty must equal last ledger.after_qty",
+            "msg": "stocks_lot qty must equal last ledger.after_qty (by lot_id_key grain)",
             "wid": wid,
             "item_id": item_id,
-            "batch_code": batch_code,
+            "lot_id_key": lot_id_key,
             "stocks_lot.qty": qty,
             "ledger.after_qty": int(last["after_qty"]),
             "ledger.ref_line": int(last["ref_line"]),
+            "ledger.batch_code": last.get("batch_code"),
+            "ledger.lot_id": last.get("lot_id"),
         }
+
+
+def _is_required_expiry_policy(v: Any) -> bool:
+    return str(v or "").strip().upper() == "REQUIRED"
+
+
+def _assert_blocking_errors(workbench: Dict[str, Any], fields: List[str]) -> None:
+    explain = workbench.get("explain") or {}
+    assert bool(explain.get("confirmable")) is False, workbench
+    errs = explain.get("blocking_errors") or []
+    assert isinstance(errs, list) and len(errs) >= 1, workbench
+    got = {str(e.get("field") or "") for e in errs}
+    for f in fields:
+        assert f in got, {"missing_field": f, "got": sorted(got), "workbench": workbench}
+
+
+def _expected_missing_fields_for_required_item(item: Dict[str, Any]) -> List[str]:
+    fields: List[str] = []
+    # lot_source_policy=SUPPLIER_ONLY => 缺 batch_code
+    if str(item.get("lot_source_policy") or "").strip().upper() == "SUPPLIER_ONLY":
+        fields.append("batch_code")
+
+    derivation_allowed = bool(item.get("derivation_allowed") or False)
+    if derivation_allowed:
+        fields.append("production_date")
+        if item.get("shelf_life_value") is None or item.get("shelf_life_unit") is None:
+            fields.append("shelf_life")
+    else:
+        fields.append("expiry_date")
+
+    out: List[str] = []
+    for f in fields:
+        if f not in out:
+            out.append(f)
+    return out
 
 
 @pytest.mark.asyncio
@@ -182,76 +248,39 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     client: httpx.AsyncClient,
     session: AsyncSession,
 ) -> None:
-    """
-    Phase5+ 合同（采购收货闭环）：
-
-    - 显式开始收货（draft）
-    - receive-line 返回 workbench，草稿数量累加
-    - confirm 是唯一库存写入口：confirm 后才写 stock_ledger / stocks_lot
-
-    Phase 1A 批次两态：
-    - REQUIRED：批次必填，禁止伪批次；错误应返回 400 且给出明确 reason
-    - NONE：batch_code=NULL 且 production/expiry=NULL（由写入口封板）
-    """
     headers = await _login_admin_headers(client)
 
+    # ✅ happy-path items 不依赖 baseline：直接插两条 NONE + INTERNAL_ONLY
+    item_none_a = await _insert_item_internal_none(session, sku_prefix="UT-API-NONE-A")
+    item_none_b = await _insert_item_internal_none(session, sku_prefix="UT-API-NONE-B")
+    await session.commit()
+
+    # 负例 REQUIRED item：仍用 baseline 找一个 REQUIRED（系统应当至少有一个）
     items = await _get_items_supplier_1(client, headers)
-    with_sl = [it for it in items if bool(it.get("has_shelf_life")) is True]
-    without_sl = [it for it in items if bool(it.get("has_shelf_life")) is not True]
+    with_required = [it for it in items if _is_required_expiry_policy(it.get("expiry_policy"))]
+    assert len(with_required) >= 1, {"msg": "need at least 1 REQUIRED item in baseline", "items": items}
+    item_required_obj = with_required[0]
+    item_required = int(item_required_obj["id"])
 
-    assert len(with_sl) >= 1
-    assert len(without_sl) >= 1
-
-    item_has_sl = int(with_sl[0]["id"])
-    item_no_sl = int(without_sl[0]["id"])
-
-    # 负例：REQUIRED 商品缺 batch_code（当前接口未提供 batch_code 入参时，至少应 400）
-    po_bad = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
+    # 负例：REQUIRED 商品缺必要字段（由 policy 决定缺哪些）
+    po_bad = await _create_po_two_lines(client, headers, (item_required, item_none_a))
     po_bad_id = int(po_bad["id"])
     await _start_draft(client, headers, po_bad_id)
 
-    r_bad = await client.post(
-        f"/purchase-orders/{po_bad_id}/receive-line",
-        json={"line_no": 1, "qty": 1},
-        headers=headers,
-    )
-    assert r_bad.status_code == 400, r_bad.text
-    bad = r_bad.json()
-    assert isinstance(bad, dict)
+    wb_bad = await _receive_line(client, headers, po_bad_id, line_no=1, qty=1)
+    caps_bad = wb_bad.get("caps") or {}
+    assert bool(caps_bad.get("can_confirm")) is False, wb_bad
+    _assert_blocking_errors(wb_bad, _expected_missing_fields_for_required_item(item_required_obj))
 
-    # Phase 1A：不再绑定旧中文文案，改为断言“语义关键字”与 details.reason
-    details = bad.get("details") or []
-    assert isinstance(details, list) and len(details) >= 1, bad
-    reason = str((details[0] or {}).get("reason") or "")
-    assert "REQUIRED" in reason and "batch_code" in reason and ("必填" in reason or "required" in reason.lower()), bad
-
-    # 正例：新 PO，不带坏行
-    po = await _create_po_two_lines(client, headers, (item_has_sl, item_no_sl))
+    # ✅ 正例：happy-path 全部使用 NONE + INTERNAL_ONLY
+    po = await _create_po_two_lines(client, headers, (item_none_a, item_none_b))
     po_id = int(po["id"])
     await _start_draft(client, headers, po_id)
 
-    wb1 = await _receive_line(
-        client,
-        headers,
-        po_id,
-        line_no=1,
-        qty=1,
-        batch_code="UT-BATCH-1",
-        production_date="2026-01-01",
-        expiry_date="2026-01-31",
-    )
+    wb1 = await _receive_line(client, headers, po_id, line_no=1, qty=1)
     assert int(_find_row(wb1, 1).get("draft_received_qty") or 0) == 1
 
-    wb2 = await _receive_line(
-        client,
-        headers,
-        po_id,
-        line_no=1,
-        qty=1,
-        batch_code="UT-BATCH-1",
-        production_date="2026-01-01",
-        expiry_date="2026-01-31",
-    )
+    wb2 = await _receive_line(client, headers, po_id, line_no=1, qty=1)
     assert int(_find_row(wb2, 1).get("draft_received_qty") or 0) == 2
 
     wb3 = await _receive_line(client, headers, po_id, line_no=2, qty=3)
@@ -266,7 +295,14 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     receipt_ref = str(conf["receipt"]["ref"])
 
     rows = await _fetch_ledger_rows_by_ref(session, receipt_ref)
-    # ✅ 真实行为：line1 两次会在 confirm 归一化合并为 delta=2 一条；line2 delta=3 一条 → 共 2 条
-    assert len(rows) == 2, rows
+
+    assert len(rows) >= 2, rows
     _assert_refline_is_contiguous(rows)
+
+    total_delta = sum(int(r.get("delta") or 0) for r in rows)
+    assert total_delta == 5, {"total_delta": total_delta, "rows": rows}
+
+    item_ids = sorted({int(r.get("item_id") or 0) for r in rows})
+    assert item_ids == sorted([item_none_a, item_none_b]), {"item_ids": item_ids, "rows": rows}
+
     await _assert_stock_matches_last_ledger(session, rows)

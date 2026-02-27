@@ -1,155 +1,67 @@
 # app/services/receive/batch_semantics.py
 from __future__ import annotations
 
-from datetime import date
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
-from fastapi import HTTPException
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+# 标签来源策略（去耦合后的“标签层”）
+# - SUPPLIER：lot_code 必填
+# - INTERNAL：lot_code 可空
+LotCodeSource = Literal["SUPPLIER", "INTERNAL"]
 
-BatchMode = Literal["REQUIRED", "NONE"]
-
-# Phase L：
-# - “无批次”必须用 batch_code=None 表达（并由 lot_id 作为事实锚点），不鼓励/不接受 NULL_BATCH token 作为业务输入。
-# - 仍然禁止 NOEXP/NONE 这种人为伪码作为批次。
-_PSEUDO_BATCH_TOKENS = {
+# Phase L/M：
+# - “无批次标签”用 lot_code=None 表达，不鼓励/不接受 NULL_BATCH token 作为业务输入。
+# - 禁止 NOEXP/NONE 这种人为伪码作为批次标签。
+_PSEUDO_LOT_CODE_TOKENS = {
     "NOEXP",
     "NONE",
 }
 
 
-def batch_mode_from_has_shelf_life(has_shelf_life: bool) -> BatchMode:
-    return "REQUIRED" if bool(has_shelf_life) else "NONE"
-
-
-def normalize_batch_code(batch_code: Optional[str]) -> Optional[str]:
-    if batch_code is None:
+def normalize_lot_code(lot_code: Optional[str]) -> Optional[str]:
+    if lot_code is None:
         return None
-    s = str(batch_code).strip()
+    s = str(lot_code).strip()
     return s or None
 
 
-def is_pseudo_batch_code(batch_code: Optional[str]) -> bool:
-    s = normalize_batch_code(batch_code)
+def is_pseudo_lot_code(lot_code: Optional[str]) -> bool:
+    s = normalize_lot_code(lot_code)
     if s is None:
         return False
-    return s.upper() in _PSEUDO_BATCH_TOKENS
+    return s.upper() in _PSEUDO_LOT_CODE_TOKENS
 
 
-def enforce_batch_semantics(
-    *,
-    batch_mode: BatchMode,
-    production_date: Optional[date],
-    expiry_date: Optional[date],
-    batch_code: Optional[str],
-) -> Tuple[Optional[date], Optional[date], Optional[str]]:
+def parse_lot_code_source_policy(raw: Optional[str]) -> LotCodeSource:
     """
-    Phase 1A 批次两态封板（语义层）：
+    将 items.lot_source_policy 的值归一到 LotCodeSource。
 
-    - NONE：
-        - batch_code 必须为 NULL
-        - production_date / expiry_date 必须同时为 NULL
-
-    - REQUIRED：
-        - batch_code 必填，且禁止伪批次词（NOEXP/NONE）
-        - production_date / expiry_date：允许为空；若填写则必须成对填写（避免半事实）
+    约定：
+    - enum 名称不猜死：只要包含/前缀为 SUPPLIER 即视为 SUPPLIER 模式
+    - 否则默认为 INTERNAL
     """
-    if batch_mode == "NONE":
-        return None, None, None
-
-    norm_code = normalize_batch_code(batch_code)
-    if norm_code is None:
-        raise ValueError("批次模式 REQUIRED：batch_code 必填")
-    if is_pseudo_batch_code(norm_code):
-        raise ValueError(f"批次模式 REQUIRED：禁止伪批次码 {norm_code!r}")
-
-    # 日期允许为空；若填写则必须成对填写
-    if (production_date is None) ^ (expiry_date is None):
-        raise ValueError("批次模式 REQUIRED：production_date 与 expiry_date 必须同时提供或同时为空")
-
-    return production_date, expiry_date, norm_code
+    s = (raw or "").strip().upper()
+    if s.startswith("SUPPLIER") or s == "SUPPLIER":
+        return "SUPPLIER"
+    return "INTERNAL"
 
 
-async def ensure_batch_consistent(
-    session: AsyncSession,
-    *,
-    warehouse_id: int,
-    item_id: int,
-    batch_code: str,
-    production_date: Optional[date],
-    expiry_date: Optional[date],
-) -> None:
+def enforce_lot_code_semantics(*, lot_code_source: LotCodeSource, lot_code: Optional[str]) -> Optional[str]:
     """
-    canonical（lots）一致性硬守护（Phase 4E 真收口）：
+    标签层门禁（与有效期日期彻底去耦合）：
 
-    - canonical 不存在：创建 SUPPLIER lot（以本次写入为准）
-    - canonical 已存在：production/expiry 必须一致，否则 409
-
-    注意：
-    - 仅在 REQUIRED 且 production/expiry 都齐全时调用
-    - 批次主档已统一迁移至 lots（lot-world）
+    - SUPPLIER：
+        - lot_code 必填
+        - 禁止伪码（NOEXP/NONE）
+    - INTERNAL：
+        - lot_code 可空（允许 None）
+        - 若提供了 lot_code，也仍然做“伪码禁止”（防止污染）
     """
-    code = str(batch_code).strip()
-    if not code:
-        raise ValueError("batch_code empty")
+    code = normalize_lot_code(lot_code)
 
-    row = await session.execute(
-        text(
-            """
-            SELECT production_date, expiry_date
-              FROM lots
-             WHERE warehouse_id = :wid
-               AND item_id      = :item_id
-               AND lot_code_source = 'SUPPLIER'
-               AND lot_code     = :code
-             LIMIT 1
-            """
-        ),
-        {"wid": int(warehouse_id), "item_id": int(item_id), "code": code},
-    )
-    existing = row.first()
+    if code is not None and is_pseudo_lot_code(code):
+        raise ValueError(f"lot_code 禁止伪码 {code!r}")
 
-    if existing is None:
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots (
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    production_date,
-                    expiry_date,
-                    expiry_source
-                )
-                VALUES (:wid, :item_id, 'SUPPLIER', :code, :pd, :ed, 'EXPLICIT')
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET
-                    production_date = lots.production_date,
-                    expiry_date     = lots.expiry_date
-                """
-            ),
-            {
-                "wid": int(warehouse_id),
-                "item_id": int(item_id),
-                "code": code,
-                "pd": production_date,
-                "ed": expiry_date,
-            },
-        )
-        return
+    if lot_code_source == "SUPPLIER" and code is None:
+        raise ValueError("lot_code_source=SUPPLIER：必须填写供应商批次码 lot_code")
 
-    existing_pd = existing[0]
-    existing_ed = existing[1]
-    if existing_pd != production_date or existing_ed != expiry_date:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "批次 canonical 不一致：lots 与本次写入的日期冲突。"
-                f" (warehouse_id={int(warehouse_id)}, item_id={int(item_id)}, batch_code={code}, "
-                f"canonical.production_date={existing_pd}, canonical.expiry_date={existing_ed}, "
-                f"snapshot.production_date={production_date}, snapshot.expiry_date={expiry_date})"
-            ),
-        )
+    return code

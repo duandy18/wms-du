@@ -1,10 +1,11 @@
 # app/models/item.py
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,23 +16,24 @@ if TYPE_CHECKING:
     from .supplier import Supplier
 
 
+class LotSourcePolicy(str, enum.Enum):
+    INTERNAL_ONLY = "INTERNAL_ONLY"
+    SUPPLIER_ONLY = "SUPPLIER_ONLY"
+
+
+class ExpiryPolicy(str, enum.Enum):
+    NONE = "NONE"
+    REQUIRED = "REQUIRED"
+
+
 class Item(Base):
     """
     Item 主数据模型 —— 对齐 public.items
 
-    关键区分：
-    - has_shelf_life（开关）：是否需要有效期管理（= 入库是否强制日期）
-      * True  -> 入库必须填写生产日期；到期日期可直接填，或由保质期参数推算
-      * False -> 入库不需要日期；库存核算层走“无批次槽位”（lot 维度为空/或系统默认槽位）
-
-    - shelf_life_value/unit（参数）：可选保质期参数，用于 production_date + 参数 => 推算 expiry_date
-      * 注意：参数不是必须；若缺参数，则入库必须直接填 expiry_date
-
-    库存说明（重要，Phase 5）：
-    - items 表不承载库存事实，也不通过 ORM relationship 挂接库存表，避免影子语义。
-    - 库存余额真相：stocks_lot + lots（lot-world）
-    - 库存变动事实：stock_ledger
-    - snapshot 仅作为读模型：stock_snapshots
+    Phase M 关键变化（规则上移，禁止隐式推断）：
+    - expiry_policy 是有效期规则真相源（NONE / REQUIRED）
+    - has_shelf_life 仅作为镜像字段（DB CHECK 已锁死：has_shelf_life == expiry_policy==REQUIRED）
+    - lot_source_policy / derivation_allowed / uom_governance_enabled 为执行层只读策略开关
     """
 
     __tablename__ = "items"
@@ -60,8 +62,6 @@ class Item(Base):
     )
 
     # ✅ Phase 1: 结构化包装字段（一层箱装）
-    # 语义：1 case_uom = case_ratio × uom（最小单位）
-    # 注意：case_uom 是展示/输入偏好标签，不改变系统事实口径；可为空（未治理）
     case_ratio: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,
@@ -85,11 +85,26 @@ class Item(Base):
     brand: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # ✅ 新增：有效期管理开关（事实字段）
+    # ------------------------------------------------------------------
+    # Phase M: Rule layer (DB NOT NULL)
+    # ------------------------------------------------------------------
+    lot_source_policy: Mapped[LotSourcePolicy] = mapped_column(
+        Enum(LotSourcePolicy, name="lot_source_policy", native_enum=True),
+        nullable=False,
+    )
+    expiry_policy: Mapped[ExpiryPolicy] = mapped_column(
+        Enum(ExpiryPolicy, name="expiry_policy", native_enum=True),
+        nullable=False,
+    )
+    derivation_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    uom_governance_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    # ✅ 旧字段（镜像字段；DB CHECK 已锁死与 expiry_policy 一致）
     has_shelf_life: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         server_default=text("false"),
+        # ✅ 与当前 DB 列注释保持一致，避免 alembic-check comment drift
         comment="是否需要有效期管理（入库是否强制日期）",
     )
 
@@ -143,6 +158,6 @@ class Item(Base):
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
             f"brand={self.brand!r} category={self.category!r} "
-            f"has_shelf_life={self.has_shelf_life} "
+            f"expiry_policy={self.expiry_policy} "
             f"case_ratio={self.case_ratio!r} case_uom={self.case_uom!r}>"
         )

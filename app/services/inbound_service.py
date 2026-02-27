@@ -25,7 +25,7 @@ class InboundService:
                 await session.execute(
                     sa.text(
                         """
-                    SELECT id, has_shelf_life, shelf_life_value, shelf_life_unit
+                    SELECT id, expiry_policy, shelf_life_value, shelf_life_unit
                       FROM items
                      WHERE id = :id
                      LIMIT 1
@@ -39,10 +39,11 @@ class InboundService:
         )
 
         if not row:
-            return {"has_shelf_life": False, "shelf_life_value": None, "shelf_life_unit": None}
+            return {"expiry_policy": "NONE", "shelf_life_value": None, "shelf_life_unit": None}
 
+        # expiry_policy 是 enum，可能返回 str/Enum-like；统一转 str
         return {
-            "has_shelf_life": bool(row.get("has_shelf_life") or False),
+            "expiry_policy": str(row.get("expiry_policy")),
             "shelf_life_value": row.get("shelf_life_value"),
             "shelf_life_unit": row.get("shelf_life_unit"),
         }
@@ -78,15 +79,16 @@ class InboundService:
         wid = int(warehouse_id) if warehouse_id is not None else 1
 
         policy = await self._load_item_policy(session, iid)
-        has_sl = bool(policy.get("has_shelf_life") or False)
+        expiry_policy = str(policy.get("expiry_policy") or "").upper()
+        requires_batch = expiry_policy == "REQUIRED"
 
         # Phase L：不再默认填充 NOEXP/AUTO 批次码。
-        # - has_sl=true（有效期管理商品）：必须显式提供 batch_code（供应商批次码）
-        # - has_sl=false（无有效期/无批次商品）：允许 batch_code=None（展示码为空）
+        # - REQUIRED（有效期管理商品）：必须显式提供 batch_code（供应商批次码）
+        # - NONE（无有效期/无批次商品）：必须 batch_code=None（展示码为空）
         code = (str(batch_code).strip() if batch_code is not None else "") or None
 
         # 日期规则
-        if has_sl:
+        if requires_batch:
             if code is None:
                 raise ValueError("该商品需要有效期管理：必须提供 batch_code（供应商批次码）")
             if production_date is None:
@@ -107,7 +109,7 @@ class InboundService:
         else:
             production_date = None
             expiry_date = None
-            # 无有效期商品：batch_code 允许为空（不再强制 NOEXP）
+            # 无有效期商品：batch_code 必须为空（不再强制 NOEXP）
             code = None
 
         meta = {"sub_reason": sub_reason} if (sub_reason and str(sub_reason).strip()) else None

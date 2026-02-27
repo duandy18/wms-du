@@ -34,15 +34,18 @@ class StockService:
 
     async def _requires_batch(self, session: AsyncSession, *, item_id: int) -> bool:
         """
-        Phase 4E：最小判定“批次受控”规则。
-        当前以 items.has_shelf_life 作为强信号（与你们合同/基线一致）。
+        Phase M 第一阶段：执行层禁止读取 items.has_shelf_life。
+
+        批次受控唯一真相源：items.expiry_policy
+        - expiry_policy='REQUIRED' => requires_batch=True
+        - 其他（'NONE'/NULL）       => requires_batch=False
         """
         row = await session.execute(
-            SA("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
+            SA("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
             {"i": int(item_id)},
         )
         v = row.scalar_one_or_none()
-        return bool(v is True)
+        return str(v or "").upper() == "REQUIRED"
 
     async def _ensure_supplier_lot_id(
         self,
@@ -58,6 +61,9 @@ class StockService:
         Phase 4E：确保 SUPPLIER lot 存在，并返回 lot_id。
         - lots.lot_code_source='SUPPLIER'：lot_code 必须非空；source_receipt/source_line 必须为 NULL
         - expiry_date 可空；expiry_source 可空（DB 允许）
+
+        注意：lots 表对策略快照（item_*_snapshot）有 NOT NULL 护栏，
+        因此插入 lots 必须从 items 真相源读取并冻结快照字段。
         """
         code = str(lot_code).strip()
         if not code:
@@ -77,15 +83,50 @@ class StockService:
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
                 )
-                VALUES (:w, :i, 'SUPPLIER', :code, :prod, :exp, :exp_src)
+                SELECT
+                    :w,
+                    :i,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    :prod,
+                    :exp,
+                    :exp_src,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM items it
+                 WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET
-                    expiry_date   = EXCLUDED.expiry_date
+                    expiry_date = EXCLUDED.expiry_date
                 RETURNING id
                 """
             ),
@@ -202,7 +243,7 @@ class StockService:
         Phase 4E：对外接口保持不变，但内部统一走 lot-world：
         - batch_code=None  => NULL lot 槽位（lot_id=None）
         - batch_code=str   => 确保 SUPPLIER lot 存在，得到 lot_id，再写入
-        - 若商品批次受控（has_shelf_life=true）却 batch_code=None => 拒绝（422 batch_required）
+        - 若商品批次受控（expiry_policy=REQUIRED）却 batch_code=None => 拒绝（422 batch_required）
         """
         try:
             bc_norm = (str(batch_code).strip() if batch_code is not None else None) or None

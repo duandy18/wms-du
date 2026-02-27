@@ -20,7 +20,7 @@ async def _pick_item(session: AsyncSession) -> tuple[int, bool]:
                 """
                 SELECT id
                   FROM items
-                 WHERE COALESCE(has_shelf_life, false) = false
+                 WHERE COALESCE(expiry_policy::text, 'NONE') <> 'REQUIRED'
                  ORDER BY id ASC
                  LIMIT 1
                 """

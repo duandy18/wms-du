@@ -4,6 +4,8 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.utils.ensure_minimal import ensure_item
+
 
 async def _upsert_order_and_fulfillment(
     session: AsyncSession,
@@ -113,17 +115,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-1"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
-    # items
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
-    )
+    # items（Phase M：items policy NOT NULL，必须最小合法插入）
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -238,16 +231,7 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-2"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
-    )
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -291,16 +275,7 @@ async def seed_created_only_case(session: AsyncSession) -> str:
     item_id = 4003
     ext_order_no = "UT-ORDER-3"
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
-    )
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(

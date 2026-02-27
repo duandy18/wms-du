@@ -1,14 +1,13 @@
 # app/services/inbound_receipt_confirm.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import date, datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.batch_code_contract import normalize_optional_batch_code
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.models.inbound_receipt import InboundReceipt
@@ -24,22 +23,51 @@ from app.services.stock_service import StockService
 
 UTC = timezone.utc
 
-# Phase L：
-# - “无批次”应当由 batch_code=None 表达（并由 lot_id 作为身份锚点），而不是让用户输入 NULL_BATCH token。
-# - 仍然禁止人为伪码（如 NOEXP/NONE）作为批次。
-_PSEUDO_BATCH_TOKENS = {
-    "NOEXP",
-    "NONE",
-}
+_PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
 
 
-def _is_pseudo_batch_code(batch_code: Optional[str]) -> bool:
-    if batch_code is None:
+def _normalize_lot_code(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _is_pseudo_lot_code(lot_code: Optional[str]) -> bool:
+    c = _normalize_lot_code(lot_code)
+    if c is None:
         return False
-    s = str(batch_code).strip()
-    if not s:
-        return False
-    return s.upper() in _PSEUDO_BATCH_TOKENS
+    return c.upper() in _PSEUDO_LOT_CODE_TOKENS
+
+
+def _is_required_policy(v: object) -> bool:
+    return str(v or "").strip().upper() == "REQUIRED"
+
+
+def _parse_shelf_life(*, value: int | None, unit: str | None) -> Tuple[int, str] | None:
+    if value is None or unit is None:
+        return None
+    return int(value), str(unit).upper()
+
+
+def _compute_expiry_from_shelf_life(*, production_date: date, shelf_life: Tuple[int, str]) -> date:
+    """
+    方案 B：production_date + shelf_life 推导 expiry_date。
+    unit：DAY/WEEK/MONTH/YEAR（DB 已约束）
+    """
+    from datetime import timedelta
+    from dateutil.relativedelta import relativedelta
+
+    v, u = shelf_life
+    if u == "DAY":
+        return production_date + timedelta(days=v)
+    if u == "WEEK":
+        return production_date + timedelta(days=7 * v)
+    if u == "MONTH":
+        return production_date + relativedelta(months=v)
+    if u == "YEAR":
+        return production_date + relativedelta(years=v)
+    raise ValueError(f"unsupported shelf_life_unit: {u!r}")
 
 
 async def _load_receipt_for_update(session: AsyncSession, receipt_id: int) -> InboundReceipt:
@@ -54,9 +82,7 @@ async def _load_receipt_for_update(session: AsyncSession, receipt_id: int) -> In
         raise ValueError("InboundReceipt not found")
 
     if obj.lines:
-        obj.lines.sort(
-            key=lambda x: (int(getattr(x, "line_no", 0) or 0), int(getattr(x, "id", 0) or 0))
-        )
+        obj.lines.sort(key=lambda x: (int(getattr(x, "line_no", 0) or 0), int(getattr(x, "id", 0) or 0)))
     return obj
 
 
@@ -117,20 +143,6 @@ async def _load_item(session: AsyncSession, *, item_id: int) -> Item:
     return obj
 
 
-def _safe_int_list(v: object) -> list[int]:
-    if v is None:
-        return []
-    if isinstance(v, list):
-        out: list[int] = []
-        for x in v:
-            try:
-                out.append(int(x))
-            except Exception:
-                continue
-        return out
-    return []
-
-
 async def confirm_receipt(
     *,
     session: AsyncSession,
@@ -153,6 +165,7 @@ async def confirm_receipt(
     if status != "DRAFT":
         _raise_409_state(receipt_id=receipt_id, status=status)
 
+    # ✅ explain：只检查标签层 + 时间层（不检查 lot_id）
     exp = await explain_receipt(session=session, receipt=receipt)
     if not exp.confirmable:
         details = [e.model_dump() for e in exp.blocking_errors]
@@ -162,192 +175,144 @@ async def confirm_receipt(
     occurred_at = getattr(receipt, "occurred_at", None) or datetime.now(UTC)
     warehouse_id = int(getattr(receipt, "warehouse_id"))
 
-    normalized = list(exp.normalized_lines_preview)
+    # 预加载 item（避免 N+1）
+    item_cache: Dict[int, Item] = {}
+    item_ids = sorted({int(getattr(rl, "item_id")) for rl in (receipt.lines or [])})
+    for iid in item_ids:
+        item_cache[iid] = await _load_item(session, item_id=iid)
 
-    # === Phase 3 修复点 ===
-    # 构建 line_no -> lot_id 映射（实体来源）
-    line_lot_map: dict[int, Optional[int]] = {}
+    # ✅ confirm 阶段生成 lot_id + 推导并固化 expiry_date（方案 B）
     for rl in receipt.lines or []:
-        ln = int(getattr(rl, "line_no", 0) or 0)
-        if ln not in line_lot_map:
-            line_lot_map[ln] = rl.lot_id
-
-    # 构建 source_line_index(0-based) -> receipt_line_no(1-based) 映射
-    # receipt.lines 已经按 (line_no, id) 排序，index 即对应 explain 的 source_line_indexes
-    lines_sorted = list(receipt.lines or [])
-    index_to_line_no: dict[int, int] = {}
-    for i, rl in enumerate(lines_sorted):
-        index_to_line_no[int(i)] = int(getattr(rl, "line_no", 0) or 0)
-
-    def _line_no_from_normalized(n: object) -> int:
-        # NormalizedLinePreviewOut 没有 line_no，只有 source_line_indexes
-        idxs = _safe_int_list(getattr(n, "source_line_indexes", None))
-        if not idxs:
-            return 0
-        # 取第一个作为代表（同组多行后面会做一致性校验）
-        return int(index_to_line_no.get(int(idxs[0]), 0) or 0)
-
-    def _group_line_nos(n: object) -> list[int]:
-        idxs = _safe_int_list(getattr(n, "source_line_indexes", None))
-        out: list[int] = []
-        for i in idxs:
-            out.append(int(index_to_line_no.get(int(i), 0) or 0))
-        return out
-
-    extra_blocking_errors: list[dict] = []
-    for n in normalized:
-        bc = normalize_optional_batch_code(getattr(n, "batch_code", None))
-        pd = getattr(n, "production_date", None)
-        ed = getattr(n, "expiry_date", None)
-
-        if _is_pseudo_batch_code(bc):
-            extra_blocking_errors.append(
-                {
-                    "type": "batch",
-                    "reason": "pseudo_batch_code_forbidden",
-                    "line_key": str(getattr(n, "line_key", "")),
-                    "batch_code": bc,
-                }
+        item_id = int(getattr(rl, "item_id"))
+        line_no = int(getattr(rl, "line_no", 0) or 0)
+        if line_no <= 0:
+            _raise_422_confirm_not_allowed(
+                receipt_id=receipt_id,
+                blocking_errors=[{"type": "line", "reason": "invalid_line_no", "line_no": int(line_no), "item_id": int(item_id)}],
             )
 
-        if bc is None and (pd is not None or ed is not None):
-            extra_blocking_errors.append(
-                {
-                    "type": "batch",
-                    "reason": "none_mode_dates_must_be_null",
-                    "line_key": str(getattr(n, "line_key", "")),
-                    "production_date": str(pd) if pd else None,
-                    "expiry_date": str(ed) if ed else None,
-                }
-            )
+        item_obj = item_cache[item_id]
 
-    if extra_blocking_errors:
-        _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=extra_blocking_errors)
-
-    # ------------------------------------------------------------
-    # Phase 4B-0 (主目标前置)：确认收货时强制绑定 lot（INTERNAL identity: receipt_id + line_no）
-    # - 让 lot 成为真实入库事实锚点（否则 ledger 永远 lot_coverage=0）
-    # - 这里不依赖“上游是否提前创建 lot”，confirm 自己兜底生成
-    # ------------------------------------------------------------
-    lot_blocking_errors: list[dict] = []
-    for n in normalized:
-        line_no = _line_no_from_normalized(n)
-        item_id = int(getattr(n, "item_id", 0) or 0)
-
-        if line_no <= 0 or item_id <= 0:
-            lot_blocking_errors.append(
-                {
-                    "type": "lot",
-                    "reason": "invalid_line_no_or_item_id",
-                    "line_key": str(getattr(n, "line_key", "")),
-                    "line_no": int(line_no),
-                    "item_id": int(item_id),
-                }
-            )
-            continue
-
-        # 同一 normalized group 如果来自多条 receipt_line，必须保证它们的 lot_id 一致（否则库存维度会撕裂）
-        group_line_nos = [ln for ln in _group_line_nos(n) if ln > 0]
-        if group_line_nos:
-            lot_ids: set[int] = set()
-            for ln in group_line_nos:
-                lid = line_lot_map.get(int(ln))
-                if lid is not None:
-                    lot_ids.add(int(lid))
-            if len(lot_ids) > 1:
-                lot_blocking_errors.append(
-                    {
-                        "type": "lot",
-                        "reason": "inconsistent_lot_id_in_group",
-                        "line_key": str(getattr(n, "line_key", "")),
-                        "line_nos": [int(x) for x in group_line_nos],
-                        "lot_ids": [int(x) for x in sorted(lot_ids)],
-                        "item_id": int(item_id),
-                    }
-                )
-                continue
-
-        existing_lot_id = line_lot_map.get(line_no)
-        if existing_lot_id is not None:
-            continue
-
-        # 生成 INTERNAL lot：identity = (warehouse_id, item_id, lot_code_source='INTERNAL', source_receipt_id, source_line_no)
-        # dates：沿用 normalized（如果 batch_code=None，则上面已校验 dates 必须为 None）
-        bc_norm = normalize_optional_batch_code(getattr(n, "batch_code", None))
-        pd = getattr(n, "production_date", None)
-        ed = getattr(n, "expiry_date", None)
-        if bc_norm is None:
-            pd = None
-            ed = None
-
-        item_obj = await _load_item(session, item_id=item_id)
-        new_lot_id = await resolve_or_create_lot(
-            db=session,
-            warehouse_id=int(warehouse_id),
-            item=item_obj,
-            lot_code_source="INTERNAL",
-            lot_code=None,
-            source_receipt_id=int(receipt.id),
-            source_line_no=int(line_no),
-            production_date=pd,
-            expiry_date=ed,
-            expiry_source=None,
-            shelf_life_days_applied=None,
+        lot_source_policy = str(getattr(item_obj, "lot_source_policy") or "INTERNAL_ONLY")
+        expiry_policy = str(getattr(item_obj, "expiry_policy") or "NONE")
+        derivation_allowed = bool(getattr(item_obj, "derivation_allowed", False))
+        shelf_life = _parse_shelf_life(
+            value=getattr(item_obj, "shelf_life_value", None),
+            unit=getattr(item_obj, "shelf_life_unit", None),
         )
 
-        # 回填到 receipt_line（让后续再 confirm / explain / 追溯都能看到实体绑定）
-        # receipt.lines 已经 selectinload；按 line_no 找到第一条即可
-        for rl in receipt.lines or []:
-            ln = int(getattr(rl, "line_no", 0) or 0)
-            if ln == line_no:
-                rl.lot_id = int(new_lot_id)
-                break
+        lot_code = _normalize_lot_code(getattr(rl, "batch_code", None))
 
-        line_lot_map[line_no] = int(new_lot_id)
+        # --- 标签层（只管 lot_code 必填与伪码）---
+        if lot_source_policy == "SUPPLIER_ONLY":
+            if lot_code is None:
+                _raise_422_confirm_not_allowed(
+                    receipt_id=receipt_id,
+                    blocking_errors=[{"type": "lot_code", "reason": "lot_code_required", "line_no": int(line_no), "item_id": int(item_id)}],
+                )
+            if _is_pseudo_lot_code(lot_code):
+                _raise_422_confirm_not_allowed(
+                    receipt_id=receipt_id,
+                    blocking_errors=[{"type": "lot_code", "reason": "pseudo_lot_code_forbidden", "lot_code": lot_code, "line_no": int(line_no)}],
+                )
+        else:
+            if _is_pseudo_lot_code(lot_code):
+                _raise_422_confirm_not_allowed(
+                    receipt_id=receipt_id,
+                    blocking_errors=[{"type": "lot_code", "reason": "pseudo_lot_code_forbidden", "lot_code": lot_code, "line_no": int(line_no)}],
+                )
 
-    if lot_blocking_errors:
-        _raise_422_confirm_not_allowed(receipt_id=receipt_id, blocking_errors=lot_blocking_errors)
+        # --- 时间层（方案 B）---
+        pd = getattr(rl, "production_date", None)
+        ed = getattr(rl, "expiry_date", None)
+        final_expiry: date | None = ed
+
+        if _is_required_policy(expiry_policy):
+            if ed is None:
+                if not derivation_allowed:
+                    _raise_422_confirm_not_allowed(
+                        receipt_id=receipt_id,
+                        blocking_errors=[{"type": "expiry", "reason": "expiry_date_required_derivation_disabled", "line_no": int(line_no), "item_id": int(item_id)}],
+                    )
+                if pd is None:
+                    _raise_422_confirm_not_allowed(
+                        receipt_id=receipt_id,
+                        blocking_errors=[{"type": "expiry", "reason": "production_date_required_for_derivation", "line_no": int(line_no), "item_id": int(item_id)}],
+                    )
+                if shelf_life is None:
+                    _raise_422_confirm_not_allowed(
+                        receipt_id=receipt_id,
+                        blocking_errors=[{"type": "expiry", "reason": "shelf_life_not_configured", "line_no": int(line_no), "item_id": int(item_id)}],
+                    )
+
+                final_expiry = _compute_expiry_from_shelf_life(production_date=pd, shelf_life=shelf_life)
+                rl.expiry_date = final_expiry
+        else:
+            # NONE：保持干净（强制不允许日期）
+            if pd is not None or ed is not None:
+                _raise_422_confirm_not_allowed(
+                    receipt_id=receipt_id,
+                    blocking_errors=[{"type": "expiry", "reason": "dates_must_be_null_for_none_policy", "line_no": int(line_no), "item_id": int(item_id)}],
+                )
+            rl.production_date = None
+            rl.expiry_date = None
+            pd = None
+            final_expiry = None
+
+        # --- 生成 lot_id（仅在 confirm）---
+        if getattr(rl, "lot_id", None) is None:
+            if lot_source_policy == "SUPPLIER_ONLY":
+                new_lot_id = await resolve_or_create_lot(
+                    db=session,
+                    warehouse_id=int(warehouse_id),
+                    item=item_obj,
+                    lot_code_source="SUPPLIER",
+                    lot_code=str(lot_code),
+                    source_receipt_id=None,
+                    source_line_no=None,
+                    production_date=pd,
+                    expiry_date=final_expiry,
+                    expiry_source="EXPLICIT" if ed is not None else None,
+                    shelf_life_days_applied=None,
+                )
+            else:
+                new_lot_id = await resolve_or_create_lot(
+                    db=session,
+                    warehouse_id=int(warehouse_id),
+                    item=item_obj,
+                    lot_code_source="INTERNAL",
+                    lot_code=None,
+                    source_receipt_id=int(receipt.id),
+                    source_line_no=int(line_no),
+                    production_date=pd,
+                    expiry_date=final_expiry,
+                    expiry_source="EXPLICIT" if ed is not None else None,
+                    shelf_life_days_applied=None,
+                )
+            rl.lot_id = int(new_lot_id)
 
     stock_svc = StockService()
 
-    base_ref_line = await _load_next_ref_line_base(
-        session,
-        ref=ref,
-        reason=MovementType.INBOUND.value,
-    )
+    base_ref_line = await _load_next_ref_line_base(session, ref=ref, reason=MovementType.INBOUND.value)
 
     ledger_refs: List[InboundReceiptConfirmLedgerRef] = []
 
-    for idx, n in enumerate(normalized, start=1):
-        item_id = int(n.item_id)
-        qty_delta = int(n.qty_total)
+    for idx, rl in enumerate(receipt.lines or [], start=1):
+        item_id = int(getattr(rl, "item_id"))
+        qty_delta = int(getattr(rl, "qty_received", 0) or 0)
         ref_line = int(base_ref_line + idx)
 
-        bc = normalize_optional_batch_code(getattr(n, "batch_code", None))
-        pd = getattr(n, "production_date", None)
-        ed = getattr(n, "expiry_date", None)
-
-        if bc is None:
-            pd = None
-            ed = None
-
-        line_no = _line_no_from_normalized(n)
-        lot_id = line_lot_map.get(line_no)
-
-        # 最终硬校验：入库必须有 lot_id（主目标驱动）
+        line_no = int(getattr(rl, "line_no", 0) or 0)
+        lot_id = getattr(rl, "lot_id", None)
         if lot_id is None:
             _raise_422_confirm_not_allowed(
                 receipt_id=receipt_id,
-                blocking_errors=[
-                    {
-                        "type": "lot",
-                        "reason": "lot_id_required_for_receipt_confirm",
-                        "line_key": str(getattr(n, "line_key", "")),
-                        "line_no": int(line_no),
-                        "item_id": int(item_id),
-                    }
-                ],
+                blocking_errors=[{"type": "lot", "reason": "lot_id_required_at_confirm", "line_no": int(line_no), "item_id": int(item_id)}],
             )
+
+        bc = _normalize_lot_code(getattr(rl, "batch_code", None))
+        pd = getattr(rl, "production_date", None)
+        ed = getattr(rl, "expiry_date", None)
 
         res = await stock_svc.adjust(
             session=session,
@@ -359,16 +324,16 @@ async def confirm_receipt(
             ref_line=ref_line,
             occurred_at=occurred_at,
             meta={"source": "inbound-receipt-confirm", "receipt_id": int(receipt_id)},
-            batch_code=bc,
+            batch_code=bc,  # 展示/追溯字段，不参与身份
             production_date=pd,
             expiry_date=ed,
             trace_id=getattr(receipt, "trace_id", None),
-            lot_id=int(lot_id),  # ✅ 现在保证非空
+            lot_id=int(lot_id),
         )
 
         ledger_refs.append(
             InboundReceiptConfirmLedgerRef(
-                source_line_key=str(getattr(n, "line_key", "")),
+                source_line_key=f"LINE:{line_no}",
                 ref=ref,
                 ref_line=ref_line,
                 item_id=item_id,

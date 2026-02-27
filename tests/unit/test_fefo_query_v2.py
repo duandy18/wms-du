@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock_fallbacks import FefoAllocator
+from tests.utils.ensure_minimal import ensure_item
 
 
 @pytest.mark.asyncio
@@ -24,6 +25,9 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
       * 第一条的 take_qty = 2（在最早批次中优先消耗）。
     """
 
+    # Phase M：items policy NOT NULL + has_shelf_life CHECK → 统一走最小合法 helper
+    await ensure_item(session, id=3003, sku="SKU-3003", name="ITEM-3003", expiry_required=True)
+
     # 1) 准备 lots（SUPPLIER：必须 lot_code 非空，且 source_receipt_id/source_line_no 必须为 NULL）
     lot_rows = (
         await session.execute(
@@ -34,12 +38,50 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
-                ) VALUES
-                  (1, 3003, 'SUPPLIER', 'A_NEAR', CURRENT_DATE, CURRENT_DATE + INTERVAL '1 day',  'EXPLICIT'),
-                  (1, 3003, 'SUPPLIER', 'B_FAR',  CURRENT_DATE, CURRENT_DATE + INTERVAL '10 day', 'EXPLICIT')
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
+                )
+                SELECT
+                    1,
+                    3003,
+                    'SUPPLIER',
+                    v.lot_code,
+                    NULL,
+                    NULL,
+                    CURRENT_DATE,
+                    v.expiry_date,
+                    'EXPLICIT',
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM (
+                        VALUES
+                          ('A_NEAR'::varchar, CURRENT_DATE + INTERVAL '1 day'),
+                          ('B_FAR'::varchar,  CURRENT_DATE + INTERVAL '10 day')
+                       ) AS v(lot_code, expiry_date)
+                  JOIN items it ON it.id = 3003
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET

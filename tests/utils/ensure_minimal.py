@@ -23,23 +23,67 @@ async def ensure_warehouse(session: AsyncSession, *, id: int, name: Optional[str
 
 
 # ---------- items ----------
-async def ensure_item(session: AsyncSession, *, id: int, sku: Optional[str] = None, name: Optional[str] = None) -> None:
+async def ensure_item(
+    session: AsyncSession,
+    *,
+    id: int,
+    sku: Optional[str] = None,
+    name: Optional[str] = None,
+    uom: Optional[str] = None,
+    expiry_required: bool = False,
+) -> None:
     """
-    items 表：sku NOT NULL, name NOT NULL。
-    自动生成 SKU/name 以防缺失。
+    items 表（Phase M）：
+    - sku NOT NULL, name NOT NULL
+    - uom（通常 NOT NULL；测试侧必须显式给，避免依赖默认）
+    - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 均 NOT NULL 且无默认
+    - has_shelf_life 是镜像字段（DB CHECK 锁死：has_shelf_life == expiry_policy=='REQUIRED'）
+
+    测试工具：用最小但合法的默认 policy，避免各种 helper 插 lot 时爆 NOT NULL。
+
+    使用方式：
+    - 默认（无保质期）：expiry_required=False -> expiry_policy='NONE', has_shelf_life=FALSE
+    - 需要保质期：expiry_required=True  -> expiry_policy='REQUIRED', has_shelf_life=TRUE
     """
     sku = sku or f"SKU-{id}"
     name = name or f"ITEM-{id}"
+    uom = uom or "PCS"
+
+    expiry_policy = "REQUIRED" if expiry_required else "NONE"
+    has_shelf_life = bool(expiry_required)
+
     await session.execute(
         text(
             """
-            INSERT INTO items (id, sku, name)
-            VALUES (:id, :sku, :name)
+            INSERT INTO items (
+              id, sku, name, uom,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life
+            )
+            VALUES (
+              :id, :sku, :name, :uom,
+              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, FALSE,
+              CAST(:has_shelf_life AS boolean)
+            )
             ON CONFLICT (id) DO UPDATE
-            SET sku = EXCLUDED.sku, name = EXCLUDED.name
-        """
+               SET sku = EXCLUDED.sku,
+                   name = EXCLUDED.name,
+                   uom = EXCLUDED.uom,
+                   lot_source_policy = EXCLUDED.lot_source_policy,
+                   expiry_policy = EXCLUDED.expiry_policy,
+                   derivation_allowed = EXCLUDED.derivation_allowed,
+                   uom_governance_enabled = EXCLUDED.uom_governance_enabled,
+                   has_shelf_life = EXCLUDED.has_shelf_life
+            """
         ),
-        {"id": int(id), "sku": str(sku), "name": str(name)},
+        {
+            "id": int(id),
+            "sku": str(sku),
+            "name": str(name),
+            "uom": str(uom),
+            "expiry_policy": str(expiry_policy),
+            "has_shelf_life": bool(has_shelf_life),
+        },
     )
 
 
@@ -57,7 +101,12 @@ async def ensure_supplier_lot(
     注意：
     - lots 的 SUPPLIER 唯一性是 partial unique index，不是 constraint
     - 使用 ON CONFLICT (cols) WHERE predicate 形式
+    - lots 对策略快照（item_*_snapshot）有 NOT NULL 护栏 → 必须从 items 真相源读取并冻结
     """
+    code = str(lot_code).strip()
+    if not code:
+        raise ValueError("lot_code empty")
+
     row = (
         await session.execute(
             text(
@@ -67,18 +116,53 @@ async def ensure_supplier_lot(
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
                 )
-                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, CURRENT_DATE + INTERVAL '365 day', 'EXPLICIT')
+                SELECT
+                    :w,
+                    :i,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    CURRENT_DATE,
+                    CURRENT_DATE + INTERVAL '365 day',
+                    'EXPLICIT',
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM items it
+                 WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET expiry_date = EXCLUDED.expiry_date
                 RETURNING id
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": str(lot_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": code},
         )
     ).first()
     if not row:
@@ -108,7 +192,12 @@ async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id
         )
         return
 
-    lot_id = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
+    lot_id = await ensure_supplier_lot(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(batch_code),
+    )
     await session.execute(
         text(
             """
@@ -141,7 +230,12 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
         )
         return
 
-    lot_id = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
+    lot_id = await ensure_supplier_lot(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(batch_code),
+    )
     await session.execute(
         text(
             """

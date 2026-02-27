@@ -6,6 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.utils.ensure_minimal import ensure_item
+
 pytestmark = pytest.mark.grp_snapshot  # 分组标记，可按需调整
 
 
@@ -20,8 +22,8 @@ async def _seed_wh_item_lot_stock(
     Phase 4D 最小种子数据（lot-world）：
 
     - warehouses：确保存在
-    - items：确保存在
-    - lots：插入 SUPPLIER lot（lot_code 非空）
+    - items：确保存在（Phase M policy NOT NULL）
+    - lots：插入 SUPPLIER lot（lot_code 非空，且冻结 item_*_snapshot）
     - stocks_lot：插入对应槽位（qty=0）
 
     返回 lot_id。
@@ -37,20 +39,8 @@ async def _seed_wh_item_lot_stock(
         {"wh_id": int(wh_id)},
     )
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {
-            "item_id": int(item_id),
-            "sku": f"SKU-{int(item_id)}",
-            "name": f"Item-{int(item_id)}",
-        },
-    )
+    # Phase M：items policy NOT NULL + has_shelf_life CHECK → 统一走最小合法 helper
+    await ensure_item(session, id=int(item_id), sku=f"SKU-{int(item_id)}", name=f"Item-{int(item_id)}")
 
     lot_row = (
         await session.execute(
@@ -61,11 +51,46 @@ async def _seed_wh_item_lot_stock(
                     item_id,
                     lot_code_source,
                     lot_code,
+                    source_receipt_id,
+                    source_line_no,
                     production_date,
                     expiry_date,
-                    expiry_source
+                    expiry_source,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_has_shelf_life_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    item_uom_snapshot,
+                    item_case_ratio_snapshot,
+                    item_case_uom_snapshot
                 )
-                VALUES (:w, :i, 'SUPPLIER', :code, CURRENT_DATE, CURRENT_DATE + INTERVAL '365 day', 'EXPLICIT')
+                SELECT
+                    :w,
+                    :i,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    CURRENT_DATE,
+                    CURRENT_DATE + INTERVAL '365 day',
+                    'EXPLICIT',
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.has_shelf_life,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    it.uom,
+                    it.case_ratio,
+                    it.case_uom
+                  FROM items it
+                 WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
                 DO UPDATE SET expiry_date = EXCLUDED.expiry_date

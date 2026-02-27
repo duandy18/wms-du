@@ -9,12 +9,16 @@ from app.services.stock_service import StockService
 
 
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
     row = await session.execute(
-        text("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
+        text("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
         {"i": int(item_id)},
     )
     v = row.scalar_one_or_none()
-    return bool(v is True)
+    return str(v or "").strip().upper() == "REQUIRED"
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:

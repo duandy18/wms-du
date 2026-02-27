@@ -1,6 +1,7 @@
 # app/api/routers/items.py
 from __future__ import annotations
 
+import inspect
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +16,39 @@ router = APIRouter(prefix="/items", tags=["items"])
 
 def get_item_service(db: Session = Depends(get_db)) -> ItemService:
     return ItemService(db)
+
+
+def _is_required(policy: Optional[str]) -> bool:
+    return str(policy or "").upper() == "REQUIRED"
+
+
+def _normalize_expiry_policy(expiry_policy: Optional[str]) -> Optional[str]:
+    s = str(expiry_policy or "").strip().upper()
+    return s if s else None
+
+
+def _derive_expiry_policy_from_legacy_flag(legacy_has_shelf_life: Optional[bool]) -> str:
+    """
+    Legacy/Input 兼容：
+    - 旧客户端可能只传 has_shelf_life（镜像字段）
+    - 新世界观真相源是 expiry_policy
+    这里仅用于“当 expiry_policy 缺省时”的兜底推导，避免违反 DB CHECK。
+    """
+    return "REQUIRED" if bool(legacy_has_shelf_life) else "NONE"
+
+
+def _call_create_item_compat(item_service: ItemService, **kwargs):
+    sig = inspect.signature(item_service.create_item)
+    accepted = set(sig.parameters.keys())
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+    return item_service.create_item(**filtered)
+
+
+def _call_update_item_compat(item_service: ItemService, **kwargs):
+    sig = inspect.signature(item_service.update_item)
+    accepted = set(sig.parameters.keys())
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+    return item_service.update_item(**filtered)
 
 
 # ===========================
@@ -40,9 +74,21 @@ def create_item(
     item_service: ItemService = Depends(get_item_service),
 ):
     try:
+        # Phase M：policy 真相源（若未提供，使用一步到位默认）
+        exp_policy_norm = _normalize_expiry_policy(item_in.expiry_policy)
+        expiry_policy = exp_policy_norm or _derive_expiry_policy_from_legacy_flag(item_in.has_shelf_life)
+
+        lot_source_policy = item_in.lot_source_policy or "SUPPLIER_ONLY"
+        derivation_allowed = True if item_in.derivation_allowed is None else bool(item_in.derivation_allowed)
+        uom_governance_enabled = False if item_in.uom_governance_enabled is None else bool(item_in.uom_governance_enabled)
+
+        # has_shelf_life 镜像（DB 已强约束一致）
+        has_shelf_life = _is_required(expiry_policy)
+
         # SKU 永远由后端生成；不接受前端/脚本传入
         # barcode（可选）：若提供，则写入 item_barcodes 并设为主条码（primary）
-        return item_service.create_item(
+        return _call_create_item_compat(
+            item_service,
             name=item_in.name,
             spec=item_in.spec,
             uom=item_in.uom,
@@ -53,7 +99,13 @@ def create_item(
             category=item_in.category,
             enabled=item_in.enabled,
             supplier_id=item_in.supplier_id,
-            has_shelf_life=item_in.has_shelf_life,
+            # Phase M policy
+            lot_source_policy=lot_source_policy,
+            expiry_policy=expiry_policy,
+            derivation_allowed=derivation_allowed,
+            uom_governance_enabled=uom_governance_enabled,
+            # legacy mirror + params
+            has_shelf_life=has_shelf_life,
             shelf_life_value=item_in.shelf_life_value,
             shelf_life_unit=item_in.shelf_life_unit,
             weight_kg=item_in.weight_kg,
@@ -61,7 +113,6 @@ def create_item(
     except ValueError as e:
         detail = str(e)
         if detail == "SKU duplicate":
-            # 理论上不会发生（序列发号），保留防御
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
@@ -92,7 +143,6 @@ def get_all_items(
     ),
     item_service: ItemService = Depends(get_item_service),
 ):
-    # ✅ 向后兼容：不传参数时等价于旧行为（返回全量）
     return item_service.get_items(
         supplier_id=supplier_id,
         enabled=enabled,
@@ -157,22 +207,34 @@ def update_item(
 ):
     data = item_in.model_dump(exclude_unset=True)
 
-    # 强制禁止通过 Update 修改 SKU（防止“后门改码”）
     if "sku" in data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="SKU is immutable and managed by backend",
         )
 
-    # ✅ 条码必须走 /item-barcodes（避免出现“双真相”与治理混乱）
     if "barcode" in data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="barcode is managed by /item-barcodes (set primary there)",
         )
 
+    # Phase M：policy 同步（避免违反 DB CHECK）
+    expiry_policy = _normalize_expiry_policy(data.get("expiry_policy"))
+    if expiry_policy is None and "has_shelf_life" in data and data.get("has_shelf_life") is not None:
+        expiry_policy = _derive_expiry_policy_from_legacy_flag(bool(data.get("has_shelf_life")))
+
+    lot_source_policy = data.get("lot_source_policy")
+    derivation_allowed = data.get("derivation_allowed")
+    uom_governance_enabled = data.get("uom_governance_enabled")
+
+    has_shelf_life = data.get("has_shelf_life")
+    if expiry_policy is not None:
+        has_shelf_life = _is_required(expiry_policy)
+
     try:
-        return item_service.update_item(
+        return _call_update_item_compat(
+            item_service,
             id=id,
             name=data.get("name"),
             spec=data.get("spec"),
@@ -183,11 +245,16 @@ def update_item(
             case_uom_set=("case_uom" in data),
             enabled=data.get("enabled"),
             supplier_id=data.get("supplier_id"),
-            has_shelf_life=data.get("has_shelf_life"),
+            # Phase M policy
+            lot_source_policy=lot_source_policy,
+            expiry_policy=expiry_policy,
+            derivation_allowed=derivation_allowed,
+            uom_governance_enabled=uom_governance_enabled,
+            # legacy mirror + params
+            has_shelf_life=has_shelf_life,
             shelf_life_value=data.get("shelf_life_value"),
             shelf_life_unit=data.get("shelf_life_unit"),
             weight_kg=data.get("weight_kg"),
-            # ✅ brand/category：需要区分“未提供” vs “显式置空(null)”
             brand=data.get("brand"),
             category=data.get("category"),
             brand_set=("brand" in data),

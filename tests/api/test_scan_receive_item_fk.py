@@ -1,8 +1,10 @@
 # tests/api/test_scan_receive_item_fk.py
 #
 # 目标：
-# - 当 item_id 不存在时，/scan(mode=receive) 必须失败，并暴露 FK 相关错误（不落账）。
-# - 当 items 表中已存在该 item_id 时，同样的收货请求不能再触发 FK 错误。
+# - 当 item_id 不存在时，/scan(mode=receive) 必须失败（不落账），并暴露“无法写入”的关键信号：
+#     * 旧世界可能是 items FK 失败文本；
+#     * Phase M / lot-world 护栏下，也可能更早表现为 lot_not_found（没有可解析的 lot / 不允许隐式创建）。
+# - 当 items 表中已存在该 item_id 时，同样的收货请求不能再触发上述“缺失 item / 缺失 lot”的阻断信号。
 #
 from __future__ import annotations
 
@@ -27,55 +29,81 @@ def _get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def _ensure_item(
-    db: Session, item_id: int, sku: str | None = None, name: str | None = None
-) -> None:
+def _ensure_item(db: Session, item_id: int, sku: str | None = None, name: str | None = None) -> None:
     """
     在 items 表中确保存在一条指定 id 的记录：
 
     - 若已存在（id 已存在），不做任何事；
-    - 若不存在，只插入最小必要字段 (id, sku, name)，让 DB 自己填充其余默认列。
+    - 若不存在，插入 Phase M “最小合法”字段集合，避免 items policy NOT NULL / CHECK 护栏爆炸。
 
     注意：不依赖 ORM Item 模型字段定义，直接用 SQL，避免模型/表不一致问题。
     """
     sku_val = (sku or str(item_id)).strip()
     name_val = (name or f"ITEM-{item_id}").strip()
 
+    # Phase M：items policy NOT NULL + has_shelf_life CHECK
+    # 最小合法：
+    # - uom 给 PCS
+    # - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 必填
+    # - has_shelf_life 必须与 expiry_policy='REQUIRED' 一致（这里用 NONE + FALSE）
     db.execute(
         text(
             """
-            INSERT INTO items (id, sku, name)
-            VALUES (:id, :sku, :name)
+            INSERT INTO items (
+              id, sku, name, uom,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              has_shelf_life
+            )
+            VALUES (
+              :id, :sku, :name, 'PCS',
+              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, FALSE,
+              CAST(:has_shelf_life AS boolean)
+            )
             ON CONFLICT (id) DO NOTHING
             """
         ),
-        {"id": item_id, "sku": sku_val, "name": name_val},
+        {
+            "id": int(item_id),
+            "sku": sku_val,
+            "name": name_val,
+            "expiry_policy": "NONE",
+            "has_shelf_life": False,
+        },
     )
     db.commit()
 
 
-def _looks_like_missing_item_fk(msg: str) -> bool:
+def _looks_like_missing_item_or_lot_guard(msg: str) -> bool:
     """
-    Phase 4E：不再绑死 batches/约束名；只验证“items 不存在导致 FK 失败”的语义。
+    Phase M：不再绑死 batches/约束名；只验证“unknown item / 无法解析 lot 导致写入被阻断”的语义。
 
-    兼容不同错误包装/不同驱动的文本差异。
+    兼容不同错误包装/不同驱动/不同实现路径的文本差异：
+    - 可能是 items FK 失败（旧路径）
+    - 也可能是 lot_not_found（lot-world 护栏更早触发）
     """
     s = (msg or "").lower()
-    # 常见：psycopg/asyncpg 会包含这类片段
+
+    # 1) items FK 语义（常见：psycopg/asyncpg 文本）
     if 'not present in table "items"' in s:
         return True
     if "violates foreign key constraint" in s and "item" in s:
         return True
-    # 更泛化兜底：出现 foreign key + items 字样
     if ("foreign key" in s) and ("items" in s):
         return True
+
+    # 2) lot-world 护栏语义：lot_not_found / “lot 不存在”
+    if "lot_not_found" in s:
+        return True
+    if "lot 不存在" in msg:
+        return True
+
     return False
 
 
 def test_scan_receive_unknown_item_should_fail_fk() -> None:
     """
     当 item_id 在 items 表中不存在时，
-    /scan(mode=receive) 不应该落账，而是返回错误信息。
+    /scan(mode=receive) 不应该落账，而是返回错误信息（语义：缺失 item / 缺失 lot 导致阻断）。
     """
     payload = {
         "mode": "receive",
@@ -100,18 +128,18 @@ def test_scan_receive_unknown_item_should_fail_fk() -> None:
     errors = data.get("errors") or []
     joined = "\n".join(e.get("error", "") for e in errors)
 
-    # 不强依赖约束名；必须体现“items 不存在导致 FK 失败”的语义
-    assert _looks_like_missing_item_fk(joined), joined
+    # 不强依赖约束名；必须体现“unknown item / lot-world 护栏阻断”的语义
+    assert _looks_like_missing_item_or_lot_guard(joined), joined
 
 
 def test_scan_receive_existing_item_should_succeed() -> None:
     """
     在 items 表中预先插入 item 记录后，
-    同样的 /scan(mode=receive) 请求应当不再触发 FK 错误。
+    同样的 /scan(mode=receive) 请求应当不再触发“缺失 item / 缺失 lot”类阻断信号。
     """
     target_item_id = 52405
 
-    # 1) 先插入 item 主数据，满足 FK（id + sku + name）
+    # 1) 先插入 item 主数据，满足 FK（Phase M 最小合法）
     db = next(_get_db())
     _ensure_item(
         db,
@@ -136,13 +164,13 @@ def test_scan_receive_existing_item_should_succeed() -> None:
 
     data = resp.json()
 
-    # 期望：不再出现“items 不存在导致 FK 失败”的错误
+    # 期望：不再出现“unknown item / lot-world 护栏阻断”的错误
     errors = data.get("errors") or []
     joined = "\n".join(e.get("error", "") for e in errors)
-    assert not _looks_like_missing_item_fk(joined), joined
+    assert not _looks_like_missing_item_or_lot_guard(joined), joined
 
     # 这里不强行要求 ok/committed=True（避免把业务逻辑绑死在一条测试上），
-    # 只要确认不再 FK 炸，后续可以在别的测试里更细分地检查台账 /库存等行为。
+    # 只要确认不再被“缺失 item / 缺失 lot”阻断，后续可以在别的测试里更细分地检查台账 /库存等行为。
     # 如果你已经确认 receive 流程完全通了，可以再加：
     # assert data.get("ok") is True
     # assert data.get("committed") is True

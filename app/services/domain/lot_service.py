@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.lot import Lot
 from app.models.item import Item
+from app.models.lot import Lot
 
 
 def _snapshot_equal(existing: Lot, incoming: dict) -> bool:
@@ -26,6 +26,11 @@ def _snapshot_equal(existing: Lot, incoming: dict) -> bool:
         and existing.item_uom_snapshot == incoming["item_uom_snapshot"]
         and existing.item_case_ratio_snapshot == incoming["item_case_ratio_snapshot"]
         and existing.item_case_uom_snapshot == incoming["item_case_uom_snapshot"]
+        # Phase M policy snapshots (NOT NULL in DB)
+        and existing.item_lot_source_policy_snapshot == incoming["item_lot_source_policy_snapshot"]
+        and existing.item_expiry_policy_snapshot == incoming["item_expiry_policy_snapshot"]
+        and existing.item_derivation_allowed_snapshot == incoming["item_derivation_allowed_snapshot"]
+        and existing.item_uom_governance_enabled_snapshot == incoming["item_uom_governance_enabled_snapshot"]
     )
 
 
@@ -43,10 +48,12 @@ async def resolve_or_create_lot(
     expiry_source: Optional[str],
     shelf_life_days_applied: Optional[int],
 ) -> int:
-
     # ---------------------------
     # 构造 snapshot
     # ---------------------------
+    # NOTE:
+    # - Phase M：policy 字段已在 DB NOT NULL，必须写入 lots snapshot，否则插入会失败。
+    # - has_shelf_life 已被约束锁死为 expiry_policy 的镜像字段；业务规则以后应以 expiry_policy 为准。
     snapshot = {
         "production_date": production_date,
         "expiry_date": expiry_date,
@@ -58,7 +65,18 @@ async def resolve_or_create_lot(
         "item_uom_snapshot": item.uom,  # ✅ 修正：使用真实字段 uom
         "item_case_ratio_snapshot": item.case_ratio,
         "item_case_uom_snapshot": item.case_uom,
+        # Phase M: policy snapshots
+        "item_lot_source_policy_snapshot": getattr(item, "lot_source_policy"),
+        "item_expiry_policy_snapshot": getattr(item, "expiry_policy"),
+        "item_derivation_allowed_snapshot": bool(getattr(item, "derivation_allowed")),
+        "item_uom_governance_enabled_snapshot": bool(getattr(item, "uom_governance_enabled")),
     }
+
+    # 快速防御：若 item 模型还没更新导致 policy 取不到，直接暴露（比 silent drift 强）
+    if snapshot["item_lot_source_policy_snapshot"] is None:
+        raise HTTPException(status_code=500, detail="item_policy_missing:lot_source_policy")
+    if snapshot["item_expiry_policy_snapshot"] is None:
+        raise HTTPException(status_code=500, detail="item_policy_missing:expiry_policy")
 
     # ---------------------------
     # 构造 identity 查询
@@ -122,6 +140,11 @@ async def resolve_or_create_lot(
         item_uom_snapshot=snapshot["item_uom_snapshot"],
         item_case_ratio_snapshot=snapshot["item_case_ratio_snapshot"],
         item_case_uom_snapshot=snapshot["item_case_uom_snapshot"],
+        # Phase M policy snapshots
+        item_lot_source_policy_snapshot=snapshot["item_lot_source_policy_snapshot"],
+        item_expiry_policy_snapshot=snapshot["item_expiry_policy_snapshot"],
+        item_derivation_allowed_snapshot=snapshot["item_derivation_allowed_snapshot"],
+        item_uom_governance_enabled_snapshot=snapshot["item_uom_governance_enabled_snapshot"],
     )
 
     db.add(new_lot)

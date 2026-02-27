@@ -6,7 +6,8 @@
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name)
-VALUES (1, 'WH-1');
+VALUES (1, 'WH-1')
+ON CONFLICT (id) DO NOTHING;
 
 -- ===== stores (TEST gate baseline) =====
 -- 目的：
@@ -38,16 +39,38 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== items =====
--- 目前仅使用 head schema 中最低要求字段：id/sku/name
--- 如果以后 items 强制新增非空列（无默认），只需要改这里，不需要改 conftest.py
-INSERT INTO items (id, sku, name)
+-- Phase M：items 新增 rule policy（NOT NULL）
+-- 默认策略：
+-- - lot_source_policy: SUPPLIER_ONLY
+-- - expiry_policy: NONE（除非明确设为 REQUIRED）
+-- - derivation_allowed: true
+-- - uom_governance_enabled: false
+-- - has_shelf_life: 必须与 expiry_policy 一致（NONE -> false）
+INSERT INTO items (
+  id, sku, name, uom,
+  lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+  has_shelf_life
+)
 VALUES
-  (1,    'SKU-0001', 'UT-ITEM-1'),
-  (3001, 'SKU-3001', 'SOFT-PICK-1'),
-  (3002, 'SKU-3002', 'SOFT-PICK-2'),
-  (3003, 'SKU-3003', 'SOFT-PICK-BASE'),
-  (4001, 'SKU-4001', 'OUTBOUND-MERGE'),
-  (4002, 'SKU-4002', 'PURCHASE-BASE-1');
+  (1,    'SKU-0001', 'UT-ITEM-1',        'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false),
+  (3001, 'SKU-3001', 'SOFT-PICK-1',      'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false),
+  (3002, 'SKU-3002', 'SOFT-PICK-2',      'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false),
+  (3003, 'SKU-3003', 'SOFT-PICK-BASE',   'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false),
+  (4001, 'SKU-4001', 'OUTBOUND-MERGE',   'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false),
+  (4002, 'SKU-4002', 'PURCHASE-BASE-1',  'PCS',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false,
+   false)
+ON CONFLICT (id) DO NOTHING;
 
 -- ===== item_barcodes (primary) =====
 -- 每个 item 生成一个主条码：AUTO-BC-{item_id}
@@ -93,6 +116,8 @@ SELECT setval(
 -- 注意：
 -- - uq_lots_supplier_wh_item_lot_code 是 partial unique index（不是 constraint）
 -- - 需要用 ON CONFLICT (cols) WHERE predicate 形式匹配
+--
+-- Phase M：lots 新增 policy snapshot（NOT NULL），这里必须补齐（从 items 当前策略填入）
 INSERT INTO lots (
   warehouse_id,
   item_id,
@@ -100,13 +125,21 @@ INSERT INTO lots (
   lot_code,
   production_date,
   expiry_date,
-  expiry_source
+  expiry_source,
+  item_lot_source_policy_snapshot,
+  item_expiry_policy_snapshot,
+  item_derivation_allowed_snapshot,
+  item_uom_governance_enabled_snapshot
 )
 VALUES
-  (1, 3001, 'SUPPLIER', 'B-CONC-1',  CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT'),
-  (1, 3002, 'SUPPLIER', 'B-OOO-1',   CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT'),
-  (1, 4001, 'SUPPLIER', 'B-MERGE-1', CURRENT_DATE, CURRENT_DATE + INTERVAL '10 day', 'EXPLICIT'),
-  (1, 4002, 'SUPPLIER', 'B-PO-1',    CURRENT_DATE, CURRENT_DATE + INTERVAL '20 day', 'EXPLICIT')
+  (1, 3001, 'SUPPLIER', 'B-CONC-1',  CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false),
+  (1, 3002, 'SUPPLIER', 'B-OOO-1',   CURRENT_DATE, CURRENT_DATE + INTERVAL '7 day',  'EXPLICIT',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false),
+  (1, 4001, 'SUPPLIER', 'B-MERGE-1', CURRENT_DATE, CURRENT_DATE + INTERVAL '10 day', 'EXPLICIT',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false),
+  (1, 4002, 'SUPPLIER', 'B-PO-1',    CURRENT_DATE, CURRENT_DATE + INTERVAL '20 day', 'EXPLICIT',
+   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, false)
 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
 WHERE lot_code_source = 'SUPPLIER'
 DO UPDATE SET expiry_date = EXCLUDED.expiry_date;
@@ -140,8 +173,6 @@ DO UPDATE SET qty = EXCLUDED.qty;
 
 -- =========================
 -- ✅ 采购入库测试基线：供应商-商品绑定（合同化）
--- 说明：
--- - items 表当前 insert 仅覆盖最小字段；这里用 UPDATE 给出采购所需事实字段
 -- =========================
 
 -- 供应商 1：绑定采购基线商品（用于采购创建/入库链路）
@@ -151,8 +182,10 @@ SET supplier_id = 1,
 WHERE id IN (3001, 3002, 4002);
 
 -- 至少一个商品开启有效期管理（用于“必须补录日期/批次”的入库测试）
+-- Phase M：必须同时设置 expiry_policy=REQUIRED（否则违反 ck_items_has_shelf_life_matches_expiry_policy）
 UPDATE items
 SET has_shelf_life = true,
+    expiry_policy = 'REQUIRED'::expiry_policy,
     -- ✅ 合同收敛：has_shelf_life=true 必须同时具备 shelf_life_value/unit（满足 DB CHECK）
     shelf_life_value = 30,
     shelf_life_unit = 'DAY',

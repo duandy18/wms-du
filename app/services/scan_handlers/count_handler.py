@@ -25,6 +25,9 @@ async def _ensure_supplier_lot_id(
     Phase 4E：Count 写入以 lot-world 为准。
     - 把 batch_code 视为展示码（lots.lot_code）
     - COUNT 的维度需要落在一个确定的 lot 槽位上，因此这里确保 SUPPLIER lot 存在并返回 id
+
+    注意：lots 表对策略快照（item_*_snapshot）有 NOT NULL 护栏，
+    因此插入 lots 必须从 items 真相源读取并冻结快照字段。
     """
     code = str(lot_code).strip()
     if not code:
@@ -41,11 +44,46 @@ async def _ensure_supplier_lot_id(
                 item_id,
                 lot_code_source,
                 lot_code,
+                source_receipt_id,
+                source_line_no,
                 production_date,
                 expiry_date,
-                expiry_source
+                expiry_source,
+                -- required snapshots (NOT NULL)
+                item_lot_source_policy_snapshot,
+                item_expiry_policy_snapshot,
+                item_derivation_allowed_snapshot,
+                item_uom_governance_enabled_snapshot,
+                -- optional snapshots (nullable)
+                item_has_shelf_life_snapshot,
+                item_shelf_life_value_snapshot,
+                item_shelf_life_unit_snapshot,
+                item_uom_snapshot,
+                item_case_ratio_snapshot,
+                item_case_uom_snapshot
             )
-            VALUES (:w, :i, 'SUPPLIER', :code, :prod, :exp, :exp_src)
+            SELECT
+                :w,
+                :i,
+                'SUPPLIER',
+                :code,
+                NULL,
+                NULL,
+                :prod,
+                :exp,
+                :exp_src,
+                it.lot_source_policy,
+                it.expiry_policy,
+                it.derivation_allowed,
+                it.uom_governance_enabled,
+                it.has_shelf_life,
+                it.shelf_life_value,
+                it.shelf_life_unit,
+                it.uom,
+                it.case_ratio,
+                it.case_uom
+              FROM items it
+             WHERE it.id = :i
             ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
             WHERE lot_code_source = 'SUPPLIER'
             DO UPDATE SET expiry_date = EXCLUDED.expiry_date

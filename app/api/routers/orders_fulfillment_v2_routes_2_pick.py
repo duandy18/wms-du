@@ -7,12 +7,19 @@ from typing import List, Set
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.batch_code_contract import (
+    fetch_item_expiry_policy_map,
+    validate_batch_code_contract,
+)
 from app.api.deps import get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import PickRequest, PickResponse
 from app.models.enums import MovementType
 from app.services.pick_service import PickService
+
+
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
 
 
 def register(router: APIRouter) -> None:
@@ -32,28 +39,37 @@ def register(router: APIRouter) -> None:
         if not body.lines:
             return []
 
-        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        # ✅ Phase M：策略真相源为 expiry_policy
         item_ids: Set[int] = {int(ln.item_id) for ln in body.lines}
-        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
+        expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
 
-        missing_items = [str(i) for i in sorted(item_ids) if i not in has_shelf_life_map]
+        missing_items = [str(i) for i in sorted(item_ids) if i not in expiry_policy_map]
         if missing_items:
             raise HTTPException(status_code=422, detail=f"unknown item_id(s): {', '.join(missing_items)}")
 
-        any_requires = any(has_shelf_life_map.get(i, False) is True for i in item_ids)
-        any_not_requires = any(has_shelf_life_map.get(i, False) is not True for i in item_ids)
+        any_requires = any(
+            _requires_batch_from_expiry_policy(expiry_policy_map.get(i))
+            for i in item_ids
+        )
+        any_not_requires = any(
+            not _requires_batch_from_expiry_policy(expiry_policy_map.get(i))
+            for i in item_ids
+        )
 
-        # 由于该接口只有一个 body.batch_code，无法同时满足“批次必填”和“非批次必须为 null”
+        # 混合订单禁止（接口只有一个 body.batch_code）
         if any_requires and any_not_requires:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "mixed items detected (has_shelf_life true and not true). "
+                    "mixed items detected (expiry_policy REQUIRED and NONE). "
                     "This endpoint requires per-line batch_code; single body.batch_code is not allowed for mixed orders."
                 ),
             )
 
-        batch_code = validate_batch_code_contract(requires_batch=any_requires, batch_code=getattr(body, "batch_code", None))
+        batch_code = validate_batch_code_contract(
+            requires_batch=any_requires,
+            batch_code=getattr(body, "batch_code", None),
+        )
 
         order_ref, trace_id = await get_order_ref_and_trace_id(
             session=session,
@@ -80,7 +96,6 @@ def register(router: APIRouter) -> None:
                     warehouse_id=body.warehouse_id,
                     trace_id=trace_id,
                     start_ref_line=ref_line,
-                    # ✅ 关键修复：订单出库扣减必须记为 SHIPMENT（而不是 ADJUSTMENT）
                     movement_type=MovementType.SHIP,
                 )
                 ref_line = result.get("ref_line", ref_line) + 1
