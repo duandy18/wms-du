@@ -1,0 +1,32 @@
+                                                                   Table "public.inbound_receipts"
+    Column     |           Type           | Collation | Nullable |                   Default                    | Storage  | Compression | Stats target | Description 
+---------------+--------------------------+-----------+----------+----------------------------------------------+----------+-------------+--------------+-------------
+ id            | integer                  |           | not null | nextval('inbound_receipts_id_seq'::regclass) | plain    |             |              | 
+ warehouse_id  | integer                  |           | not null |                                              | plain    |             |              | 
+ supplier_id   | integer                  |           |          |                                              | plain    |             |              | 
+ supplier_name | character varying(255)   |           |          |                                              | extended |             |              | 
+ source_type   | character varying(16)    |           | not null |                                              | extended |             |              | 
+ source_id     | integer                  |           |          |                                              | plain    |             |              | 
+ ref           | character varying(128)   |           | not null |                                              | extended |             |              | 
+ trace_id      | character varying(64)    |           |          |                                              | extended |             |              | 
+ status        | character varying(32)    |           | not null | 'DRAFT'::character varying                   | extended |             |              | 
+ remark        | character varying(255)   |           |          |                                              | extended |             |              | 
+ occurred_at   | timestamp with time zone |           | not null |                                              | plain    |             |              | 
+ created_at    | timestamp with time zone |           | not null | now()                                        | plain    |             |              | 
+ updated_at    | timestamp with time zone |           | not null | now()                                        | plain    |             |              | 
+Indexes:
+    "inbound_receipts_pkey" PRIMARY KEY, btree (id)
+    "ix_inbound_receipts_occurred_at" btree (occurred_at)
+    "ix_inbound_receipts_supplier" btree (supplier_id)
+    "ix_inbound_receipts_trace" btree (trace_id)
+    "ix_inbound_receipts_wh" btree (warehouse_id)
+    "uq_inbound_receipts_po_draft" UNIQUE, btree (source_type, source_id) WHERE source_type::text = 'PO'::text AND source_id IS NOT NULL AND status::text = 'DRAFT'::text
+    "uq_inbound_receipts_ref" UNIQUE, btree (ref)
+Foreign-key constraints:
+    "fk_inbound_receipts_supplier" FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+    "fk_inbound_receipts_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_receipt" FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+    TABLE "lots" CONSTRAINT "fk_lots_source_receipt" FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+Access method: heap
+

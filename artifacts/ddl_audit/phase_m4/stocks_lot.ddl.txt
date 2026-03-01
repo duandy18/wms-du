@@ -1,0 +1,20 @@
+                                                          Table "public.stocks_lot"
+    Column    |  Type   | Collation | Nullable |                Default                 | Storage | Compression | Stats target | Description 
+--------------+---------+-----------+----------+----------------------------------------+---------+-------------+--------------+-------------
+ id           | integer |           | not null | nextval('stocks_lot_id_seq'::regclass) | plain   |             |              | 
+ item_id      | integer |           | not null |                                        | plain   |             |              | 
+ warehouse_id | integer |           | not null |                                        | plain   |             |              | 
+ lot_id       | integer |           | not null |                                        | plain   |             |              | 
+ qty          | integer |           | not null |                                        | plain   |             |              | 
+Indexes:
+    "stocks_lot_pkey" PRIMARY KEY, btree (id)
+    "ix_stocks_lot_item_id" btree (item_id)
+    "ix_stocks_lot_item_wh_lot" btree (item_id, warehouse_id, lot_id)
+    "ix_stocks_lot_warehouse_id" btree (warehouse_id)
+    "uq_stocks_lot_item_wh_lot" UNIQUE CONSTRAINT, btree (item_id, warehouse_id, lot_id)
+Foreign-key constraints:
+    "fk_stocks_lot_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_stocks_lot_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    "fk_stocks_lot_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+Access method: heap
+
