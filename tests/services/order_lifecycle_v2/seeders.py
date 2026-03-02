@@ -106,6 +106,10 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     - stock_ledger:
         * SHIPMENT delta=-2
         * RETURN_IN delta=+1
+
+    Lot-World 终态注意：
+    - stock_ledger 不再存在 batch_code 列；展示码应来自 lots.lot_code（通过 lot_id JOIN）
+    - 因此这里先 ensure SUPPLIER lot（lot_code='B-LIFE-1'）拿到 lot_id，再写 stock_ledger.lot_id
     """
     trace_id = "LIFE-UT-1"
     platform = "PDD"
@@ -165,8 +169,58 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：SHIPMENT / RETURN_IN
-    # 单宇宙回归后：stock_ledger 不再含 scope 列
+    # ensure SUPPLIER lot (lot_code 展示码)
+    lot_code = "B-LIFE-1"
+    lot_row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    source_receipt_id,
+                    source_line_no,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    created_at
+                )
+                SELECT
+                    :w,
+                    it.id,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    now()
+                  FROM items it
+                 WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, lot_code)
+                WHERE lot_code IS NOT NULL
+                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                RETURNING id
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    assert lot_row is not None, "failed to ensure lot"
+    lot_id = int(lot_row[0])
+
+    # stock_ledger：SHIPMENT / RETURN_IN（lot_id 维度；不写 batch_code）
     await session.execute(
         text(
             """
@@ -174,8 +228,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 trace_id,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 reason,
+                reason_canon,
                 ref,
                 ref_line,
                 delta,
@@ -188,7 +243,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
+                'SHIPMENT',
                 'SHIPMENT',
                 :ref,
                 1,
@@ -201,8 +257,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
                 'RETURN_IN',
+                'RECEIPT',
                 :ref,
                 1,
                 1,
@@ -212,7 +269,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             )
             """
         ),
-        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "ref": order_ref},
+        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "lot_id": lot_id, "ref": order_ref},
     )
 
     await session.commit()

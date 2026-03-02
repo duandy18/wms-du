@@ -11,7 +11,7 @@ async def _pick_one_stock_slot(session: AsyncSession):
     """
     从 stocks_lot 中挑一个 (item_id, warehouse_id, lot_code, sum_qty)。
 
-    - lot_code 来自 lots.lot_code（可能为 NULL：lot_id=NULL 槽位）
+    - lot_code 来自 lots.lot_code（可能为 NULL：INTERNAL lot 的展示码）
     - 只选 qty > 0 的槽位
     """
     row = await session.execute(
@@ -44,6 +44,8 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
       - results.committed_lines == 1
       - total_qty == 汇总 qty
       - stock_ledger 中对应 ref 的 delta 总和 == -total_qty
+
+    终态：stock_ledger 不存在 batch_code 列；展示码来自 lots.lot_code。
     """
     item_id, warehouse_id, batch_code, qty_sum = await _pick_one_stock_slot(session)
     if qty_sum < 5:
@@ -72,13 +74,14 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
     row = await session.execute(
         text(
             """
-            SELECT COALESCE(SUM(delta), 0)
-            FROM stock_ledger
-            WHERE ref = :ref
-              AND reason = 'OUTBOUND_SHIP'
-              AND item_id = :item_id
-              AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
+            SELECT COALESCE(SUM(l.delta), 0)
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.ref = :ref
+               AND l.reason = 'OUTBOUND_SHIP'
+               AND l.item_id = :item_id
+               AND l.warehouse_id = :warehouse_id
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {
@@ -97,6 +100,8 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     """
     同一 order_id + 同样 lines 再次调用：
       - 第二次不再额外扣减（delta 总和保持不变）
+
+    终态：stock_ledger 不存在 batch_code 列；展示码来自 lots.lot_code。
     """
     item_id, warehouse_id, batch_code, qty_sum = await _pick_one_stock_slot(session)
     if qty_sum < 3:
@@ -117,13 +122,14 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     row = await session.execute(
         text(
             """
-            SELECT COALESCE(SUM(delta), 0)
-            FROM stock_ledger
-            WHERE ref = :ref
-              AND reason = 'OUTBOUND_SHIP'
-              AND item_id = :item_id
-              AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
+            SELECT COALESCE(SUM(l.delta), 0)
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.ref = :ref
+               AND l.reason = 'OUTBOUND_SHIP'
+               AND l.item_id = :item_id
+               AND l.warehouse_id = :warehouse_id
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {
@@ -144,13 +150,14 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     row = await session.execute(
         text(
             """
-            SELECT COALESCE(SUM(delta), 0)
-            FROM stock_ledger
-            WHERE ref = :ref
-              AND reason = 'OUTBOUND_SHIP'
-              AND item_id = :item_id
-              AND warehouse_id = :warehouse_id
-              AND batch_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
+            SELECT COALESCE(SUM(l.delta), 0)
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.ref = :ref
+               AND l.reason = 'OUTBOUND_SHIP'
+               AND l.item_id = :item_id
+               AND l.warehouse_id = :warehouse_id
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:batch_code AS TEXT)
             """
         ),
         {

@@ -1,0 +1,42 @@
+                                                                               Table "public.lots"
+                Column                |           Type           | Collation | Nullable |             Default              | Storage  | Compression | Stats target | Description
+--------------------------------------+--------------------------+-----------+----------+----------------------------------+----------+-------------+--------------+-------------
+ id                                   | integer                  |           | not null | nextval('lots_id_seq'::regclass) | plain    |             |              |
+ warehouse_id                         | integer                  |           | not null |                                  | plain    |             |              |
+ item_id                              | integer                  |           | not null |                                  | plain    |             |              |
+ lot_code_source                      | character varying(16)    |           | not null |                                  | extended |             |              |
+ lot_code                             | character varying(64)    |           |          |                                  | extended |             |              |
+ source_receipt_id                    | integer                  |           |          |                                  | plain    |             |              |
+ source_line_no                       | integer                  |           |          |                                  | plain    |             |              |
+ created_at                           | timestamp with time zone |           | not null | now()                            | plain    |             |              |
+ item_shelf_life_value_snapshot       | integer                  |           |          |                                  | plain    |             |              |
+ item_shelf_life_unit_snapshot        | character varying(16)    |           |          |                                  | extended |             |              |
+ item_lot_source_policy_snapshot      | lot_source_policy        |           | not null |                                  | plain    |             |              |
+ item_expiry_policy_snapshot          | expiry_policy            |           | not null |                                  | plain    |             |              |
+ item_derivation_allowed_snapshot     | boolean                  |           | not null |                                  | plain    |             |              |
+ item_uom_governance_enabled_snapshot | boolean                  |           | not null |                                  | plain    |             |              |
+ item_base_uom_snapshot               | character varying(8)     |           |          |                                  | extended |             |              |
+ item_purchase_ratio_snapshot         | integer                  |           |          |                                  | plain    |             |              |
+ item_purchase_uom_snapshot           | character varying(16)    |           |          |                                  | extended |             |              |
+Indexes:
+    "lots_pkey" PRIMARY KEY, btree (id)
+    "ix_lots_item" btree (item_id)
+    "ix_lots_wh" btree (warehouse_id)
+    "ix_lots_wh_item" btree (warehouse_id, item_id)
+    "uq_lots_id_wh_item" UNIQUE CONSTRAINT, btree (id, warehouse_id, item_id)
+    "uq_lots_wh_item_lot_code" UNIQUE, btree (warehouse_id, item_id, lot_code) WHERE lot_code IS NOT NULL
+Check constraints:
+    "ck_lots_item_purchase_ratio_ge_1_snapshot" CHECK (item_purchase_ratio_snapshot IS NULL OR item_purchase_ratio_snapshot >= 1)
+    "ck_lots_item_shelf_life_pair_snapshot" CHECK ((item_shelf_life_value_snapshot IS NULL) = (item_shelf_life_unit_snapshot IS NULL))
+    "ck_lots_item_shelf_life_unit_enum_snapshot" CHECK (item_shelf_life_unit_snapshot IS NULL OR (item_shelf_life_unit_snapshot::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
+    "ck_lots_lot_code_source" CHECK (lot_code_source::text = ANY (ARRAY['SUPPLIER'::character varying, 'INTERNAL'::character varying]::text[]))
+    "ck_lots_sl_params_by_policy_snap" CHECK (item_expiry_policy_snapshot = 'REQUIRED'::expiry_policy OR item_shelf_life_value_snapshot IS NULL AND item_shelf_life_unit_snapshot IS NULL)
+Foreign-key constraints:
+    "fk_lots_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_lots_source_receipt" FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+    "fk_lots_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "stock_ledger" CONSTRAINT "fk_stock_ledger_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    TABLE "stock_snapshots" CONSTRAINT "fk_stock_snapshots_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    TABLE "stocks_lot" CONSTRAINT "fk_stocks_lot_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+Access method: heap

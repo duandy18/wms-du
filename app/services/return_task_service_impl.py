@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional, Set
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,8 +31,35 @@ def _norm_bc(v: Any) -> Optional[str]:
     return s2
 
 
-def _batch_key(bc: Optional[str]) -> str:
-    return bc if bc is not None else "__NULL_BATCH__"
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str | None,
+) -> Optional[int]:
+    if lot_code is None:
+        return None
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code     = :c
+                 LIMIT 2
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+        )
+    ).fetchall()
+    if not row:
+        return None
+    if len(row) > 1:
+        return None
+    return int(row[0][0])
 
 
 class ReturnTaskServiceImpl:
@@ -50,13 +77,12 @@ class ReturnTaskServiceImpl:
         self.stock_svc = stock_svc or StockService()
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
-        # ✅ 用 batch_code_key 聚合 shipped 事实，避免 NULL/"None" 分裂
+        # ✅ lot-only：以 lot_id 聚合 shipped 事实；展示码来自 lots.lot_code
         res = await session.execute(
             select(
                 StockLedger.item_id,
                 StockLedger.warehouse_id,
-                StockLedger.batch_code,
-                StockLedger.batch_code_key,
+                StockLedger.lot_id,
                 StockLedger.delta,
                 StockLedger.reason,
             )
@@ -64,32 +90,36 @@ class ReturnTaskServiceImpl:
             .where(StockLedger.delta < 0)
         )
 
-        # key: (item, wh, batch_code_key)
-        agg: dict[tuple[int, int, str], int] = {}
-        any_bc: dict[tuple[int, int, str], Optional[str]] = {}
+        agg: dict[tuple[int, int, int], int] = {}
 
-        for item_id, wh_id, batch_code, batch_code_key, delta, reason in res.all():
+        for item_id, wh_id, lot_id, delta, reason in res.all():
             r = str(reason or "").strip().upper()
             if r not in self.SHIP_OUT_REASONS:
                 continue
-
-            bc = _norm_bc(batch_code)
-            ck = str(batch_code_key or _batch_key(bc))
-            key = (int(item_id), int(wh_id), ck)
-
+            key = (int(item_id), int(wh_id), int(lot_id))
             agg[key] = agg.get(key, 0) + int(-int(delta or 0))
-            any_bc.setdefault(key, bc)
+
+        # 批量补齐展示码
+        lot_ids = sorted({k[2] for k in agg.keys()})
+        lot_code_map: dict[int, str | None] = {}
+        if lot_ids:
+            r2 = await session.execute(
+                text("SELECT id, lot_code FROM lots WHERE id = ANY(:ids)"),
+                {"ids": lot_ids},
+            )
+            for x in r2.mappings().all():
+                lot_code_map[int(x["id"])] = x.get("lot_code")
 
         out: list[dict[str, Any]] = []
-        for (item_id, wh_id, ck), shipped_qty in agg.items():
+        for (item_id, wh_id, lot_id), shipped_qty in agg.items():
             if shipped_qty <= 0:
                 continue
             out.append(
                 {
                     "item_id": item_id,
                     "warehouse_id": wh_id,
-                    "batch_code": any_bc.get((item_id, wh_id, ck)),
-                    "batch_code_key": ck,
+                    "lot_id": lot_id,
+                    "batch_code": lot_code_map.get(lot_id),
                     "shipped_qty": shipped_qty,
                 }
             )
@@ -154,7 +184,7 @@ class ReturnTaskServiceImpl:
                 task_id=task.id,
                 order_line_id=None,
                 item_id=item_id,
-                batch_code=batch_code,  # ✅ may be NULL（非批次商品回仓）
+                batch_code=batch_code,  # ✅ 展示/兼容字段（lots.lot_code）
                 expected_qty=expected_qty,
                 picked_qty=0,
                 committed_qty=0,
@@ -221,6 +251,177 @@ class ReturnTaskServiceImpl:
 
         return await self.get_with_lines(session, task_id=task_id, for_update=False)
 
+    async def _ensure_return_receipt_id(
+        self,
+        session: AsyncSession,
+        *,
+        warehouse_id: int,
+        task_id: int,
+        order_ref: str,
+        trace_id: Optional[str],
+        occurred_at: datetime,
+    ) -> int:
+        """
+        Return commit 的终态做法：
+        - 用一张 CONFIRMED inbound_receipts 作为“回仓入库事实单据”（source_type='ORDER'）
+        - 其 id 用于 INTERNAL lot 的 source_receipt_id（满足 lots 的 DB check）
+        """
+        # ref 全局唯一：用 task_id + order_ref 组成稳定 ref（同 task 重跑也可命中）
+        ref = f"RET-TASK:{int(task_id)}:{str(order_ref)}"
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id
+                      FROM inbound_receipts
+                     WHERE ref = :ref
+                     LIMIT 1
+                    """
+                ),
+                {"ref": ref},
+            )
+        ).first()
+        if row is not None:
+            return int(row[0])
+
+        r2 = await session.execute(
+            text(
+                """
+                INSERT INTO inbound_receipts(
+                  warehouse_id,
+                  supplier_id,
+                  supplier_name,
+                  source_type,
+                  source_id,
+                  ref,
+                  trace_id,
+                  status,
+                  remark,
+                  occurred_at,
+                  created_at,
+                  updated_at
+                )
+                VALUES(
+                  :w,
+                  NULL,
+                  NULL,
+                  'ORDER',
+                  NULL,
+                  :ref,
+                  :trace_id,
+                  'CONFIRMED',
+                  'RETURN_TASK_COMMIT',
+                  :occurred_at,
+                  now(),
+                  now()
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "w": int(warehouse_id),
+                "ref": ref,
+                "trace_id": (str(trace_id) if trace_id else None),
+                "occurred_at": occurred_at,
+            },
+        )
+        return int(r2.scalar_one())
+
+    async def _ensure_internal_lot_for_return_line(
+        self,
+        session: AsyncSession,
+        *,
+        warehouse_id: int,
+        item_id: int,
+        receipt_id: int,
+        source_line_no: int,
+    ) -> int:
+        """
+        INTERNAL lot 终态：
+        - lot_code_source='INTERNAL'
+        - lot_code=NULL
+        - source_receipt_id/source_line_no NOT NULL（DB check）
+        """
+        row0 = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id
+                      FROM lots
+                     WHERE warehouse_id = :w
+                       AND item_id      = :i
+                       AND lot_code_source = 'INTERNAL'
+                       AND source_receipt_id = :rid
+                       AND source_line_no = :ln
+                     LIMIT 1
+                    """
+                ),
+                {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id), "ln": int(source_line_no)},
+            )
+        ).first()
+        if row0 is not None:
+            return int(row0[0])
+
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                  warehouse_id,
+                  item_id,
+                  lot_code_source,
+                  lot_code,
+                  source_receipt_id,
+                  source_line_no,
+                  created_at,
+                  item_shelf_life_value_snapshot,
+                  item_shelf_life_unit_snapshot,
+                  item_lot_source_policy_snapshot,
+                  item_expiry_policy_snapshot,
+                  item_derivation_allowed_snapshot,
+                  item_uom_governance_enabled_snapshot
+                )
+                SELECT
+                  :w,
+                  it.id,
+                  'INTERNAL',
+                  NULL,
+                  :rid,
+                  :ln,
+                  now(),
+                  it.shelf_life_value,
+                  it.shelf_life_unit,
+                  it.lot_source_policy,
+                  it.expiry_policy,
+                  it.derivation_allowed,
+                  it.uom_governance_enabled
+                FROM items it
+                WHERE it.id = :i
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id), "ln": int(source_line_no)},
+        )
+
+        row1 = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id
+                      FROM lots
+                     WHERE warehouse_id = :w
+                       AND item_id      = :i
+                       AND lot_code_source = 'INTERNAL'
+                       AND source_receipt_id = :rid
+                       AND source_line_no = :ln
+                     LIMIT 1
+                    """
+                ),
+                {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id), "ln": int(source_line_no)},
+            )
+        ).first()
+        if row1 is None:
+            raise ValueError("failed to ensure INTERNAL lot for return receipt line")
+        return int(row1[0])
+
     async def commit(
         self,
         session: AsyncSession,
@@ -235,6 +436,16 @@ class ReturnTaskServiceImpl:
 
         ts = occurred_at or datetime.now(UTC)
 
+        # ✅ Return commit：必须生成一个 receipt 事实（用于 INTERNAL lot 的 source_receipt_id）
+        receipt_id = await self._ensure_return_receipt_id(
+            session,
+            warehouse_id=int(task.warehouse_id),
+            task_id=int(task.id),
+            order_ref=str(task.order_id),
+            trace_id=trace_id,
+            occurred_at=ts,
+        )
+
         lines = list(task.lines or [])
         applied_any = False
         effects: list[dict[str, Any]] = []
@@ -245,18 +456,30 @@ class ReturnTaskServiceImpl:
                 continue
 
             ref_line = int(getattr(ln, "id", 1) or 1)
+            bc = _norm_bc(ln.batch_code)
+
+            # ✅ 终态：Return-in 的 RECEIPT 不能复用旧 SUPPLIER lot_id（会撞 uq_ledger_receipt_wh_lot）
+            # 为每条 line 建一个 INTERNAL lot（lot_code NULL），以 receipt_id + ref_line 作为来源维度。
+            internal_lot_id = await self._ensure_internal_lot_for_return_line(
+                session,
+                warehouse_id=int(task.warehouse_id),
+                item_id=int(ln.item_id),
+                receipt_id=int(receipt_id),
+                source_line_no=int(ref_line),
+            )
 
             res = await self.stock_svc.adjust(
                 session=session,
                 item_id=int(ln.item_id),
                 delta=+picked,
-                reason=MovementType.RETURN,
+                reason=MovementType.RETURN,  # canon='RECEIPT'
                 ref=str(task.order_id),
                 ref_line=ref_line,
                 occurred_at=ts,
-                batch_code=_norm_bc(ln.batch_code),  # ✅ keep NULL, forbid "None"
+                batch_code=bc,  # 展示/输入标签（不会落库到 stock_ledger）
                 warehouse_id=int(task.warehouse_id),
                 trace_id=trace_id,
+                lot_id=int(internal_lot_id),
                 meta={"sub_reason": "RETURN_RECEIPT"},
             )
 
@@ -264,7 +487,8 @@ class ReturnTaskServiceImpl:
                 {
                     "warehouse_id": int(task.warehouse_id),
                     "item_id": int(ln.item_id),
-                    "batch_code": _norm_bc(ln.batch_code),
+                    "lot_id": int(internal_lot_id),
+                    "batch_code": bc,
                     "qty": int(picked),
                     "ref": str(task.order_id),
                     "ref_line": ref_line,

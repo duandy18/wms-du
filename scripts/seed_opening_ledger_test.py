@@ -24,53 +24,47 @@ def main() -> int:
     sub_reason = os.getenv("OPENING_LEDGER_SUB_REASON", "OPENING_TEST")
 
     # 只补“缺口”：diff = bal_qty - ledger_qty
-    # 注意：
-    # - 以 (warehouse_id,item_id,lot_id_key) 为槽位维度（lot-world 余额）
-    # - batch_code 取 lots.lot_code（展示码；可为 NULL）
-    # - 幂等：依赖 uq_ledger_wh_lot_batch_item_reason_ref_line
+    # 终态口径（Phase M-5）：
+    # - 以 (warehouse_id,item_id,lot_id) 为槽位维度（lot-world 余额；lot_id NOT NULL）
+    # - stock_ledger 表中没有 batch_code 列；展示码需 JOIN lots 获取
+    # - 幂等：依赖 uq_ledger_wh_lot_item_reason_ref_line
     seed_sql = text(
         """
         WITH ledger AS (
-          SELECT warehouse_id, item_id, lot_id_key, COALESCE(SUM(delta),0) AS ledger_qty
+          SELECT warehouse_id, item_id, lot_id, COALESCE(SUM(delta),0) AS ledger_qty
             FROM stock_ledger
-           GROUP BY warehouse_id, item_id, lot_id_key
+           GROUP BY warehouse_id, item_id, lot_id
         ),
         bal AS (
-          SELECT warehouse_id, item_id, lot_id_key, COALESCE(SUM(qty),0) AS bal_qty
+          SELECT warehouse_id, item_id, lot_id, COALESCE(SUM(qty),0) AS bal_qty
             FROM stocks_lot
-           GROUP BY warehouse_id, item_id, lot_id_key
+           GROUP BY warehouse_id, item_id, lot_id
         ),
         diff AS (
           SELECT
             b.warehouse_id,
             b.item_id,
-            b.lot_id_key,
+            b.lot_id,
             COALESCE(l.ledger_qty, 0) AS ledger_qty,
             b.bal_qty,
             (b.bal_qty - COALESCE(l.ledger_qty, 0)) AS delta_need
           FROM bal b
           LEFT JOIN ledger l
-            ON l.warehouse_id=b.warehouse_id AND l.item_id=b.item_id AND l.lot_id_key=b.lot_id_key
+            ON l.warehouse_id=b.warehouse_id AND l.item_id=b.item_id AND l.lot_id=b.lot_id
         ),
         src AS (
           SELECT
             d.warehouse_id,
             d.item_id,
-            d.lot_id_key,
+            d.lot_id,
             d.delta_need,
-            d.bal_qty AS after_qty,
-            sl.lot_id,
-            lo.lot_code AS batch_code
+            d.bal_qty AS after_qty
           FROM diff d
-          JOIN stocks_lot sl
-            ON sl.warehouse_id=d.warehouse_id AND sl.item_id=d.item_id AND sl.lot_id_key=d.lot_id_key
-          LEFT JOIN lots lo
-            ON lo.id = sl.lot_id
           WHERE d.delta_need <> 0
         )
         INSERT INTO stock_ledger(
           reason, after_qty, delta, ref, ref_line, item_id, warehouse_id,
-          batch_code, lot_id, sub_reason
+          lot_id, sub_reason
         )
         SELECT
           :reason AS reason,
@@ -80,41 +74,40 @@ def main() -> int:
           1 AS ref_line,
           s.item_id,
           s.warehouse_id,
-          s.batch_code,
           s.lot_id,
           :sub_reason AS sub_reason
         FROM src s
-        ON CONFLICT (reason, ref, ref_line, item_id, warehouse_id, lot_id_key, batch_code_key) DO NOTHING
+        ON CONFLICT (reason, ref, ref_line, item_id, warehouse_id, lot_id) DO NOTHING
         """
     )
 
     check_sql = text(
         """
         WITH ledger AS (
-          SELECT warehouse_id, item_id, lot_id_key, COALESCE(SUM(delta),0) AS ledger_qty
+          SELECT warehouse_id, item_id, lot_id, COALESCE(SUM(delta),0) AS ledger_qty
             FROM stock_ledger
-           GROUP BY warehouse_id, item_id, lot_id_key
+           GROUP BY warehouse_id, item_id, lot_id
         ),
         bal AS (
-          SELECT warehouse_id, item_id, lot_id_key, COALESCE(SUM(qty),0) AS bal_qty
+          SELECT warehouse_id, item_id, lot_id, COALESCE(SUM(qty),0) AS bal_qty
             FROM stocks_lot
-           GROUP BY warehouse_id, item_id, lot_id_key
+           GROUP BY warehouse_id, item_id, lot_id
         ),
         j AS (
           SELECT
             COALESCE(b.warehouse_id, l.warehouse_id) AS warehouse_id,
             COALESCE(b.item_id, l.item_id) AS item_id,
-            COALESCE(b.lot_id_key, l.lot_id_key) AS lot_id_key,
+            COALESCE(b.lot_id, l.lot_id) AS lot_id,
             COALESCE(l.ledger_qty, 0) AS ledger_qty,
             COALESCE(b.bal_qty, 0) AS bal_qty
           FROM bal b
           FULL JOIN ledger l
-            ON l.warehouse_id=b.warehouse_id AND l.item_id=b.item_id AND l.lot_id_key=b.lot_id_key
+            ON l.warehouse_id=b.warehouse_id AND l.item_id=b.item_id AND l.lot_id=b.lot_id
         )
-        SELECT warehouse_id, item_id, lot_id_key, ledger_qty, bal_qty
+        SELECT warehouse_id, item_id, lot_id, ledger_qty, bal_qty
           FROM j
          WHERE ledger_qty <> bal_qty
-         ORDER BY warehouse_id, item_id, lot_id_key
+         ORDER BY warehouse_id, item_id, lot_id
          LIMIT 50
         """
     )
@@ -130,7 +123,7 @@ def main() -> int:
     if remain:
         print("[seed-opening-ledger-test] remaining mismatches (first 50):")
         for r in remain:
-            print(f"  warehouse_id={r[0]} item_id={r[1]} lot_id_key={r[2]} ledger_qty={r[3]} bal_qty={r[4]}")
+            print(f"  warehouse_id={r[0]} item_id={r[1]} lot_id={r[2]} ledger_qty={r[3]} bal_qty={r[4]}")
         # 这里选择非 0 退出，让 CI 直接发现问题（你喜欢硬护栏）
         return 2
 

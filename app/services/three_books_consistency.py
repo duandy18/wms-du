@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,8 +23,45 @@ def _norm_bc(v: Any) -> str | None:
     return s2
 
 
-def _batch_key(bc: str | None) -> str:
-    return bc if bc is not None else "__NULL_BATCH__"
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str | None,
+) -> Optional[int]:
+    """
+    兼容入口：用展示码 lot_code（旧名 batch_code）解析 lot_id。
+
+    注意：
+    - lot_code 允许为 NULL；但 NULL 时可能存在多个 INTERNAL lot，无法唯一解析 => 返回 None
+    - 仅当能唯一解析到一个 lot_id 时才返回
+    """
+    if lot_code is None:
+        return None
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code     = :c
+                 LIMIT 2
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+        )
+    ).fetchall()
+
+    if not row:
+        return None
+    if len(row) > 1:
+        # 理论上 uq_lots_wh_item_lot_code 应保证非 NULL 唯一，但这里仍做防御
+        return None
+    return int(row[0][0])
 
 
 async def verify_commit_three_books(
@@ -36,33 +73,50 @@ async def verify_commit_three_books(
     at: datetime,
 ) -> None:
     """
-    Phase 4C 收尾版三账校验：
+    Phase 4C+ / Phase 3 终态三账校验（lot-only）：
 
-    ✅ ledger 仍是唯一事实：
+    ✅ ledger 是唯一事实：
       - 校验每个 ref_line 的 ledger 行存在且 delta 匹配（必要条件）
 
-    ✅ 4C 主余额切换为 stocks_lot：
+    ✅ 主余额为 stocks_lot：
       - 余额对齐：snapshot(today) 总量 == stocks_lot 总量（仅 touched items；同仓）
 
     说明：
-    - 仍按 (warehouse_id,item_id) 做总量对齐，避免 batch_code_key/展示码漂移造成误判。
+    - 总量对齐仍按 (warehouse_id,item_id) 聚合，避免“展示码口径”影响判断
+    - effects 必须以 lot_id 为维度事实；batch_code 仅作为展示/兼容输入
     """
     if not effects:
         return
 
     snap_date: date = at.date()
 
-    # 1) ledger 存在性 + delta 校验（保持原行为：按 batch_code_key 锚定）
+    # 1) ledger 存在性 + delta 校验（lot-only）
     missing_ledger: List[Dict[str, Any]] = []
     delta_mismatch: List[Dict[str, Any]] = []
 
     for e in effects:
         rl = int(e["ref_line"])
         iid = int(e["item_id"])
-        bc = _norm_bc(e.get("batch_code"))
-        ck = _batch_key(bc)
         qty = int(e["qty"])
         reason = e.get("reason")
+
+        lot_id = e.get("lot_id")
+        if lot_id is None:
+            # 兼容：尝试用 batch_code(展示码) 唯一解析 lot_id（仅非空码）
+            bc = _norm_bc(e.get("batch_code"))
+            lot_id = await _resolve_lot_id_by_lot_code(
+                session,
+                warehouse_id=int(warehouse_id),
+                item_id=iid,
+                lot_code=bc,
+            )
+            if lot_id is None:
+                raise ValueError(
+                    "three_books_consistency requires lot_id in effects under lot-only world; "
+                    f"failed to resolve lot_id from batch_code for item_id={iid}, ref_line={rl}"
+                )
+
+        lot_id_i = int(lot_id)
 
         if reason is not None and str(reason).strip():
             row = (
@@ -71,19 +125,19 @@ async def verify_commit_three_books(
                         """
                         SELECT delta
                           FROM stock_ledger
-                         WHERE warehouse_id   = :w
-                           AND item_id        = :i
-                           AND batch_code_key = :ck
-                           AND ref            = :ref
-                           AND ref_line       = :rl
-                           AND reason         = :reason
+                         WHERE warehouse_id = :w
+                           AND item_id      = :i
+                           AND lot_id       = :lot
+                           AND ref          = :ref
+                           AND ref_line     = :rl
+                           AND reason       = :reason
                          LIMIT 1
                         """
                     ),
                     {
                         "w": int(warehouse_id),
                         "i": iid,
-                        "ck": ck,
+                        "lot": lot_id_i,
                         "ref": str(ref),
                         "rl": rl,
                         "reason": str(reason),
@@ -97,20 +151,20 @@ async def verify_commit_three_books(
                         """
                         SELECT delta
                           FROM stock_ledger
-                         WHERE warehouse_id   = :w
-                           AND item_id        = :i
-                           AND batch_code_key = :ck
-                           AND ref            = :ref
-                           AND ref_line       = :rl
+                         WHERE warehouse_id = :w
+                           AND item_id      = :i
+                           AND lot_id       = :lot
+                           AND ref          = :ref
+                           AND ref_line     = :rl
                          LIMIT 1
                         """
                     ),
-                    {"w": int(warehouse_id), "i": iid, "ck": ck, "ref": str(ref), "rl": rl},
+                    {"w": int(warehouse_id), "i": iid, "lot": lot_id_i, "ref": str(ref), "rl": rl},
                 )
             ).first()
 
         if not row:
-            miss = {"item_id": iid, "batch_code": bc, "ref": ref, "ref_line": rl}
+            miss: Dict[str, Any] = {"item_id": iid, "lot_id": lot_id_i, "ref": ref, "ref_line": rl}
             if reason is not None and str(reason).strip():
                 miss["reason"] = str(reason)
             missing_ledger.append(miss)
@@ -118,9 +172,9 @@ async def verify_commit_three_books(
 
         delta_val = int(row[0] or 0)
         if delta_val != qty:
-            mm = {
+            mm: Dict[str, Any] = {
                 "item_id": iid,
-                "batch_code": bc,
+                "lot_id": lot_id_i,
                 "ref": ref,
                 "ref_line": rl,
                 "expected_delta": qty,

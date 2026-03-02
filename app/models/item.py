@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from .item_uom import ItemUOM
     from .order import Order
     from .order_item import OrderItem
     from .supplier import Supplier
@@ -32,8 +33,14 @@ class Item(Base):
 
     Phase M 关键变化（规则上移，禁止隐式推断）：
     - expiry_policy 是有效期规则真相源（NONE / REQUIRED）
-    - has_shelf_life 仅作为镜像字段（DB CHECK 已锁死：has_shelf_life == expiry_policy==REQUIRED）
     - lot_source_policy / derivation_allowed / uom_governance_enabled 为执行层只读策略开关
+
+    Phase M-3（结构减法）：
+    - items.case_ratio / items.case_uom 已物理删除；包装倍率真相源 = item_uoms
+
+    Phase M-5（unit_governance 二阶段）：
+    - items.uom 已物理移除
+    - base_uom 的事实口径 = item_uoms.is_base=true（结构层）
     """
 
     __tablename__ = "items"
@@ -54,25 +61,6 @@ class Item(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    # ✅ 事实单位（唯一口径）：DB 列名已迁移为 items.uom
-    uom: Mapped[str] = mapped_column(
-        String(8),
-        nullable=False,
-        server_default=text("'PCS'::character varying"),
-    )
-
-    # ✅ Phase 1: 结构化包装字段（一层箱装）
-    case_ratio: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        nullable=True,
-        comment="箱装换算倍率（整数）；1 case_uom = case_ratio × uom（最小单位）；允许为空（未治理）",
-    )
-    case_uom: Mapped[Optional[str]] = mapped_column(
-        String(16),
-        nullable=True,
-        comment="箱装单位名（展示/输入偏好），如“箱”；允许为空（未治理）",
-    )
-
     spec: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     enabled: Mapped[bool] = mapped_column(
@@ -81,13 +69,9 @@ class Item(Base):
         server_default=text("true"),
     )
 
-    # ✅ 新增：品牌/品类（主数据字段，允许为空，逐步治理）
     brand: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # ------------------------------------------------------------------
-    # Phase M: Rule layer (DB NOT NULL)
-    # ------------------------------------------------------------------
     lot_source_policy: Mapped[LotSourcePolicy] = mapped_column(
         Enum(LotSourcePolicy, name="lot_source_policy", native_enum=True),
         nullable=False,
@@ -99,22 +83,12 @@ class Item(Base):
     derivation_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     uom_governance_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
-    # ✅ 旧字段（镜像字段；DB CHECK 已锁死与 expiry_policy 一致）
-    has_shelf_life: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default=text("false"),
-        # ✅ 与当前 DB 列注释保持一致，避免 alembic-check comment drift
-        comment="是否需要有效期管理（入库是否强制日期）",
-    )
-
     weight_kg: Mapped[Optional[float]] = mapped_column(
         Numeric(10, 3),
         nullable=True,
         comment="单件净重（kg），用于运费预估，不含包材",
     )
 
-    # ✅ 可选保质期参数（用于推算到期日）
     shelf_life_value: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shelf_life_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
@@ -126,19 +100,55 @@ class Item(Base):
     )
     supplier: Mapped[Optional["Supplier"]] = relationship("Supplier", lazy="joined")
 
+    uoms: Mapped[List["ItemUOM"]] = relationship(
+        "ItemUOM",
+        back_populates="item",
+        lazy="selectin",
+        order_by="ItemUOM.id.asc()",
+    )
+
     @property
     def unit(self) -> str:
-        # ✅ 兼容旧调用：Item.unit -> Item.uom（只读）
-        return self.uom
+        """
+        Phase M-5：对外兼容字段
+        - items.uom 已移除；只能从结构层 base item_uom 读取
+        """
+        base = self.get_base_uom()
+        if base is None or not getattr(base, "uom", None):
+            raise RuntimeError(f"item missing base item_uom (is_base=true): item_id={int(self.id)}")
+        return str(getattr(base, "uom"))
 
     @property
     def barcode(self) -> Optional[str]:
-        # ✅ 兼容输出：旧字段 barcode = 主条码（primary_barcode）
         return getattr(self, "primary_barcode", None)
 
     @property
     def supplier_name(self) -> Optional[str]:
         return self.supplier.name if self.supplier is not None else None
+
+    def get_base_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_base", False):
+                return u
+        return None
+
+    def get_default_purchase_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_purchase_default", False):
+                return u
+        return self.get_base_uom()
+
+    def get_default_inbound_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_inbound_default", False):
+                return u
+        return self.get_base_uom()
+
+    def get_default_outbound_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_outbound_default", False):
+                return u
+        return self.get_base_uom()
 
     order_items: Mapped[List["OrderItem"]] = relationship(
         "OrderItem",
@@ -158,6 +168,5 @@ class Item(Base):
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
             f"brand={self.brand!r} category={self.category!r} "
-            f"expiry_policy={self.expiry_policy} "
-            f"case_ratio={self.case_ratio!r} case_uom={self.case_uom!r}>"
+            f"expiry_policy={self.expiry_policy}>"
         )

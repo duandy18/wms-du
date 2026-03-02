@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 import pytest
 from sqlalchemy import text
@@ -39,6 +39,167 @@ async def _item_batch_mode_is_required(session: AsyncSession, *, item_id: int) -
     return str(row[0] or "").strip().upper() == "REQUIRED"
 
 
+async def _pick_base_uom_and_ratio(session: AsyncSession, *, item_id: int) -> Tuple[int, int]:
+    """
+    终态：收货行必须显式落 uom_id + ratio_to_base_snapshot + qty_base。
+    这里选 base uom（is_base=true），保证测试稳定。
+    """
+    row = await session.execute(
+        text(
+            """
+            SELECT id, ratio_to_base
+              FROM item_uoms
+             WHERE item_id = :i AND is_base = true
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    r = row.first()
+    assert r is not None, {"msg": "item has no base uom", "item_id": int(item_id)}
+    return int(r[0]), int(r[1])
+
+
+async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, code: str) -> int:
+    """
+    SUPPLIER lot：lot_code = code（展示码），source_receipt 可空。
+    必填快照从 items 取值。
+    """
+    r = await session.execute(
+        text(
+            """
+            INSERT INTO lots(
+              warehouse_id,
+              item_id,
+              lot_code_source,
+              lot_code,
+              source_receipt_id,
+              source_line_no,
+              item_lot_source_policy_snapshot,
+              item_expiry_policy_snapshot,
+              item_derivation_allowed_snapshot,
+              item_uom_governance_enabled_snapshot,
+              item_shelf_life_value_snapshot,
+              item_shelf_life_unit_snapshot,
+              created_at
+            )
+            SELECT
+              :w,
+              it.id,
+              'SUPPLIER',
+              :code,
+              NULL,
+              NULL,
+              it.lot_source_policy,
+              it.expiry_policy,
+              it.derivation_allowed,
+              it.uom_governance_enabled,
+              it.shelf_life_value,
+              it.shelf_life_unit,
+              now()
+            FROM items it
+            WHERE it.id = :i
+            ON CONFLICT (warehouse_id, item_id, lot_code)
+            WHERE lot_code IS NOT NULL
+            DO NOTHING
+            RETURNING id
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
+    )
+    got = r.scalar_one_or_none()
+    if got is not None:
+        return int(got)
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id = :i
+               AND lot_code_source = 'SUPPLIER'
+               AND lot_code = :code
+             LIMIT 1
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
+    )
+    got2 = r2.scalar_one_or_none()
+    assert got2 is not None, {"msg": "failed to ensure supplier lot", "warehouse_id": warehouse_id, "item_id": item_id, "code": code}
+    return int(got2)
+
+
+async def _ensure_internal_lot_for_receipt(session: AsyncSession, *, warehouse_id: int, item_id: int, receipt_id: int) -> int:
+    """
+    INTERNAL lot：lot_code NULL，且必须绑定 source_receipt_id/source_line_no（DB check）。
+    这里直接用当前 receipt 作为来源，保证“终态不变量”稳定。
+    """
+    r = await session.execute(
+        text(
+            """
+            INSERT INTO lots(
+              warehouse_id,
+              item_id,
+              lot_code_source,
+              lot_code,
+              source_receipt_id,
+              source_line_no,
+              item_lot_source_policy_snapshot,
+              item_expiry_policy_snapshot,
+              item_derivation_allowed_snapshot,
+              item_uom_governance_enabled_snapshot,
+              item_shelf_life_value_snapshot,
+              item_shelf_life_unit_snapshot,
+              created_at
+            )
+            SELECT
+              :w,
+              it.id,
+              'INTERNAL',
+              NULL,
+              :rid,
+              1,
+              it.lot_source_policy,
+              it.expiry_policy,
+              it.derivation_allowed,
+              it.uom_governance_enabled,
+              it.shelf_life_value,
+              it.shelf_life_unit,
+              now()
+            FROM items it
+            WHERE it.id = :i
+            ON CONFLICT DO NOTHING
+            RETURNING id
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
+    )
+    got = r.scalar_one_or_none()
+    if got is not None:
+        return int(got)
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id = :i
+               AND lot_code_source = 'INTERNAL'
+               AND source_receipt_id = :rid
+               AND source_line_no = 1
+             LIMIT 1
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
+    )
+    got2 = r2.scalar_one_or_none()
+    assert got2 is not None, {"msg": "failed to ensure internal lot", "warehouse_id": warehouse_id, "item_id": item_id, "receipt_id": receipt_id}
+    return int(got2)
+
+
 async def _insert_confirmed_order_return_receipt(
     session: AsyncSession,
     *,
@@ -54,17 +215,12 @@ async def _insert_confirmed_order_return_receipt(
 ) -> int:
     """
     退货终态口径：用 confirmed InboundReceipt 事实表达 returned。
-    - inbound_receipts.source_type='ORDER'
-    - inbound_receipts.source_id=order_id
-    - inbound_receipts.status='CONFIRMED'
-    - inbound_receipt_lines.qty_received 作为 returned_qty（按 item_id 聚合）
 
-    Phase5+ 护栏：
-    - inbound_receipts.ref 全局唯一 → 同一订单多张 RMA receipt 必须使用唯一 ref
-
-    Phase 1A 批次两态：
-    - NONE：batch_code=NULL 且 production/expiry=NULL
-    - REQUIRED：batch_code 非空；日期可按需要填写
+    终态写入：
+    - inbound_receipts: source_type='ORDER', source_id=order_id, status='CONFIRMED'
+    - inbound_receipt_lines: 使用终态列（uom_id + qty_input + ratio_to_base_snapshot + qty_base + lot_id + warehouse_id）
+      且 receipt_status_snapshot='CONFIRMED'（lot_id 必填）
+    - batch_code 仅作为 lot_code_input 展示/输入码；lot_id 才是结构锚点
     """
     ref = f"RMA-ORD-{order_id}-{trace_id}-{int(occurred_at.timestamp()*1000)}"
 
@@ -115,6 +271,19 @@ async def _insert_confirmed_order_return_receipt(
         ).scalar_one()
     )
 
+    uom_id, ratio = await _pick_base_uom_and_ratio(session, item_id=int(item_id))
+    qty_input = int(qty_received)
+    qty_base = int(qty_input) * int(ratio)
+
+    if batch_code is not None:
+        lot_id = await _ensure_supplier_lot(session, warehouse_id=int(warehouse_id), item_id=int(item_id), code=str(batch_code))
+        lot_code_input = str(batch_code)
+    else:
+        lot_id = await _ensure_internal_lot_for_receipt(
+            session, warehouse_id=int(warehouse_id), item_id=int(item_id), receipt_id=int(receipt_id)
+        )
+        lot_code_input = None
+
     await session.execute(
         text(
             """
@@ -123,49 +292,57 @@ async def _insert_confirmed_order_return_receipt(
                 line_no,
                 po_line_id,
                 item_id,
-                item_name,
-                item_sku,
-                batch_code,
                 production_date,
                 expiry_date,
-                qty_received,
-                units_per_case,
-                qty_units,
                 unit_cost,
                 line_amount,
                 remark,
                 created_at,
-                updated_at
+                updated_at,
+                lot_id,
+                warehouse_id,
+                uom_id,
+                qty_input,
+                ratio_to_base_snapshot,
+                qty_base,
+                receipt_status_snapshot,
+                lot_code_input
             )
             VALUES (
                 :rid,
                 1,
                 NULL,
                 :item_id,
-                'UT-ITEM',
-                NULL,
-                :batch_code,
                 :production_date,
                 :expiry_date,
-                :qty_received,
-                1,
-                :qty_units,
                 NULL,
                 NULL,
                 'UT-RMA-LINE',
                 NOW(),
-                NOW()
+                NOW(),
+                :lot_id,
+                :warehouse_id,
+                :uom_id,
+                :qty_input,
+                :ratio,
+                :qty_base,
+                'CONFIRMED',
+                :lot_code_input
             )
             """
         ),
         {
             "rid": int(receipt_id),
             "item_id": int(item_id),
-            "batch_code": batch_code,  # may be NULL (NONE)
             "production_date": production_date,
             "expiry_date": expiry_date,
-            "qty_received": int(qty_received),
-            "qty_units": int(qty_received),
+            "lot_id": int(lot_id),
+            "warehouse_id": int(warehouse_id),
+            "uom_id": int(uom_id),
+            "qty_input": int(qty_input),
+            "ratio": int(ratio),
+            "qty_base": int(qty_base),
+            "lot_code_input": lot_code_input,
         },
     )
 

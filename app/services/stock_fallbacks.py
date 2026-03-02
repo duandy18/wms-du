@@ -73,21 +73,30 @@ class FefoAllocator:
         allow_expired: bool,
     ) -> List[dict]:
         """
-        Phase 4D：
+        终态（Phase M-5+）：
         - 只读 lot-world：stocks_lot + lots
-        - 禁止回退 legacy stocks（避免口径回退，避免 rename/drop stocks 时执行期炸裂）
+        - 时间事实（expiry_date）不在 lots，而在 stock_ledger（reason_canon='RECEIPT'）
+        - FEFO 仅提示：按 expiry_date 升序排序（NULL last）
         """
         params: dict[str, object] = {"item_id": int(item_id)}
 
         sql = """
             SELECT
-                COALESCE(s.lot_id, 0) AS stock_id,
-                l.lot_code  AS batch_code,
+                s.lot_id AS stock_id,
+                l.lot_code AS batch_code,
                 GREATEST(COALESCE(s.qty, 0), 0) AS avail,
-                l.expiry_date AS expiry_date
+                led.expiry_date AS expiry_date
             FROM   stocks_lot s
             LEFT   JOIN lots l
               ON  l.id = s.lot_id
+            LEFT JOIN LATERAL (
+                SELECT MIN(sl.expiry_date) AS expiry_date
+                  FROM stock_ledger sl
+                 WHERE sl.warehouse_id = s.warehouse_id
+                   AND sl.item_id      = s.item_id
+                   AND sl.lot_id       = s.lot_id
+                   AND sl.reason_canon = 'RECEIPT'
+            ) led ON TRUE
             WHERE  s.item_id = :item_id
               AND  GREATEST(COALESCE(s.qty, 0), 0) > 0
         """
@@ -97,7 +106,8 @@ class FefoAllocator:
             params["warehouse_id"] = int(warehouse_id)
 
         if not allow_expired:
-            sql += " AND (l.expiry_date IS NULL OR l.expiry_date > NOW())"
+            # expiry_date 为 date；用 CURRENT_DATE 更稳定
+            sql += " AND (led.expiry_date IS NULL OR led.expiry_date > CURRENT_DATE)"
 
         res: Result = await session.execute(text(sql), params)
         return [dict(r._mapping) for r in res]

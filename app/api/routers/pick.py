@@ -7,10 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import (
-    fetch_item_expiry_policy_map,
-    validate_batch_code_contract,
-)
+from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.api.problem import raise_409, raise_422
 from app.db.session import get_session
 from app.services.pick_service import PickService
@@ -26,7 +23,11 @@ class PickIn(BaseModel):
     item_id: int = Field(..., ge=1)
     qty: int = Field(..., ge=1)
     warehouse_id: int = Field(..., ge=1)
+
+    # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
+    lot_code: Optional[str] = Field(default=None, description="Lot 展示码（优先使用；等价于 batch_code）")
     batch_code: Optional[str] = None
+
     ref: str = Field(..., min_length=1)
 
     occurred_at: Optional[datetime] = None
@@ -40,7 +41,11 @@ class PickIn(BaseModel):
 class PickOut(BaseModel):
     item_id: int
     warehouse_id: int
-    batch_code: Optional[str]
+
+    # ✅ 对外返回双轨
+    lot_code: Optional[str] = None
+    batch_code: Optional[str] = None
+
     picked: int
     stock_after: Optional[int] = None
     ref: str
@@ -66,13 +71,12 @@ async def pick_commit(
             details=[{"type": "validation", "path": "item_id", "item_id": int(body.item_id), "reason": "unknown"}],
         )
 
-    requires_batch = _requires_batch_from_expiry_policy(
-        expiry_policy_map.get(body.item_id)
-    )
+    requires_batch = _requires_batch_from_expiry_policy(expiry_policy_map.get(body.item_id))
 
-    batch_code = validate_batch_code_contract(
+    lot_code = body.lot_code or body.batch_code
+    batch_code = validate_lot_code_contract(
         requires_batch=requires_batch,
-        batch_code=body.batch_code,
+        lot_code=lot_code,
     )
 
     try:
@@ -82,7 +86,7 @@ async def pick_commit(
             qty=body.qty,
             ref=body.ref,
             occurred_at=occurred_at,
-            batch_code=batch_code,
+            batch_code=batch_code,  # 兼容：内部仍使用 batch_code 字段名
             warehouse_id=body.warehouse_id,
             task_line_id=body.task_line_id,
         )
@@ -98,10 +102,12 @@ async def pick_commit(
         await session.rollback()
         raise
 
+    out_code = result.get("batch_code", batch_code)
     return PickOut(
         item_id=body.item_id,
         warehouse_id=result.get("warehouse_id", body.warehouse_id),
-        batch_code=result.get("batch_code", batch_code),
+        lot_code=out_code,
+        batch_code=out_code,
         picked=result.get("picked", body.qty),
         stock_after=result.get("stock_after"),
         ref=result.get("ref", body.ref),

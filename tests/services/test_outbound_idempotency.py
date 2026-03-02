@@ -104,17 +104,19 @@ async def _sum_ledger_for_ref(
     order_id: str,
 ) -> int:
     """
-    查询 stock_ledger 中特定 (warehouse_id, item_id, batch_code, ref=order_id) 的 delta 总和。
+    查询 stock_ledger 中特定 (warehouse_id, item_id, lot_code(batch_code 展示), ref=order_id) 的 delta 总和。
+    终态：stock_ledger 以 lot_id 为结构锚点，展示码来自 lots.lot_code。
     """
     row = await session.execute(
         sa.text(
             """
-            SELECT COALESCE(SUM(delta), 0) AS s
-              FROM stock_ledger
-             WHERE warehouse_id = :wid
-               AND item_id      = :item
-               AND batch_code   = :code
-               AND ref          = :ref
+            SELECT COALESCE(SUM(l.delta), 0) AS s
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.warehouse_id = :wid
+               AND l.item_id      = :item
+               AND lo.lot_code    = :code
+               AND l.ref          = :ref
             """
         ),
         {

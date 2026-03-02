@@ -7,6 +7,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 pytestmark = pytest.mark.asyncio
 
 
+async def _pick_one_lot_id_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> int:
+    """
+    终态：stock_ledger 必须带 lot_id（lot-world）。
+    从 stocks_lot 中挑一个现存槽位的 lot_id（qty 可以为 0）。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT lot_id
+                  FROM stocks_lot
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                 ORDER BY id
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id)},
+        )
+    ).first()
+    assert row is not None, {"msg": "no stocks_lot slot for item", "warehouse_id": warehouse_id, "item_id": item_id}
+    return int(row[0])
+
+
 @pytest.mark.asyncio
 async def test_metrics_view_basic(session: AsyncSession) -> None:
     # 视图存在
@@ -18,9 +42,11 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
     ref = f"ORD:{platform}:{shop_id}:UT-METRICS-001"
 
     # 选择 baseline 已存在的 item，避免引入额外 items/stocks_lot 依赖
-    # base_seed.sql 已包含 item_id=1，且 stocks_lot 也有 (item_id=1, warehouse_id=1, lot_id=NULL) 槽位
     item_id = 1
     wh_id = 1
+
+    # 终态：需要一个真实 lot_id
+    lot_id = await _pick_one_lot_id_for_item(session, warehouse_id=wh_id, item_id=item_id)
 
     # 2) 清理同 ref 残留（先清再写，保证幂等复跑）
     await session.execute(text("DELETE FROM audit_events WHERE category='OUTBOUND' AND ref=:r"), {"r": ref})
@@ -44,25 +70,23 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
             {"r": ref},
         )
 
-        # 4) 写一笔 PICK 落账：
-        #    - batch_code 允许为 NULL（lot_id_key=0 语义），避免对账脚本在 lot-world 上产生歧义
-        #    - after_qty 随便给个合理值，metrics 视图不依赖它
+        # 4) 写一笔 PICK 落账（lot-world：必须带 lot_id；metrics 视图不依赖 after_qty 的精确性）
         await session.execute(
             text(
                 """
                 INSERT INTO stock_ledger(
                     reason, ref, ref_line,
-                    warehouse_id, item_id, batch_code,
+                    warehouse_id, item_id, lot_id,
                     delta, occurred_at, after_qty
                 )
                 VALUES (
                     'PICK', :r, 1,
-                    :w, :i, NULL,
+                    :w, :i, :lot,
                     -3, now(), -3
                 )
                 """
             ),
-            {"r": ref, "w": wh_id, "i": item_id},
+            {"r": ref, "w": wh_id, "i": item_id, "lot": int(lot_id)},
         )
         await session.commit()
 
@@ -95,7 +119,8 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
         assert all(r[2] == platform for r in rows)
 
     finally:
-        # ✅ 关键：清理本测试写入的持久数据，避免污染 make test 的 opening-ledger 对账关卡
+        # 若前面 SQL 失败导致事务中止，必须 rollback 才能继续清理
+        await session.rollback()
         await session.execute(text("DELETE FROM audit_events WHERE category='OUTBOUND' AND ref=:r"), {"r": ref})
         await session.execute(text("DELETE FROM stock_ledger WHERE ref=:r"), {"r": ref})
         await session.commit()

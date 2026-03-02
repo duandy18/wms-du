@@ -14,7 +14,10 @@ class InternalOutboundDoc(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     warehouse_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("warehouses.id"), nullable=False
+        BigInteger,
+        # 对齐 DB：warehouse_id FK 不显式指定 ondelete（默认行为），仅补齐 name 避免 alembic-check 噪音
+        ForeignKey("warehouses.id", name="fk_internal_outbound_docs_warehouse_id"),
+        nullable=False,
     )
     doc_no: Mapped[str] = mapped_column(Text, nullable=False)
     doc_type: Mapped[str] = mapped_column(
@@ -25,7 +28,10 @@ class InternalOutboundDoc(Base):
     # 领取人信息
     recipient_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     recipient_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=True
+        BigInteger,
+        # 对齐 DB：nullable FK -> ondelete=SET NULL
+        ForeignKey("users.id", name="fk_internal_outbound_docs_recipient_id", ondelete="SET NULL"),
+        nullable=True,
     )
     recipient_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     recipient_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -33,15 +39,24 @@ class InternalOutboundDoc(Base):
     # 备注 / 审计
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=True
+        BigInteger,
+        # 对齐 DB：nullable FK -> ondelete=SET NULL
+        ForeignKey("users.id", name="fk_internal_outbound_docs_created_by", ondelete="SET NULL"),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     confirmed_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=True
+        BigInteger,
+        # 对齐 DB：nullable FK -> ondelete=SET NULL
+        ForeignKey("users.id", name="fk_internal_outbound_docs_confirmed_by", ondelete="SET NULL"),
+        nullable=True,
     )
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     canceled_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=True
+        BigInteger,
+        # 对齐 DB：nullable FK -> ondelete=SET NULL
+        ForeignKey("users.id", name="fk_internal_outbound_docs_canceled_by", ondelete="SET NULL"),
+        nullable=True,
     )
     canceled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -85,14 +100,27 @@ class InternalOutboundLine(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     doc_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("internal_outbound_docs.id"), nullable=False
+        BigInteger,
+        ForeignKey(
+            "internal_outbound_docs.id",
+            name="fk_internal_outbound_lines_doc_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
     )
     line_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    item_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("items.id"), nullable=False)
+    item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "items.id",
+            name="fk_internal_outbound_lines_item_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     batch_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     requested_qty: Mapped[int] = mapped_column(Integer, nullable=False)
     confirmed_qty: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    uom: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     extra_meta: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 

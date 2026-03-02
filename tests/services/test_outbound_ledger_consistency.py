@@ -20,7 +20,6 @@ async def _seed_minimal_order_for_outbound(
 ) -> tuple[str, int, int, str]:
     """
     为出库写台账准备一条最小订单头（Phase 5+）：
-
     - platform = 'PDD'
     - shop_id = 'UT-SHOP'
     - actual_warehouse_id = 1（写入 order_fulfillment）
@@ -117,17 +116,14 @@ async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: in
     从 lot-world 余额（stocks_lot）中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，
     返回 lot_code（映射到服务/台账中的 batch_code 字段，可能为 NULL）。
 
-    强护栏下，非批次商品一般是 lot_id_key=0（返回 None 槽位）。
+    DB 事实：stocks_lot.lot_id NOT NULL，因此是否“无批次”由 lots.lot_code 是否为 NULL 表达。
     """
     row = (
         await session.execute(
             text(
                 """
                 SELECT
-                  CASE
-                    WHEN sl.lot_id_key = 0 THEN NULL
-                    ELSE l.lot_code
-                  END AS lot_code,
+                  l.lot_code AS lot_code,
                   sl.qty
                 FROM stocks_lot sl
                 LEFT JOIN lots l ON l.id = sl.lot_id
@@ -150,13 +146,6 @@ async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: in
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
     验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 lot-world 槽位一致。
-
-    这里不关心完整业务流程（soft reserve / audit / platform events），只关心：
-    - OutboundService.commit 能在当前 schema 下正常运行；
-    - 写出来的 stock_ledger 行：
-        * reason = 'OUTBOUND_SHIP'
-        * warehouse_id / item_id / batch_code|NULL 维度正确（batch_code 字段承载 lot_code 展示码）
-        * delta < 0（出库）
     """
     order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 
@@ -184,22 +173,24 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
     )
     assert isinstance(result, dict)
 
+    # 终态：stock_ledger 不再有 batch_code 列；展示码来自 lots.lot_code
     rows = (
         await session.execute(
             text(
                 """
                 SELECT
-                    warehouse_id,
-                    item_id,
-                    batch_code,
-                    reason,
-                    ref,
-                    delta,
-                    after_qty
-                  FROM stock_ledger
-                 WHERE reason = 'OUTBOUND_SHIP'
-                   AND ref = :ref
-                 ORDER BY occurred_at, id
+                    l.warehouse_id,
+                    l.item_id,
+                    COALESCE(lo.lot_code, NULL) AS batch_code,
+                    l.reason,
+                    l.ref,
+                    l.delta,
+                    l.after_qty
+                  FROM stock_ledger l
+                  LEFT JOIN lots lo ON lo.id = l.lot_id
+                 WHERE l.reason = 'OUTBOUND_SHIP'
+                   AND l.ref = :ref
+                 ORDER BY l.occurred_at, l.id
                 """
             ),
             {"ref": order_ref},

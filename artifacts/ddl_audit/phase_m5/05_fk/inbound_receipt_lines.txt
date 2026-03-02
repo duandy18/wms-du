@@ -1,0 +1,6 @@
+fk_inbound_receipt_lines_item|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_inbound_receipt_lines_lot_dims|FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+fk_inbound_receipt_lines_po_line|FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
+fk_inbound_receipt_lines_receipt|FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+fk_inbound_receipt_lines_warehouse|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+fk_receipt_line_uom|FOREIGN KEY (uom_id) REFERENCES item_uoms(id)

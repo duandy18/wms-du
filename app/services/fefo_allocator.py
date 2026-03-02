@@ -42,12 +42,11 @@ def _shortage_detail(
 
 class FefoAllocator:
     """
-    Phase 4C：FEFO 分配器正式切写到 lot-world
+    Phase M-2 终态：FEFO 分配器（lot-only）
 
     核心思想：
     ------------------------------------------
-    • 分配维度： (warehouse_id, item_id, lot_id_key)
-      - lot_id 可为空（lot_id_key=0）表示“无 lot 槽位”
+    • 分配维度： (warehouse_id, item_id, lot_id)
     • expiry_date 为 FEFO 核心排序依据（来自 lots.expiry_date）
     • expiry_date NULL → 排最后
     • stocks_lot.qty 为扣减余额真相
@@ -71,10 +70,6 @@ class FefoAllocator:
         allow_expired: bool,
         occurred_date: date,
     ) -> int:
-        """
-        用于不足错误提示的“总可用量”统计（lot-world）。
-        - allow_expired=False 时，会排除已过期 lot（expiry_date < occurred_date）
-        """
         if allow_expired:
             row = (
                 await session.execute(
@@ -112,9 +107,6 @@ class FefoAllocator:
         except Exception:
             return 0
 
-    # ---------------------------------------------------------------
-    # 计算 FEFO 计划：返回 [(batch_code, take_qty)]
-    # ---------------------------------------------------------------
     async def plan(
         self,
         session: AsyncSession,
@@ -126,17 +118,16 @@ class FefoAllocator:
         allow_expired: bool = False,
     ) -> List[Tuple[Optional[str], int]]:
         """
-        （只读 + 锁）计算 FEFO 计划（lot-world）。
+        （只读 + 锁）计算 FEFO 计划（lot-only）。
 
         排序规则：
         1) lots.expiry_date ASC（NULLS LAST）
-        2) stocks_lot.lot_id_key ASC（稳定 tie-breaker；lot_id_key=0 的无 lot 槽位排最前/最后取决于 expiry_date=NULL）
+        2) stocks_lot.lot_id ASC（稳定 tie-breaker）
         """
         sql = text(
             """
             SELECT
                 s.lot_id AS lot_id,
-                s.lot_id_key AS lot_id_key,
                 s.qty AS qty,
                 lo.lot_code AS lot_code,
                 lo.expiry_date AS exp
@@ -145,21 +136,20 @@ class FefoAllocator:
             WHERE s.item_id = :item
               AND s.warehouse_id = :wh
               AND s.qty > 0
-            ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id_key ASC
+            ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id ASC
             FOR UPDATE OF s
             """
         )
 
         rows = (await session.execute(sql, {"item": int(item_id), "wh": int(warehouse_id)})).all()
 
-        seq: List[Tuple[Optional[int], Optional[str], Optional[date], int, int]] = []
+        seq: List[Tuple[int, Optional[str], Optional[date], int]] = []
         for r in rows:
-            lot_id = r.lot_id
+            lot_id = int(r.lot_id)
             lot_code = r.lot_code
             exp = r.exp
             qty = int(r.qty)
-            lot_key = int(r.lot_id_key)
-            seq.append((int(lot_id) if lot_id is not None else None, lot_code, exp, qty, lot_key))
+            seq.append((lot_id, lot_code, exp, qty))
 
         if not allow_expired:
             seq = [x for x in seq if x[2] is None or x[2] >= occurred_date]
@@ -167,10 +157,9 @@ class FefoAllocator:
         remaining = int(need)
         plan: List[Tuple[Optional[str], int]] = []
 
-        for lot_id, lot_code, exp, qty, lot_key in seq:
+        for lot_id, lot_code, exp, qty in seq:
+            _ = lot_id
             _ = exp
-            _ = lot_key
-            _ = lot_id  # ship 阶段会重新算 plan，因此这里只返回展示码
             if remaining <= 0:
                 break
             take = min(remaining, int(qty))
@@ -213,9 +202,6 @@ class FefoAllocator:
 
         return plan
 
-    # ---------------------------------------------------------------
-    # ship：根据 FEFO 计划扣减库存（必须在同一事务内）
-    # ---------------------------------------------------------------
     async def ship(
         self,
         session: AsyncSession,
@@ -236,7 +222,6 @@ class FefoAllocator:
             - 写 stocks_lot（主写）
             - 可选 shadow 写 stocks（adjust_lot 默认开启）
         """
-        # 重新走 lot-world plan
         _ = await self.plan(
             session=session,
             item_id=int(item_id),
@@ -246,14 +231,12 @@ class FefoAllocator:
             allow_expired=bool(allow_expired),
         )
 
-        # 直接从 stocks_lot 再取一遍可扣减行（锁已经拿到了）
         rows = (
             await session.execute(
                 text(
                     """
                     SELECT
                         s.lot_id AS lot_id,
-                        s.lot_id_key AS lot_id_key,
                         s.qty AS qty,
                         lo.lot_code AS lot_code,
                         lo.expiry_date AS exp
@@ -262,21 +245,20 @@ class FefoAllocator:
                     WHERE s.item_id = :item
                       AND s.warehouse_id = :wh
                       AND s.qty > 0
-                    ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id_key ASC
+                    ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id ASC
                     """
                 ),
                 {"item": int(item_id), "wh": int(warehouse_id)},
             )
         ).all()
 
-        seq: List[Tuple[Optional[int], Optional[str], Optional[date], int, int]] = []
+        seq: List[Tuple[int, Optional[str], Optional[date], int]] = []
         for r in rows:
-            lot_id = r.lot_id
+            lot_id = int(r.lot_id)
             lot_code = r.lot_code
             exp = r.exp
             q = int(r.qty)
-            lot_key = int(r.lot_id_key)
-            seq.append((int(lot_id) if lot_id is not None else None, lot_code, exp, q, lot_key))
+            seq.append((lot_id, lot_code, exp, q))
 
         if not allow_expired:
             seq = [x for x in seq if x[2] is None or x[2] >= occurred_at.date()]
@@ -285,9 +267,8 @@ class FefoAllocator:
         total = 0
         remain = int(qty)
 
-        for idx, (lot_id, lot_code, exp, q, lot_key) in enumerate(seq, start=int(start_ref_line)):
+        for idx, (lot_id, lot_code, exp, q) in enumerate(seq, start=int(start_ref_line)):
             _ = exp
-            _ = lot_key
             if remain <= 0:
                 break
             take_qty = min(remain, int(q))
@@ -298,7 +279,7 @@ class FefoAllocator:
                 session=session,
                 item_id=int(item_id),
                 warehouse_id=int(warehouse_id),
-                lot_id=lot_id,
+                lot_id=int(lot_id),
                 delta=-int(take_qty),
                 reason=reason,
                 ref=str(ref),

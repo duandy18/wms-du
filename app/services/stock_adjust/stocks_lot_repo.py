@@ -1,12 +1,9 @@
 # app/services/stock_adjust/stocks_lot_repo.py
 from __future__ import annotations
 
-from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.services.stock_adjust.batch_keys import lot_key
 
 
 async def ensure_stocks_lot_slot_exists(
@@ -14,11 +11,8 @@ async def ensure_stocks_lot_slot_exists(
     *,
     item_id: int,
     warehouse_id: int,
-    lot_id: Optional[int],
+    lot_id: int,
 ) -> None:
-    """
-    确保 stocks_lot 槽位存在（lot_id 允许 NULL，映射 lot_id_key=0）。
-    """
     await session.execute(
         text(
             """
@@ -27,7 +21,7 @@ async def ensure_stocks_lot_slot_exists(
             ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot DO NOTHING
             """
         ),
-        {"i": int(item_id), "w": int(warehouse_id), "lot": (int(lot_id) if lot_id is not None else None)},
+        {"i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
     )
 
 
@@ -36,7 +30,7 @@ async def lock_stocks_lot_slot_for_update(
     *,
     item_id: int,
     warehouse_id: int,
-    lot_id: Optional[int],
+    lot_id: int,
 ) -> tuple[int, int]:
     row = (
         (
@@ -47,18 +41,20 @@ async def lock_stocks_lot_slot_for_update(
                       FROM stocks_lot
                      WHERE item_id=:i
                        AND warehouse_id=:w
-                       AND lot_id_key = :lk
+                       AND lot_id = :lot
                      FOR UPDATE
                     """
                 ),
-                {"i": int(item_id), "w": int(warehouse_id), "lk": lot_key(lot_id)},
+                {"i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
             )
         )
         .mappings()
         .first()
     )
     if not row:
-        raise ValueError(f"stocks_lot slot missing for item={item_id}, wh={warehouse_id}, lot_id={lot_id}")
+        raise ValueError(
+            f"stocks_lot slot missing for item={item_id}, wh={warehouse_id}, lot_id={lot_id}"
+        )
     return int(row["sid"]), int(row["q"])
 
 

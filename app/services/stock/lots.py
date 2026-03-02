@@ -19,9 +19,14 @@ async def ensure_lot_full(
     - 批次主档统一迁移到 lots（SUPPLIER lot）
     - 返回 lot_id（幂等）
 
-    注意：lots 表对策略快照（item_*_snapshot）有 NOT NULL 护栏，
-    因此插入 lots 必须从 items 真相源读取并冻结快照字段。
+    Phase M-5（结构治理：unit_governance 二阶段）：
+    - lots 不承载 production/expiry 时间事实（时间真相在 stock_ledger）
+    - lots 的单位快照列已移除（不再写入 base/purchase uom snapshot）
+      单位展示/推导应来自 item_uoms（结构层）与业务行快照（PO/Receipt）
     """
+    _ = production_date
+    _ = expiry_date
+
     code = str(lot_code).strip()
     if not code:
         raise ValueError("lot_code empty")
@@ -36,21 +41,14 @@ async def ensure_lot_full(
                 lot_code,
                 source_receipt_id,
                 source_line_no,
-                production_date,
-                expiry_date,
-                expiry_source,
                 -- required snapshots (NOT NULL)
                 item_lot_source_policy_snapshot,
                 item_expiry_policy_snapshot,
                 item_derivation_allowed_snapshot,
                 item_uom_governance_enabled_snapshot,
                 -- optional snapshots (nullable)
-                item_has_shelf_life_snapshot,
                 item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot,
-                item_uom_snapshot,
-                item_case_ratio_snapshot,
-                item_case_uom_snapshot
+                item_shelf_life_unit_snapshot
             )
             SELECT
                 :w,
@@ -59,25 +57,17 @@ async def ensure_lot_full(
                 :code,
                 NULL,
                 NULL,
-                :prod,
-                :exp,
-                :exp_src,
                 it.lot_source_policy,
                 it.expiry_policy,
                 it.derivation_allowed,
                 it.uom_governance_enabled,
-                it.has_shelf_life,
                 it.shelf_life_value,
-                it.shelf_life_unit,
-                it.uom,
-                it.case_ratio,
-                it.case_uom
+                it.shelf_life_unit
               FROM items it
              WHERE it.id = :i
-            ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-            WHERE lot_code_source = 'SUPPLIER'
-            DO UPDATE SET
-                expiry_date = COALESCE(lots.expiry_date, EXCLUDED.expiry_date)
+            ON CONFLICT (warehouse_id, item_id, lot_code)
+            WHERE lot_code IS NOT NULL
+            DO NOTHING
             RETURNING id
             """
         ),
@@ -85,9 +75,6 @@ async def ensure_lot_full(
             "w": int(warehouse_id),
             "i": int(item_id),
             "code": code,
-            "prod": production_date,
-            "exp": expiry_date,
-            "exp_src": ("EXPLICIT" if expiry_date is not None else None),
         },
     )
     got = row.scalar_one_or_none()
@@ -114,7 +101,6 @@ async def ensure_lot_full(
     return int(got2)
 
 
-# 兼容旧调用名：仍保留函数入口，但内部语义是 lot-world
 async def ensure_batch_full(
     session: AsyncSession,
     *,

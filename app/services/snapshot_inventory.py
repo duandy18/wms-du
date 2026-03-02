@@ -21,6 +21,9 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
     - 主数据字段：来自 items（1:1 join，不放大）
     - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
     - 日期相关：后端统一 UTC 计算，前端不推导
+
+    Phase M-5：
+    - items.uom 已物理移除；此接口不再输出 uom 字段
     """
     rows = (
         (
@@ -31,7 +34,6 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                     s.item_id,
                     i.name      AS item_name,
                     i.sku       AS item_code,
-                    i.uom       AS uom,
                     i.spec      AS spec,
                     i.brand     AS brand,
                     i.category  AS category,
@@ -86,13 +88,13 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 "item_id": int(r["item_id"]),
                 "item_name": r["item_name"],
                 "item_code": r["item_code"],
-                "uom": r["uom"],
                 "spec": r["spec"],
                 "brand": r["brand"],
                 "category": r["category"],
                 "main_barcode": r["main_barcode"],
                 "warehouse_id": int(r["warehouse_id"]),
                 "batch_code": r["batch_code"],  # Phase 4B-3: 实际来自 lots.lot_code
+                "lot_code": r["batch_code"],
                 "qty": qty,
                 "expiry_date": expiry_date,
                 "near_expiry": near_expiry,

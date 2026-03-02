@@ -37,7 +37,7 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id=:i
                    AND warehouse_id=:w
-                   AND lot_id_key = 0
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),

@@ -1,0 +1,20 @@
+1|id|integer|int4|NO|nextval('inbound_receipt_lines_id_seq'::regclass)
+2|receipt_id|integer|int4|NO|
+3|line_no|integer|int4|NO|
+4|po_line_id|integer|int4|YES|
+5|item_id|integer|int4|NO|
+9|production_date|date|date|YES|
+10|expiry_date|date|date|YES|
+14|unit_cost|numeric|numeric|YES|
+15|line_amount|numeric|numeric|YES|
+16|remark|character varying|varchar|YES|
+17|created_at|timestamp with time zone|timestamptz|NO|now()
+18|updated_at|timestamp with time zone|timestamptz|NO|now()
+24|lot_id|integer|int4|YES|
+25|warehouse_id|integer|int4|NO|
+27|uom_id|integer|int4|NO|
+28|qty_input|integer|int4|NO|
+29|ratio_to_base_snapshot|integer|int4|NO|
+30|qty_base|integer|int4|NO|
+31|receipt_status_snapshot|character varying|varchar|NO|
+32|lot_code_input|character varying|varchar|YES|

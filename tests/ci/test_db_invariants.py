@@ -19,14 +19,18 @@ async def _seed_wh_item_lot_stock(
     lot_code: str = "LEDGER-TEST-LOT",
 ) -> int:
     """
-    Phase 4D 最小种子数据（lot-world）：
+    Phase M-5 最小种子数据（lot-world）：
 
     - warehouses：确保存在
     - items：确保存在（Phase M policy NOT NULL）
-    - lots：插入 SUPPLIER lot（lot_code 非空，且冻结 item_*_snapshot）
+    - lots：确保存在 SUPPLIER lot（lot_code 非空，且冻结 policy snapshots）
     - stocks_lot：插入对应槽位（qty=0）
 
     返回 lot_id。
+
+    说明（重要）：
+    - 以真实 DB 结构为准：不假设 lots 上存在某个 ON CONFLICT 的唯一约束组合；
+      因此这里采用“先查再插”避免对约束名/列组合的猜测。
     """
     await session.execute(
         text(
@@ -39,10 +43,29 @@ async def _seed_wh_item_lot_stock(
         {"wh_id": int(wh_id)},
     )
 
-    # Phase M：items policy NOT NULL + has_shelf_life CHECK → 统一走最小合法 helper
     await ensure_item(session, id=int(item_id), sku=f"SKU-{int(item_id)}", name=f"Item-{int(item_id)}")
 
-    lot_row = (
+    # 1) try select existing SUPPLIER lot by natural key (wh,item,code)
+    row0 = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :code
+                 LIMIT 1
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    if row0 is not None:
+        lot_id = int(row0[0])
+    else:
+        # 2) insert (no ON CONFLICT guessing)
         await session.execute(
             text(
                 """
@@ -53,21 +76,14 @@ async def _seed_wh_item_lot_stock(
                     lot_code,
                     source_receipt_id,
                     source_line_no,
-                    production_date,
-                    expiry_date,
-                    expiry_source,
-                    -- required snapshots (NOT NULL)
+                    -- required policy snapshots (NOT NULL)
                     item_lot_source_policy_snapshot,
                     item_expiry_policy_snapshot,
                     item_derivation_allowed_snapshot,
                     item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_has_shelf_life_snapshot,
+                    -- optional shelf-life snapshots (nullable)
                     item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    item_uom_snapshot,
-                    item_case_ratio_snapshot,
-                    item_case_uom_snapshot
+                    item_shelf_life_unit_snapshot
                 )
                 SELECT
                     :w,
@@ -76,32 +92,37 @@ async def _seed_wh_item_lot_stock(
                     :code,
                     NULL,
                     NULL,
-                    CURRENT_DATE,
-                    CURRENT_DATE + INTERVAL '365 day',
-                    'EXPLICIT',
                     it.lot_source_policy,
                     it.expiry_policy,
                     it.derivation_allowed,
                     it.uom_governance_enabled,
-                    it.has_shelf_life,
                     it.shelf_life_value,
-                    it.shelf_life_unit,
-                    it.uom,
-                    it.case_ratio,
-                    it.case_uom
+                    it.shelf_life_unit
                   FROM items it
                  WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
-                RETURNING id
                 """
             ),
             {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
         )
-    ).first()
-    assert lot_row is not None, "failed to ensure lot"
-    lot_id = int(lot_row[0])
+        # 3) re-select
+        row1 = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id
+                      FROM lots
+                     WHERE warehouse_id = :w
+                       AND item_id = :i
+                       AND lot_code_source = 'SUPPLIER'
+                       AND lot_code = :code
+                     LIMIT 1
+                    """
+                ),
+                {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+            )
+        ).first()
+        assert row1 is not None, "failed to ensure lot"
+        lot_id = int(row1[0])
 
     await session.execute(
         text(
@@ -125,8 +146,8 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     lot-world 行为验证：
 
     - 先造一个 stocks_lot 槽位 (warehouse_id, item_id, lot_id, qty)
-    - 再往 stock_ledger 写一条 COUNT 记录（显式写 lot_id 与 batch_code=lot_code）
-    - 通过 JOIN stocks_lot/lots 校验 ledger 的维度与 lot-world 槽位一致
+    - 再往 stock_ledger 写一条 COUNT 记录（显式写 lot_id）
+    - 通过 JOIN stocks_lot/lots 校验 ledger 的维度与 lot-world 槽位一致（展示码来自 lots.lot_code）
     """
     wh_id, item_id = 1, 99901
     lot_code = "LEDGER-TEST-LOT"
@@ -141,7 +162,6 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
                 warehouse_id,
                 item_id,
                 lot_id,
-                batch_code,
                 reason,
                 ref,
                 ref_line,
@@ -153,7 +173,6 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
                 :wh_id,
                 :item_id,
                 :lot_id,
-                :batch_code,
                 'COUNT',
                 'TRG-TEST',
                 1,
@@ -168,7 +187,6 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
             "wh_id": int(wh_id),
             "item_id": int(item_id),
             "lot_id": int(lot_id),
-            "batch_code": str(lot_code),
             "ts": now,
         },
     )
@@ -181,17 +199,18 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
               l.warehouse_id AS l_wh,
               l.item_id      AS l_item,
               l.lot_id       AS l_lot,
-              l.batch_code   AS l_code,
+              lo_l.lot_code  AS l_code,
               sl.warehouse_id AS s_wh,
               sl.item_id      AS s_item,
               sl.lot_id       AS s_lot,
-              lo.lot_code     AS s_code
+              lo_s.lot_code   AS s_code
             FROM stock_ledger AS l
+            LEFT JOIN lots lo_l ON lo_l.id = l.lot_id
             JOIN stocks_lot AS sl
               ON sl.warehouse_id = l.warehouse_id
              AND sl.item_id      = l.item_id
-             AND sl.lot_id_key   = COALESCE(l.lot_id, 0)
-            LEFT JOIN lots lo ON lo.id = sl.lot_id
+             AND sl.lot_id       = l.lot_id
+            LEFT JOIN lots lo_s ON lo_s.id = sl.lot_id
            WHERE l.id = :lid
             """
         ),

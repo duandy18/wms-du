@@ -66,7 +66,8 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
     - ref 不再是 'PO-{po_id}'，而是 receipt.ref（每次 confirm 固化一张 receipt）
 
     ⚠️ 重要：避免 join 放大导致同一 ledger 行重复（ref_line 重复）。
-    做法：先把 inbound_receipt_lines 按 (receipt_id,item_id,batch_code,production_date) 聚合成唯一映射。
+    做法：先把 inbound_receipt_lines 按 (receipt_id,item_id,lot_id) 聚合成唯一映射。
+    batch_code 仅展示字段，不参与 identity。
     """
     po = await _load_po_exists(session, po_id)
     if po is None:
@@ -79,7 +80,6 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
     reason = "RECEIPT"
     fallback_line_no_map = await _load_line_no_map(session, po_id)
 
-    # rl_map：把 receipt_lines 先压成唯一映射，避免一条 ledger 行被多条 receipt_line 匹配导致重复输出
     stmt = (
         text(
             """
@@ -87,18 +87,17 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
               SELECT
                 rl.receipt_id,
                 rl.item_id,
-                rl.batch_code,
-                rl.production_date,
+                rl.lot_id,
                 MIN(rl.po_line_id) AS po_line_id
               FROM inbound_receipt_lines AS rl
-              GROUP BY rl.receipt_id, rl.item_id, rl.batch_code, rl.production_date
+              GROUP BY rl.receipt_id, rl.item_id, rl.lot_id
             )
             SELECT
               sl.ref,
               sl.ref_line,
               sl.warehouse_id,
               sl.item_id,
-              sl.batch_code,
+              COALESCE(lo.lot_code, '') AS batch_code,
               sl.delta,
               sl.after_qty,
               sl.occurred_at,
@@ -106,6 +105,8 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
               sl.expiry_date,
               pol.line_no AS po_line_no
             FROM stock_ledger AS sl
+            LEFT JOIN lots AS lo
+              ON lo.id = sl.lot_id
             LEFT JOIN inbound_receipts AS r
               ON r.ref = sl.ref
              AND r.source_type = 'PO'
@@ -113,16 +114,14 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
             LEFT JOIN rl_map AS m
               ON m.receipt_id = r.id
              AND m.item_id = sl.item_id
-             AND m.batch_code = sl.batch_code
-             AND m.production_date IS NOT DISTINCT FROM sl.production_date
+             AND m.lot_id = sl.lot_id
             LEFT JOIN purchase_order_lines AS pol
               ON pol.id = m.po_line_id
             WHERE sl.reason = :reason
               AND sl.ref IN :refs
             ORDER BY sl.occurred_at ASC, sl.ref ASC, sl.ref_line ASC
             """
-        )
-        .bindparams(bindparam("refs", expanding=True))
+        ).bindparams(bindparam("refs", expanding=True))
     )
 
     res = await session.execute(
@@ -145,7 +144,7 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
                 warehouse_id=int(r["warehouse_id"]),
                 item_id=item_id,
                 line_no=int(po_line_no) if po_line_no is not None else None,
-                batch_code=str(r["batch_code"]),
+                batch_code=r.get("batch_code"),
                 qty=int(r["delta"]),
                 after_qty=int(r["after_qty"]),
                 occurred_at=r["occurred_at"],

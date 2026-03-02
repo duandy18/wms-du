@@ -1,0 +1,6 @@
+ck_ledger_dates_only_on_receipt|c|CHECK (reason_canon::text = 'RECEIPT'::text OR production_date IS NULL AND expiry_date IS NULL)
+fk_stock_ledger_item_id|f|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_stock_ledger_lot_dims|f|FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+fk_stock_ledger_warehouse|f|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+stock_ledger_pkey|p|PRIMARY KEY (id)
+uq_ledger_wh_lot_item_reason_ref_line|u|UNIQUE (reason, ref, ref_line, item_id, warehouse_id, lot_id)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,19 +62,47 @@ async def get_any_purchaser(session: AsyncSession) -> str:
     return s or "UT-PURCHASER"
 
 
+async def _require_base_item_uom(session: AsyncSession, *, item_id: int) -> Tuple[int, int]:
+    """
+    Phase M-5：PO 行单位完全结构化（purchase_uom_id_snapshot + ratio snapshot）
+    这里不猜任何默认值：直接从 item_uoms 里取 is_base=true 的那一行。
+    返回：
+    - uom_id（item_uoms.id）
+    - ratio_to_base（item_uoms.ratio_to_base）
+    """
+    row = await session.execute(
+        text(
+            """
+            SELECT id, ratio_to_base
+            FROM item_uoms
+            WHERE item_id = :i AND is_base = true
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    r = row.first()
+    if r is None or r[0] is None:
+        raise RuntimeError(f"tests require base item_uom (is_base=true) for item_id={int(item_id)}")
+    uom_id = int(r[0])
+    ratio = int(r[1] or 0)
+    if ratio <= 0:
+        raise RuntimeError(f"invalid item_uoms.ratio_to_base for item_id={int(item_id)} uom_id={uom_id}")
+    return uom_id, ratio
+
+
 async def create_po_with_line(
     session: AsyncSession,
     *,
     item_id: int,
     qty_ordered_base: int = 10,
-    uom_snapshot: str = "EA",
     warehouse_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
     supplier_name: Optional[str] = None,
     purchaser: Optional[str] = None,
     item_name: str = "UT-item-name",
     item_sku: str = "UT-item-sku",
-    base_uom: Optional[str] = "EA",
     spec_text: Optional[str] = None,
 ) -> PoLineWorld:
     """
@@ -89,17 +117,15 @@ async def create_po_with_line(
     - status
     - created_at/updated_at
 
-    purchase_order_lines 必填：
+    purchase_order_lines 必填（Phase M-5 结构化单位）：
     - po_id
     - line_no
     - item_id
+    - purchase_uom_id_snapshot
+    - purchase_ratio_to_base_snapshot
+    - qty_ordered_input
     - qty_ordered_base（>0）
     - discount_amount（NOT NULL）
-    - uom_snapshot（NOT NULL）
-
-    说明：
-    - 本 helper 不负责创建 item（避免猜 items 表约束）。item 由测试提供。
-    - 本 helper 只创建 PO / PO Line。
     """
     if qty_ordered_base <= 0:
         raise ValueError("qty_ordered_base must be > 0 (ck_po_lines_qty_ordered_base_positive).")
@@ -150,24 +176,39 @@ async def create_po_with_line(
     )
     po_id = int(po_row.scalar_one())
 
+    # 以 base item_uom 作为 purchase_uom（用于测试最小合法行，不猜）
+    uom_id, ratio_to_base = await _require_base_item_uom(session, item_id=int(item_id))
+
+    # 计算 qty_input：必须满足 ck_po_lines_qty_base_consistent
+    if int(qty_ordered_base) % int(ratio_to_base) != 0:
+        raise ValueError(
+            f"qty_ordered_base must be divisible by ratio_to_base in tests: "
+            f"qty_ordered_base={int(qty_ordered_base)} ratio_to_base={int(ratio_to_base)}"
+        )
+    qty_input = int(qty_ordered_base) // int(ratio_to_base)
+
     ln_row = await session.execute(
         text(
             """
             INSERT INTO purchase_order_lines (
                 po_id, line_no, item_id,
                 item_name, item_sku,
-                spec_text, base_uom,
+                spec_text,
+                purchase_uom_id_snapshot,
+                purchase_ratio_to_base_snapshot,
+                qty_ordered_input,
                 qty_ordered_base,
-                discount_amount,
-                uom_snapshot
+                discount_amount
             )
             VALUES (
                 :po_id, 1, :item_id,
                 :item_name, :item_sku,
-                :spec_text, :base_uom,
+                :spec_text,
+                :uom_id,
+                :ratio,
+                :qty_input,
                 :qty_ordered_base,
-                0,
-                :uom_snapshot
+                0
             )
             RETURNING id
             """
@@ -178,9 +219,10 @@ async def create_po_with_line(
             "item_name": item_name,
             "item_sku": item_sku,
             "spec_text": spec_text,
-            "base_uom": base_uom,
+            "uom_id": int(uom_id),
+            "ratio": int(ratio_to_base),
+            "qty_input": int(qty_input),
             "qty_ordered_base": int(qty_ordered_base),
-            "uom_snapshot": str(uom_snapshot),
         },
     )
     po_line_id = int(ln_row.scalar_one())
@@ -201,7 +243,6 @@ async def create_po_with_line_and_draft_receipt(
     *,
     item_id: int,
     qty_ordered_base: int = 10,
-    uom_snapshot: str = "EA",
 ) -> PoLineWorld:
     """
     一步到位：创建 PO + 单行 + inbound_receipts(DRAFT)
@@ -211,7 +252,6 @@ async def create_po_with_line_and_draft_receipt(
         session,
         item_id=item_id,
         qty_ordered_base=qty_ordered_base,
-        uom_snapshot=uom_snapshot,
     )
 
     now = datetime.now(tz=timezone.utc)

@@ -17,11 +17,11 @@ async def fill_canonical_lot_dates(
     batch_rows_map: Dict[int, List[WorkbenchBatchRowOut]],
 ) -> None:
     """
-    将 WorkbenchBatchRowOut.production_date/expiry_date 回填为 canonical（来自 lots）。
+    将 WorkbenchBatchRowOut.production_date/expiry_date 回填为 canonical（来自 receipt_lines 日期事实）。
 
     合同：
     - batch_code=None => prod/exp 必须为 None
-    - batch_code!=None => 从 lots(warehouse_id, item_id, lot_code_source='SUPPLIER', lot_code) 精确匹配
+    - batch_code!=None => 从 inbound_receipt_lines(warehouse_id,item_id,lot_code_input) 精确匹配/聚合得到日期事实
     """
     need_pairs: list[tuple[int, str]] = []
     seen: set[tuple[int, str]] = set()
@@ -54,12 +54,19 @@ async def fill_canonical_lot_dates(
             params[pi] = int(iid)
             params[pc] = str(code)
 
+        # Lot-World 终态：日期事实在 inbound_receipt_lines（production_date/expiry_date）
+        # 这里按 (warehouse_id,item_id,lot_code_input) 聚合出 canonical 日期（MAX 作为稳定聚合策略）
         sql = f"""
-            SELECT item_id, lot_code, production_date, expiry_date
-              FROM lots
-             WHERE warehouse_id = :w
-               AND lot_code_source = 'SUPPLIER'
-               AND (item_id, lot_code) IN ({", ".join(in_terms)})
+            SELECT
+              rl.item_id,
+              rl.lot_code_input AS lot_code,
+              MAX(rl.production_date) AS production_date,
+              MAX(rl.expiry_date)     AS expiry_date
+            FROM inbound_receipt_lines rl
+            WHERE rl.warehouse_id = :w
+              AND rl.lot_code_input IS NOT NULL
+              AND (rl.item_id, rl.lot_code_input) IN ({", ".join(in_terms)})
+            GROUP BY rl.item_id, rl.lot_code_input
         """
 
         rows = (await session.execute(text(sql), params)).fetchall()

@@ -31,7 +31,7 @@ async def adjust_lot_impl(
     session: AsyncSession,
     item_id: int,
     warehouse_id: int,
-    lot_id: Optional[int],
+    lot_id: int,
     delta: int,
     reason: Union[str, MovementType],
     ref: str,
@@ -46,13 +46,12 @@ async def adjust_lot_impl(
     shadow_write_stocks: bool = False,
 ) -> Dict[str, Any]:
     """
-    Phase 4C：lot-world 主写入口
+    Phase M-2 终态：lot-world 主写入口（结构封板）
 
-    - 余额：写 stocks_lot（按 lot_id_key）
-    - 台账：写 stock_ledger（必须带 lot_id，使 lot_id_key 生效）
+    - 余额：写 stocks_lot（按 lot_id）
+    - 台账：写 stock_ledger（必须带 lot_id）
+    - 幂等：按 (warehouse_id, item_id, lot_id, reason, ref, ref_line) 命中
     - stocks：可选 shadow 写入（便于回滚/对账）
-
-    Phase 4D 第一步：shadow_write_stocks 默认关闭（False）。
     """
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
@@ -67,21 +66,23 @@ async def adjust_lot_impl(
     if delta == 0 and allow_zero and not sub_reason:
         raise ValueError("delta==0 记账必须提供 meta.sub_reason（例如 COUNT_ADJUST）")
 
+    if lot_id is None:
+        raise ValueError("lot_id is required in lot-only world.")
+
     requires_batch = await item_requires_batch(session, item_id=int(item_id))
     bc_norm = norm_batch_code(batch_code)
 
-    # 4C 规则：效期商品允许通过 lot_id 表达，不强制 batch_code（展示码可为空）
-    if requires_batch and (lot_id is None) and not bc_norm:
-        raise ValueError("批次受控商品必须指定 lot_id 或 batch_code。")
+    # 终态：批次受控商品允许 batch_code 为空（展示码），但 lot_id 必须存在
+    if requires_batch and not lot_id:
+        raise ValueError("批次受控商品必须指定 lot_id。")
 
     await assert_lot_belongs_to(
         session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        lot_id=lot_id,
+        lot_id=int(lot_id),
     )
 
-    # 为了保持现有审计契约：如果显式传了 batch_code（lot_code），沿用 inbound 的日期解析规则
     production_date, expiry_date = await resolve_and_validate_dates_for_inbound(
         session=session,
         item_id=int(item_id),
@@ -91,13 +92,13 @@ async def adjust_lot_impl(
         expiry_date=expiry_date,
     )
 
-    # 幂等：仍以 (warehouse,item,lot_id_key,batch_code_key,reason,ref,ref_line) 命中
+    # 幂等：lot-only
     if await idem_hit_by_lot_and_batch_key(
         session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
         batch_code_norm=bc_norm,
-        lot_id=lot_id,
+        lot_id=int(lot_id),
         reason=reason_val,
         ref=str(ref),
         ref_line=int(rl),
@@ -108,14 +109,14 @@ async def adjust_lot_impl(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
-        lot_id=lot_id,
+        lot_id=int(lot_id),
     )
 
     lot_slot_id, before_qty = await lock_stocks_lot_slot_for_update(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
-        lot_id=lot_id,
+        lot_id=int(lot_id),
     )
 
     if delta == 0:
@@ -126,8 +127,8 @@ async def adjust_lot_impl(
             raise ValueError(f"insufficient stock(lot): before={before_qty}, delta={delta}")
 
     # 展示码：优先用 lot_id 对应的 lots.lot_code（若存在）
-    if lot_id is not None and not bc_norm:
-        bc_norm = await load_lot_code_for_lot_id(session, lot_id=lot_id)
+    if not bc_norm:
+        bc_norm = await load_lot_code_for_lot_id(session, lot_id=int(lot_id))
 
     # audit-consistency：记账必须通过白名单入口（stock_service_adjust.write_ledger_infra）
     # 这里必须用 lazy import，避免 stock_service_adjust <-> stock_adjust 循环导入
@@ -148,14 +149,13 @@ async def adjust_lot_impl(
         trace_id=trace_id,
         production_date=production_date,
         expiry_date=expiry_date,
-        lot_id=lot_id,
+        lot_id=int(lot_id),
     )
 
     if delta != 0:
         await apply_stocks_lot_set_qty(session, slot_id=int(lot_slot_id), new_qty=int(new_qty))
 
         if shadow_write_stocks:
-            # 影子写 stocks（按 batch_code 槽位）；若 batch_code 为空，则落入 NULL 槽位
             await ensure_stock_slot_exists(
                 session,
                 item_id=int(item_id),
@@ -175,7 +175,7 @@ async def adjust_lot_impl(
         meta_out.setdefault("trace_id", trace_id)
 
     return {
-        "lot_id": lot_id,
+        "lot_id": int(lot_id),
         "before": int(before_qty),
         "delta": int(delta),
         "after": int(new_qty),

@@ -1,0 +1,7 @@
+ix_lots_item|CREATE INDEX ix_lots_item ON public.lots USING btree (item_id)
+ix_lots_wh|CREATE INDEX ix_lots_wh ON public.lots USING btree (warehouse_id)
+ix_lots_wh_item|CREATE INDEX ix_lots_wh_item ON public.lots USING btree (warehouse_id, item_id)
+lots_pkey|CREATE UNIQUE INDEX lots_pkey ON public.lots USING btree (id)
+uq_lots_id_wh_item|CREATE UNIQUE INDEX uq_lots_id_wh_item ON public.lots USING btree (id, warehouse_id, item_id)
+uq_lots_internal_wh_item_src_receipt_line|CREATE UNIQUE INDEX uq_lots_internal_wh_item_src_receipt_line ON public.lots USING btree (warehouse_id, item_id, source_receipt_id, source_line_no) WHERE ((lot_code_source)::text = 'INTERNAL'::text)
+uq_lots_wh_item_lot_code|CREATE UNIQUE INDEX uq_lots_wh_item_lot_code ON public.lots USING btree (warehouse_id, item_id, lot_code) WHERE (lot_code IS NOT NULL)

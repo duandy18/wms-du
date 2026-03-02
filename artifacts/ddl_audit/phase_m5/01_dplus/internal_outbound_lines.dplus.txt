@@ -1,0 +1,23 @@
+                                                           Table "public.internal_outbound_lines"
+    Column     |  Type   | Collation | Nullable |                       Default                       | Storage  | Compression | Stats target | Description
+---------------+---------+-----------+----------+-----------------------------------------------------+----------+-------------+--------------+-------------
+ id            | bigint  |           | not null | nextval('internal_outbound_lines_id_seq'::regclass) | plain    |             |              |
+ doc_id        | bigint  |           | not null |                                                     | plain    |             |              |
+ line_no       | integer |           | not null |                                                     | plain    |             |              |
+ item_id       | bigint  |           | not null |                                                     | plain    |             |              |
+ batch_code    | text    |           |          |                                                     | extended |             |              |
+ requested_qty | integer |           | not null |                                                     | plain    |             |              |
+ confirmed_qty | integer |           |          |                                                     | plain    |             |              |
+ note          | text    |           |          |                                                     | extended |             |              |
+ extra_meta    | json    |           |          |                                                     | extended |             |              |
+Indexes:
+    "internal_outbound_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_internal_outbound_lines_doc_id" btree (doc_id)
+    "ix_internal_outbound_lines_item_id" btree (item_id)
+    "uq_internal_outbound_lines_doc_line_no" UNIQUE, btree (doc_id, line_no)
+Foreign-key constraints:
+    "fk_internal_outbound_lines_doc_id" FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id) ON DELETE CASCADE
+    "fk_internal_outbound_lines_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "internal_outbound_lines_doc_id_fkey" FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id)
+    "internal_outbound_lines_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+Access method: heap

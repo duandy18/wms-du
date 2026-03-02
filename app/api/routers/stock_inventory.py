@@ -24,6 +24,7 @@ def _make_scan_ref(device_id: Optional[str], occurred_at: datetime, warehouse_id
 class StockRecountRequest(BaseModel):
     item_id: int = Field(..., description="物料ID")
     warehouse_id: int = Field(..., ge=1, description="仓库ID")
+    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
     batch_code: Optional[str] = Field(None, description="批次（无批次槽位传 null）")
     actual: int = Field(..., ge=0, description="实际数量")
     ctx: Dict[str, Any] | None = None
@@ -60,6 +61,9 @@ async def stock_recount(
     occurred_at = datetime.now(timezone.utc)
     scan_ref = _make_scan_ref(device_id, occurred_at, req.warehouse_id)
 
+    # Phase M-4 governance：lot_code 正名；batch_code 兼容字段
+    code = getattr(req, "lot_code", None) or req.batch_code
+
     try:
         from app.services.stock_service import StockService  # type: ignore
     except Exception as e:  # pragma: no cover
@@ -80,7 +84,7 @@ async def stock_recount(
                    AND lo.lot_code IS NOT DISTINCT FROM :c
                 """
             ),
-            {"i": int(req.item_id), "w": int(req.warehouse_id), "c": req.batch_code},
+            {"i": int(req.item_id), "w": int(req.warehouse_id), "c": code},
         )
         on_hand = int(row.scalar_one() or 0)
         delta = int(req.actual) - on_hand
@@ -93,7 +97,7 @@ async def stock_recount(
                 delta=delta,
                 reason="COUNT",
                 ref=scan_ref,
-                batch_code=req.batch_code,
+                batch_code=code,
             )
 
         ev_id = await _insert_event(session, source="stock_recount", message=scan_ref, occurred_at=occurred_at)

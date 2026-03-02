@@ -10,36 +10,103 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
-async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
-    if code is None:
-        r = await session.execute(
-            text(
-                """
-                SELECT COALESCE(qty, 0)
-                  FROM stocks_lot
-                 WHERE item_id=:i
-                   AND warehouse_id=:w
-                   AND lot_id_key = 0
-                 LIMIT 1
-                """
-            ),
-            {"i": item_id, "w": wh},
-        )
-        return int(r.scalar_one_or_none() or 0)
+async def _ensure_internal_lot(session: AsyncSession, *, item_id: int, wh: int, ref: str) -> int:
+    """
+    Lot-World 终态：lot_id 是库存唯一身份。
+    “非批次商品的 NULL 槽位”由 INTERNAL lot 承载（lot_code 可为 NULL，但 lot_id 必须真实存在）。
 
+    约束回顾（来自 DB 真实结构）：
+    - lots.lot_code_source='INTERNAL' 时必须提供 source_receipt_id + source_line_no
+    - lots snapshot 字段需与 items 对齐（not null snapshot：policy/expiry/derivation/uom_governance）
+    """
+    # 1) 造一个 inbound_receipts 作为 INTERNAL lot 的来源（满足 FK + check）
     r = await session.execute(
         text(
             """
-            SELECT COALESCE(sl.qty, 0)
-              FROM stocks_lot sl
-              JOIN lots l ON l.id = sl.lot_id
-             WHERE sl.item_id=:i
-               AND sl.warehouse_id=:w
-               AND l.lot_code = :c
+            INSERT INTO inbound_receipts (
+                warehouse_id,
+                source_type,
+                source_id,
+                ref,
+                trace_id,
+                status,
+                remark,
+                occurred_at
+            )
+            VALUES (
+                :wh,
+                'PO',
+                NULL,
+                :ref,
+                NULL,
+                'DRAFT',
+                'UT internal lot source receipt',
+                :occurred_at
+            )
+            RETURNING id
+            """
+        ),
+        {"wh": wh, "ref": ref, "occurred_at": datetime.now(UTC)},
+    )
+    receipt_id = int(r.scalar_one())
+
+    # 2) 基于 items 抽取快照字段，插入 INTERNAL lot（lot_code = NULL）
+    r2 = await session.execute(
+        text(
+            """
+            INSERT INTO lots (
+                warehouse_id,
+                item_id,
+                lot_code_source,
+                lot_code,
+                source_receipt_id,
+                source_line_no,
+                created_at,
+                item_shelf_life_value_snapshot,
+                item_shelf_life_unit_snapshot,
+                item_lot_source_policy_snapshot,
+                item_expiry_policy_snapshot,
+                item_derivation_allowed_snapshot,
+                item_uom_governance_enabled_snapshot
+            )
+            SELECT
+                :wh,
+                i.id,
+                'INTERNAL',
+                NULL,
+                :receipt_id,
+                1,
+                now(),
+                i.shelf_life_value,
+                i.shelf_life_unit,
+                i.lot_source_policy,
+                i.expiry_policy,
+                i.derivation_allowed,
+                i.uom_governance_enabled
+            FROM items i
+            WHERE i.id = :item_id
+            RETURNING id
+            """
+        ),
+        {"wh": wh, "item_id": item_id, "receipt_id": receipt_id},
+    )
+    lot_id = int(r2.scalar_one())
+    return lot_id
+
+
+async def _qty(session: AsyncSession, item_id: int, wh: int, lot_id: int) -> int:
+    r = await session.execute(
+        text(
+            """
+            SELECT COALESCE(qty, 0)
+              FROM stocks_lot
+             WHERE item_id=:i
+               AND warehouse_id=:w
+               AND lot_id=:lot
              LIMIT 1
             """
         ),
-        {"i": item_id, "w": wh, "c": str(code)},
+        {"i": item_id, "w": wh, "lot": lot_id},
     )
     return int(r.scalar_one_or_none() or 0)
 
@@ -50,10 +117,14 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     item_id = 1
     wh = 1
 
-    # 强护栏口径：非批次商品用 NULL 槽位
+    # Lot-World 终态：非批次商品不再用 sentinel/NULL 槽位表达，
+    # 而是用 INTERNAL lot 承载“原 batch_code=None 的库存身份”。
+    lot_id = await _ensure_internal_lot(session, item_id=item_id, wh=wh, ref="UT-IPC-INTERNAL-RECEIPT-1")
+
+    # 兼容字段：batch_code 仍可为 None（展示标签），但结构身份必须传 lot_id
     batch_code: str | None = None
 
-    # 1) 入库 +2（日期参数允许传入，但在无批次槽位下会被归一为 None）
+    # 1) 入库 +2（日期参数允许传入；lot_id 才是身份）
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -63,13 +134,14 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=batch_code,
+        lot_id=lot_id,
         production_date=date.today(),
         warehouse_id=wh,
     )
-    q1 = await _qty(session, item_id, wh, batch_code)
+    q1 = await _qty(session, item_id, wh, lot_id)
     assert q1 >= 2
 
-    # 2) 拣货 -1（无批次商品允许 batch_code=NULL）
+    # 2) 拣货 -1
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -79,13 +151,14 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=batch_code,
+        lot_id=lot_id,
         warehouse_id=wh,
     )
-    q2 = await _qty(session, item_id, wh, batch_code)
+    q2 = await _qty(session, item_id, wh, lot_id)
     assert q2 == q1 - 1
 
     # 3) 盘点：把数量调整为 1（delta = 1 - 当前）
-    remain = await _qty(session, item_id, wh, batch_code)
+    remain = await _qty(session, item_id, wh, lot_id)
     delta = 1 - remain
     if delta != 0:
         await svc.adjust(
@@ -97,8 +170,9 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
             ref_line=1,
             occurred_at=datetime.now(UTC),
             batch_code=batch_code,
+            lot_id=lot_id,
             production_date=date.today(),
             warehouse_id=wh,
         )
-    q3 = await _qty(session, item_id, wh, batch_code)
+    q3 = await _qty(session, item_id, wh, lot_id)
     assert q3 == 1

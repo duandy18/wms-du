@@ -1,0 +1,3 @@
+fk_stocks_lot_item|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_stocks_lot_lot_dims|FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+fk_stocks_lot_warehouse|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT

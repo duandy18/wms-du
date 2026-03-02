@@ -35,6 +35,114 @@ async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
     return pol.strip().upper() == "REQUIRED"
 
 
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    source_receipt_id,
+                    source_line_no,
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    created_at
+                )
+                SELECT
+                    :w,
+                    it.id,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    now()
+                  FROM items it
+                 WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, lot_code)
+                WHERE lot_code IS NOT NULL
+                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                RETURNING id
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    assert row is not None, "failed to ensure supplier lot"
+    return int(row[0])
+
+
+async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
+    r = await session.execute(
+        text(
+            """
+            INSERT INTO inbound_receipts (
+                warehouse_id, source_type, source_id, ref, trace_id, status, remark, occurred_at, created_at, updated_at
+            )
+            VALUES (
+                :wh, 'PO', NULL, :ref, NULL, 'DRAFT', 'UT internal lot source receipt', :occurred_at, now(), now()
+            )
+            RETURNING id
+            """
+        ),
+        {"wh": int(wh_id), "ref": str(ref), "occurred_at": datetime.now(timezone.utc)},
+    )
+    receipt_id = int(r.scalar_one())
+
+    r2 = await session.execute(
+        text(
+            """
+            INSERT INTO lots (
+                warehouse_id,
+                item_id,
+                lot_code_source,
+                lot_code,
+                source_receipt_id,
+                source_line_no,
+                created_at,
+                item_shelf_life_value_snapshot,
+                item_shelf_life_unit_snapshot,
+                item_lot_source_policy_snapshot,
+                item_expiry_policy_snapshot,
+                item_derivation_allowed_snapshot,
+                item_uom_governance_enabled_snapshot
+            )
+            SELECT
+                :wh,
+                it.id,
+                'INTERNAL',
+                NULL,
+                :rid,
+                1,
+                now(),
+                it.shelf_life_value,
+                it.shelf_life_unit,
+                it.lot_source_policy,
+                it.expiry_policy,
+                it.derivation_allowed,
+                it.uom_governance_enabled
+            FROM items it
+            WHERE it.id = :i
+            RETURNING id
+            """
+        ),
+        {"wh": int(wh_id), "i": int(item_id), "rid": int(receipt_id)},
+    )
+    return int(r2.scalar_one())
+
+
 async def _seed_order_and_stock(session: AsyncSession) -> int:
     platform = "PDD"
     shop_id = "1"
@@ -60,8 +168,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     )
     order_id = int(result["id"])
 
-    # 可拣货护栏：避免订单被 BLOCKED 误伤测试主线
-    # 新世界观：orders 不再有 fulfillment_status / blocked_* 列，统一写 order_fulfillment（blocked 只保留 reasons）
+    # 可拣货护栏
     await session.execute(
         text(
             """
@@ -98,10 +205,16 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     prod = date.today()
     exp = prod + timedelta(days=365)
 
-    await stock.adjust(
+    if requires_batch:
+        lot_id = await _ensure_supplier_lot(session, wh_id=1, item_id=1, lot_code=str(batch_code))
+    else:
+        lot_id = await _ensure_internal_lot(session, wh_id=1, item_id=1, ref=f"UT-INTERNAL-LOT-PRINTJOB-{uniq}")
+
+    await stock.adjust_lot(
         session=session,
         item_id=1,
         warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason=MovementType.RECEIPT,
         ref=f"SEED-STOCK-PRINTJOB-{uniq}",
@@ -123,7 +236,6 @@ async def test_pick_task_get_includes_print_job_summary(
 ):
     order_id = await _seed_order_and_stock(session)
 
-    # 创建拣货任务（手工主线：必须显式 warehouse_id；只创建任务，不自动 enqueue 打印）
     r1 = await client.post(
         f"/pick-tasks/manual-from-order/{order_id}",
         json={"warehouse_id": 1, "source": "ORDER", "priority": 100},
@@ -132,22 +244,18 @@ async def test_pick_task_get_includes_print_job_summary(
     task = r1.json()
     task_id = int(task["id"])
 
-    # GET 任务详情：创建后不应自动带 print_job（自动化已剥离）
     r2 = await client.get(f"/pick-tasks/{task_id}")
     assert r2.status_code == 200, r2.text
     body = r2.json()
-
     pj0 = body.get("print_job")
     assert pj0 is None, body
 
-    # 手工触发打印：显式 enqueue pick_list print_job（幂等）
     r3 = await client.post(
         f"/pick-tasks/{task_id}/print-pick-list",
         json={"order_id": int(order_id)},
     )
     assert r3.status_code == 200, r3.text
 
-    # 再 GET：必须带 print_job（可观测闭环）
     r4 = await client.get(f"/pick-tasks/{task_id}")
     assert r4.status_code == 200, r4.text
     body2 = r4.json()

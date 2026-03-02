@@ -36,7 +36,7 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id=:i
                    AND warehouse_id=:w
-                   AND lot_id_key = 0
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),
@@ -69,7 +69,7 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     wh_returns = await _ensure_wh(session, "RETURNS")
     wh_main = await _ensure_wh(session, "MAIN")
 
-    # 强护栏口径：非批次商品用 NULL 槽位
+    # 强护栏口径：非批次商品用 NULL 槽位（lot_id IS NULL）
     batch_code: str | None = None
 
     # 1) RETURNS：入库 +2
@@ -113,7 +113,7 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
         production_date=date.today(),
     )
 
-    # 3) 断言：RETURNS 减 1，MAIN 加 1，总量不变
+    # 3) 断言：RETURNS 减 1，MAIN 加 1，总量不变（仅验证两仓槽位变化，不引入 lot_id_key 概念）
     r1 = await _qty(session, item_id, wh_returns, batch_code)
     m1 = await _qty(session, item_id, wh_main, batch_code)
     assert r1 == r0 - 1

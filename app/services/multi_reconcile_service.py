@@ -7,17 +7,16 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_NULL_BATCH_KEY = "__NULL_BATCH__"
-
 
 class MultiReconcileService:
     """
     Multi-dimension Reconcile Engine
     --------------------------------
 
-    Phase 4B-3（切读到 lot）：
-    - three_books_compare：stocks 侧改为 stocks_lot
-    - batch_code 展示值改为 lots.lot_code
+    Phase 3 终态（lot-only）：
+    - three_books_compare：stocks 侧为 stocks_lot（lot-world）
+    - 对齐维度： (warehouse_id, item_id, lot_id)
+    - batch_code 仅为展示值：lots.lot_code
     """
 
     @staticmethod
@@ -29,15 +28,16 @@ class MultiReconcileService:
         stmt = text(
             """
             SELECT
-                warehouse_id,
-                item_id,
-                batch_code,
-                batch_code_key,
-                SUM(delta) AS qty
-            FROM stock_ledger
-            WHERE occurred_at <= :cut
+                l.warehouse_id,
+                l.item_id,
+                l.lot_id,
+                lo.lot_code AS batch_code,
+                SUM(l.delta) AS qty
+            FROM stock_ledger l
+            JOIN lots lo ON lo.id = l.lot_id
+            WHERE l.occurred_at <= :cut
             GROUP BY 1,2,3,4
-            HAVING SUM(delta) != 0
+            HAVING SUM(l.delta) != 0
         """
         )
         rows = (await session.execute(stmt, {"cut": cut})).mappings().all()
@@ -129,8 +129,8 @@ class MultiReconcileService:
             SELECT
                 x.warehouse_id,
                 x.item_id,
+                x.lot_id,
                 x.batch_code,
-                x.batch_code_key,
                 x.ledger_qty,
                 COALESCE(st.qty, 0) AS stock_qty,
                 COALESCE(sn.qty, 0) AS snapshot_qty,
@@ -140,11 +140,11 @@ class MultiReconcileService:
                 SELECT
                     l.warehouse_id,
                     l.item_id,
+                    l.lot_id,
                     lo.lot_code AS batch_code,
-                    COALESCE(lo.lot_code, :null_key) AS batch_code_key,
                     SUM(l.delta) AS ledger_qty
                 FROM stock_ledger l
-                LEFT JOIN lots lo
+                JOIN lots lo
                   ON lo.id = l.lot_id
                 WHERE l.occurred_at <= :cut
                 GROUP BY 1,2,3,4
@@ -153,23 +153,21 @@ class MultiReconcileService:
                 SELECT
                   s.warehouse_id,
                   s.item_id,
-                  COALESCE(lo.lot_code, :null_key) AS batch_code_key,
+                  s.lot_id,
                   SUM(s.qty)::integer AS qty
                 FROM stocks_lot s
-                LEFT JOIN lots lo
-                  ON lo.id = s.lot_id
                 GROUP BY 1,2,3
             ) st
                 ON st.warehouse_id = x.warehouse_id
                AND st.item_id      = x.item_id
-               AND st.batch_code_key = x.batch_code_key
+               AND st.lot_id       = x.lot_id
             LEFT JOIN stock_snapshots sn
                 ON sn.snapshot_date = :cut::date
                AND sn.warehouse_id  = x.warehouse_id
                AND sn.item_id       = x.item_id
-               AND sn.batch_code_key = x.batch_code_key
-            ORDER BY x.warehouse_id, x.item_id, x.batch_code_key
+               AND sn.lot_id        = x.lot_id
+            ORDER BY x.warehouse_id, x.item_id, x.lot_id
         """
         )
-        rows = (await session.execute(stmt, {"cut": cut, "null_key": _NULL_BATCH_KEY})).mappings().all()
+        rows = (await session.execute(stmt, {"cut": cut})).mappings().all()
         return [dict(r) for r in rows]

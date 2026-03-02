@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.models.inbound_receipt import InboundReceipt
 from app.schemas.purchase_order_receive_workbench import WorkbenchBatchRowOut
 
@@ -32,11 +32,56 @@ async def load_latest_po_draft_receipt_with_lines(
     return obj
 
 
-async def load_po_confirmed_received_map(session: AsyncSession, *, po_id: int) -> Dict[int, int]:
+def build_draft_received_aggregates(
+    *, draft: Optional[InboundReceipt]
+) -> Tuple[Dict[int, int], Dict[int, List[WorkbenchBatchRowOut]]]:
     """
-    聚合口径：只统计 CONFIRMED receipts 的 inbound_receipt_lines.qty_received
-    维度：po_line_id -> sum(qty_received)
+    Build:
+      - draft_map: {po_line_id -> total_qty_base}
+      - draft_rows_map: {po_line_id -> [WorkbenchBatchRowOut...]}
+
+    Phase M-5:
+    - inbound_receipt_lines 输入展示码字段为 lot_code_input（历史兼容字段名在 ORM 里可能仍叫 batch_code）
+    - draft 阶段允许 lot_id 为空（尚未 confirm），因此 WorkbenchBatchRowOut.lot_id 使用 0 作为占位
+      （仅用于 workbench 展示聚合，不作为库存事实维度）
     """
+    draft_map: Dict[int, int] = {}
+    draft_rows_map: Dict[int, List[WorkbenchBatchRowOut]] = {}
+
+    if draft is None or not getattr(draft, "lines", None):
+        return draft_map, draft_rows_map
+
+    for ln in draft.lines:
+        po_line_id = getattr(ln, "po_line_id", None)
+        if po_line_id is None:
+            continue
+
+        pid = int(po_line_id)
+        qty_base = int(getattr(ln, "qty_base", 0) or 0)
+        draft_map[pid] = int(draft_map.get(pid, 0)) + qty_base
+
+        lot_id = getattr(ln, "lot_id", None)
+        bc_raw = getattr(ln, "lot_code_input", None)
+        if bc_raw is None:
+            # 兼容旧属性名（若 ORM 仍暴露 batch_code）
+            bc_raw = getattr(ln, "batch_code", None)
+
+        draft_rows_map.setdefault(pid, []).append(
+            WorkbenchBatchRowOut(
+                lot_id=int(lot_id) if lot_id is not None else 0,
+                batch_code=normalize_optional_lot_code(bc_raw),
+                production_date=getattr(ln, "production_date", None),
+                expiry_date=getattr(ln, "expiry_date", None),
+                qty_base=qty_base,
+            )
+        )
+
+    return draft_map, draft_rows_map
+
+
+async def load_po_confirmed_received_map(
+    session: AsyncSession, *, po_id: int
+) -> Dict[int, int]:
     rows = (
         (
             await session.execute(
@@ -44,7 +89,7 @@ async def load_po_confirmed_received_map(session: AsyncSession, *, po_id: int) -
                     """
                     SELECT
                         rl.po_line_id,
-                        SUM(COALESCE(rl.qty_received, 0)) AS qty
+                        SUM(COALESCE(rl.qty_base, 0)) AS qty
                       FROM inbound_receipt_lines AS rl
                       JOIN inbound_receipts AS r
                         ON r.id = rl.receipt_id
@@ -61,6 +106,7 @@ async def load_po_confirmed_received_map(session: AsyncSession, *, po_id: int) -
         .mappings()
         .all()
     )
+
     out: Dict[int, int] = {}
     for r in rows:
         out[int(r["po_line_id"])] = int(r.get("qty") or 0)
@@ -70,11 +116,6 @@ async def load_po_confirmed_received_map(session: AsyncSession, *, po_id: int) -
 async def load_po_confirmed_batch_rows_map(
     session: AsyncSession, *, po_id: int
 ) -> Dict[int, List[WorkbenchBatchRowOut]]:
-    """
-    Phase L：confirmed 聚合迁移为 lot_id 维度
-    - 聚合维度：po_line_id + lot_id（batch_code 仅展示字段）
-    - production_date/expiry_date 作为 canonical 字段，后续统一从 lots 回填
-    """
     rows = (
         (
             await session.execute(
@@ -83,8 +124,8 @@ async def load_po_confirmed_batch_rows_map(
                     SELECT
                         rl.po_line_id,
                         rl.lot_id,
-                        rl.batch_code,
-                        SUM(COALESCE(rl.qty_received, 0)) AS qty
+                        rl.lot_code_input,
+                        SUM(COALESCE(rl.qty_base, 0)) AS qty
                       FROM inbound_receipt_lines AS rl
                       JOIN inbound_receipts AS r
                         ON r.id = rl.receipt_id
@@ -93,7 +134,7 @@ async def load_po_confirmed_batch_rows_map(
                        AND r.status = 'CONFIRMED'
                        AND rl.po_line_id IS NOT NULL
                        AND rl.lot_id IS NOT NULL
-                     GROUP BY rl.po_line_id, rl.lot_id, rl.batch_code
+                     GROUP BY rl.po_line_id, rl.lot_id, rl.lot_code_input
                      ORDER BY rl.po_line_id, rl.lot_id
                     """
                 ),
@@ -108,74 +149,14 @@ async def load_po_confirmed_batch_rows_map(
     for r in rows:
         po_line_id = int(r["po_line_id"])
         lot_id = int(r["lot_id"])
-        bc_norm = normalize_optional_batch_code(r.get("batch_code"))
+        bc_norm = normalize_optional_lot_code(r.get("lot_code_input"))
         out.setdefault(po_line_id, []).append(
             WorkbenchBatchRowOut(
-                lot_id=lot_id,  # Phase L：新增字段（schema 为 Optional[int] 兼容旧前端）
+                lot_id=lot_id,
                 batch_code=bc_norm,
                 production_date=None,
                 expiry_date=None,
-                qty_received=int(r.get("qty") or 0),
+                qty_base=int(r.get("qty") or 0),
             )
         )
     return out
-
-
-def build_draft_received_aggregates(
-    *,
-    draft: Optional[InboundReceipt],
-) -> Tuple[Dict[int, int], Dict[int, List[WorkbenchBatchRowOut]]]:
-    """
-    从 draft receipt.lines 聚合：
-    - draft_map: po_line_id -> sum(qty_received)
-    - batch_rows_map: po_line_id -> list[WorkbenchBatchRowOut]（Phase L：按 po_line_id + lot_id 聚合）
-
-    注意：production_date/expiry_date 不从 receipt_line 取，统一交给 canonical 回填。
-    """
-    draft_map: Dict[int, int] = {}
-    batch_rows_map: Dict[int, List[WorkbenchBatchRowOut]] = {}
-
-    if draft is None or not getattr(draft, "lines", None):
-        return draft_map, batch_rows_map
-
-    # key: (po_line_id, lot_id) -> payload
-    tmp: Dict[Tuple[int, int], Dict[str, object]] = {}
-
-    for rl in draft.lines:
-        po_line_id = getattr(rl, "po_line_id", None)
-        if po_line_id is None:
-            continue
-
-        po_line_id_i = int(po_line_id)
-        qty = int(getattr(rl, "qty_received", 0) or 0)
-        draft_map[po_line_id_i] = int(draft_map.get(po_line_id_i, 0) + qty)
-
-        lot_id_raw = getattr(rl, "lot_id", None)
-        if lot_id_raw is None:
-            # DB 侧应为 NOT NULL；这里兜底跳过（同时上层 explain/validate 应当报错）
-            continue
-        lot_id_i = int(lot_id_raw)
-
-        key = (po_line_id_i, lot_id_i)
-        if key not in tmp:
-            tmp[key] = {
-                "qty": 0,
-                # batch_code 仅展示字段：保持 None/null 语义，不制造 NULL_BATCH token
-                "batch_code": normalize_optional_batch_code(getattr(rl, "batch_code", None)),
-            }
-        tmp[key]["qty"] = int(tmp[key]["qty"]) + qty
-
-    for (po_line_id_i, lot_id_i), payload in tmp.items():
-        qty = int(payload.get("qty") or 0)
-        bc_norm = payload.get("batch_code")
-        batch_rows_map.setdefault(po_line_id_i, []).append(
-            WorkbenchBatchRowOut(
-                lot_id=lot_id_i,  # Phase L：新增字段（schema 为 Optional[int] 兼容旧前端）
-                batch_code=bc_norm,  # type: ignore[arg-type]
-                production_date=None,
-                expiry_date=None,
-                qty_received=int(qty),
-            )
-        )
-
-    return draft_map, batch_rows_map

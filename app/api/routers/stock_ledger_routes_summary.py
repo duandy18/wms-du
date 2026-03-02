@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.api.routers.stock_ledger_helpers import build_common_filters, normalize_time_range
 from app.db.session import get_session
 from app.models.item import Item
@@ -31,7 +31,7 @@ def register(router: APIRouter) -> None:
         - 按 reason 聚合 count / sum(delta)；
         - ✅ 统计口径 PROD-only：排除 DEFAULT Test Set 商品。
         """
-        norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
+        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
         if getattr(payload, "batch_code", None) != norm_bc:
             payload = payload.model_copy(update={"batch_code": norm_bc})
 

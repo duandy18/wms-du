@@ -34,25 +34,32 @@ class LotShadowAggRow(_Base):
     last_occurred_at: Optional[datetime] = None
 
 
-class LotShadowDateMismatchRow(_Base):
+class LedgerDateViolationRow(_Base):
+    """
+    Phase 3 ledger-only:
+
+    lots 已不再承载日期字段；日期 canonical 仅存在于 stock_ledger(RECEIPT)。
+    因此这里不再做 ledger vs lots 的 mismatch，而是提供 ledger 自身的“违规/污染”清单：
+
+    - 非 RECEIPT 行携带 production_date/expiry_date（理论上被 DB 约束禁止，正常应为 0）
+    """
+
     ledger_id: int
     lot_id: int
-    ledger_production_date: Optional[str] = None
-    lot_production_date: Optional[str] = None
-    ledger_expiry_date: Optional[str] = None
-    lot_expiry_date: Optional[str] = None
+    reason_canon: Optional[str] = None
+    production_date: Optional[str] = None
+    expiry_date: Optional[str] = None
     occurred_at: datetime
 
 
 class LotShadowReconcileOut(_Base):
     warehouse_id: int
     item_id: int
-    batch_code_key: Optional[str] = None
     time_from: datetime
     time_to: datetime
 
     coverage: LotShadowCoverage = Field(default_factory=LotShadowCoverage)
     by_lot: List[LotShadowAggRow] = Field(default_factory=list)
 
-    mismatch_count: int = 0
-    mismatches: List[LotShadowDateMismatchRow] = Field(default_factory=list)
+    violation_count: int = 0
+    violations: List[LedgerDateViolationRow] = Field(default_factory=list)

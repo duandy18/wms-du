@@ -8,9 +8,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import (
+from app.api.lot_code_contract import (
     fetch_item_expiry_policy_map,
-    validate_batch_code_contract,
+    validate_lot_code_contract,
 )
 from app.api.problem import raise_409, raise_422
 from app.api.routers.pick_tasks_helpers import load_task_with_lines
@@ -67,9 +67,8 @@ def register_commit(router: APIRouter) -> None:
             )
 
             try:
-                validate_batch_code_contract(
-                    requires_batch=requires_batch,
-                    batch_code=ln.batch_code,
+                validate_lot_code_contract(requires_batch=requires_batch,
+                    lot_code=ln.batch_code,
                 )
             except HTTPException as e:
                 raise_422(

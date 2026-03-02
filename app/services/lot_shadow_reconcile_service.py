@@ -7,33 +7,16 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
-
-_NULL_BATCH_KEY = "__NULL_BATCH__"
-
-
-def _batch_key(batch_code: Optional[str]) -> Optional[str]:
-    """
-    None 表示“不按 batch 过滤”（全量 batch 槽位）。
-    若用户显式传了 batch_code（可能是 ""/"None"），上层会把 payload.batch_code 归一。
-    这里提供一个 helper 给 router/service 更清晰。
-    """
-    if batch_code is None:
-        return None
-    norm = normalize_optional_batch_code(batch_code)
-    return _NULL_BATCH_KEY if norm is None else str(norm)
-
 
 class LotShadowReconcileService:
     """
-    Phase 4A-2a / Step C: lot 维度影子对账（最小可落地版）
+    Phase 3（结构收口后的 ledger-only 影子对账）：
 
-    - 不改 stocks 槽位世界观
-    - 只读 stock_ledger + lots
+    - 只读 stock_ledger（lots 不再承载日期字段；batch_code_key 语义已退场）
     - 给出：
       1) lot 覆盖率（整体 + receipt 口径）
       2) 按 lot 聚合的 sum(delta)（影子余额）
-      3) ledger dates vs lot dates 差异清单（用于数据治理/迁移准备）
+      3) ledger 日期违规/污染清单（非 RECEIPT 行携带日期；理论上应永远为 0）
     """
 
     @staticmethod
@@ -44,23 +27,17 @@ class LotShadowReconcileService:
         item_id: int,
         time_from: datetime,
         time_to: datetime,
-        batch_code: Optional[str] = None,
         lot_id: Optional[int] = None,
-        mismatch_limit: int = 50,
+        violation_limit: int = 50,
     ) -> Dict[str, Any]:
         w = int(warehouse_id)
         i = int(item_id)
         t1 = time_from
         t2 = time_to
 
-        bkey = _batch_key(batch_code)
-
         # 1) 覆盖率
         cond = ["warehouse_id=:w", "item_id=:i", "occurred_at>=:t1", "occurred_at<=:t2"]
         params: Dict[str, Any] = {"w": w, "i": i, "t1": t1, "t2": t2}
-        if bkey is not None:
-            cond.append("batch_code_key=:bkey")
-            params["bkey"] = bkey
         if lot_id is not None:
             cond.append("lot_id=:lot")
             params["lot"] = int(lot_id)
@@ -97,57 +74,45 @@ class LotShadowReconcileService:
         """
         by_lot = (await session.execute(text(by_lot_sql), params)).mappings().all()
 
-        # 3) 日期一致性（ledger vs lots）
-        # 只检查有 lot_id 的行；只要两边都非空且不相等就算 mismatch
-        mismatch_sql = f"""
+        # 3) ledger-only 日期违规（非 RECEIPT 行携带日期；正常应为 0）
+        violation_sql = f"""
             SELECT
               l.id AS ledger_id,
               l.lot_id AS lot_id,
-              l.production_date::text AS ledger_production_date,
-              lo.production_date::text AS lot_production_date,
-              l.expiry_date::text AS ledger_expiry_date,
-              lo.expiry_date::text AS lot_expiry_date,
+              l.reason_canon::text AS reason_canon,
+              l.production_date::text AS production_date,
+              l.expiry_date::text AS expiry_date,
               l.occurred_at AS occurred_at
             FROM stock_ledger l
-            JOIN lots lo ON lo.id = l.lot_id
             WHERE {" AND ".join(cond)}
               AND l.lot_id IS NOT NULL
-              AND (
-                (l.production_date IS NOT NULL AND lo.production_date IS NOT NULL AND l.production_date <> lo.production_date)
-                OR
-                (l.expiry_date IS NOT NULL AND lo.expiry_date IS NOT NULL AND l.expiry_date <> lo.expiry_date)
-              )
+              AND l.reason_canon <> 'RECEIPT'
+              AND (l.production_date IS NOT NULL OR l.expiry_date IS NOT NULL)
             ORDER BY l.occurred_at DESC, l.id DESC
             LIMIT :lim
         """
         params2 = dict(params)
-        params2["lim"] = int(mismatch_limit)
+        params2["lim"] = int(violation_limit)
+        violations = (await session.execute(text(violation_sql), params2)).mappings().all()
 
-        mismatches = (await session.execute(text(mismatch_sql), params2)).mappings().all()
-
-        mismatch_count_sql = f"""
+        violation_count_sql = f"""
             SELECT COUNT(*)::int AS cnt
             FROM stock_ledger l
-            JOIN lots lo ON lo.id = l.lot_id
             WHERE {" AND ".join(cond)}
               AND l.lot_id IS NOT NULL
-              AND (
-                (l.production_date IS NOT NULL AND lo.production_date IS NOT NULL AND l.production_date <> lo.production_date)
-                OR
-                (l.expiry_date IS NOT NULL AND lo.expiry_date IS NOT NULL AND l.expiry_date <> lo.expiry_date)
-              )
+              AND l.reason_canon <> 'RECEIPT'
+              AND (l.production_date IS NOT NULL OR l.expiry_date IS NOT NULL)
         """
-        mismatch_cnt_row = (await session.execute(text(mismatch_count_sql), params)).mappings().first() or {}
-        mismatch_count = int(mismatch_cnt_row.get("cnt") or 0)
+        violation_cnt_row = (await session.execute(text(violation_count_sql), params)).mappings().first() or {}
+        violation_count = int(violation_cnt_row.get("cnt") or 0)
 
         return {
             "warehouse_id": w,
             "item_id": i,
-            "batch_code_key": bkey,
             "time_from": t1,
             "time_to": t2,
             "coverage": coverage,
             "by_lot": [dict(r) for r in by_lot],
-            "mismatch_count": mismatch_count,
-            "mismatches": [dict(r) for r in mismatches],
+            "violation_count": violation_count,
+            "violations": [dict(r) for r in violations],
         }

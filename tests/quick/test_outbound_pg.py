@@ -27,7 +27,7 @@ async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
-    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位
+    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位（lot_id IS NULL）
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
@@ -40,7 +40,7 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id = :i
                    AND warehouse_id = :w
-                   AND lot_id_key = 0
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),
@@ -70,7 +70,7 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
 async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
     """
     强护栏下不要依赖 conftest 的“隐式基线库存”，测试自己把目标槽位 seed 到 qty。
-    - code=None  => lot_id_key=0 槽位
+    - code=None  => NULL 槽位（lot_id IS NULL）
     - code=str   => 批次槽位（lot_code 展示码），入库需日期
     """
     svc = StockService()

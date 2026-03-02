@@ -7,9 +7,9 @@ from typing import List, Set
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import (
+from app.api.lot_code_contract import (
     fetch_item_expiry_policy_map,
-    validate_batch_code_contract,
+    validate_lot_code_contract,
 )
 from app.api.deps import get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
@@ -66,9 +66,9 @@ def register(router: APIRouter) -> None:
                 ),
             )
 
-        batch_code = validate_batch_code_contract(
+        batch_code = validate_lot_code_contract(
             requires_batch=any_requires,
-            batch_code=getattr(body, "batch_code", None),
+            lot_code=getattr(body, "batch_code", None),
         )
 
         order_ref, trace_id = await get_order_ref_and_trace_id(

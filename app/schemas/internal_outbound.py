@@ -15,7 +15,6 @@ class InternalOutboundLineOut(BaseModel):
     batch_code: Optional[str] = None
     requested_qty: int
     confirmed_qty: Optional[int] = None
-    uom: Optional[str] = None
     note: Optional[str] = None
     extra_meta: Optional[dict[str, Any]] = None
 
@@ -67,7 +66,6 @@ class InternalOutboundUpsertLineIn(BaseModel):
     item_id: int
     qty: int
     batch_code: Optional[str] = None
-    uom: Optional[str] = None
     note: Optional[str] = None
 
 

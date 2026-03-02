@@ -37,6 +37,10 @@ async def parse_scan(
     统一解析 /scan 请求，返回：
       parsed, mode, probe, qty, item_id, batch_code, warehouse_id,
       production_date(date|None), expiry_date(date|None)
+
+    Phase M-4 governance：
+    - 对外新增 lot_code（正名），但 orchestrator 内部 key 仍使用 batch_code（历史兼容）
+    - 因此：若请求带 lot_code 且 batch_code 为空，会映射到 parsed['batch_code']
     """
     # 1) 从 barcode 字符串里解析 KV token：ITM: / QTY: / B: / PD: / EXP: / WH:
     raw = str(scan.get("barcode") or (scan.get("tokens") or {}).get("barcode") or "")
@@ -48,6 +52,7 @@ async def parse_scan(
         "qty",
         "task_line_id",
         "batch_code",
+        "lot_code",
         "warehouse_id",
         "production_date",
         "expiry_date",
@@ -56,6 +61,10 @@ async def parse_scan(
         v_parsed = parsed.get(f)
         if (v_parsed is None or v_parsed == "") and v_scan is not None:
             parsed[f] = v_scan
+
+    # 2.1) 合同双轨：lot_code -> batch_code（内部统一使用 batch_code key）
+    if not parsed.get("batch_code") and parsed.get("lot_code"):
+        parsed["batch_code"] = parsed.get("lot_code")
 
     # 3) 使用 item_barcodes 反查 item_id
     if raw and parsed.get("item_id") is None:
@@ -105,6 +114,8 @@ async def parse_scan(
     probe = bool(scan.get("probe"))
     qty = int(parsed.get("qty") or scan.get("qty") or 1)
     item_id = int(parsed.get("item_id") or 0)
+
+    # 内部仍使用 batch_code 变量名（历史兼容），值可来自 lot_code
     batch_code = parsed.get("batch_code")
     wh_id = int(parsed.get("warehouse_id") or scan.get("warehouse_id") or 1)
 

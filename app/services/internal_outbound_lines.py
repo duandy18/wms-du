@@ -6,7 +6,6 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.internal_outbound import InternalOutboundLine
-
 from app.services.internal_outbound_query import get_with_lines
 
 
@@ -17,7 +16,6 @@ async def upsert_line(
     item_id: int,
     qty: int,
     batch_code: Optional[str] = None,
-    uom: Optional[str] = None,
     note: Optional[str] = None,
 ):
     """
@@ -26,6 +24,9 @@ async def upsert_line(
     - 若同一 doc 下已存在 (item_id, batch_code) 则累加 requested_qty；
     - 否则新建一行，line_no = 当前最大行号 + 1；
     - qty 可为正数（新增）或负数（减少），但最终 requested_qty 不得小于 0。
+
+    Phase M-5：
+    - internal_outbound_lines 不再承载 uom（单位真相源 = item_uoms；此处只保留数量/批次/备注）
     """
     if qty == 0:
         return await get_with_lines(session, doc_id)
@@ -54,7 +55,7 @@ async def upsert_line(
             batch_code=norm_code,
             requested_qty=int(qty),
             confirmed_qty=None,
-            uom=uom,
+            # uom 不再写入
             note=note,
         )
         if target.requested_qty < 0:
@@ -73,8 +74,7 @@ async def upsert_line(
             target.batch_code = norm_code
         if note is not None:
             target.note = note
-        if uom is not None:
-            target.uom = uom
+        # uom 不再更新
 
     await session.flush()
     return await get_with_lines(session, doc.id)
