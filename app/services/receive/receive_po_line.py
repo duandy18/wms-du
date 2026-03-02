@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.inbound_receipt import InboundReceiptLine
@@ -21,16 +21,11 @@ from app.services.receive.receipt_draft import (
     sum_draft_received_base,
 )
 
+_PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
+
 
 def _ordered_base(line: Any) -> int:
     return _ordered_base_impl(line)
-
-
-def _normalize_barcode(barcode: Optional[str]) -> Optional[str]:
-    if barcode is None:
-        return None
-    s = str(barcode).strip()
-    return s or None
 
 
 def _normalize_lot_code(v: Optional[str]) -> Optional[str]:
@@ -40,8 +35,14 @@ def _normalize_lot_code(v: Optional[str]) -> Optional[str]:
     return s or None
 
 
+def _is_pseudo_lot_code(lot_code: Optional[str]) -> bool:
+    c = _normalize_lot_code(lot_code)
+    if c is None:
+        return False
+    return c.upper() in _PSEUDO_LOT_CODE_TOKENS
+
+
 def _validate_dates_light(*, production_date: Optional[date], expiry_date: Optional[date]) -> None:
-    # DB 也有 ck_inbound_receipt_lines_prod_le_exp，这里给更友好的 400
     if production_date is not None and expiry_date is not None and production_date > expiry_date:
         raise ValueError("日期不合法：production_date 不能晚于 expiry_date")
 
@@ -51,8 +52,52 @@ async def _load_item_expiry_policy(session: AsyncSession, *, item_id: int) -> st
     v = row.scalar_one_or_none()
     if v is None:
         return "NONE"
-    # ✅ Item.expiry_policy 是 ExpiryPolicy Enum：必须用 .value
     return str(getattr(v, "value", v) or "NONE").upper()
+
+
+async def _load_item_lot_source_policy(session: AsyncSession, *, item_id: int) -> str:
+    row = await session.execute(select(Item.lot_source_policy).where(Item.id == int(item_id)))
+    v = row.scalar_one_or_none()
+    if v is None:
+        return "INTERNAL_ONLY"
+    return str(getattr(v, "value", v) or "INTERNAL_ONLY").upper()
+
+
+async def _require_item_uom_ratio_to_base(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    uom_id: int,
+) -> Tuple[int, Optional[str]]:
+    if uom_id <= 0:
+        raise HTTPException(status_code=400, detail="uom_id 必须为正整数")
+
+    row = await session.execute(
+        text(
+            """
+            SELECT
+              ratio_to_base,
+              COALESCE(NULLIF(TRIM(display_name), ''), NULLIF(TRIM(uom), '')) AS disp
+            FROM item_uoms
+            WHERE id = :uom_id AND item_id = :item_id
+            """
+        ),
+        {"uom_id": int(uom_id), "item_id": int(item_id)},
+    )
+    r = row.mappings().first()
+    if r is None:
+        raise HTTPException(status_code=400, detail=f"uom_id 不存在或不属于该商品：item_id={int(item_id)} uom_id={int(uom_id)}")
+
+    try:
+        ratio = int(r.get("ratio_to_base") or 0)
+    except Exception:
+        ratio = 0
+    if ratio <= 0:
+        raise HTTPException(status_code=400, detail="item_uoms.ratio_to_base 非法（必须 >= 1）")
+
+    disp = r.get("disp")
+    disp = str(disp).strip() if disp is not None and str(disp).strip() else None
+    return ratio, disp
 
 
 async def receive_po_line(
@@ -61,14 +106,22 @@ async def receive_po_line(
     po_id: int,
     line_id: Optional[int] = None,
     line_no: Optional[int] = None,
+    uom_id: int,
     qty: int,
     occurred_at: Optional[datetime] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
-    barcode: Optional[str] = None,
-    batch_code: Optional[str] = None,  # 作为 lot_code 标签输入（是否必填由 item.lot_source_policy 决定，交给 explain/confirm）
+    barcode: Optional[str] = None,  # 当前不落库：receipt_lines 不承载 barcode；保留签名兼容
+    batch_code: Optional[str] = None,  # 作为 lot_code 标签输入（是否必填由 item.lot_source_policy 决定）
 ) -> PurchaseOrder:
+    """
+    M-4：收货输入单位合同收敛（硬切）
+    - 输入：uom_id + qty（qty 是输入数量，按该 uom）
+    - 事实：qty_base = qty * ratio_to_base（ratio 来自 item_uoms）
+    - 禁止：units_per_case / 历史字段 fallback
+    """
     _ = occurred_at
+    _ = barcode
 
     if qty <= 0:
         raise ValueError("收货数量 qty 必须 > 0")
@@ -84,12 +137,12 @@ async def receive_po_line(
     target: Optional[PurchaseOrderLine] = None
     if line_id is not None:
         for line in po.lines:
-            if line.id == line_id:
+            if int(line.id) == int(line_id):
                 target = line
                 break
     else:
         for line in po.lines:
-            if line.line_no == line_no:
+            if int(line.line_no) == int(line_no):
                 target = line
                 break
 
@@ -100,18 +153,29 @@ async def receive_po_line(
     if draft is None:
         raise ValueError(f"请先开始收货：未找到 PO 的 DRAFT 收货单 (po_id={po_id})")
 
+    draft_wh_id = int(getattr(draft, "warehouse_id"))
+    po_wh_id = int(getattr(po, "warehouse_id"))
+    if draft_wh_id != po_wh_id:
+        raise ValueError(f"DRAFT receipt warehouse mismatch: receipt.wh={draft_wh_id} po.wh={po_wh_id}")
+
+    item_id_val = int(getattr(target, "item_id"))
+
+    # ✅ 输入单位合法性：只认 item_uoms
+    ratio_to_base, _disp = await _require_item_uom_ratio_to_base(session, item_id=item_id_val, uom_id=int(uom_id))
+    qty_base = int(qty) * int(ratio_to_base)
+    if qty_base <= 0:
+        raise ValueError("收货数量换算后 qty_base 必须 > 0")
+
     ordered_base = int(_ordered_base(target) or 0)
     confirmed_received_base = await sum_confirmed_received_base(session, po_id=int(po.id), po_line_id=int(target.id))
     draft_received_base = await sum_draft_received_base(session, receipt_id=int(draft.id), po_line_id=int(target.id))
 
     remaining_base = max(0, ordered_base - confirmed_received_base - draft_received_base)
-    if qty > remaining_base:
+    if qty_base > remaining_base:
         raise ValueError("行收货数量超出剩余数量")
 
     next_line_no = await next_receipt_line_no(session, receipt_id=int(draft.id))
-    item_id_val = int(getattr(target, "item_id"))
 
-    # ✅ 时间层：expiry_policy=NONE 时强制清空日期输入（与 lot_code 去耦合）
     expiry_policy = await _load_item_expiry_policy(session, item_id=item_id_val)
     if expiry_policy == "NONE":
         production_date = None
@@ -122,28 +186,34 @@ async def receive_po_line(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    lot_code = _normalize_lot_code(batch_code)
+    if _is_pseudo_lot_code(lot_code):
+        raise HTTPException(status_code=400, detail="批次码禁止伪码（NOEXP/NONE）")
+
+    lot_source_policy = await _load_item_lot_source_policy(session, item_id=item_id_val)
+    if lot_source_policy == "SUPPLIER_ONLY" and lot_code is None:
+        raise HTTPException(status_code=400, detail="供应商批次码必填（lot_source_policy=SUPPLIER_ONLY）")
+
+    # ✅ Route B：draft 不生成 lot_id；confirm 时填
+    # ✅ 终态字段：
+    # - lot_code_input 取代旧 batch_code 列（输入标签/展示码）
+    # - receipt_status_snapshot NOT NULL（DRAFT/CONFIRMED）
     rl = InboundReceiptLine(
         receipt_id=int(draft.id),
         line_no=int(next_line_no),
         po_line_id=int(getattr(target, "id")),
         item_id=item_id_val,
-        item_name=getattr(target, "item_name", None),
-        item_sku=getattr(target, "item_sku", None),
-        category=None,
-        spec_text=getattr(target, "spec_text", None),
-        base_uom=getattr(target, "base_uom", None),
-        purchase_uom=getattr(target, "purchase_uom", None),
-        barcode=_normalize_barcode(barcode),
-        batch_code=_normalize_lot_code(batch_code),
+        warehouse_id=int(draft_wh_id),
+        lot_code_input=lot_code,
         production_date=production_date,
         expiry_date=expiry_date,
-        qty_received=int(qty),
-        units_per_case=int(getattr(target, "units_per_case", 1) or 1),
-        qty_units=int(qty),
-        unit_cost=None,
-        line_amount=None,
+        uom_id=int(uom_id),
+        qty_input=int(qty),
+        ratio_to_base_snapshot=int(ratio_to_base),
+        qty_base=int(qty_base),
+        receipt_status_snapshot="DRAFT",
         remark=None,
-        lot_id=None,  # ✅ draft 阶段不产生 lot_id
+        lot_id=None,  # Route B: confirm will fill
     )
 
     session.add(rl)

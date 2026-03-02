@@ -31,13 +31,6 @@ class ItemBase(_Base):
     sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
-    uom: Annotated[str | None, Field(default=None, max_length=32)] = None
-
-    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
-    # 语义：1 case_uom = case_ratio × uom（最小单位）
-    # 注意：uom 是系统事实口径；case_* 不改变事实口径，仅用于展示/输入偏好与换算
-    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
-    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
 
     # 兼容字段：历史上前端/调用方使用 barcode 表示“主条码”
     # 本轮收敛：primary_barcode 才是唯一真相；barcode 作为 alias（输出时等同 primary_barcode）
@@ -59,7 +52,7 @@ class ItemBase(_Base):
     derivation_allowed: Annotated[bool | None, Field(default=None)] = None
     uom_governance_enabled: Annotated[bool | None, Field(default=None)] = None
 
-    # 旧字段（仍保留输出，DB 已锁死与 expiry_policy 一致）
+    # 旧字段（兼容输入/输出，但真相以 expiry_policy 为准）
     has_shelf_life: Annotated[bool | None, Field(default=None)] = None
 
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
@@ -71,8 +64,6 @@ class ItemBase(_Base):
         "sku",
         "name",
         "spec",
-        "uom",
-        "case_uom",
         "barcode",
         "primary_barcode",
         "brand",
@@ -88,15 +79,13 @@ class ItemCreate(_Base):
     """
     Create Item（统一由后端生成 SKU）：
     - 不接受 sku 输入
+
+    Phase M-3：
+    - items.case_ratio/case_uom 已删除；包装单位请走 item_uoms
     """
 
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
-    uom: Annotated[str | None, Field(default=None, max_length=32)] = None
-
-    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
-    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
-    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
 
     # 兼容：创建时允许传入 barcode，后端会写入 item_barcodes 并设为主条码
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
@@ -114,7 +103,7 @@ class ItemCreate(_Base):
     derivation_allowed: bool | None = None
     uom_governance_enabled: bool | None = None
 
-    # 旧字段（保留兼容，但最终以 expiry_policy 为准；DB 已锁死一致性）
+    # 旧字段（保留兼容，但最终以 expiry_policy 为准）
     has_shelf_life: bool | None = None
     shelf_life_value: Annotated[int | None, Field(default=None, ge=0)] = None
     shelf_life_unit: Annotated[Literal["DAY", "MONTH"] | None, Field(default=None)] = None
@@ -124,8 +113,6 @@ class ItemCreate(_Base):
     @field_validator(
         "name",
         "spec",
-        "uom",
-        "case_uom",
         "barcode",
         "brand",
         "category",
@@ -142,11 +129,6 @@ class ItemUpdate(_Base):
 
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
-    uom: Annotated[str | None, Field(default=None, max_length=32)] = None
-
-    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
-    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
-    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
 
     # 保留字段（兼容），但 router 会拒绝通过 /items 更新 barcode，要求走 /item-barcodes
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
@@ -175,8 +157,6 @@ class ItemUpdate(_Base):
         "sku",
         "name",
         "spec",
-        "uom",
-        "case_uom",
         "barcode",
         "brand",
         "category",
@@ -194,9 +174,6 @@ class ItemUpdate(_Base):
                 "sku",
                 "name",
                 "spec",
-                "uom",
-                "case_ratio",
-                "case_uom",
                 "barcode",
                 "brand",
                 "category",
@@ -219,7 +196,9 @@ class ItemUpdate(_Base):
 class ItemCreateById(_Base):
     """
     这个接口本身就是“例外通道”，用于历史兼容/修复。
-    如果你也想“完全统一标准”，建议在 router 层直接禁用该接口（删除 /by-id 路由）。
+
+    Phase M-3：
+    - items.case_ratio/case_uom 已删除；包装单位请走 item_uoms
     """
 
     id: Annotated[int, Field(gt=0)]
@@ -227,11 +206,6 @@ class ItemCreateById(_Base):
     sku: Annotated[str | None, Field(default=None, max_length=128)] = None
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
-    uom: Annotated[str | None, Field(default=None, max_length=32)] = None
-
-    # ✅ Phase 1: 结构化包装字段（仅一层箱装）
-    case_ratio: Annotated[int | None, Field(default=None, ge=1)] = None
-    case_uom: Annotated[str | None, Field(default=None, max_length=16)] = None
 
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 

@@ -100,6 +100,7 @@ async def query_item_detail(
             "warehouse_name": r["warehouse_name"],
             "pool": pool,
             "batch_code": r["batch_code"],  # Phase 4B-3: 实际来自 lots.lot_code
+            "lot_code": r["batch_code"],
             "production_date": production_date,
             "expiry_date": expiry_date,
             "on_hand_qty": qty,

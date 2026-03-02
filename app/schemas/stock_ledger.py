@@ -46,13 +46,19 @@ class SubReason(str, Enum):
 # =========================================================
 class LedgerQuery(_Base):
     """
-    库存台账查询条件（统一合同）：
+    库存台账查询条件（统一合同）
+
+    Phase M-4 governance：
+    - lot_code 为正名（展示码 lots.lot_code）
+    - batch_code 为历史兼容字段（与 lot_code 等价）
     """
 
     item_id: Optional[int] = Field(default=None, description="商品 ID（精确）")
     item_keyword: Optional[str] = Field(default=None, description="商品关键词（模糊匹配 name / sku）")
     warehouse_id: Optional[int] = Field(default=None, description="仓库 ID")
-    batch_code: Optional[str] = Field(default=None, max_length=64, description="批次编码（精确）")
+
+    lot_code: Optional[str] = Field(default=None, max_length=64, description="Lot 展示码（优先使用；等价于 batch_code）")
+    batch_code: Optional[str] = Field(default=None, max_length=64, description="批次编码（兼容字段；等价于 lot_code）")
 
     # Phase 4A-2a: lot 维度过滤（事实维度）
     lot_id: Optional[int] = Field(default=None, description="Lot ID（精确，影子事实维度过滤）")
@@ -83,6 +89,7 @@ class LedgerQuery(_Base):
 
     @field_validator(
         "item_keyword",
+        "lot_code",
         "batch_code",
         "reason",
         "ref",
@@ -115,7 +122,10 @@ class LedgerRow(_Base):
     warehouse_id: int
     item_id: int
     item_name: Optional[str] = None
-    batch_code: str
+
+    # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
+    lot_code: Optional[str] = None
+    batch_code: Optional[str] = None
 
     # Phase 3+ : lot shadow dimension (Phase 4A-2a expose for query/history)
     lot_id: Optional[int] = None
@@ -152,10 +162,17 @@ class LedgerSummary(_Base):
 class LedgerReconcileRow(_Base):
     warehouse_id: int
     item_id: int
-    batch_code: str
+
+    # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
+    lot_code: Optional[str] = None
+    batch_code: Optional[str] = None
+
     ledger_sum_delta: int
     stock_qty: int
     diff: int
+
+    # 如果调用方补齐 lot_id，则保留（extra=ignore 会兼容）
+    lot_id: Optional[int] = None
 
 
 class LedgerReconcileResult(_Base):

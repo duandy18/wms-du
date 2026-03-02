@@ -11,10 +11,11 @@ class LedgerReplayService:
     """
     Ledger Replay Engine
     --------------------
-    从 ledger 逐事件重放库存，模拟 stocks 变化。
+    从 ledger 逐事件重放库存，模拟 stocks_lot 变化。
 
-    Phase 4 提示：
-    - 当主维度切到 lot_id 后，slot key 应切换到 (wh,item,lot_id)（并处理 NONE 槽位）。
+    Phase 3 终态（lot-only）：
+    - slot key 必须切到 (wh, item, lot_id)
+    - batch_code 仅用于展示（lots.lot_code），不参与 slot key
     """
 
     @staticmethod
@@ -26,20 +27,29 @@ class LedgerReplayService:
     ) -> List[Dict[str, Any]]:
         sql = text(
             """
-            SELECT id, occurred_at, reason, delta, warehouse_id, item_id, batch_code
-            FROM stock_ledger
-            WHERE occurred_at >= :t1 AND occurred_at <= :t2
-            ORDER BY occurred_at ASC, id ASC;
+            SELECT
+              l.id,
+              l.occurred_at,
+              l.reason,
+              l.delta,
+              l.warehouse_id,
+              l.item_id,
+              l.lot_id,
+              lo.lot_code AS batch_code
+            FROM stock_ledger l
+            JOIN lots lo ON lo.id = l.lot_id
+            WHERE l.occurred_at >= :t1 AND l.occurred_at <= :t2
+            ORDER BY l.occurred_at ASC, l.id ASC;
         """
         )
 
         rows = (await session.execute(sql, {"t1": time_from, "t2": time_to})).mappings().all()
 
-        slot: dict[tuple[int, int, str | None], int] = {}
+        slot: dict[tuple[int, int, int], int] = {}
         timeline: list[dict[str, Any]] = []
 
         for e in rows:
-            k = (int(e["warehouse_id"]), int(e["item_id"]), e["batch_code"])
+            k = (int(e["warehouse_id"]), int(e["item_id"]), int(e["lot_id"]))
             slot.setdefault(k, 0)
             before = slot[k]
             after = before + int(e["delta"])
@@ -55,7 +65,9 @@ class LedgerReplayService:
                     "after": after,
                     "warehouse_id": k[0],
                     "item_id": k[1],
-                    "batch_code": k[2],
+                    "lot_id": k[2],
+                    # 展示码：lots.lot_code（可能为 NULL）
+                    "batch_code": e.get("batch_code"),
                 }
             )
 

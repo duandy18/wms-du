@@ -22,7 +22,7 @@ async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
-    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位
+    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位（lot_id IS NULL）
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
@@ -35,7 +35,7 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id=:i
                    AND warehouse_id=:w
-                   AND lot_id_key = 0
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),
@@ -111,7 +111,7 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
 
     槽位口径（与后端 requires_batch 派生一致）：
       - 批次受控：batch_code='NEAR'（承载 lot_code 展示码）
-      - 非批次受控：batch_code=NULL（lot_id_key=0）
+      - 非批次受控：batch_code=NULL（NULL 槽位：lot_id IS NULL）
     """
     item_id, wh = 3003, 1
     code = await _slot_code(session, item_id)

@@ -17,8 +17,13 @@ class ItemService:
     """
     门面（Facade）：
 
-    - 对外保持现有接口不变（router 不用改）
     - 内部按功能拆分到：Query / Write / Presenter / TestSet / Maintenance
+
+    Phase M-3：
+    - items.case_ratio / items.case_uom 已删除；包装单位/倍率请走 item_uoms
+
+    Phase M-5：
+    - items.uom 已物理移除；单位治理完全由 item_uoms 承载
     """
 
     def __init__(self, db: Session) -> None:
@@ -74,9 +79,6 @@ class ItemService:
         *,
         name: str,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
@@ -96,9 +98,6 @@ class ItemService:
         obj = self._write.create_item(
             name=name,
             spec=spec,
-            uom=uom,
-            case_ratio=case_ratio,
-            case_uom=case_uom,
             barcode=barcode,
             brand=brand,
             category=category,
@@ -124,9 +123,6 @@ class ItemService:
         sku: Optional[str] = None,
         name: Optional[str] = None,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
@@ -142,9 +138,6 @@ class ItemService:
             sku=sku,
             name=name,
             spec=spec,
-            uom=uom,
-            case_ratio=case_ratio,
-            case_uom=case_uom,
             barcode=barcode,
             brand=brand,
             category=category,
@@ -187,11 +180,6 @@ class ItemService:
         id: int,
         name: Optional[str] = None,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
-        case_ratio_set: bool = False,
-        case_uom_set: bool = False,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
         # legacy mirror
@@ -213,11 +201,6 @@ class ItemService:
             id=id,
             name=name,
             spec=spec,
-            uom=uom,
-            case_ratio=case_ratio,
-            case_uom=case_uom,
-            case_ratio_set=case_ratio_set,
-            case_uom_set=case_uom_set,
             enabled=enabled,
             supplier_id=supplier_id,
             has_shelf_life=has_shelf_life,

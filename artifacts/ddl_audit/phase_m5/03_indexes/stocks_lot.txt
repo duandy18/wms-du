@@ -1,0 +1,4 @@
+ix_stocks_lot_item_id|CREATE INDEX ix_stocks_lot_item_id ON public.stocks_lot USING btree (item_id)
+ix_stocks_lot_warehouse_id|CREATE INDEX ix_stocks_lot_warehouse_id ON public.stocks_lot USING btree (warehouse_id)
+stocks_lot_pkey|CREATE UNIQUE INDEX stocks_lot_pkey ON public.stocks_lot USING btree (id)
+uq_stocks_lot_item_wh_lot|CREATE UNIQUE INDEX uq_stocks_lot_item_wh_lot ON public.stocks_lot USING btree (item_id, warehouse_id, lot_id)

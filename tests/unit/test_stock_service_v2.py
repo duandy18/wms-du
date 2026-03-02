@@ -37,77 +37,183 @@ async def _ensure_supplier_lot(
     code: str,
 ) -> int:
     """
-    确保存在一个最小合法 SUPPLIER lot，并返回 id。
-
-    注意：lots 表对策略快照（item_*_snapshot）有 NOT NULL 护栏，
-    因此插入 lots 必须从 items 真相源读取并冻结快照字段。
+    Phase M-5 终态：
+    - lots 只承载 identity + policy snapshots（不承载 production/expiry/expiry_source，也不承载 item_uom/case snapshot）
+    - 不依赖 ON CONFLICT 的具体 unique/index：先查再插
     """
-    row = (
+    lot_code = str(code).strip()
+    if not lot_code:
+        raise ValueError("lot_code required")
+
+    row0 = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :code
+                 LIMIT 1
+                """
+            ),
+            {"w": int(wh), "i": int(item_id), "code": lot_code},
+        )
+    ).first()
+    if row0 is not None:
+        return int(row0[0])
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO lots(
+              warehouse_id,
+              item_id,
+              lot_code_source,
+              lot_code,
+              source_receipt_id,
+              source_line_no,
+              -- required snapshots (NOT NULL)
+              item_lot_source_policy_snapshot,
+              item_expiry_policy_snapshot,
+              item_derivation_allowed_snapshot,
+              item_uom_governance_enabled_snapshot,
+              -- optional shelf-life snapshots (nullable)
+              item_shelf_life_value_snapshot,
+              item_shelf_life_unit_snapshot,
+              created_at
+            )
+            SELECT
+              :w,
+              it.id,
+              'SUPPLIER',
+              :code,
+              NULL,
+              NULL,
+              it.lot_source_policy,
+              it.expiry_policy,
+              it.derivation_allowed,
+              it.uom_governance_enabled,
+              it.shelf_life_value,
+              it.shelf_life_unit,
+              now()
+            FROM items it
+            WHERE it.id = :i
+            """
+        ),
+        {"w": int(wh), "i": int(item_id), "code": lot_code},
+    )
+
+    row1 = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :code
+                 LIMIT 1
+                """
+            ),
+            {"w": int(wh), "i": int(item_id), "code": lot_code},
+        )
+    ).first()
+    assert row1 is not None, {"msg": "failed to ensure supplier lot", "wh": wh, "item_id": item_id, "code": lot_code}
+    return int(row1[0])
+
+
+async def _ensure_internal_lot_for_test(session: AsyncSession, *, wh: int, item_id: int, ref: str) -> int:
+    """
+    Phase M-5 终态：非批次商品也必须落在一个真实 lot_id 上（不允许 NULL lot）。
+    INTERNAL lot 约束：
+    - lot_code_source='INTERNAL'
+    - lot_code IS NULL
+    - source_receipt_id/source_line_no NOT NULL（DB check）
+    """
+    r = await session.execute(
+        text(
+            """
+            INSERT INTO inbound_receipts (
+              warehouse_id,
+              source_type,
+              source_id,
+              ref,
+              trace_id,
+              status,
+              remark,
+              occurred_at
+            )
+            VALUES (
+              :w,
+              'PO',
+              NULL,
+              :ref,
+              NULL,
+              'DRAFT',
+              'UT internal lot source',
+              now()
+            )
+            RETURNING id
+            """
+        ),
+        {"w": int(wh), "ref": str(ref)},
+    )
+    receipt_id = int(r.scalar_one())
+
+    lot_row = (
         await session.execute(
             text(
                 """
                 INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    production_date,
-                    expiry_date,
-                    expiry_source,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_has_shelf_life_snapshot,
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    item_uom_snapshot,
-                    item_case_ratio_snapshot,
-                    item_case_uom_snapshot
+                  warehouse_id,
+                  item_id,
+                  lot_code_source,
+                  lot_code,
+                  source_receipt_id,
+                  source_line_no,
+                  -- required snapshots (NOT NULL)
+                  item_lot_source_policy_snapshot,
+                  item_expiry_policy_snapshot,
+                  item_derivation_allowed_snapshot,
+                  item_uom_governance_enabled_snapshot,
+                  -- optional shelf-life snapshots (nullable)
+                  item_shelf_life_value_snapshot,
+                  item_shelf_life_unit_snapshot,
+                  created_at
                 )
                 SELECT
-                    :w,
-                    :i,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    CURRENT_DATE,
-                    CURRENT_DATE + INTERVAL '365 day',
-                    'EXPLICIT',
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.has_shelf_life,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    it.uom,
-                    it.case_ratio,
-                    it.case_uom
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                  :w,
+                  it.id,
+                  'INTERNAL',
+                  NULL,
+                  :rid,
+                  1,
+                  it.lot_source_policy,
+                  it.expiry_policy,
+                  it.derivation_allowed,
+                  it.uom_governance_enabled,
+                  it.shelf_life_value,
+                  it.shelf_life_unit,
+                  now()
+                FROM items it
+                WHERE it.id = :i
                 RETURNING id
                 """
             ),
-            {"w": int(wh), "i": int(item_id), "code": str(code)},
+            {"w": int(wh), "i": int(item_id), "rid": int(receipt_id)},
         )
     ).first()
-    assert row is not None
-    return int(row[0])
+    assert lot_row is not None, {"msg": "failed to ensure internal lot", "wh": wh, "item_id": item_id}
+    return int(lot_row[0])
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
     """
     Phase 4D：只读 lot-world（stocks_lot + lots），按 lot_code（展示码）汇总 qty。
-    - code=None 表示 lot_id=NULL 槽位（lot_code=NULL）
+    - code=None 表示 lot_code=NULL（INTERNAL lot）
     """
     r = await session.execute(
         text(
@@ -128,9 +234,9 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
 
 async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
     """
-    Phase 4D：用 lot-world 种子补足库存。
-    - code=None → lot_id=None 槽位
-    - code!=None → 确保 SUPPLIER lot 存在，并写入该 lot 槽位
+    Phase 4D+：用 lot-world 种子补足库存。
+    - code=None 也必须落到 INTERNAL lot_id（lot_code=NULL）
+    - code!=None → SUPPLIER lot（lot_code=code）
     """
     svc = StockService()
     now = datetime.now(UTC)
@@ -142,14 +248,20 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
     need = qty - before
 
     if code is None:
+        lot_id = await _ensure_internal_lot_for_test(
+            session,
+            wh=int(wh),
+            item_id=int(item_id),
+            ref=f"UT-INTERNAL-LOT-{item_id}-{wh}-{int(now.timestamp()*1000)}",
+        )
         await svc.adjust_lot(
             session=session,
             item_id=int(item_id),
             warehouse_id=int(wh),
-            lot_id=None,
+            lot_id=int(lot_id),
             delta=int(need),
             reason=MovementType.INBOUND,
-            ref=f"UT-SEED-{item_id}-{wh}-NULL",
+            ref=f"UT-SEED-{item_id}-{wh}-INTERNAL",
             ref_line=1,
             occurred_at=now,
             batch_code=None,
@@ -175,14 +287,6 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
 
 @pytest.mark.asyncio
 async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
-    """
-    入库在缺省日期时，会自动兜底并推导日期，而不是直接抛错：
-    - 不传 production_date / expiry_date；
-    - adjust_lot 正常执行；
-    - 返回结果中有 production_date；
-    - 如果存在 expiry_date，则应满足 expiry_date >= production_date；
-    - 库存按 delta 正确变化。
-    """
     svc = StockService()
 
     item_id = 3001
@@ -203,7 +307,6 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=code,
-        # 不传日期，应该自动兜底
     )
 
     after = await _qty(session, item_id=item_id, wh=wh, code=code)
@@ -219,10 +322,6 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_adjust_outbound_requires_batch(session: AsyncSession):
-    """
-    仍保留 batch-world 合同：出库必须指定批次（batch_code 不能为空）——仅针对批次受控商品。
-    该测试验证 StockService.adjust 的 HTTPProblem 包装语义。
-    """
     svc = StockService()
 
     with pytest.raises(HTTPException) as exc:
@@ -245,7 +344,6 @@ async def test_adjust_outbound_requires_batch(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_adjust_idempotent(session: AsyncSession):
-    """相同 (wh,item,lot_id_key,batch_code_key,reason,ref,ref_line) 的入库应命中幂等。"""
     svc = StockService()
 
     item_id = 3001
@@ -300,11 +398,33 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
     before = await _qty(session, item_id=item_id, wh=wh, code=code)
     assert before >= 1
 
+    # ✅ 必须扣减“真实有库存的那个 lot 槽位”
+    lot_row = (
+        await session.execute(
+            text(
+                """
+                SELECT sl.lot_id
+                  FROM stocks_lot sl
+                  LEFT JOIN lots lo ON lo.id = sl.lot_id
+                 WHERE sl.warehouse_id = :w
+                   AND sl.item_id = :i
+                   AND sl.qty > 0
+                   AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
+                 ORDER BY sl.qty DESC, sl.lot_id ASC
+                 LIMIT 1
+                """
+            ),
+            {"w": int(wh), "i": int(item_id), "c": code},
+        )
+    ).first()
+    assert lot_row is not None, {"msg": "no positive stocks_lot slot found", "item_id": item_id, "warehouse_id": wh, "code": code}
+    lot_id = int(lot_row[0])
+
     r = await svc.adjust_lot(
         session=session,
         item_id=item_id,
         warehouse_id=wh,
-        lot_id=None,
+        lot_id=int(lot_id),
         delta=-1,
         reason=MovementType.OUTBOUND,
         ref="UT-OUT-2",
@@ -320,7 +440,7 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
             session=session,
             item_id=item_id,
             warehouse_id=wh,
-            lot_id=None,
+            lot_id=int(lot_id),
             delta=-(int(remain) + 1),
             reason=MovementType.OUTBOUND,
             ref="UT-OUT-3",
@@ -333,63 +453,71 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
 async def _insert_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, lot_code: str) -> int:
     """
     用于构造“坏 lot_id”（lot_mismatch / not_found）测试场景。
-    注意：lots 表有 NOT NULL snapshot 护栏，因此插入必须冻结快照。
+    终态：lots 不再承载 production/expiry/单位快照，仅冻结 policy snapshots。
     """
+    code = str(lot_code).strip()
+    if not code:
+        raise ValueError("lot_code required")
+
+    row0 = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :code
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "code": code},
+        )
+    ).first()
+    if row0 is not None:
+        return int(row0[0])
+
     row = await session.execute(
         text(
             """
             INSERT INTO lots(
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                source_receipt_id,
-                source_line_no,
-                production_date,
-                expiry_date,
-                expiry_source,
-                -- required snapshots (NOT NULL)
-                item_lot_source_policy_snapshot,
-                item_expiry_policy_snapshot,
-                item_derivation_allowed_snapshot,
-                item_uom_governance_enabled_snapshot,
-                -- optional snapshots (nullable)
-                item_has_shelf_life_snapshot,
-                item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot,
-                item_uom_snapshot,
-                item_case_ratio_snapshot,
-                item_case_uom_snapshot
+              warehouse_id,
+              item_id,
+              lot_code_source,
+              lot_code,
+              source_receipt_id,
+              source_line_no,
+              -- required snapshots (NOT NULL)
+              item_lot_source_policy_snapshot,
+              item_expiry_policy_snapshot,
+              item_derivation_allowed_snapshot,
+              item_uom_governance_enabled_snapshot,
+              -- optional shelf-life snapshots (nullable)
+              item_shelf_life_value_snapshot,
+              item_shelf_life_unit_snapshot,
+              created_at
             )
             SELECT
-                :w,
-                :i,
-                'SUPPLIER',
-                :code,
-                NULL,
-                NULL,
-                CURRENT_DATE,
-                CURRENT_DATE + INTERVAL '365 day',
-                'EXPLICIT',
-                it.lot_source_policy,
-                it.expiry_policy,
-                it.derivation_allowed,
-                it.uom_governance_enabled,
-                it.has_shelf_life,
-                it.shelf_life_value,
-                it.shelf_life_unit,
-                it.uom,
-                it.case_ratio,
-                it.case_uom
-              FROM items it
-             WHERE it.id = :i
-            ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-            WHERE lot_code_source = 'SUPPLIER'
-            DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+              :w,
+              it.id,
+              'SUPPLIER',
+              :code,
+              NULL,
+              NULL,
+              it.lot_source_policy,
+              it.expiry_policy,
+              it.derivation_allowed,
+              it.uom_governance_enabled,
+              it.shelf_life_value,
+              it.shelf_life_unit,
+              now()
+            FROM items it
+            WHERE it.id = :i
             RETURNING id
             """
         ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": str(lot_code)},
+        {"w": int(warehouse_id), "i": int(item_id), "code": code},
     )
     lot_id = row.scalar_one()
     return int(lot_id)
@@ -397,10 +525,6 @@ async def _insert_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
 
 @pytest.mark.asyncio
 async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
-    """
-    当传入 lot_id 且 lot 的 (warehouse_id,item_id) 与请求不一致，必须拒绝（409 lot_mismatch）。
-    这里保留对 batch-world adjust 的护栏包装（HTTPException）。
-    """
     svc = StockService()
     wh = 1
 
@@ -429,7 +553,6 @@ async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_adjust_rejects_lot_not_found(session: AsyncSession):
-    """当传入 lot_id 且 lot 不存在，必须拒绝（404 lot_not_found）。"""
     svc = StockService()
     wh = 1
 

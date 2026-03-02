@@ -1,25 +1,25 @@
                                                                         Table "public.inbound_receipt_lines"
-         Column         |           Type           | Collation | Nullable |                      Default                      | Storage  | Compression | Stats target | Description 
+         Column         |           Type           | Collation | Nullable |                      Default                      | Storage  | Compression | Stats target | Description
 ------------------------+--------------------------+-----------+----------+---------------------------------------------------+----------+-------------+--------------+-------------
- id                     | integer                  |           | not null | nextval('inbound_receipt_lines_id_seq'::regclass) | plain    |             |              | 
- receipt_id             | integer                  |           | not null |                                                   | plain    |             |              | 
- line_no                | integer                  |           | not null |                                                   | plain    |             |              | 
- po_line_id             | integer                  |           |          |                                                   | plain    |             |              | 
- item_id                | integer                  |           | not null |                                                   | plain    |             |              | 
- production_date        | date                     |           |          |                                                   | plain    |             |              | 
- expiry_date            | date                     |           |          |                                                   | plain    |             |              | 
- unit_cost              | numeric(12,2)            |           |          |                                                   | main     |             |              | 
- line_amount            | numeric(14,2)            |           |          |                                                   | main     |             |              | 
- remark                 | character varying(255)   |           |          |                                                   | extended |             |              | 
- created_at             | timestamp with time zone |           | not null | now()                                             | plain    |             |              | 
- updated_at             | timestamp with time zone |           | not null | now()                                             | plain    |             |              | 
- lot_id                 | integer                  |           |          |                                                   | plain    |             |              | 
- warehouse_id           | integer                  |           | not null |                                                   | plain    |             |              | 
- batch_code             | character varying(64)    |           |          |                                                   | extended |             |              | 
- uom_id                 | integer                  |           | not null |                                                   | plain    |             |              | 
- qty_input              | integer                  |           | not null |                                                   | plain    |             |              | 
- ratio_to_base_snapshot | integer                  |           | not null |                                                   | plain    |             |              | 
- qty_base               | integer                  |           | not null |                                                   | plain    |             |              | 
+ id                     | integer                  |           | not null | nextval('inbound_receipt_lines_id_seq'::regclass) | plain    |             |              |
+ receipt_id             | integer                  |           | not null |                                                   | plain    |             |              |
+ line_no                | integer                  |           | not null |                                                   | plain    |             |              |
+ po_line_id             | integer                  |           |          |                                                   | plain    |             |              |
+ item_id                | integer                  |           | not null |                                                   | plain    |             |              |
+ production_date        | date                     |           |          |                                                   | plain    |             |              |
+ expiry_date            | date                     |           |          |                                                   | plain    |             |              |
+ unit_cost              | numeric(12,2)            |           |          |                                                   | main     |             |              |
+ line_amount            | numeric(14,2)            |           |          |                                                   | main     |             |              |
+ remark                 | character varying(255)   |           |          |                                                   | extended |             |              |
+ created_at             | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ updated_at             | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ lot_id                 | integer                  |           |          |                                                   | plain    |             |              |
+ warehouse_id           | integer                  |           | not null |                                                   | plain    |             |              |
+ batch_code             | character varying(64)    |           |          |                                                   | extended |             |              |
+ uom_id                 | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_input              | integer                  |           | not null |                                                   | plain    |             |              |
+ ratio_to_base_snapshot | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_base               | integer                  |           | not null |                                                   | plain    |             |              |
 Indexes:
     "inbound_receipt_lines_pkey" PRIMARY KEY, btree (id)
     "ix_inbound_receipt_lines_item" btree (item_id)
@@ -35,4 +35,3 @@ Foreign-key constraints:
     "fk_inbound_receipt_lines_receipt" FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
     "fk_receipt_line_uom" FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
 Access method: heap
-

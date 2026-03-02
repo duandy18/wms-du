@@ -1,0 +1,5 @@
+1|id|integer|int4|NO|nextval('stocks_lot_id_seq'::regclass)
+2|item_id|integer|int4|NO|
+3|warehouse_id|integer|int4|NO|
+4|lot_id|integer|int4|NO|
+5|qty|integer|int4|NO|

@@ -78,10 +78,9 @@ async def _resolve_supplier_lot_id_by_lot_code(
     lot_code: str,
 ) -> int:
     """
-    Phase 5 第一刀（执行域收紧）：
-
+    终态（lot-only）：
     - 显式 batch_code 已演进为 SUPPLIER lot_code（lot-world）
-    - 执行域禁止 fallback 到 batch-world（不允许双真相）
+    - 执行域禁止 fallback 到 batch-world
     - 找不到 lot 直接硬拦（409）
     """
     code = (lot_code or "").strip()
@@ -114,7 +113,6 @@ async def _resolve_supplier_lot_id_by_lot_code(
             details=[],
             next_actions=[{"action": "create_lot", "label": "补录批次/入库以生成 lot"}],
         )
-        # raise_problem 会抛异常；这里 return 只是类型补全
         return 0
 
     return int(row[0])
@@ -132,8 +130,8 @@ async def fefo_deduct_internal(
     trace_id: Optional[str],
 ) -> None:
     """
-    Phase 4C：internal_outbound FEFO 扣减切到 lot-world：
-    - 选槽：stocks_lot + lots（expiry_date ASC, lot_id ASC）
+    internal_outbound FEFO 扣减（lot-only）：
+    - 选槽：stocks_lot + lots（expiry_date ASC NULLS LAST, lot_id ASC）
     - 扣减：StockService.adjust_lot（写 stocks_lot + ledger(lot_id)）
     """
     remain = int(total_qty)
@@ -151,7 +149,7 @@ async def fefo_deduct_internal(
                      WHERE s.item_id = :i
                        AND s.warehouse_id = :w
                        AND s.qty > 0
-                     ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id_key ASC
+                     ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id ASC
                      LIMIT 1
                     """
                 ),
@@ -162,7 +160,7 @@ async def fefo_deduct_internal(
         if not row:
             raise ValueError(f"内部出库 FEFO 扣减失败：库存不足 item_id={item_id}, remain={remain}")
 
-        lot_id = row[0]
+        lot_id = int(row[0])
         on_hand = int(row[1] or 0)
         take = min(remain, on_hand)
         idx += 1
@@ -171,7 +169,7 @@ async def fefo_deduct_internal(
             session=session,
             item_id=int(item_id),
             warehouse_id=int(warehouse_id),
-            lot_id=(int(lot_id) if lot_id is not None else None),
+            lot_id=int(lot_id),
             delta=-int(take),
             reason="INTERNAL_OUT",
             ref=str(ref),

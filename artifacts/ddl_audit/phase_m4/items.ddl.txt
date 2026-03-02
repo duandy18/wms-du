@@ -1,24 +1,24 @@
                                                                                      Table "public.items"
-         Column         |           Type           | Collation | Nullable |              Default              | Storage  | Compression | Stats target |              Description               
+         Column         |           Type           | Collation | Nullable |              Default              | Storage  | Compression | Stats target |              Description
 ------------------------+--------------------------+-----------+----------+-----------------------------------+----------+-------------+--------------+----------------------------------------
- id                     | integer                  |           | not null | nextval('items_id_seq'::regclass) | plain    |             |              | 
- sku                    | character varying(64)    |           | not null |                                   | extended |             |              | 
- name                   | character varying(128)   |           | not null |                                   | extended |             |              | 
- created_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              | 
- updated_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              | 
- uom                    | character varying(8)     |           | not null | 'PCS'::character varying          | extended |             |              | 
- spec                   | character varying(128)   |           |          |                                   | extended |             |              | 
- enabled                | boolean                  |           | not null | true                              | plain    |             |              | 
- supplier_id            | integer                  |           |          |                                   | plain    |             |              | 
- shelf_life_value       | integer                  |           |          |                                   | plain    |             |              | 
- shelf_life_unit        | character varying(16)    |           |          |                                   | extended |             |              | 
+ id                     | integer                  |           | not null | nextval('items_id_seq'::regclass) | plain    |             |              |
+ sku                    | character varying(64)    |           | not null |                                   | extended |             |              |
+ name                   | character varying(128)   |           | not null |                                   | extended |             |              |
+ created_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ updated_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ uom                    | character varying(8)     |           | not null | 'PCS'::character varying          | extended |             |              |
+ spec                   | character varying(128)   |           |          |                                   | extended |             |              |
+ enabled                | boolean                  |           | not null | true                              | plain    |             |              |
+ supplier_id            | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_value       | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_unit        | character varying(16)    |           |          |                                   | extended |             |              |
  weight_kg              | numeric(10,3)            |           |          |                                   | main     |             |              | 单件净重（kg），用于运费预估，不含包材
- brand                  | character varying(64)    |           |          |                                   | extended |             |              | 
- category               | character varying(64)    |           |          |                                   | extended |             |              | 
- lot_source_policy      | lot_source_policy        |           | not null |                                   | plain    |             |              | 
- expiry_policy          | expiry_policy            |           | not null |                                   | plain    |             |              | 
- derivation_allowed     | boolean                  |           | not null |                                   | plain    |             |              | 
- uom_governance_enabled | boolean                  |           | not null |                                   | plain    |             |              | 
+ brand                  | character varying(64)    |           |          |                                   | extended |             |              |
+ category               | character varying(64)    |           |          |                                   | extended |             |              |
+ lot_source_policy      | lot_source_policy        |           | not null |                                   | plain    |             |              |
+ expiry_policy          | expiry_policy            |           | not null |                                   | plain    |             |              |
+ derivation_allowed     | boolean                  |           | not null |                                   | plain    |             |              |
+ uom_governance_enabled | boolean                  |           | not null |                                   | plain    |             |              |
 Indexes:
     "items_pkey" PRIMARY KEY, btree (id)
     "items_sku_key" UNIQUE CONSTRAINT, btree (sku)
@@ -51,4 +51,3 @@ Referenced by:
     TABLE "stock_snapshots" CONSTRAINT "stock_snapshots_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
     TABLE "store_items" CONSTRAINT "store_items_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
 Access method: heap
-

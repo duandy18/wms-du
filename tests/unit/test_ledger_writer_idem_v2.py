@@ -13,70 +13,73 @@ UTC = timezone.utc
 
 @pytest.mark.asyncio
 async def test_write_ledger_idempotent(session: AsyncSession):
-    # Phase 4D：用 lots + stocks_lot 提供一个可解释的库存背景（不再写 legacy stocks）
-
-    # Phase M：items policy NOT NULL → 统一走最小合法 helper
     await ensure_item(session, id=3003, sku="SKU-3003", name="ITEM-3003", expiry_required=False)
 
-    lot_row = (
+    # lots 终态：不再承载 item_uom_snapshot / item_case_*_snapshot 等历史列
+    # 也不依赖 ON CONFLICT 的具体 unique/index；先查再插最稳。
+    row0 = (
         await session.execute(
             text(
                 """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    production_date,
-                    expiry_date,
-                    expiry_source,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_has_shelf_life_snapshot,
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    item_uom_snapshot,
-                    item_case_ratio_snapshot,
-                    item_case_uom_snapshot
-                )
-                SELECT
-                    1,
-                    3003,
-                    'SUPPLIER',
-                    'IDEM',
-                    NULL,
-                    NULL,
-                    CURRENT_DATE,
-                    CURRENT_DATE + INTERVAL '365 day',
-                    'EXPLICIT',
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.has_shelf_life,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    it.uom,
-                    it.case_ratio,
-                    it.case_uom
-                  FROM items it
-                 WHERE it.id = 3003
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
-                RETURNING id
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = 1
+                   AND item_id = 3003
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = 'IDEM'
+                 LIMIT 1
                 """
             )
         )
     ).first()
-    assert lot_row is not None
-    lot_id = int(lot_row[0])
+
+    if row0 is not None:
+        lot_id = int(row0[0])
+    else:
+        lot_row = (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO lots(
+                        warehouse_id,
+                        item_id,
+                        lot_code_source,
+                        lot_code,
+                        source_receipt_id,
+                        source_line_no,
+                        -- required snapshots (NOT NULL)
+                        item_lot_source_policy_snapshot,
+                        item_expiry_policy_snapshot,
+                        item_derivation_allowed_snapshot,
+                        item_uom_governance_enabled_snapshot,
+                        -- optional snapshots (nullable)
+                        item_shelf_life_value_snapshot,
+                        item_shelf_life_unit_snapshot,
+                        created_at
+                    )
+                    SELECT
+                        1,
+                        3003,
+                        'SUPPLIER',
+                        'IDEM',
+                        NULL,
+                        NULL,
+                        it.lot_source_policy,
+                        it.expiry_policy,
+                        it.derivation_allowed,
+                        it.uom_governance_enabled,
+                        it.shelf_life_value,
+                        it.shelf_life_unit,
+                        now()
+                      FROM items it
+                     WHERE it.id = 3003
+                    RETURNING id
+                    """
+                )
+            )
+        ).first()
+        assert lot_row is not None
+        lot_id = int(lot_row[0])
 
     await session.execute(
         text(
@@ -90,7 +93,6 @@ async def test_write_ledger_idempotent(session: AsyncSession):
         {"lot_id": int(lot_id)},
     )
 
-    # 首次写
     id1 = await write_ledger(
         session,
         warehouse_id=1,
@@ -106,7 +108,6 @@ async def test_write_ledger_idempotent(session: AsyncSession):
     )
     assert id1 > 0
 
-    # 幂等命中
     id2 = await write_ledger(
         session,
         warehouse_id=1,

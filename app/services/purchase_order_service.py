@@ -97,20 +97,26 @@ class PurchaseOrderService:
         po_id: int,
         line_id: Optional[int] = None,
         line_no: Optional[int] = None,
+        uom_id: int,
         qty: int,
         occurred_at: Optional[datetime] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
+        batch_code: Optional[str] = None,
+        barcode: Optional[str] = None,
     ):
         return await _receive_po_line(
             session,
             po_id=po_id,
             line_id=line_id,
             line_no=line_no,
+            uom_id=int(uom_id),
             qty=qty,
             occurred_at=occurred_at,
             production_date=production_date,
             expiry_date=expiry_date,
+            batch_code=batch_code,
+            barcode=barcode,
         )
 
     async def receive_po_line_workbench(
@@ -120,6 +126,7 @@ class PurchaseOrderService:
         po_id: int,
         line_id: Optional[int] = None,
         line_no: Optional[int] = None,
+        uom_id: int,
         qty: int,
         occurred_at: Optional[datetime] = None,
         production_date: Optional[date] = None,
@@ -133,6 +140,7 @@ class PurchaseOrderService:
             po_id=po_id,
             line_id=line_id,
             line_no=line_no,
+            uom_id=int(uom_id),
             qty=qty,
             occurred_at=occurred_at,
             production_date=production_date,

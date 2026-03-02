@@ -20,8 +20,7 @@ TRUNCATE TABLE
   -- outbound commits
   outbound_commits,
 
-  -- channel inventory / store_items
-  channel_inventory,
+  -- store_items
   store_items,
 
   -- errors

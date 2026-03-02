@@ -19,6 +19,10 @@ async def test_internal_outbound_end_to_end():
       3) 添加一行 item_id=1, qty=4，指定同一 lot_code（batch_code 展示码）
       4) 确认内部出库（扣 stocks_lot）
       5) 验证：stocks_lot 减少 / ledger 写入 INTERNAL_OUT 记录
+
+    Phase M-3：
+      - items.case_ratio/case_uom 已删除；lots 不再承载 item_case_*_snapshot / item_uom_snapshot 等历史残影列
+      - lots 也不再承载 production_date/expiry_date/expiry_source（日期事实在 receipt/ledger 侧表达）
     """
 
     warehouse_id = 1
@@ -31,7 +35,6 @@ async def test_internal_outbound_end_to_end():
     async with async_session_maker() as session:
         await session.execute(text("DELETE FROM stock_ledger WHERE ref = 'INT-SEED-TEST-001'"))
 
-        # 删除对应 lot 的 stocks_lot 槽位
         await session.execute(
             text(
                 """
@@ -51,7 +54,6 @@ async def test_internal_outbound_end_to_end():
             {"w": int(warehouse_id), "i": int(item_id), "c": str(batch_code)},
         )
 
-        # 删除 lot（可选：保持库干净）
         await session.execute(
             text(
                 """
@@ -69,12 +71,12 @@ async def test_internal_outbound_end_to_end():
 
     # STEP 1 — 种子库存 +10（特定 lot_code）
     async with async_session_maker() as session:
-        # ✅ 确保最小维度存在（本测试不依赖 baseline seed）
         await ensure_warehouse(session, id=int(warehouse_id), name="WH-1")
         await ensure_item(session, id=int(item_id), sku=f"SKU-{item_id}", name=f"ITEM-{item_id}")
         await session.commit()
 
-        # Phase M：lots 必须冻结 item_*_snapshot（NOT NULL）→ 必须从 items 真相源读取
+        # lots 终态：仅结构身份 + 必要快照，不承载 production/expiry 等日期事实列
+        # 唯一性：uq_lots_wh_item_lot_code => (warehouse_id,item_id,lot_code) WHERE lot_code IS NOT NULL
         lot_row = (
             await session.execute(
                 text(
@@ -86,47 +88,35 @@ async def test_internal_outbound_end_to_end():
                         lot_code,
                         source_receipt_id,
                         source_line_no,
-                        production_date,
-                        expiry_date,
-                        expiry_source,
                         -- required snapshots (NOT NULL)
                         item_lot_source_policy_snapshot,
                         item_expiry_policy_snapshot,
                         item_derivation_allowed_snapshot,
                         item_uom_governance_enabled_snapshot,
                         -- optional snapshots (nullable)
-                        item_has_shelf_life_snapshot,
                         item_shelf_life_value_snapshot,
                         item_shelf_life_unit_snapshot,
-                        item_uom_snapshot,
-                        item_case_ratio_snapshot,
-                        item_case_uom_snapshot
+                        created_at
                     )
                     SELECT
                         :w,
-                        :i,
+                        it.id,
                         'SUPPLIER',
                         :code,
                         NULL,
                         NULL,
-                        CURRENT_DATE,
-                        CURRENT_DATE + INTERVAL '365 day',
-                        'EXPLICIT',
                         it.lot_source_policy,
                         it.expiry_policy,
                         it.derivation_allowed,
                         it.uom_governance_enabled,
-                        it.has_shelf_life,
                         it.shelf_life_value,
                         it.shelf_life_unit,
-                        it.uom,
-                        it.case_ratio,
-                        it.case_uom
+                        now()
                       FROM items it
                      WHERE it.id = :i
-                    ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                    WHERE lot_code_source = 'SUPPLIER'
-                    DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                    ON CONFLICT (warehouse_id, item_id, lot_code)
+                    WHERE lot_code IS NOT NULL
+                    DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
                     RETURNING id
                     """
                 ),
@@ -146,7 +136,7 @@ async def test_internal_outbound_end_to_end():
             reason="TEST_SEED",
             ref="INT-SEED-TEST-001",
             ref_line=1,
-            batch_code=batch_code,  # 展示码
+            batch_code=batch_code,
             production_date=date.today(),
             expiry_date=None,
             trace_id="INT-SEED-TRACE",
@@ -179,7 +169,6 @@ async def test_internal_outbound_end_to_end():
             item_id=item_id,
             qty=qty_outbound,
             batch_code=batch_code,
-            uom="PCS",
             note="测试行",
         )
         await session.commit()

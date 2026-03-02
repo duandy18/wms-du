@@ -14,10 +14,10 @@ class InventoryInsightsService:
     -------------------------------------
     输出可用于 Dashboard 的库存健康与洞察指标集：
 
-    Phase 4B-3（切读到 lot）：
-    - stock_rows 改为统计 stocks_lot
-    - ledger vs stock 一致性：使用 lot_id_key 维度对齐
-    - 批次过期风险：从 lots 读取 expiry_date
+    Phase M-2 / Phase 3（lot-only）：
+    - stock_rows 统计 stocks_lot
+    - ledger vs stock 一致性：使用 lot_id 维度对齐
+    - 过期风险：从 stock_ledger(RECEIPT) 读取 expiry_date（lot 不承载日期真相）
 
     ✅ 运维口径（封板）：
     - 默认只统计 PROD（排除 DEFAULT Test Set 商品）
@@ -65,13 +65,15 @@ class InventoryInsightsService:
         inventory_health_score = (stock_rows / ledger_rows) if ledger_rows > 0 else 1.0
         inventory_health_score = round(min(max(inventory_health_score, 0), 1), 4)
 
-        # 2) accuracy：ledger_cut vs stocks_lot（PROD-only，按 lot_id_key 对齐）
+        # 2) accuracy：ledger_cut vs stocks_lot（PROD-only，按 lot_id 对齐）
         acc_ledger_sql = text(
             default_set_cte
             + """
             SELECT COUNT(*) FROM (
                 SELECT
-                    l.warehouse_id, l.item_id, l.lot_id_key,
+                    l.warehouse_id,
+                    l.item_id,
+                    l.lot_id,
                     SUM(l.delta) AS ledger_qty,
                     COALESCE(s.qty, 0) AS stock_qty
                 FROM stock_ledger AS l
@@ -81,7 +83,7 @@ class InventoryInsightsService:
                 LEFT JOIN stocks_lot AS s
                   ON s.warehouse_id = l.warehouse_id
                  AND s.item_id      = l.item_id
-                 AND s.lot_id_key   = l.lot_id_key
+                 AND s.lot_id       = l.lot_id
                 WHERE its.id IS NULL
                 GROUP BY 1,2,3, stock_qty
             ) AS x
@@ -104,27 +106,25 @@ class InventoryInsightsService:
         total_slots = int((await session.execute(total_slot_sql)).scalar() or 1)
         inventory_accuracy_score = round(acc_ok / total_slots, 4)
 
-        # 3) snapshot_accuracy：仍按 snapshot_v3 口径（batch_code_key）统计一致性（PROD-only）
-        # 注：snapshot 的 batch_code 存放展示码（lot_code），batch_code_key 仍是其生成列。
+        # 3) snapshot_accuracy：lot-only（PROD-only）
         snap_sql = text(
             default_set_cte
             + """
             SELECT COUNT(*) FROM (
                 SELECT
-                    l.warehouse_id, l.item_id,
-                    COALESCE(lo.lot_code, '__NULL_BATCH__') AS snap_key,
+                    l.warehouse_id,
+                    l.item_id,
+                    l.lot_id,
                     SUM(l.delta) AS ledger_qty,
                     COALESCE(sn.qty, 0) AS snap_qty
                 FROM stock_ledger AS l
-                LEFT JOIN lots lo
-                  ON lo.id = l.lot_id
                 LEFT JOIN item_test_set_items its
                   ON its.item_id = l.item_id
                  AND its.set_id  = (SELECT set_id FROM default_set)
                 LEFT JOIN stock_snapshots AS sn
                   ON sn.warehouse_id   = l.warehouse_id
                  AND sn.item_id        = l.item_id
-                 AND sn.batch_code_key = COALESCE(lo.lot_code, '__NULL_BATCH__')
+                 AND sn.lot_id         = l.lot_id
                  AND sn.snapshot_date  = CURRENT_DATE
                 WHERE its.id IS NULL
                 GROUP BY 1,2,3, snap_qty
@@ -149,7 +149,7 @@ class InventoryInsightsService:
         snap_rows = int((await session.execute(snapshot_row_sql)).scalar() or 1)
         snapshot_accuracy_score = round(snap_ok / snap_rows, 4)
 
-        # 4) 批次活跃度：最近 30 天事件数量（PROD-only）
+        # 4) 活跃度：最近 30 天事件数量（PROD-only）
         active_sql = text(
             default_set_cte
             + """
@@ -164,16 +164,17 @@ class InventoryInsightsService:
         )
         active_events_30d = int((await session.execute(active_sql)).scalar() or 0)
 
-        # 5) 批次老化风险指数：lots.expiry_date（PROD-only）
+        # 5) 过期风险：从 stock_ledger(RECEIPT) 读取 expiry_date（PROD-only）
         ageing_sql = text(
             default_set_cte
             + """
-            SELECT lo.expiry_date
-            FROM lots lo
+            SELECT l.expiry_date
+            FROM stock_ledger l
             LEFT JOIN item_test_set_items its
-              ON its.item_id = lo.item_id
+              ON its.item_id = l.item_id
              AND its.set_id  = (SELECT set_id FROM default_set)
-            WHERE lo.expiry_date IS NOT NULL
+            WHERE l.reason_canon = 'RECEIPT'
+              AND l.expiry_date IS NOT NULL
               AND its.id IS NULL
         """
         )
@@ -214,6 +215,7 @@ class InventoryInsightsService:
         wh = (await session.execute(wh_sql)).mappings().first() or {}
         warehouse_efficiency = round((wh.get("outbound_events") or 0) / (wh.get("total_events") or 1), 4)
 
+        # ⚠️ 输出 key 维持历史命名（避免前端立刻炸），但语义已为 lot-only
         return {
             "inventory_health_score": inventory_health_score,
             "inventory_accuracy_score": inventory_accuracy_score,

@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.services.ledger_timeline_service import LedgerTimelineService
 
@@ -26,7 +26,7 @@ async def ledger_timeline(
     session: AsyncSession = Depends(get_session),
 ):
     # ✅ 主线 B：查询级 batch_code 归一（None/空串/'None' -> None）
-    batch_code_norm = normalize_optional_batch_code(batch_code)
+    batch_code_norm = normalize_optional_lot_code(batch_code)
 
     svc = LedgerTimelineService()
     rows = await svc.fetch_timeline(
@@ -40,4 +40,8 @@ async def ledger_timeline(
         trace_id=trace_id,
         ref=ref,
     )
+    # Phase M-4 governance：lot_code 正名；batch_code 兼容字段
+    for x in rows:
+        if isinstance(x, dict) and "lot_code" not in x:
+            x["lot_code"] = x.get("batch_code")
     return {"ok": True, "rows": rows}

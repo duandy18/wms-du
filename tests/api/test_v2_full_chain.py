@@ -63,6 +63,55 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
     )
 
 
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    source_receipt_id,
+                    source_line_no,
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    created_at
+                )
+                SELECT
+                    :w,
+                    it.id,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    now()
+                  FROM items it
+                 WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, lot_code)
+                WHERE lot_code IS NOT NULL
+                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                RETURNING id
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    assert row is not None, "failed to ensure supplier lot"
+    return int(row[0])
+
+
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
@@ -110,7 +159,6 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert r["ref"] == order_ref
 
     # 2) manual-assign（需要登录；测试环境一般用 admin/admin123）
-    # 这里直接走 HTTP，验证路由存在且能写入执行仓。
     login = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
@@ -128,23 +176,28 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert body["ref"] == order_ref
     assert int(body["to_warehouse_id"]) == 1
 
-    # 3) 入库（为后续 pick/ship 准备库存）
+    # 3) 入库（Lot-World：必须锚定 lot_id）
     stock_svc = StockService()
-    await stock_svc.adjust(
+    lot_code = "BATCH-001"
+    lot_id = await _ensure_supplier_lot(db_session_like_pg, wh_id=1, item_id=3001, lot_code=lot_code)
+
+    await stock_svc.adjust_lot(
         session=db_session_like_pg,
         item_id=3001,
+        warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason="RECEIPT",
         ref=f"UNIT-TEST-IN-3001-{uniq}",
         ref_line=1,
         occurred_at=now,
-        batch_code="BATCH-001",
+        batch_code=lot_code,
         production_date=now.date(),
-        warehouse_id=1,
+        expiry_date=None,
         trace_id=None,
     )
     await db_session_like_pg.commit()
-    print("[TEST] 已通过 StockService.adjust 入库 10 件到 BATCH-001")
+    print("[TEST] 已通过 StockService.adjust_lot 入库 10 件到 BATCH-001")
 
     # 4) pick
     resp = await client.post(

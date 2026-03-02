@@ -1,22 +1,22 @@
                                                                     Table "public.stock_ledger"
-     Column      |           Type           | Collation | Nullable |                 Default                  | Storage  | Compression | Stats target | Description 
+     Column      |           Type           | Collation | Nullable |                 Default                  | Storage  | Compression | Stats target | Description
 -----------------+--------------------------+-----------+----------+------------------------------------------+----------+-------------+--------------+-------------
- id              | integer                  |           | not null | nextval('stock_ledger_id_seq'::regclass) | plain    |             |              | 
- reason          | character varying(32)    |           | not null |                                          | extended |             |              | 
- after_qty       | integer                  |           | not null |                                          | plain    |             |              | 
- delta           | integer                  |           | not null |                                          | plain    |             |              | 
- occurred_at     | timestamp with time zone |           | not null | now()                                    | plain    |             |              | 
- ref             | character varying(128)   |           | not null |                                          | extended |             |              | 
- ref_line        | integer                  |           | not null | 1                                        | plain    |             |              | 
- item_id         | integer                  |           | not null |                                          | plain    |             |              | 
- created_at      | timestamp with time zone |           | not null | now()                                    | plain    |             |              | 
- warehouse_id    | integer                  |           | not null |                                          | plain    |             |              | 
- trace_id        | character varying(64)    |           |          |                                          | extended |             |              | 
- production_date | date                     |           |          |                                          | plain    |             |              | 
- expiry_date     | date                     |           |          |                                          | plain    |             |              | 
- sub_reason      | character varying(32)    |           |          |                                          | extended |             |              | 
- reason_canon    | character varying(32)    |           |          |                                          | extended |             |              | 
- lot_id          | integer                  |           | not null |                                          | plain    |             |              | 
+ id              | integer                  |           | not null | nextval('stock_ledger_id_seq'::regclass) | plain    |             |              |
+ reason          | character varying(32)    |           | not null |                                          | extended |             |              |
+ after_qty       | integer                  |           | not null |                                          | plain    |             |              |
+ delta           | integer                  |           | not null |                                          | plain    |             |              |
+ occurred_at     | timestamp with time zone |           | not null | now()                                    | plain    |             |              |
+ ref             | character varying(128)   |           | not null |                                          | extended |             |              |
+ ref_line        | integer                  |           | not null | 1                                        | plain    |             |              |
+ item_id         | integer                  |           | not null |                                          | plain    |             |              |
+ created_at      | timestamp with time zone |           | not null | now()                                    | plain    |             |              |
+ warehouse_id    | integer                  |           | not null |                                          | plain    |             |              |
+ trace_id        | character varying(64)    |           |          |                                          | extended |             |              |
+ production_date | date                     |           |          |                                          | plain    |             |              |
+ expiry_date     | date                     |           |          |                                          | plain    |             |              |
+ sub_reason      | character varying(32)    |           |          |                                          | extended |             |              |
+ reason_canon    | character varying(32)    |           |          |                                          | extended |             |              |
+ lot_id          | integer                  |           | not null |                                          | plain    |             |              |
 Indexes:
     "stock_ledger_pkey" PRIMARY KEY, btree (id)
     "idx_stock_ledger_occurred_at" btree (occurred_at)
@@ -39,4 +39,3 @@ Foreign-key constraints:
     "fk_stock_ledger_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
     "fk_stock_ledger_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
 Access method: heap
-

@@ -26,22 +26,63 @@ async def _get_items_supplier_1(client: httpx.AsyncClient, headers: Dict[str, st
     return data
 
 
+async def _pick_any_uom_id(session: AsyncSession, *, item_id: int) -> int:
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i AND is_base = true
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got = r1.scalar_one_or_none()
+    if got is not None:
+        return int(got)
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got2 = r2.scalar_one_or_none()
+    assert got2 is not None, {"msg": "item has no item_uoms", "item_id": int(item_id)}
+    return int(got2)
+
+
 async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) -> int:
+    """
+    为 API happy-path 插入稳定测试用 item：
+    - supplier_id = 1
+    - enabled = true
+    - lot_source_policy = INTERNAL_ONLY（标签层不要求 batch_code）
+    - expiry_policy = NONE（时间层不要求日期）
+    - Phase M-5：items.uom / has_shelf_life 已删除；单位真相源唯一为 item_uoms
+    """
     sku = f"{sku_prefix}-{uuid4().hex[:10]}"
     name = f"UT-{sku}"
+
     row = await session.execute(
         text(
             """
             INSERT INTO items(
-              name, sku, uom, enabled, supplier_id,
+              name, sku, enabled, supplier_id,
               lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
-              has_shelf_life,
               shelf_life_value, shelf_life_unit
             )
             VALUES(
-              :name, :sku, 'PCS', TRUE, 1,
-              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
-              FALSE,
+              :name, :sku, TRUE, 1,
+              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, TRUE,
               NULL, NULL
             )
             RETURNING id
@@ -49,13 +90,46 @@ async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) 
         ),
         {"name": name, "sku": sku},
     )
-    return int(row.scalar_one())
+    item_id = int(row.scalar_one())
+
+    # 单位真相：为该 item 写入 base+defaults（PCS, ratio=1）
+    await session.execute(
+        text(
+            """
+            INSERT INTO item_uoms(
+              item_id, uom, ratio_to_base, display_name,
+              is_base, is_purchase_default, is_inbound_default, is_outbound_default
+            )
+            VALUES(
+              :i, 'PCS', 1, 'PCS',
+              TRUE, TRUE, TRUE, TRUE
+            )
+            ON CONFLICT ON CONSTRAINT uq_item_uoms_item_uom
+            DO UPDATE SET
+              ratio_to_base = EXCLUDED.ratio_to_base,
+              display_name = EXCLUDED.display_name,
+              is_base = EXCLUDED.is_base,
+              is_purchase_default = EXCLUDED.is_purchase_default,
+              is_inbound_default = EXCLUDED.is_inbound_default,
+              is_outbound_default = EXCLUDED.is_outbound_default
+            """
+        ),
+        {"i": int(item_id)},
+    )
+
+    return item_id
 
 
 async def _create_po_two_lines(
-    client: httpx.AsyncClient, headers: Dict[str, str], item_ids: Tuple[int, int]
+    session: AsyncSession,
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    item_ids: Tuple[int, int],
 ) -> Dict[str, Any]:
     item1, item2 = item_ids
+    uom1 = await _pick_any_uom_id(session, item_id=int(item1))
+    uom2 = await _pick_any_uom_id(session, item_id=int(item2))
+
     payload = {
         "supplier": "S1",
         "warehouse_id": 1,
@@ -64,8 +138,8 @@ async def _create_po_two_lines(
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
         "lines": [
-            {"line_no": 1, "item_id": item1, "qty_ordered": 2},
-            {"line_no": 2, "item_id": item2, "qty_ordered": 3},
+            {"line_no": 1, "item_id": int(item1), "uom_id": int(uom1), "qty_input": 2},
+            {"line_no": 2, "item_id": int(item2), "uom_id": int(uom2), "qty_input": 3},
         ],
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
@@ -90,6 +164,7 @@ async def _receive_line(
     *,
     line_no: int,
     qty: int,
+    expect_status: int = 200,
     batch_code: str | None = None,
     production_date: str | None = None,
     expiry_date: str | None = None,
@@ -107,7 +182,7 @@ async def _receive_line(
         json=payload,
         headers=headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == int(expect_status), r.text
     out = r.json()
     assert isinstance(out, dict)
     return out
@@ -129,25 +204,28 @@ async def _confirm_receipt(client: httpx.AsyncClient, headers: Dict[str, str], r
 
 
 async def _fetch_ledger_rows_by_ref(session: AsyncSession, ref: str) -> List[Dict[str, Any]]:
+    """
+    Phase M-5：ledger 粒度=lot_id；batch_code 仅为展示，不作为测试依赖字段。
+    """
     reason = "RECEIPT"
     res = await session.execute(
         text(
             """
             SELECT
-              reason,
-              ref,
-              ref_line,
-              warehouse_id,
-              item_id,
-              lot_id,
-              COALESCE(lot_id, 0) AS lot_id_key,
-              batch_code,
-              delta,
-              after_qty
-              FROM stock_ledger
-             WHERE ref = :ref
-               AND reason = :reason
-             ORDER BY ref_line ASC
+              l.reason,
+              l.ref,
+              l.ref_line,
+              l.warehouse_id,
+              l.item_id,
+              l.lot_id,
+              COALESCE(lo.lot_code, '') AS lot_code,
+              l.delta,
+              l.after_qty
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.ref = :ref
+               AND l.reason = :reason
+             ORDER BY l.ref_line ASC
             """
         ),
         {"ref": str(ref), "reason": reason},
@@ -161,8 +239,24 @@ async def _fetch_stock_qty(
     *,
     warehouse_id: int,
     item_id: int,
-    lot_id_key: int,
+    lot_id: int | None,
 ) -> int:
+    if lot_id is None:
+        res = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0) AS qty
+                  FROM stocks_lot
+                 WHERE warehouse_id = :wid
+                   AND item_id = :item_id
+                   AND lot_id IS NULL
+                 LIMIT 1
+                """
+            ),
+            {"wid": int(warehouse_id), "item_id": int(item_id)},
+        )
+        return int(res.scalar_one_or_none() or 0)
+
     res = await session.execute(
         text(
             """
@@ -170,11 +264,11 @@ async def _fetch_stock_qty(
               FROM stocks_lot
              WHERE warehouse_id = :wid
                AND item_id = :item_id
-               AND lot_id_key = :k
+               AND lot_id = :lot_id
              LIMIT 1
             """
         ),
-        {"wid": int(warehouse_id), "item_id": int(item_id), "k": int(lot_id_key)},
+        {"wid": int(warehouse_id), "item_id": int(item_id), "lot_id": int(lot_id)},
     )
     return int(res.scalar_one_or_none() or 0)
 
@@ -188,59 +282,33 @@ async def _assert_stock_matches_last_ledger(
     session: AsyncSession,
     rows: List[Dict[str, Any]],
 ) -> None:
+    """
+    Phase M-5：按 (warehouse_id, item_id, lot_id|NULL) 粒度，对齐 stocks_lot.qty 与最后一条 ledger.after_qty。
+    """
     last_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
     for r in rows:
-        key = (int(r["warehouse_id"]), int(r["item_id"]), int(r.get("lot_id_key") or 0))
+        lot_id = r.get("lot_id")
+        lot_key = int(lot_id) if lot_id is not None else 0
+        key = (int(r["warehouse_id"]), int(r["item_id"]), lot_key)
         last_by_key[key] = r
 
-    for (wid, item_id, lot_id_key), last in last_by_key.items():
-        qty = await _fetch_stock_qty(session, warehouse_id=wid, item_id=item_id, lot_id_key=lot_id_key)
+    for (wid, item_id, lot_key), last in last_by_key.items():
+        lot_id = None if lot_key == 0 else int(lot_key)
+        qty = await _fetch_stock_qty(session, warehouse_id=wid, item_id=item_id, lot_id=lot_id)
         assert qty == int(last["after_qty"]), {
-            "msg": "stocks_lot qty must equal last ledger.after_qty (by lot_id_key grain)",
+            "msg": "stocks_lot qty must equal last ledger.after_qty (by lot_id grain)",
             "wid": wid,
             "item_id": item_id,
-            "lot_id_key": lot_id_key,
+            "lot_id": lot_id,
             "stocks_lot.qty": qty,
             "ledger.after_qty": int(last["after_qty"]),
             "ledger.ref_line": int(last["ref_line"]),
-            "ledger.batch_code": last.get("batch_code"),
-            "ledger.lot_id": last.get("lot_id"),
+            "ledger.lot_code": last.get("lot_code"),
         }
 
 
 def _is_required_expiry_policy(v: Any) -> bool:
     return str(v or "").strip().upper() == "REQUIRED"
-
-
-def _assert_blocking_errors(workbench: Dict[str, Any], fields: List[str]) -> None:
-    explain = workbench.get("explain") or {}
-    assert bool(explain.get("confirmable")) is False, workbench
-    errs = explain.get("blocking_errors") or []
-    assert isinstance(errs, list) and len(errs) >= 1, workbench
-    got = {str(e.get("field") or "") for e in errs}
-    for f in fields:
-        assert f in got, {"missing_field": f, "got": sorted(got), "workbench": workbench}
-
-
-def _expected_missing_fields_for_required_item(item: Dict[str, Any]) -> List[str]:
-    fields: List[str] = []
-    # lot_source_policy=SUPPLIER_ONLY => 缺 batch_code
-    if str(item.get("lot_source_policy") or "").strip().upper() == "SUPPLIER_ONLY":
-        fields.append("batch_code")
-
-    derivation_allowed = bool(item.get("derivation_allowed") or False)
-    if derivation_allowed:
-        fields.append("production_date")
-        if item.get("shelf_life_value") is None or item.get("shelf_life_unit") is None:
-            fields.append("shelf_life")
-    else:
-        fields.append("expiry_date")
-
-    out: List[str] = []
-    for f in fields:
-        if f not in out:
-            out.append(f)
-    return out
 
 
 @pytest.mark.asyncio
@@ -263,17 +331,17 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     item_required = int(item_required_obj["id"])
 
     # 负例：REQUIRED 商品缺必要字段（由 policy 决定缺哪些）
-    po_bad = await _create_po_two_lines(client, headers, (item_required, item_none_a))
+    po_bad = await _create_po_two_lines(session, client, headers, (item_required, item_none_a))
     po_bad_id = int(po_bad["id"])
     await _start_draft(client, headers, po_bad_id)
 
-    wb_bad = await _receive_line(client, headers, po_bad_id, line_no=1, qty=1)
-    caps_bad = wb_bad.get("caps") or {}
-    assert bool(caps_bad.get("can_confirm")) is False, wb_bad
-    _assert_blocking_errors(wb_bad, _expected_missing_fields_for_required_item(item_required_obj))
+    # SUPPLIER_ONLY 的 REQUIRED item：不传 batch_code 应被拒绝（http 400）
+    bad = await _receive_line(client, headers, po_bad_id, line_no=1, qty=1, expect_status=400)
+    assert int(bad.get("http_status") or 0) == 400, bad
+    assert "批次码必填" in str(bad.get("message") or ""), bad
 
     # ✅ 正例：happy-path 全部使用 NONE + INTERNAL_ONLY
-    po = await _create_po_two_lines(client, headers, (item_none_a, item_none_b))
+    po = await _create_po_two_lines(session, client, headers, (item_none_a, item_none_b))
     po_id = int(po["id"])
     await _start_draft(client, headers, po_id)
 

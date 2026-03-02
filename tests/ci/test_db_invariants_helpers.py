@@ -1,12 +1,12 @@
 """
 CI 基线：数据库不变量（helpers 化）
 
-lot-world 约定（Phase 4D）：
+lot-world 约定（Phase M-5 终态）：
 
-- 库存槽位维度： (item_id, warehouse_id, lot_id_key)
-  * stocks_lot 以 (item_id, warehouse_id, lot_id_key) 唯一
+- 库存槽位维度： (item_id, warehouse_id, lot_id)
+  * stocks_lot 以 (item_id, warehouse_id, lot_id) 唯一（lot_id 允许为 NULL）
   * 批次展示码：lots.lot_code（SUPPLIER）
-  * lot_id 可为 NULL（lot_id_key=0）表示“无 lot 槽位”
+  * NULL 槽位：lot_id IS NULL（不使用 lot_id_key=0）
 
 - sum_on_hand 与实际写入一致（按 (item, warehouse) 汇总 stocks_lot.qty）
 
@@ -37,7 +37,7 @@ async def test_lots_unique_supplier_4d(session: AsyncSession):
     wh, loc, item, code = 1, 1, 99001, "UNI-99001"
     await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
 
-    # 复用 seed_batch_slot：内部会写 lots + stocks_lot（（Phase 4E：不触碰 legacy batches/stocks））
+    # 复用 seed_batch_slot：内部会写 lots + stocks_lot（Phase 4E+：不触碰 legacy batches/stocks）
     await seed_batch_slot(session, item=item, loc=loc, code=code, qty=3, days=365)
     await seed_batch_slot(session, item=item, loc=loc, code=code, qty=3, days=365)
     await session.commit()

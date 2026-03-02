@@ -14,41 +14,30 @@ pytestmark = pytest.mark.asyncio
 
 WAREHOUSE_ID = 1
 ITEM_ID = 3003
-# 强护栏口径：非批次商品走 NULL 槽位
+# 强护栏口径：非批次商品 batch_code=None（展示码为 NULL；库存仍有 lot_id，通常为 INTERNAL lot）
 BATCH_CODE: str | None = None
 ORDER_NO = "P3-ORDER-001"
 
 
 async def _read_qty_lot(session: AsyncSession) -> int:
-    if BATCH_CODE is None:
-        val = await session.execute(
-            text(
-                """
-                SELECT COALESCE(qty, 0)
-                  FROM stocks_lot
-                 WHERE item_id=:i
-                   AND warehouse_id=:w
-                   AND lot_id_key = 0
-                 LIMIT 1
-                """
-            ),
-            {"i": ITEM_ID, "w": WAREHOUSE_ID},
-        )
-        return int(val.scalar_one_or_none() or 0)
-
+    """
+    Phase M-5 / DB 事实：
+    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
+    - “非批次商品”用 INTERNAL lot 表达（lots.lot_code 可能为 NULL）
+    - 槽位定位统一用 lots.lot_code（可 NULL）过滤
+    """
     val = await session.execute(
         text(
             """
-            SELECT COALESCE(sl.qty, 0)
+            SELECT COALESCE(SUM(sl.qty), 0)
               FROM stocks_lot sl
-              JOIN lots l ON l.id = sl.lot_id
+              LEFT JOIN lots lo ON lo.id = sl.lot_id
              WHERE sl.item_id=:i
                AND sl.warehouse_id=:w
-               AND l.lot_code = :c
-             LIMIT 1
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
             """
         ),
-        {"i": ITEM_ID, "w": WAREHOUSE_ID, "c": str(BATCH_CODE)},
+        {"i": ITEM_ID, "w": WAREHOUSE_ID, "c": BATCH_CODE},
     )
     return int(val.scalar_one_or_none() or 0)
 
@@ -57,12 +46,15 @@ async def _sum_ledger(session: AsyncSession) -> int:
     val = await session.execute(
         text(
             """
-            SELECT COALESCE(SUM(delta), 0)
-            FROM stock_ledger
-            WHERE item_id=:i AND warehouse_id=:w AND batch_code IS NOT DISTINCT FROM :b
+            SELECT COALESCE(SUM(l.delta), 0)
+              FROM stock_ledger l
+              LEFT JOIN lots lo ON lo.id = l.lot_id
+             WHERE l.item_id=:i
+               AND l.warehouse_id=:w
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
             """
         ),
-        {"i": ITEM_ID, "w": WAREHOUSE_ID, "b": BATCH_CODE},
+        {"i": ITEM_ID, "w": WAREHOUSE_ID, "c": BATCH_CODE},
     )
     return int(val.scalar() or 0)
 

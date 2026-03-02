@@ -1,0 +1,10 @@
+ck_lots_internal_requires_source_receipt_line|c|CHECK (lot_code_source::text <> 'INTERNAL'::text OR source_receipt_id IS NOT NULL AND source_line_no IS NOT NULL)
+ck_lots_item_shelf_life_pair_snapshot|c|CHECK ((item_shelf_life_value_snapshot IS NULL) = (item_shelf_life_unit_snapshot IS NULL))
+ck_lots_item_shelf_life_unit_enum_snapshot|c|CHECK (item_shelf_life_unit_snapshot IS NULL OR (item_shelf_life_unit_snapshot::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
+ck_lots_lot_code_source|c|CHECK (lot_code_source::text = ANY (ARRAY['SUPPLIER'::character varying, 'INTERNAL'::character varying]::text[]))
+ck_lots_sl_params_by_policy_snap|c|CHECK (item_expiry_policy_snapshot = 'REQUIRED'::expiry_policy OR item_shelf_life_value_snapshot IS NULL AND item_shelf_life_unit_snapshot IS NULL)
+fk_lots_item|f|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_lots_source_receipt|f|FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+fk_lots_warehouse|f|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+lots_pkey|p|PRIMARY KEY (id)
+uq_lots_id_wh_item|u|UNIQUE (id, warehouse_id, item_id)

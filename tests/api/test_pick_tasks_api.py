@@ -35,11 +35,147 @@ async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
     return pol.strip().upper() == "REQUIRED"
 
 
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：SUPPLIER lot 用 lots.lot_code 作为展示码（旧名 batch_code）。
+    lots 不承载日期事实；仅结构身份 + 必要快照。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    source_receipt_id,
+                    source_line_no,
+                    -- required snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional snapshots (nullable)
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot,
+                    created_at
+                )
+                SELECT
+                    :w,
+                    it.id,
+                    'SUPPLIER',
+                    :code,
+                    NULL,
+                    NULL,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.shelf_life_value,
+                    it.shelf_life_unit,
+                    now()
+                  FROM items it
+                 WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, lot_code)
+                WHERE lot_code IS NOT NULL
+                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                RETURNING id
+                """
+            ),
+            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+        )
+    ).first()
+    assert row is not None, "failed to ensure supplier lot"
+    return int(row[0])
+
+
+async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
+    """
+    Lot-World 终态：非批次商品用 INTERNAL lot 承载“展示码为空”的槽位。
+    DB 约束：INTERNAL 必须有 source_receipt_id + source_line_no。
+    """
+    r = await session.execute(
+        text(
+            """
+            INSERT INTO inbound_receipts (
+                warehouse_id,
+                source_type,
+                source_id,
+                ref,
+                trace_id,
+                status,
+                remark,
+                occurred_at,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :wh,
+                'PO',
+                NULL,
+                :ref,
+                NULL,
+                'DRAFT',
+                'UT internal lot source receipt',
+                :occurred_at,
+                now(),
+                now()
+            )
+            RETURNING id
+            """
+        ),
+        {"wh": int(wh_id), "ref": str(ref), "occurred_at": datetime.now(timezone.utc)},
+    )
+    receipt_id = int(r.scalar_one())
+
+    r2 = await session.execute(
+        text(
+            """
+            INSERT INTO lots (
+                warehouse_id,
+                item_id,
+                lot_code_source,
+                lot_code,
+                source_receipt_id,
+                source_line_no,
+                created_at,
+                item_shelf_life_value_snapshot,
+                item_shelf_life_unit_snapshot,
+                item_lot_source_policy_snapshot,
+                item_expiry_policy_snapshot,
+                item_derivation_allowed_snapshot,
+                item_uom_governance_enabled_snapshot
+            )
+            SELECT
+                :wh,
+                it.id,
+                'INTERNAL',
+                NULL,
+                :rid,
+                1,
+                now(),
+                it.shelf_life_value,
+                it.shelf_life_unit,
+                it.lot_source_policy,
+                it.expiry_policy,
+                it.derivation_allowed,
+                it.uom_governance_enabled
+            FROM items it
+            WHERE it.id = :i
+            RETURNING id
+            """
+        ),
+        {"wh": int(wh_id), "i": int(item_id), "rid": int(receipt_id)},
+    )
+    return int(r2.scalar_one())
+
+
 async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None, str]:
     """
     用 OrderService.ingest 落一张简单订单，并为其准备足够的库存：
     - 订单：PDD / shop_id=1 / item_id=1 qty=2
-    - 库存：warehouse_id=1 / item_id=1 / qty=10
+    - 库存：warehouse_id=1 / item_id=1 / qty=10（Lot-World：必须锚定 lot_id）
     """
     platform = "PDD"
     shop_id = "1"
@@ -107,10 +243,19 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
     prod = date.today()
     exp = prod + timedelta(days=365)
 
-    await stock.adjust(
+    # Lot-World：seed 库存必须锚定真实 lot_id
+    if requires_batch:
+        lot_id = await _ensure_supplier_lot(session, wh_id=1, item_id=1, lot_code=str(expected_batch_code))
+    else:
+        lot_id = await _ensure_internal_lot(
+            session, wh_id=1, item_id=1, ref=f"UT-INTERNAL-LOT-PICK-TASK-CASE-1-{uniq}"
+        )
+
+    await stock.adjust_lot(
         session=session,
         item_id=1,
         warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason=MovementType.RECEIPT,
         ref=f"SEED-STOCK-PICK-TASK-CASE-1-{uniq}",
@@ -213,22 +358,27 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
         assert diff_line["status"] == "OK"
 
     # 5) ledger 校验（可选）
+    # Lot-World：stock_ledger 不再含 batch_code；展示码来自 lots.lot_code
     res = await session.execute(
         text(
             """
             SELECT
-                reason,
-                batch_code,
-                delta,
-                warehouse_id,
-                item_id,
-                ref,
-                trace_id
-              FROM stock_ledger
-             WHERE warehouse_id = 1
-               AND item_id = 1
-               AND (trace_id = :trace_id OR ref = :ref)
-             ORDER BY id DESC
+                sl.reason,
+                lo.lot_code AS batch_code,
+                sl.delta,
+                sl.warehouse_id,
+                sl.item_id,
+                sl.ref,
+                sl.trace_id
+              FROM stock_ledger sl
+              JOIN lots lo
+                ON lo.id = sl.lot_id
+               AND lo.warehouse_id = sl.warehouse_id
+               AND lo.item_id = sl.item_id
+             WHERE sl.warehouse_id = 1
+               AND sl.item_id = 1
+               AND (sl.trace_id = :trace_id OR sl.ref = :ref)
+             ORDER BY sl.id DESC
              LIMIT 50
             """
         ),

@@ -16,22 +16,14 @@ class PickService:
     v2 拣货（出库）Facade（location_id 已移除；FEFO 仅提示不刚性）：
 
     设计要点
-    - 拣货即扣减：扫码确认后立刻扣减库存（原子 + 幂等由 StockService.adjust/adjust_lot 保障）
+    - 拣货即扣减：扫码确认后立刻扣减库存（原子 + 幂等由 StockService.adjust_lot 保障）
     - 批次强制：仅对 requires_batch=true 的商品强制 batch_code；requires_batch=false 允许 NULL
-    - 粒度统一：库存槽位最终以 (item_id, warehouse_id, lot_id|NULL) 表达（Phase 4C+）
-    - FEFO 柔性：不强制 FEFO，只要指定批次即可扣减；FEFO 风险通过快照/查询提示
+    - 粒度统一：库存槽位以 (item_id, warehouse_id, lot_id) 表达（Phase M-2 终态）
+    - FEFO 柔性：不强制 FEFO，只要指定批次即可扣减；未指定批次时按 FEFO/lot_id 选槽
 
-    Phase N（订单驱动增强）：
-    - 允许调用方传入 trace_id，用于将本次扣减挂到订单 trace 上；
-    - trace_id 透传到 StockService.adjust/adjust_lot → stock_ledger.trace_id；
-
-    ✅ 本窗口演进（唯一主线）：
-    - requires_batch=true  => batch_code 必填
-    - requires_batch=false => batch_code 允许为 NULL（表示“无批次”，不是“未知批次”）
-
-    Phase 4D：
-    - 执行扣减优先 lot-world：batch_code 视为 lot_code，先解析 lot_id 再 adjust_lot。
-    - 若解析不到 lot（历史数据/测试造数），允许回退 batch-world adjust（可回滚窗口）。
+    Phase M-2（结构封板）：
+    - 禁止 fallback 到 batch-world（不允许双真相）
+    - lot_id 必须存在：无批次商品也必须落到 INTERNAL lot（或等价的具体 lot）
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -39,14 +31,9 @@ class PickService:
 
     async def _item_requires_batch(self, session: AsyncSession, *, item_id: int) -> bool:
         """
-        Phase M 第一阶段：执行层禁止读取 items.has_shelf_life。
-
         批次受控唯一真相源：items.expiry_policy
         - expiry_policy='REQUIRED' => requires_batch=True
         - 其他（False/NULL/NONE）  => requires_batch=False
-
-        重要：item 不存在时不要在这里提前 raise，
-        让后续写库触发 FK（测试依赖此行为）。
         """
         row = (
             await session.execute(
@@ -74,13 +61,8 @@ class PickService:
         lot_code: str,
     ) -> Optional[int]:
         """
-        Phase 4D：
-        - 将扫码得到的 batch_code 视为展示码 lot_code
-        - 尝试解析到 lots.id，以便走 lot-world 扣减（stocks_lot 为余额真相）
-
-        说明：
-        - 这里不强制 lot_code_source（历史/测试可能来源不一致）
-        - 找不到则返回 None（上层可回退 batch-world）
+        将扫码得到的 batch_code 视为展示码 lot_code，解析到 lots.id。
+        找不到则返回 None（上层决定是否允许）。
         """
         code = (lot_code or "").strip()
         if not code:
@@ -108,6 +90,41 @@ class PickService:
         except Exception:
             return None
 
+    async def _pick_fefo_lot_id_for_item(
+        self,
+        session: AsyncSession,
+        *,
+        warehouse_id: int,
+        item_id: int,
+    ) -> Optional[int]:
+        """
+        当 requires_batch=false 且未提供 batch_code 时，必须选择一个真实 lot 槽位扣减。
+        这里采用 FEFO-ish 策略：expiry_date ASC NULLS LAST, lot_id ASC。
+        """
+        row = (
+            await session.execute(
+                SA(
+                    """
+                    SELECT s.lot_id
+                      FROM stocks_lot s
+                      LEFT JOIN lots lo ON lo.id = s.lot_id
+                     WHERE s.warehouse_id = :w
+                       AND s.item_id      = :i
+                       AND s.qty > 0
+                     ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id ASC
+                     LIMIT 1
+                    """
+                ),
+                {"w": int(warehouse_id), "i": int(item_id)},
+            )
+        ).first()
+        if not row:
+            return None
+        try:
+            return int(row[0])
+        except Exception:
+            return None
+
     async def _load_stock_qty(
         self,
         session: AsyncSession,
@@ -117,12 +134,9 @@ class PickService:
         batch_code: Optional[str],
     ) -> int:
         """
-        用于“库存不足”时给出可行动的缺口明细（只读，不参与扣减裁决）：
-
-        Phase 4D：
+        用于“库存不足”时给出缺口明细（只读，不参与扣减裁决）：
         - 只读 stocks_lot（lot-world）
         - batch_code 作为 lot_code 匹配 lots.lot_code
-        - NULL 用 IS NOT DISTINCT FROM + CAST(:bc AS TEXT)
         """
         row = (
             await session.execute(
@@ -168,9 +182,8 @@ class PickService:
 
         requires_batch = await self._item_requires_batch(session, item_id=int(item_id))
 
-        bc_norm: Optional[str]
         if batch_code is None:
-            bc_norm = None
+            bc_norm: Optional[str] = None
         else:
             s = str(batch_code).strip()
             bc_norm = s or None
@@ -182,8 +195,9 @@ class PickService:
         ref_line = int(start_ref_line or 1)
 
         try:
-            # Phase 4D：优先走 lot-world 扣减（stocks_lot 为余额真相）
+            # 终态：只走 lot-world
             lot_id: Optional[int] = None
+
             if bc_norm:
                 lot_id = await self._resolve_lot_id_by_lot_code(
                     session,
@@ -191,41 +205,35 @@ class PickService:
                     item_id=int(item_id),
                     lot_code=str(bc_norm),
                 )
+                if lot_id is None:
+                    raise ValueError("lot_not_found_for_batch_code")
 
-            if lot_id is not None or (not requires_batch):
-                # requires_batch=false：允许 lot_id None（lot_id_key=0 槽位）
-                result = await self.stock_svc.adjust_lot(
-                    session=session,
-                    item_id=int(item_id),
+            if lot_id is None:
+                # requires_batch=false：未提供 batch_code，按 FEFO-ish 选一个可扣减 lot
+                lot_id = await self._pick_fefo_lot_id_for_item(
+                    session,
                     warehouse_id=int(warehouse_id),
-                    lot_id=(int(lot_id) if lot_id is not None else None),
-                    delta=-int(qty),
-                    reason=movement_type,
-                    ref=str(ref),
-                    ref_line=int(ref_line),
-                    occurred_at=occurred_at,
-                    trace_id=trace_id,
-                    batch_code=bc_norm,  # 展示码
-                    meta={"sub_reason": "PICK"},
-                )
-            else:
-                # 兼容回滚：lot 不存在但 requires_batch=true → 回退 batch-world（历史/测试造数）
-                result = await self.stock_svc.adjust(
-                    session=session,
                     item_id=int(item_id),
-                    delta=-int(qty),
-                    reason=movement_type,
-                    ref=str(ref),
-                    ref_line=int(ref_line),
-                    occurred_at=occurred_at,
-                    batch_code=bc_norm,
-                    warehouse_id=int(warehouse_id),
-                    trace_id=trace_id,
-                    meta={"sub_reason": "PICK_FB"},
                 )
+                if lot_id is None:
+                    raise ValueError("insufficient_stock")
+
+            result = await self.stock_svc.adjust_lot(
+                session=session,
+                item_id=int(item_id),
+                warehouse_id=int(warehouse_id),
+                lot_id=int(lot_id),
+                delta=-int(qty),
+                reason=movement_type,
+                ref=str(ref),
+                ref_line=int(ref_line),
+                occurred_at=occurred_at,
+                trace_id=trace_id,
+                batch_code=bc_norm,  # 展示码（可为空）
+                meta={"sub_reason": "PICK"},
+            )
 
         except ValueError as e:
-            # 统一裁决：库存不足/并发变化等 “现实不满足制度” → 409 + 可行动明细
             from app.api.problem import raise_problem
 
             available = await self._load_stock_qty(

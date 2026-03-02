@@ -10,55 +10,63 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class InventoryAnomalyService:
     @staticmethod
     async def detect(session: AsyncSession, *, cut: str) -> Dict[str, Any]:
-        # ledger：用 lot_code 作为展示 batch_code（Phase 4B-3）
+        # ledger：lot-only，展示码来自 lots.lot_code
         ledger_sql = text(
             """
             SELECT
               l.warehouse_id,
               l.item_id,
+              l.lot_id,
               lo.lot_code AS batch_code,
               SUM(l.delta) AS qty
             FROM stock_ledger l
-            LEFT JOIN lots lo
+            JOIN lots lo
               ON lo.id = l.lot_id
             WHERE l.occurred_at <= :cut
-            GROUP BY 1,2,3
+            GROUP BY 1,2,3,4
         """
         )
         ledger_rows = (await session.execute(ledger_sql, {"cut": cut})).mappings().all()
 
-        # stocks_lot：以 lots.lot_code 作为展示 batch_code
+        # stocks_lot：lot-only，展示码来自 lots.lot_code
         stocks_lot_sql = text(
             """
             SELECT
               s.warehouse_id,
               s.item_id,
+              s.lot_id,
               lo.lot_code AS batch_code,
               SUM(s.qty)::integer AS qty
             FROM stocks_lot s
-            LEFT JOIN lots lo
+            JOIN lots lo
               ON lo.id = s.lot_id
-            GROUP BY 1,2,3
+            GROUP BY 1,2,3,4
         """
         )
         stocks_lot_rows = (await session.execute(stocks_lot_sql)).mappings().all()
 
-        # ✅ Stage C.2-1：snapshot 新事实列为 qty（不再读 qty_on_hand）
-        # 注意：snapshot 的 batch_code 已在 Phase 4B-3 的 fallback 逻辑中写入 lots.lot_code（展示码）
+        # snapshot：lot-only（stock_snapshots 无 batch_code；展示码 join lots）
         snap_sql = text(
             """
-            SELECT warehouse_id, item_id, batch_code, qty
-            FROM stock_snapshots
-            WHERE snapshot_date = :d
+            SELECT
+              sn.warehouse_id,
+              sn.item_id,
+              sn.lot_id,
+              lo.lot_code AS batch_code,
+              sn.qty
+            FROM stock_snapshots sn
+            JOIN lots lo
+              ON lo.id = sn.lot_id
+            WHERE sn.snapshot_date = :d
         """
         )
         snap_rows = (await session.execute(snap_sql, {"d": cut.split("T")[0]})).mappings().all()
 
-        def to_map(rows, val_key: str) -> dict[tuple[int, int, str | None], int]:
-            mapping: dict[tuple[int, int, str | None], int] = {}
+        def to_map(rows, val_key: str) -> dict[tuple[int, int, int], tuple[int, str | None]]:
+            mapping: dict[tuple[int, int, int], tuple[int, str | None]] = {}
             for row in rows:
-                k = (int(row["warehouse_id"]), int(row["item_id"]), row.get("batch_code"))
-                mapping[k] = int(row.get(val_key) or 0)
+                k = (int(row["warehouse_id"]), int(row["item_id"]), int(row["lot_id"]))
+                mapping[k] = (int(row.get(val_key) or 0), row.get("batch_code"))
             return mapping
 
         ledger_map = to_map(ledger_rows, "qty")
@@ -72,16 +80,18 @@ class InventoryAnomalyService:
         all_keys = set(ledger_map.keys()) | set(stocks_lot_map.keys()) | set(snapshot_map.keys())
 
         for key in sorted(all_keys):
-            ledger_qty = int(ledger_map.get(key, 0))
-            stocks_lot_qty = int(stocks_lot_map.get(key, 0))
-            snapshot_qty = int(snapshot_map.get(key, 0))
+            ledger_qty, bc1 = ledger_map.get(key, (0, None))
+            stocks_lot_qty, bc2 = stocks_lot_map.get(key, (0, None))
+            snapshot_qty, bc3 = snapshot_map.get(key, (0, None))
+            batch_code = bc1 if bc1 is not None else (bc2 if bc2 is not None else bc3)
 
             if ledger_qty != stocks_lot_qty:
                 anomalies_ledger_stocks_lot.append(
                     {
                         "wh": key[0],
                         "item": key[1],
-                        "batch": key[2],
+                        "lot_id": key[2],
+                        "batch": batch_code,
                         "ledger": ledger_qty,
                         "stocks_lot": stocks_lot_qty,
                         "diff": ledger_qty - stocks_lot_qty,
@@ -92,7 +102,8 @@ class InventoryAnomalyService:
                     {
                         "wh": key[0],
                         "item": key[1],
-                        "batch": key[2],
+                        "lot_id": key[2],
+                        "batch": batch_code,
                         "ledger": ledger_qty,
                         "snapshot": snapshot_qty,
                         "diff": ledger_qty - snapshot_qty,
@@ -103,7 +114,8 @@ class InventoryAnomalyService:
                     {
                         "wh": key[0],
                         "item": key[1],
-                        "batch": key[2],
+                        "lot_id": key[2],
+                        "batch": batch_code,
                         "stocks_lot": stocks_lot_qty,
                         "snapshot": snapshot_qty,
                         "diff": stocks_lot_qty - snapshot_qty,

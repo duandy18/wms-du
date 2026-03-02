@@ -8,12 +8,17 @@ pytestmark = pytest.mark.contract
 @pytest.mark.asyncio
 async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession):
     """
-    Alembic 迁移合约测试（收敛到 Phase 4E 真收口设计）
+    Alembic 迁移合约测试（Phase M-5 终态）
 
     目标：
     1. 确保 Alembic 是单头（alembic_version 只有一条）
     2. stocks_lot 必须存在且具备关键列/唯一约束（lot-world 主余额源）
-    3. lots 表必须存在，且具备 canonical 批次实体化的关键约束/索引。
+    3. lots 表必须存在，且具备 canonical Lot 身份实体化的关键索引/约束。
+       注意：Phase M-5 下 lots 不再承载时间事实（production/expiry）与历史字段。
+
+    终态原则（重要）：
+    - 不用“索引/约束名字”做合同（名字容易漂移）
+    - 用“语义合同”做约束：唯一键/检查约束的真实定义必须满足终态规则
     """
 
     # 1) alembic_version 表应存在且仅一行（单 head）
@@ -21,7 +26,7 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
     assert int(result.scalar_one()) == 1
 
     # ------------------------------------------------------------------
-    # 2) Phase 4E: stocks_lot DDL contract（主余额源）
+    # 2) Phase M-5: stocks_lot DDL contract（主余额源）
     # ------------------------------------------------------------------
 
     # 2.1) stocks_lot 表必须存在
@@ -55,8 +60,6 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
         "warehouse_id",
         "lot_id",
         "qty",
-        # Phase 4E 常用：lot_id_key（生成列/投影列，用于唯一性与 join）
-        "lot_id_key",
     }
     missing_sl = required_sl_cols - sl_cols
     assert not missing_sl, f"stocks_lot missing columns: {sorted(missing_sl)}"
@@ -81,14 +84,10 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
     )
     uq_cols = [r[0] for r in cols_uq.fetchall()]
     assert uq_cols, "uq_stocks_lot_item_wh_lot not found"
-    # 不强制位置，但必须包含这三维
-    assert "item_id" in set(uq_cols)
-    assert "warehouse_id" in set(uq_cols)
-    # 约束可能是 lot_id 或 lot_id_key（依赖你 DDL），至少一个要在
-    assert ("lot_id" in set(uq_cols)) or ("lot_id_key" in set(uq_cols))
+    assert set(uq_cols) >= {"item_id", "warehouse_id", "lot_id"}
 
     # ------------------------------------------------------------------
-    # 3) Phase 2 Step 1: lots DDL contract
+    # 3) Phase M-5: lots DDL contract（identity + policy snapshots）
     # ------------------------------------------------------------------
 
     # 3.1) lots 表必须存在
@@ -105,7 +104,7 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
     )
     assert lots_exists.scalar_one_or_none() == 1, "lots table not found"
 
-    # 3.2) lots 必备列集合（至少这些必须存在）
+    # 3.2) lots 必备列集合（终态：不要求 production/expiry 等时间事实列）
     cols3 = await session.execute(
         text(
             """
@@ -125,16 +124,24 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
         "lot_code",
         "source_receipt_id",
         "source_line_no",
-        "production_date",
-        "expiry_date",
-        "expiry_source",
-        "shelf_life_days_applied",
+        # required policy snapshots
+        "item_lot_source_policy_snapshot",
+        "item_expiry_policy_snapshot",
+        "item_derivation_allowed_snapshot",
+        "item_uom_governance_enabled_snapshot",
+        # optional shelf-life snapshots
+        "item_shelf_life_value_snapshot",
+        "item_shelf_life_unit_snapshot",
         "created_at",
     }
     missing = required_cols - lots_cols
     assert not missing, f"lots missing columns: {sorted(missing)}"
 
-    # 3.3) partial unique indexes 必须存在 + predicate 必须正确
+    # 3.3) 语义唯一性合同（不依赖 index name）：
+    # - supplier lot：要求存在一个 UNIQUE 约束/索引，其 key 覆盖 (warehouse_id, item_id, lot_code)
+    #   且限定 lot_code IS NOT NULL（partial unique 或等价约束）
+    # - internal lot：要求存在一个 UNIQUE，覆盖 (warehouse_id, item_id, source_receipt_id, source_line_no)
+    #   且限定 lot_code_source = 'INTERNAL'（partial unique 或等价约束）
     idx = await session.execute(
         text(
             """
@@ -142,28 +149,40 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
               FROM pg_indexes
              WHERE schemaname='public'
                AND tablename='lots'
-               AND indexname IN (
-                 'uq_lots_supplier_wh_item_lot_code',
-                 'uq_lots_internal_wh_item_source'
-               )
-             ORDER BY indexname
             """
         )
     )
     idx_rows = idx.fetchall()
-    idx_map = {r[0]: r[1] for r in idx_rows}
+    idx_defs = [str(r[1]) for r in idx_rows]
 
-    assert "uq_lots_supplier_wh_item_lot_code" in idx_map, "missing uq_lots_supplier_wh_item_lot_code"
-    assert "uq_lots_internal_wh_item_source" in idx_map, "missing uq_lots_internal_wh_item_source"
+    def _has_supplier_unique(defs: list[str]) -> bool:
+        for d in defs:
+            ud = d.lower()
+            if "unique" not in ud:
+                continue
+            if " on " not in ud:
+                continue
+            # columns
+            if "(warehouse_id, item_id, lot_code)" in ud.replace('"', ""):
+                # predicate
+                if "where" in ud and "lot_code" in ud and "is not null" in ud:
+                    return True
+        return False
 
-    # predicate（WHERE）必须包含 lot_code_source 过滤
-    sup_def = idx_map["uq_lots_supplier_wh_item_lot_code"]
-    int_def = idx_map["uq_lots_internal_wh_item_source"]
+    def _has_internal_unique(defs: list[str]) -> bool:
+        for d in defs:
+            ud = d.lower().replace('"', "")
+            if "unique" not in ud:
+                continue
+            if "(warehouse_id, item_id, source_receipt_id, source_line_no)" in ud:
+                if "where" in ud and "lot_code_source" in ud and "internal" in ud:
+                    return True
+        return False
 
-    assert "WHERE" in sup_def and "lot_code_source" in sup_def and "SUPPLIER" in sup_def, sup_def
-    assert "WHERE" in int_def and "lot_code_source" in int_def and "INTERNAL" in int_def, int_def
+    assert _has_supplier_unique(idx_defs), "missing supplier-lot uniqueness: UNIQUE (warehouse_id,item_id,lot_code) WHERE lot_code IS NOT NULL"
+    assert _has_internal_unique(idx_defs), "missing internal-lot uniqueness: UNIQUE (warehouse_id,item_id,source_receipt_id,source_line_no) WHERE lot_code_source='INTERNAL'"
 
-    # 3.4) 关键 CHECK 约束至少要存在（lot_code_source 枚举）
+    # 3.4) 关键 CHECK 约束（使用真实约束名）
     ck = await session.execute(
         text(
             """
@@ -172,16 +191,11 @@ async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession
               JOIN pg_class t ON t.oid = c.conrelid
              WHERE t.relname = 'lots'
                AND c.contype = 'c'
-               AND c.conname IN (
-                 'ck_lots_lot_code_source',
-                 'ck_lots_supplier_requires_lot_code_and_no_source',
-                 'ck_lots_internal_requires_source'
-               )
             """
         )
     )
     ck_names = {r[0] for r in ck.fetchall()}
 
+    # 真实 schema（Phase M-5）中应至少包含以下两条：
     assert "ck_lots_lot_code_source" in ck_names, "missing ck_lots_lot_code_source"
-    assert "ck_lots_supplier_requires_lot_code_and_no_source" in ck_names, "missing ck_lots_supplier_requires_lot_code_and_no_source"
-    assert "ck_lots_internal_requires_source" in ck_names, "missing ck_lots_internal_requires_source"
+    assert "ck_lots_internal_requires_source_receipt_line" in ck_names, "missing ck_lots_internal_requires_source_receipt_line"

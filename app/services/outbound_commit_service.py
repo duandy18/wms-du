@@ -15,7 +15,6 @@ from app.services.order_fulfillment_service import OrderFulfillmentService
 from app.services.order_ref_resolver import resolve_order_id
 from app.services.outbound_commit_models import (
     ShipLine,
-    batch_key,
     coerce_line,
     norm_batch_code,
     problem_error_code_from_http_exc_detail,
@@ -23,6 +22,35 @@ from app.services.outbound_commit_models import (
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
+
+
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+) -> Optional[int]:
+    """
+    用展示码 lot_code（旧名 batch_code）解析 lot_id。
+    lot_code 非 NULL 时，(wh,item,lot_code) 应唯一（uq_lots_wh_item_lot_code）。
+    """
+    row = (
+        await session.execute(
+            sa.text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code     = :c
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+        )
+    ).first()
+    return int(row[0]) if row else None
 
 
 class OutboundService:
@@ -63,7 +91,7 @@ class OutboundService:
         # ✅ Phase 5：硬解析外部 order_ref -> orders.id（解析失败直接拒绝，不执行扣库）
         order_pk = await resolve_order_id(session, order_ref=order_ref)
 
-        # ✅ 聚合维度：item + wh + batch_code（允许 NULL）
+        # ✅ 聚合维度：item + wh + batch_code(展示码，允许 NULL)
         agg_qty: Dict[Tuple[int, int, Optional[str]], int] = defaultdict(int)
         wh_set: set[int] = set()
 
@@ -107,24 +135,48 @@ class OutboundService:
         results: List[Dict[str, Any]] = []
 
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
-            ck = batch_key(batch_code)
+            # ✅ 幂等查询以 ledger 为准：
+            # - batch_code 非空：可唯一解析 lot_id -> 幂等按 lot_id 精确统计
+            # - batch_code 为空：对“非批次商品”允许存在多个 INTERNAL lot，幂等按 (ref,item,wh) 汇总避免漂移
+            lot_id: int | None = None
+            if batch_code is not None:
+                lot_id = await _resolve_lot_id_by_lot_code(
+                    session,
+                    warehouse_id=int(wh_id),
+                    item_id=int(item_id),
+                    lot_code=str(batch_code),
+                )
 
-            # ✅ 幂等查询仍以 ledger 为准（不破坏历史口径）：
-            # 注意：ref 使用外部 order_ref（保留人读/对账友好口径）
-            row = await session.execute(
-                sa.text(
-                    """
-                    SELECT COALESCE(SUM(delta), 0)
-                    FROM stock_ledger
-                    WHERE ref=:ref
-                      AND item_id=:item
-                      AND warehouse_id=:wid
-                      AND batch_code_key=:ck
-                      AND delta < 0
-                    """
-                ),
-                {"ref": str(order_ref), "item": item_id, "wid": wh_id, "ck": ck},
-            )
+            if lot_id is not None:
+                row = await session.execute(
+                    sa.text(
+                        """
+                        SELECT COALESCE(SUM(delta), 0)
+                        FROM stock_ledger
+                        WHERE ref=:ref
+                          AND item_id=:item
+                          AND warehouse_id=:wid
+                          AND lot_id=:lot
+                          AND delta < 0
+                        """
+                    ),
+                    {"ref": str(order_ref), "item": item_id, "wid": wh_id, "lot": int(lot_id)},
+                )
+            else:
+                row = await session.execute(
+                    sa.text(
+                        """
+                        SELECT COALESCE(SUM(delta), 0)
+                        FROM stock_ledger
+                        WHERE ref=:ref
+                          AND item_id=:item
+                          AND warehouse_id=:wid
+                          AND delta < 0
+                        """
+                    ),
+                    {"ref": str(order_ref), "item": item_id, "wid": wh_id},
+                )
+
             already = int(row.scalar() or 0)
             need = int(want_qty) + already  # 目标是总 delta = -want_qty
 
@@ -151,7 +203,7 @@ class OutboundService:
                     ref_line=1,
                     occurred_at=ts,
                     warehouse_id=wh_id,
-                    batch_code=batch_code,  # may be NULL
+                    batch_code=batch_code,  # 展示码输入（可为空）
                     trace_id=trace_id,
                     meta={
                         "sub_reason": "ORDER_SHIP",
@@ -169,6 +221,7 @@ class OutboundService:
                         "qty": need,
                         "status": "OK",
                         "after": res.get("after"),
+                        "lot_id": res.get("lot_id"),
                     }
                 )
 

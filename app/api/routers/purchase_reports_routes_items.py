@@ -48,9 +48,6 @@ def register(router: APIRouter) -> None:
             .scalar_subquery()
         )
 
-        # ================================
-        # FACT 口径（基于 inbound_receipts）
-        # ================================
         if mode == "fact":
             supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label(
                 "supplier_name"
@@ -64,14 +61,11 @@ def register(router: APIRouter) -> None:
                     main_barcode_expr.label("barcode"),
                     Item.brand.label("brand"),
                     Item.category.label("category"),
-                    func.max(InboundReceiptLine.spec_text).label("spec_text"),
-                    InboundReceipt.supplier_id.label("supplier_id"),
                     supplier_name_expr,
                     func.count(distinct(InboundReceipt.source_id)).label("order_count"),
-                    func.coalesce(func.sum(InboundReceiptLine.qty_received), 0).label(
-                        "total_qty_cases"
+                    func.coalesce(func.sum(InboundReceiptLine.qty_base), 0).label(
+                        "total_units"
                     ),
-                    func.coalesce(func.sum(InboundReceiptLine.qty_units), 0).label("total_units"),
                     func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label(
                         "total_amount"
                     ),
@@ -120,7 +114,6 @@ def register(router: APIRouter) -> None:
                 Item.name,
                 Item.brand,
                 Item.category,
-                InboundReceipt.supplier_id,
                 supplier_name_expr,
                 main_barcode_expr,
             ).order_by(InboundReceiptLine.item_id.asc())
@@ -135,11 +128,8 @@ def register(router: APIRouter) -> None:
                 barcode,
                 brand,
                 category,
-                spec_text,
-                supplier_id_val,
                 supplier_name,
                 order_count,
-                total_qty_cases,
                 total_units,
                 total_amount,
             ) in rows:
@@ -159,11 +149,8 @@ def register(router: APIRouter) -> None:
                         barcode=barcode,
                         brand=brand,
                         category=category,
-                        spec_text=spec_text,
-                        supplier_id=supplier_id_val,
                         supplier_name=supplier_name,
                         order_count=int(order_count or 0),
-                        total_qty_cases=int(total_qty_cases or 0),
                         total_units=total_units_int,
                         total_amount=total_amount_dec,
                         avg_unit_price=avg_unit_price,
@@ -171,133 +158,46 @@ def register(router: APIRouter) -> None:
                 )
             return items
 
-        # ================================
-        # PLAN 口径（supplier 自由文本已废除）
-        # ================================
+        # PLAN 模式（全部基于 base）
         supplier_name_expr = func.coalesce(
             PurchaseOrder.supplier_name, ""
         ).label("supplier_name")
-
-        line_amount_expr = func.coalesce(PurchaseOrderLine.qty_ordered_base, 0) * func.coalesce(
-            PurchaseOrderLine.supply_price, 0
-        ) - func.coalesce(PurchaseOrderLine.discount_amount, 0)
-
-        total_units_expr = func.coalesce(
-            func.sum(func.coalesce(PurchaseOrderLine.qty_ordered_base, 0)), 0
-        )
-        total_qty_cases_expr = func.coalesce(func.sum(PurchaseOrderLine.qty_ordered), 0)
-        total_amount_expr = func.coalesce(func.sum(line_amount_expr), 0)
 
         stmt = (
             select(
                 PurchaseOrderLine.item_id.label("item_id"),
                 Item.sku.label("item_sku"),
                 Item.name.label("item_name"),
-                main_barcode_expr.label("barcode"),
-                Item.brand.label("brand"),
-                Item.category.label("category"),
-                func.max(PurchaseOrderLine.spec_text).label("spec_text"),
-                PurchaseOrder.supplier_id.label("supplier_id"),
                 supplier_name_expr,
                 func.count(distinct(PurchaseOrder.id)).label("order_count"),
-                total_qty_cases_expr.label("total_qty_cases"),
-                total_units_expr.label("total_units"),
-                total_amount_expr.label("total_amount"),
+                func.coalesce(func.sum(PurchaseOrderLine.qty_ordered_base), 0).label(
+                    "total_units"
+                ),
             )
             .select_from(PurchaseOrder)
             .join(PurchaseOrderLine, PurchaseOrderLine.po_id == PurchaseOrder.id)
             .join(Item, Item.id == PurchaseOrderLine.item_id)
-            .outerjoin(
-                ItemTestSetItem,
-                and_(
-                    ItemTestSetItem.item_id == Item.id,
-                    ItemTestSetItem.set_id == default_set_id_sq,
-                ),
-            )
-            .where(ItemTestSetItem.id.is_(None))
         )
-
-        if time_mode == "po_created":
-            time_col = PurchaseOrder.created_at
-        else:
-            time_col = PurchaseOrder.purchase_time
-
-        if date_from is not None:
-            stmt = stmt.where(func.date(time_col) >= date_from)
-        if date_to is not None:
-            stmt = stmt.where(func.date(time_col) <= date_to)
-        if warehouse_id is not None:
-            stmt = stmt.where(PurchaseOrder.warehouse_id == int(warehouse_id))
-        if supplier_id is not None:
-            stmt = stmt.where(PurchaseOrder.supplier_id == int(supplier_id))
-        if status:
-            stmt = stmt.where(PurchaseOrder.status == status.strip().upper())
-        if item_id is not None:
-            stmt = stmt.where(PurchaseOrderLine.item_id == int(item_id))
-        elif item_keyword and str(item_keyword).strip():
-            kw = f"%{str(item_keyword).strip()}%"
-            stmt = stmt.where(
-                or_(
-                    Item.name.ilike(kw),
-                    Item.sku.ilike(kw),
-                    main_barcode_expr.ilike(kw),
-                )
-            )
 
         stmt = stmt.group_by(
             PurchaseOrderLine.item_id,
             Item.sku,
             Item.name,
-            Item.brand,
-            Item.category,
-            PurchaseOrder.supplier_id,
             supplier_name_expr,
-            main_barcode_expr,
-        ).order_by(PurchaseOrderLine.item_id.asc())
+        )
 
         rows = (await session.execute(stmt)).all()
 
-        items: List[ItemPurchaseReportItem] = []
-        for (
-            item_id_val,
-            item_sku,
-            item_name,
-            barcode,
-            brand,
-            category,
-            spec_text,
-            supplier_id_val,
-            supplier_name,
-            order_count,
-            total_qty_cases,
-            total_units,
-            total_amount,
-        ) in rows:
-            total_units_int = int(total_units or 0)
-            total_amount_dec = Decimal(str(total_amount or 0))
-            avg_unit_price = (
-                (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
-                if total_units_int > 0
-                else None
+        return [
+            ItemPurchaseReportItem(
+                item_id=int(r[0]),
+                item_sku=r[1],
+                item_name=r[2],
+                supplier_name=r[3],
+                order_count=int(r[4] or 0),
+                total_units=int(r[5] or 0),
+                total_amount=None,
+                avg_unit_price=None,
             )
-
-            items.append(
-                ItemPurchaseReportItem(
-                    item_id=int(item_id_val),
-                    item_sku=item_sku,
-                    item_name=item_name,
-                    barcode=barcode,
-                    brand=brand,
-                    category=category,
-                    spec_text=spec_text,
-                    supplier_id=supplier_id_val,
-                    supplier_name=supplier_name,
-                    order_count=int(order_count or 0),
-                    total_qty_cases=int(total_qty_cases or 0),
-                    total_units=total_units_int,
-                    total_amount=total_amount_dec,
-                    avg_unit_price=avg_unit_price,
-                )
-            )
-
-        return items
+            for r in rows
+        ]

@@ -24,7 +24,13 @@ def norm_batch_code(v: Any) -> Optional[str]:
 
 
 def batch_key(bc: Optional[str]) -> str:
-    return bc if bc is not None else "__NULL_BATCH__"
+    """
+    Phase M-5:
+    - 禁止把 None 变成 "__NULL_BATCH__" 这种 sentinel（会污染执行语义/幂等键/日志）。
+    - 本函数仅用于“内存聚合键”，返回值不得写入 DB。
+    - 由于 norm_batch_code 已保证真实 batch_code 不会是空串，这里用 "" 表示 None 槽位是安全的。
+    """
+    return bc if bc is not None else ""
 
 
 def problem_error_code_from_http_exc_detail(detail: Any) -> Optional[str]:

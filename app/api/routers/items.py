@@ -51,30 +51,17 @@ def _call_update_item_compat(item_service: ItemService, **kwargs):
     return item_service.update_item(**filtered)
 
 
-# ===========================
-# SKU 后端权威发号
-# ===========================
 @router.post("/sku/next", response_model=NextSkuOut)
 def next_sku(item_service: ItemService = Depends(get_item_service)):
-    """
-    返回下一个 SKU：
-    - AKT-000001...
-    - 并发安全
-    - 不创建 item
-    """
     return NextSkuOut(sku=item_service.next_sku())
 
 
-# ===========================
-# Create Item（统一标准：后端生成 SKU）
-# ===========================
 @router.post("", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
 def create_item(
     item_in: ItemCreate,
     item_service: ItemService = Depends(get_item_service),
 ):
     try:
-        # Phase M：policy 真相源（若未提供，使用一步到位默认）
         exp_policy_norm = _normalize_expiry_policy(item_in.expiry_policy)
         expiry_policy = exp_policy_norm or _derive_expiry_policy_from_legacy_flag(item_in.has_shelf_life)
 
@@ -82,29 +69,21 @@ def create_item(
         derivation_allowed = True if item_in.derivation_allowed is None else bool(item_in.derivation_allowed)
         uom_governance_enabled = False if item_in.uom_governance_enabled is None else bool(item_in.uom_governance_enabled)
 
-        # has_shelf_life 镜像（DB 已强约束一致）
         has_shelf_life = _is_required(expiry_policy)
 
-        # SKU 永远由后端生成；不接受前端/脚本传入
-        # barcode（可选）：若提供，则写入 item_barcodes 并设为主条码（primary）
         return _call_create_item_compat(
             item_service,
             name=item_in.name,
             spec=item_in.spec,
-            uom=item_in.uom,
-            case_ratio=item_in.case_ratio,
-            case_uom=item_in.case_uom,
             barcode=item_in.barcode,
             brand=item_in.brand,
             category=item_in.category,
             enabled=item_in.enabled,
             supplier_id=item_in.supplier_id,
-            # Phase M policy
             lot_source_policy=lot_source_policy,
             expiry_policy=expiry_policy,
             derivation_allowed=derivation_allowed,
             uom_governance_enabled=uom_governance_enabled,
-            # legacy mirror + params
             has_shelf_life=has_shelf_life,
             shelf_life_value=item_in.shelf_life_value,
             shelf_life_unit=item_in.shelf_life_unit,
@@ -117,30 +96,12 @@ def create_item(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-# ===========================
-# Query
-# ===========================
 @router.get("", response_model=List[ItemOut])
 def get_all_items(
-    supplier_id: Optional[int] = Query(
-        None,
-        ge=1,
-        description="按供应商过滤（采购单创建/收货用）",
-    ),
-    enabled: Optional[bool] = Query(
-        None,
-        description="按启用状态过滤（enabled=true 只取启用商品）",
-    ),
-    q: Optional[str] = Query(
-        None,
-        description="关键词搜索（命中 sku/name/primary_barcode/id；大小写不敏感）",
-    ),
-    limit: Optional[int] = Query(
-        None,
-        ge=1,
-        le=200,
-        description="限制返回条数（默认 50，最大 200）",
-    ),
+    supplier_id: Optional[int] = Query(None, ge=1, description="按供应商过滤（采购单创建/收货用）"),
+    enabled: Optional[bool] = Query(None, description="按启用状态过滤（enabled=true 只取启用商品）"),
+    q: Optional[str] = Query(None, description="关键词搜索（命中 sku/name/primary_barcode/id；大小写不敏感）"),
+    limit: Optional[int] = Query(None, ge=1, le=200, description="限制返回条数（默认 50，最大 200）"),
     item_service: ItemService = Depends(get_item_service),
 ):
     return item_service.get_items(
@@ -167,9 +128,6 @@ def get_item_by_sku(sku: str, item_service: ItemService = Depends(get_item_servi
     return obj
 
 
-# ===========================
-# Test Set (DEFAULT) membership toggle
-# ===========================
 @router.post("/{id}/test:enable", response_model=ItemOut)
 def enable_test_item(id: int, item_service: ItemService = Depends(get_item_service)):
     try:
@@ -196,9 +154,6 @@ def disable_test_item(id: int, item_service: ItemService = Depends(get_item_serv
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-# ===========================
-# Update（不允许改 SKU；不允许在 /items 更新条码）
-# ===========================
 @router.patch("/{id}", response_model=ItemOut)
 def update_item(
     id: int,
@@ -219,7 +174,6 @@ def update_item(
             detail="barcode is managed by /item-barcodes (set primary there)",
         )
 
-    # Phase M：policy 同步（避免违反 DB CHECK）
     expiry_policy = _normalize_expiry_policy(data.get("expiry_policy"))
     if expiry_policy is None and "has_shelf_life" in data and data.get("has_shelf_life") is not None:
         expiry_policy = _derive_expiry_policy_from_legacy_flag(bool(data.get("has_shelf_life")))
@@ -238,19 +192,12 @@ def update_item(
             id=id,
             name=data.get("name"),
             spec=data.get("spec"),
-            uom=data.get("uom"),
-            case_ratio=data.get("case_ratio"),
-            case_uom=data.get("case_uom"),
-            case_ratio_set=("case_ratio" in data),
-            case_uom_set=("case_uom" in data),
             enabled=data.get("enabled"),
             supplier_id=data.get("supplier_id"),
-            # Phase M policy
             lot_source_policy=lot_source_policy,
             expiry_policy=expiry_policy,
             derivation_allowed=derivation_allowed,
             uom_governance_enabled=uom_governance_enabled,
-            # legacy mirror + params
             has_shelf_life=has_shelf_life,
             shelf_life_value=data.get("shelf_life_value"),
             shelf_life_unit=data.get("shelf_life_unit"),

@@ -33,56 +33,49 @@ async def ensure_item(
     expiry_required: bool = False,
 ) -> None:
     """
-    items 表（Phase M）：
-    - sku NOT NULL, name NOT NULL
-    - uom（通常 NOT NULL；测试侧必须显式给，避免依赖默认）
-    - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 均 NOT NULL 且无默认
-    - has_shelf_life 是镜像字段（DB CHECK 锁死：has_shelf_life == expiry_policy=='REQUIRED'）
+    items 表（Phase M-5 终态）：
 
-    测试工具：用最小但合法的默认 policy，避免各种 helper 插 lot 时爆 NOT NULL。
+    - sku NOT NULL, name NOT NULL
+    - items.uom 已物理删除（单位真相源唯一为 item_uoms）
+    - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 均 NOT NULL 且无默认
 
     使用方式：
-    - 默认（无保质期）：expiry_required=False -> expiry_policy='NONE', has_shelf_life=FALSE
-    - 需要保质期：expiry_required=True  -> expiry_policy='REQUIRED', has_shelf_life=TRUE
+    - 默认（无有效期）：expiry_required=False -> expiry_policy='NONE'
+    - 需要有效期：expiry_required=True  -> expiry_policy='REQUIRED'
+
+    参数 uom：历史兼容参数（已不再写入 DB），保留以避免旧测试调用报错。
     """
     sku = sku or f"SKU-{id}"
     name = name or f"ITEM-{id}"
-    uom = uom or "PCS"
+    _ = uom  # deprecated (items.uom removed)
 
     expiry_policy = "REQUIRED" if expiry_required else "NONE"
-    has_shelf_life = bool(expiry_required)
 
     await session.execute(
         text(
             """
             INSERT INTO items (
-              id, sku, name, uom,
-              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
-              has_shelf_life
+              id, sku, name,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled
             )
             VALUES (
-              :id, :sku, :name, :uom,
-              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, FALSE,
-              CAST(:has_shelf_life AS boolean)
+              :id, :sku, :name,
+              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, TRUE
             )
             ON CONFLICT (id) DO UPDATE
                SET sku = EXCLUDED.sku,
                    name = EXCLUDED.name,
-                   uom = EXCLUDED.uom,
                    lot_source_policy = EXCLUDED.lot_source_policy,
                    expiry_policy = EXCLUDED.expiry_policy,
                    derivation_allowed = EXCLUDED.derivation_allowed,
-                   uom_governance_enabled = EXCLUDED.uom_governance_enabled,
-                   has_shelf_life = EXCLUDED.has_shelf_life
+                   uom_governance_enabled = EXCLUDED.uom_governance_enabled
             """
         ),
         {
             "id": int(id),
             "sku": str(sku),
             "name": str(name),
-            "uom": str(uom),
             "expiry_policy": str(expiry_policy),
-            "has_shelf_life": bool(has_shelf_life),
         },
     )
 
@@ -96,12 +89,12 @@ async def ensure_supplier_lot(
     lot_code: str,
 ) -> int:
     """
-    Phase 4D：创建/获取一个最小合法 SUPPLIER lot，并返回 lot_id。
+    Phase M-5：创建/获取一个最小合法 SUPPLIER lot，并返回 lot_id。
 
-    注意：
-    - lots 的 SUPPLIER 唯一性是 partial unique index，不是 constraint
-    - 使用 ON CONFLICT (cols) WHERE predicate 形式
-    - lots 对策略快照（item_*_snapshot）有 NOT NULL 护栏 → 必须从 items 真相源读取并冻结
+    注意（终态世界观）：
+    - lots 只承载 identity + policy snapshots（不承载时间事实 / 不承载单位快照）
+    - 时间事实（production/expiry 等）属于 ledger（RECEIPT 快照），不在 lots
+    - lots 的 SUPPLIER 唯一性是 partial unique index（ON CONFLICT ... WHERE）
     """
     code = str(lot_code).strip()
     if not code:
@@ -118,21 +111,14 @@ async def ensure_supplier_lot(
                     lot_code,
                     source_receipt_id,
                     source_line_no,
-                    production_date,
-                    expiry_date,
-                    expiry_source,
-                    -- required snapshots (NOT NULL)
+                    -- required policy snapshots (NOT NULL)
                     item_lot_source_policy_snapshot,
                     item_expiry_policy_snapshot,
                     item_derivation_allowed_snapshot,
                     item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_has_shelf_life_snapshot,
+                    -- optional shelf-life snapshots (nullable)
                     item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    item_uom_snapshot,
-                    item_case_ratio_snapshot,
-                    item_case_uom_snapshot
+                    item_shelf_life_unit_snapshot
                 )
                 SELECT
                     :w,
@@ -141,24 +127,17 @@ async def ensure_supplier_lot(
                     :code,
                     NULL,
                     NULL,
-                    CURRENT_DATE,
-                    CURRENT_DATE + INTERVAL '365 day',
-                    'EXPLICIT',
                     it.lot_source_policy,
                     it.expiry_policy,
                     it.derivation_allowed,
                     it.uom_governance_enabled,
-                    it.has_shelf_life,
                     it.shelf_life_value,
-                    it.shelf_life_unit,
-                    it.uom,
-                    it.case_ratio,
-                    it.case_uom
+                    it.shelf_life_unit
                   FROM items it
                  WHERE it.id = :i
                 ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
                 WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                DO UPDATE SET lot_code = EXCLUDED.lot_code
                 RETURNING id
                 """
             ),
@@ -172,10 +151,10 @@ async def ensure_supplier_lot(
 
 async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None) -> None:
     """
-    Phase 4D：创建 stocks_lot 槽位（测试工具）。
+    Phase 4D+：创建 stocks_lot 槽位（测试工具）。
 
-    batch_code 语义：
-    - None：lot_id=NULL（lot_id_key=0 槽位）
+    batch_code（历史命名）语义：
+    - None：lot_id=NULL 槽位（NONE 商品聚合槽位）
     - 非空：作为 SUPPLIER lot_code，映射到 lots.id
     """
     if batch_code is None:
@@ -213,7 +192,7 @@ async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id
 
 async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None, qty: int) -> None:
     """
-    Phase 4D：把 stocks_lot 槽位的 qty 设置为特定值（幂等重置，用于测试）。
+    Phase 4D+：把 stocks_lot 槽位的 qty 设置为特定值（幂等重置，用于测试）。
     """
     if batch_code is None:
         await session.execute(

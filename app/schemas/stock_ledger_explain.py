@@ -43,17 +43,12 @@ class ExplainReceiptLine(BaseModel):
 
     category: Optional[str] = None
     spec_text: Optional[str] = None
-    base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
 
     batch_code: str
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
 
     qty_received: int
-    units_per_case: int
-    qty_units: int
-
     unit_cost: Optional[Decimal] = None
     line_amount: Optional[Decimal] = None
     remark: Optional[str] = None
@@ -74,9 +69,6 @@ class ExplainPurchaseOrderLine(BaseModel):
     item_sku: Optional[str] = None
     category: Optional[str] = None
     spec_text: Optional[str] = None
-    base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
-    units_per_case: Optional[int] = None
 
     qty_ordered: int
     qty_received: int

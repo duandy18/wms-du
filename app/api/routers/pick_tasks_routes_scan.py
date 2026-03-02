@@ -4,9 +4,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import (
+from app.api.lot_code_contract import (
     fetch_item_expiry_policy_map,
-    validate_batch_code_contract,
+    validate_lot_code_contract,
 )
 from app.api.problem import raise_409, raise_422
 from app.db.session import get_session
@@ -50,9 +50,11 @@ def register_scan(router: APIRouter) -> None:
             expiry_policy_map.get(payload.item_id)
         )
 
-        batch_code = validate_batch_code_contract(
+        # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
+        lot_code = getattr(payload, "lot_code", None) or payload.batch_code
+        batch_code = validate_lot_code_contract(
             requires_batch=requires_batch,
-            batch_code=payload.batch_code,
+            lot_code=lot_code,
         )
 
         svc = PickTaskService(session)
@@ -61,7 +63,7 @@ def register_scan(router: APIRouter) -> None:
                 task_id=task_id,
                 item_id=payload.item_id,
                 qty=payload.qty,
-                batch_code=batch_code,
+                batch_code=batch_code,  # 兼容：内部仍使用 batch_code 字段名
             )
             await session.commit()
         except HTTPException:

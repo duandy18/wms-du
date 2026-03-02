@@ -105,6 +105,76 @@ async def _ensure_order_row(
     return f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
 
+async def _ensure_internal_lot_for_none_item(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    source_receipt_id: int,
+    source_line_no: int,
+) -> int:
+    """
+    Phase M-5 / DB 事实：
+    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
+    - “非批次商品”依然必须落在某个真实 lot_id 上，通常为 INTERNAL lot
+    - INTERNAL lot 以 (warehouse_id,item_id,source_receipt_id,source_line_no) 作为幂等锚点（partial unique）
+    - lots 需要冻结 policy snapshots（NOT NULL）
+
+    返回 INTERNAL lot_id。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO lots(
+                    warehouse_id,
+                    item_id,
+                    lot_code_source,
+                    lot_code,
+                    source_receipt_id,
+                    source_line_no,
+                    -- required policy snapshots (NOT NULL)
+                    item_lot_source_policy_snapshot,
+                    item_expiry_policy_snapshot,
+                    item_derivation_allowed_snapshot,
+                    item_uom_governance_enabled_snapshot,
+                    -- optional shelf-life snapshots (nullable)
+                    item_shelf_life_value_snapshot,
+                    item_shelf_life_unit_snapshot
+                )
+                SELECT
+                    :w,
+                    :i,
+                    'INTERNAL',
+                    NULL,
+                    :srid,
+                    :slno,
+                    it.lot_source_policy,
+                    it.expiry_policy,
+                    it.derivation_allowed,
+                    it.uom_governance_enabled,
+                    it.shelf_life_value,
+                    it.shelf_life_unit
+                  FROM items it
+                 WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, source_receipt_id, source_line_no)
+                WHERE lot_code_source = 'INTERNAL'
+                DO UPDATE SET source_line_no = EXCLUDED.source_line_no
+                RETURNING id
+                """
+            ),
+            {
+                "w": int(warehouse_id),
+                "i": int(item_id),
+                "srid": int(source_receipt_id),
+                "slno": int(source_line_no),
+            },
+        )
+    ).first()
+    assert row is not None, "failed to ensure INTERNAL lot"
+    return int(row[0])
+
+
 @pytest.mark.asyncio
 async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     """
@@ -114,25 +184,33 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     - enter_pickable（OrderService.reserve）生成 pick_task + pick_task_lines
     - commit_ship 唯一裁决点：扣库存 + 写 ledger + 写 outbound_commits_v2
 
-    Phase 4D：
-    - 测试造数必须走 lot-world：库存余额写入 stocks_lot（lot_id=NULL 槽位）
-    - 不再写 legacy stocks（为 Phase 4E drop stocks 铺路）
+    Phase M-5 / DB 事实：
+    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
+    - 非批次商品用 INTERNAL lot（lots.lot_code 可能为 NULL）承载
     """
     wh, item = 1, 3003
 
     await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 
-    # 非批次库存槽位：qty=10（lot-world：lot_id=NULL → lot_id_key=0 槽位）
+    # 为“非批次商品”准备一个 INTERNAL lot 槽位，并 seed qty=10
+    # 用稳定的 source_receipt_id/source_line_no 作为幂等锚点（避免重复跑产生碎片 lot）
+    lot_id = await _ensure_internal_lot_for_none_item(
+        session,
+        warehouse_id=wh,
+        item_id=item,
+        source_receipt_id=9000001,
+        source_line_no=1,
+    )
     await session.execute(
         text(
             """
             INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
-            VALUES (:item_id, :wid, NULL, 10)
+            VALUES (:item_id, :wid, :lot_id, 10)
             ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
-        {"item_id": int(item), "wid": int(wh)},
+        {"item_id": int(item), "wid": int(wh), "lot_id": int(lot_id)},
     )
     await session.flush()
 

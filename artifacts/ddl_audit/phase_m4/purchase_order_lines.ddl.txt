@@ -1,25 +1,25 @@
                                                                                         Table "public.purchase_order_lines"
-             Column              |           Type           | Collation | Nullable |                     Default                      | Storage  | Compression | Stats target |             Description             
+             Column              |           Type           | Collation | Nullable |                     Default                      | Storage  | Compression | Stats target |             Description
 ---------------------------------+--------------------------+-----------+----------+--------------------------------------------------+----------+-------------+--------------+-------------------------------------
- id                              | integer                  |           | not null | nextval('purchase_order_lines_id_seq'::regclass) | plain    |             |              | 
- po_id                           | integer                  |           | not null |                                                  | plain    |             |              | 
- line_no                         | integer                  |           | not null |                                                  | plain    |             |              | 
- item_id                         | integer                  |           | not null |                                                  | plain    |             |              | 
- item_name                       | character varying(255)   |           |          |                                                  | extended |             |              | 
- item_sku                        | character varying(64)    |           |          |                                                  | extended |             |              | 
- supply_price                    | numeric(12,2)            |           |          |                                                  | main     |             |              | 
- remark                          | character varying(255)   |           |          |                                                  | extended |             |              | 
- created_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              | 
- updated_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              | 
- spec_text                       | character varying(255)   |           |          |                                                  | extended |             |              | 
- base_uom                        | character varying(32)    |           |          |                                                  | extended |             |              | 
+ id                              | integer                  |           | not null | nextval('purchase_order_lines_id_seq'::regclass) | plain    |             |              |
+ po_id                           | integer                  |           | not null |                                                  | plain    |             |              |
+ line_no                         | integer                  |           | not null |                                                  | plain    |             |              |
+ item_id                         | integer                  |           | not null |                                                  | plain    |             |              |
+ item_name                       | character varying(255)   |           |          |                                                  | extended |             |              |
+ item_sku                        | character varying(64)    |           |          |                                                  | extended |             |              |
+ supply_price                    | numeric(12,2)            |           |          |                                                  | main     |             |              |
+ remark                          | character varying(255)   |           |          |                                                  | extended |             |              |
+ created_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              |
+ updated_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              |
+ spec_text                       | character varying(255)   |           |          |                                                  | extended |             |              |
+ base_uom                        | character varying(32)    |           |          |                                                  | extended |             |              |
  qty_ordered_base                | integer                  |           | not null | 0                                                | plain    |             |              | 订购数量（最小单位 base，事实字段）
  discount_amount                 | numeric(14,2)            |           | not null | 0                                                | main     |             |              | 整行减免金额（>=0）
  discount_note                   | text                     |           |          |                                                  | extended |             |              | 折扣说明（可选）
- uom_snapshot                    | character varying(32)    |           | not null |                                                  | extended |             |              | 
- purchase_uom_id_snapshot        | integer                  |           | not null |                                                  | plain    |             |              | 
- purchase_ratio_to_base_snapshot | integer                  |           | not null |                                                  | plain    |             |              | 
- qty_ordered_input               | integer                  |           | not null |                                                  | plain    |             |              | 
+ uom_snapshot                    | character varying(32)    |           | not null |                                                  | extended |             |              |
+ purchase_uom_id_snapshot        | integer                  |           | not null |                                                  | plain    |             |              |
+ purchase_ratio_to_base_snapshot | integer                  |           | not null |                                                  | plain    |             |              |
+ qty_ordered_input               | integer                  |           | not null |                                                  | plain    |             |              |
 Indexes:
     "purchase_order_lines_pkey" PRIMARY KEY, btree (id)
     "ix_purchase_order_lines_item_id" btree (item_id)
@@ -37,4 +37,3 @@ Foreign-key constraints:
 Referenced by:
     TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_po_line" FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
 Access method: heap
-

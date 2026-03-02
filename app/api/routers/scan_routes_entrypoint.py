@@ -26,15 +26,21 @@ def register(router: APIRouter) -> None:
         - 前端提交 ScanRequest（mode + item_id + qty + warehouse_id + 批次/日期 + ctx）
         - 由 scan_orchestrator.ingest 解析并路由到对应 handler（receive/pick/count）
         - 不再直接调用 InboundService.receive，也不再依赖 location_id/ref/occurred_at
+
+        Phase M-4 governance：
+        - lot_code 为正名；batch_code 为兼容别名
         """
         result = await ingest_scan(req.model_dump(), session)
 
         # ★ item_id：优先 orchestrator，其次请求体
         item_id = result.get("item_id") or req.item_id
 
-        # qty / batch_code 仍以请求体为主（count 模式下 actual 单独返回）
+        # qty / lot_code/batch_code 仍以请求体为主（count 模式下 actual 单独返回）
         qty = req.qty
-        batch_code = req.batch_code
+
+        # 合同双轨：对外返回两者对齐；内部仍沿用 batch_code 作为 key
+        lot_code = req.lot_code or req.batch_code
+        batch_code = lot_code
 
         # enriched 字段（count / receive）
         warehouse_id = result.get("warehouse_id") or req.warehouse_id
@@ -67,6 +73,7 @@ def register(router: APIRouter) -> None:
             # 现阶段 scan 层无库位概念
             location_id=None,
             qty=qty,
+            lot_code=lot_code,
             batch_code=batch_code,
             warehouse_id=warehouse_id,
             actual=actual,

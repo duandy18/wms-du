@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices
 
 
 class PoSummaryOut(BaseModel):
@@ -46,7 +46,19 @@ class WorkbenchBatchRowOut(BaseModel):
     )
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
-    qty_received: int
+
+    # ✅ 终态事实字段（base 口径）：新 worldbench 产出应优先使用 qty_base
+    qty_base: int = Field(default=0, ge=0, description="收货数量（base 口径）")
+
+    # ✅ 兼容字段：旧前端/旧测试仍使用 qty_received
+    # - 输入允许来自 qty_base 或 qty_received
+    # - 输出仍保留 qty_received，值与 qty_base 等价
+    qty_received: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("qty_base", "qty_received"),
+        description="兼容字段：等价于 qty_base（base 口径）",
+    )
 
 
 class WorkbenchRowOut(BaseModel):
