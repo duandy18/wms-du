@@ -1,0 +1,13 @@
+     enum_type     |  enum_label   | enumsortorder
+-------------------+---------------+---------------
+ biz_scope         | PROD          |             1
+ biz_scope         | DRILL         |             2
+ expiry_policy     | NONE          |             1
+ expiry_policy     | REQUIRED      |             2
+ lot_source_policy | INTERNAL_ONLY |             1
+ lot_source_policy | SUPPLIER_ONLY |             2
+ movementtype      | RECEIPT       |             1
+ movementtype      | SHIPMENT      |             2
+ movementtype      | TRANSFER      |             3
+ movementtype      | ADJUSTMENT    |             4
+(10 rows)

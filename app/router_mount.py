@@ -12,17 +12,17 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.count import router as count_router
     from app.api.routers.debug_trace import router as debug_trace_router
     from app.api.routers.dev_seed_ledger import router as dev_seed_ledger_router
-    from app.api.routers.dev_stock_adjust import router as dev_stock_adjust_router  # ✅ NEW
+    from app.api.routers.dev_stock_adjust import router as dev_stock_adjust_router
     from app.api.routers.devconsole_orders import router as devconsole_orders_router
     from app.api.routers.fake_platform import router as fake_platform_router
     from app.api.routers.finance_overview import router as finance_overview_router
     from app.api.routers.flow_replay import router as flow_replay_router
     from app.api.routers.inbound_receipts import router as inbound_receipts_router
     from app.api.routers.inbound_receipts import po_receive_router as po_receive_router
-    # ✅ 新增：收货单草稿（对照 PO 打勾 → 扫码/录入 → commit 生成 confirmed receipt）
     from app.api.routers.intelligence import router as intelligence_router
     from app.api.routers.item_barcodes import router as item_barcodes_router
     from app.api.routers.items import router as items_router
+    from app.api.routers.item_uoms import router as item_uoms_router  # ✅ NEW
     from app.api.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
     from app.api.routers.ledger_timeline import router as ledger_timeline_router
     from app.api.routers.lifecycle import router as lifecycle_router
@@ -77,11 +77,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     )
 
     from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
-
-    # ✅ 新增：merchant_code(current) → published FSKU 绑定路由
     from app.api.routers.merchant_code_bindings import router as merchant_code_bindings_router
-
-    # ✅ 新增：dev fake orders lab（仅 dev 路由开关启用时挂载）
     from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
 
     # ---------------------------------------------------------------------------
@@ -121,7 +117,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(orders_router)
     app.include_router(orders_fulfillment_v2_router)
-
     app.include_router(orders_fulfillment_debug_router)
 
     app.include_router(outbound_router)
@@ -133,7 +128,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(purchase_reports_router)
     app.include_router(inbound_receipts_router)
     app.include_router(po_receive_router)
-    # ✅ 新增：草稿收货单（先勾选/扫码/录入 → commit 生成 confirmed receipt）
     app.include_router(return_tasks_router)
     app.include_router(pick_tasks_router)
     app.include_router(print_jobs_router)
@@ -145,8 +139,11 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(warehouses_router)
     app.include_router(platform_shops_router)
     app.include_router(pdd_auth_router)
+
+    # 商品相关
     app.include_router(items_router)
     app.include_router(item_barcodes_router)
+    app.include_router(item_uoms_router)  # ✅ NEW
 
     app.include_router(suppliers_router)
     app.include_router(supplier_contacts_router)
@@ -188,6 +185,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     if enable_dev_routes:
         app.include_router(devconsole_orders_router)
         app.include_router(dev_seed_ledger_router)
-        app.include_router(dev_stock_adjust_router)  # ✅ NEW
+        app.include_router(dev_stock_adjust_router)
         app.include_router(fake_platform_router)
         app.include_router(dev_fake_orders_router)

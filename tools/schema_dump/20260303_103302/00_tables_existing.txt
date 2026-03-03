@@ -1,0 +1,10 @@
+inbound_receipt_lines
+inbound_receipts
+internal_outbound_lines
+item_barcodes
+item_uoms
+items
+lots
+purchase_order_lines
+purchase_orders
+stock_snapshots

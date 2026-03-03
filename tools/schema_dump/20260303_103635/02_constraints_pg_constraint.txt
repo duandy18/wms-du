@@ -1,0 +1,67 @@
+       table_name        |                    conname                    | contype |                                                                                                               def
+-------------------------+-----------------------------------------------+---------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ inbound_receipt_lines   | ck_inbound_receipt_lines_prod_le_exp          | c       | CHECK (((production_date IS NULL) OR (expiry_date IS NULL) OR (production_date <= expiry_date)))
+ inbound_receipt_lines   | ck_receipt_lines_lot_required_on_confirmed    | c       | CHECK ((((receipt_status_snapshot)::text <> 'CONFIRMED'::text) OR (lot_id IS NOT NULL)))
+ inbound_receipt_lines   | ck_receipt_lines_status_snapshot_enum         | c       | CHECK (((receipt_status_snapshot)::text = ANY ((ARRAY['DRAFT'::character varying, 'CONFIRMED'::character varying])::text[])))
+ inbound_receipt_lines   | ck_receipt_qty_base_consistent                | c       | CHECK ((qty_base = (qty_input * ratio_to_base_snapshot)))
+ inbound_receipt_lines   | fk_inbound_receipt_lines_item                 | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+ inbound_receipt_lines   | fk_inbound_receipt_lines_lot_dims             | f       | FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+ inbound_receipt_lines   | fk_inbound_receipt_lines_po_line              | f       | FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
+ inbound_receipt_lines   | fk_inbound_receipt_lines_receipt              | f       | FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+ inbound_receipt_lines   | fk_inbound_receipt_lines_warehouse            | f       | FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+ inbound_receipt_lines   | fk_receipt_line_uom                           | f       | FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
+ inbound_receipt_lines   | inbound_receipt_lines_pkey                    | p       | PRIMARY KEY (id)
+ inbound_receipt_lines   | uq_inbound_receipt_lines_receipt_line         | u       | UNIQUE (receipt_id, line_no)
+ inbound_receipts        | fk_inbound_receipts_supplier                  | f       | FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+ inbound_receipts        | fk_inbound_receipts_warehouse                 | f       | FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+ inbound_receipts        | inbound_receipts_pkey                         | p       | PRIMARY KEY (id)
+ internal_outbound_lines | fk_internal_outbound_lines_doc_id             | f       | FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id) ON DELETE CASCADE
+ internal_outbound_lines | fk_internal_outbound_lines_item_id            | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+ internal_outbound_lines | internal_outbound_lines_pkey                  | p       | PRIMARY KEY (id)
+ item_barcodes           | ck_item_barcodes_primary_must_be_active       | c       | CHECK (((NOT is_primary) OR active))
+ item_barcodes           | item_barcodes_item_id_fkey                    | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+ item_barcodes           | item_barcodes_pkey                            | p       | PRIMARY KEY (id)
+ item_barcodes           | uq_item_barcodes_barcode                      | u       | UNIQUE (barcode)
+ item_uoms               | ck_item_uoms_ratio_ge_1                       | c       | CHECK ((ratio_to_base >= 1))
+ item_uoms               | item_uoms_item_id_fkey                        | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+ item_uoms               | item_uoms_pkey                                | p       | PRIMARY KEY (id)
+ item_uoms               | uq_item_uoms_item_uom                         | u       | UNIQUE (item_id, uom)
+ items                   | ck_items_expiry_policy_vs_shelf_life          | c       | CHECK (((expiry_policy = 'REQUIRED'::expiry_policy) OR ((shelf_life_value IS NULL) AND (shelf_life_unit IS NULL))))
+ items                   | ck_items_shelf_life_pair                      | c       | CHECK (((shelf_life_value IS NULL) = (shelf_life_unit IS NULL)))
+ items                   | ck_items_shelf_life_unit_enum                 | c       | CHECK (((shelf_life_unit IS NULL) OR ((shelf_life_unit)::text = ANY ((ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying])::text[]))))
+ items                   | ck_items_shelf_life_value_pos                 | c       | CHECK (((shelf_life_value IS NULL) OR (shelf_life_value > 0)))
+ items                   | fk_items_supplier                             | f       | FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT
+ items                   | items_pkey                                    | p       | PRIMARY KEY (id)
+ items                   | items_sku_key                                 | u       | UNIQUE (sku)
+ lots                    | ck_lots_internal_requires_source_receipt_line | c       | CHECK ((((lot_code_source)::text <> 'INTERNAL'::text) OR ((source_receipt_id IS NOT NULL) AND (source_line_no IS NOT NULL))))
+ lots                    | ck_lots_item_shelf_life_pair_snapshot         | c       | CHECK (((item_shelf_life_value_snapshot IS NULL) = (item_shelf_life_unit_snapshot IS NULL)))
+ lots                    | ck_lots_item_shelf_life_unit_enum_snapshot    | c       | CHECK (((item_shelf_life_unit_snapshot IS NULL) OR ((item_shelf_life_unit_snapshot)::text = ANY ((ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying])::text[]))))
+ lots                    | ck_lots_lot_code_source                       | c       | CHECK (((lot_code_source)::text = ANY ((ARRAY['SUPPLIER'::character varying, 'INTERNAL'::character varying])::text[])))
+ lots                    | ck_lots_sl_params_by_policy_snap              | c       | CHECK (((item_expiry_policy_snapshot = 'REQUIRED'::expiry_policy) OR ((item_shelf_life_value_snapshot IS NULL) AND (item_shelf_life_unit_snapshot IS NULL))))
+ lots                    | fk_lots_item                                  | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+ lots                    | fk_lots_source_receipt                        | f       | FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+ lots                    | fk_lots_warehouse                             | f       | FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+ lots                    | lots_pkey                                     | p       | PRIMARY KEY (id)
+ lots                    | uq_lots_id_wh_item                            | u       | UNIQUE (id, warehouse_id, item_id)
+ purchase_order_lines    | ck_po_lines_discount_amount_nonneg            | c       | CHECK ((discount_amount >= (0)::numeric))
+ purchase_order_lines    | ck_po_lines_qty_base_consistent               | c       | CHECK ((qty_ordered_base = (qty_ordered_input * purchase_ratio_to_base_snapshot)))
+ purchase_order_lines    | ck_po_lines_qty_ordered_base_positive         | c       | CHECK ((qty_ordered_base > 0))
+ purchase_order_lines    | fk_po_line_item                               | f       | FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+ purchase_order_lines    | fk_po_line_purchase_uom                       | f       | FOREIGN KEY (purchase_uom_id_snapshot) REFERENCES item_uoms(id)
+ purchase_order_lines    | purchase_order_lines_po_id_fkey               | f       | FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE
+ purchase_order_lines    | purchase_order_lines_pkey                     | p       | PRIMARY KEY (id)
+ purchase_order_lines    | uq_purchase_order_lines_po_id_line_no         | u       | UNIQUE (po_id, line_no)
+ purchase_orders         | ck_purchase_orders_status_plan                | c       | CHECK (((status)::text = ANY ((ARRAY['CREATED'::character varying, 'CANCELED'::character varying, 'CLOSED'::character varying])::text[])))
+ purchase_orders         | fk_po_warehouse                               | f       | FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+ purchase_orders         | fk_purchase_orders_supplier_id                | f       | FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT
+ purchase_orders         | purchase_orders_pkey                          | p       | PRIMARY KEY (id)
+ stock_snapshots         | ck_stock_snapshots_qty_allocated_nonneg       | c       | CHECK ((qty_allocated >= (0)::numeric))
+ stock_snapshots         | ck_stock_snapshots_qty_available_nonneg       | c       | CHECK ((qty_available >= (0)::numeric))
+ stock_snapshots         | ck_stock_snapshots_qty_balance                | c       | CHECK (((qty_available + qty_allocated) = qty))
+ stock_snapshots         | ck_stock_snapshots_qty_nonneg                 | c       | CHECK ((qty >= (0)::numeric))
+ stock_snapshots         | fk_stock_snapshots_lot_dims                   | f       | FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+ stock_snapshots         | stock_snapshots_item_id_fkey                  | f       | FOREIGN KEY (item_id) REFERENCES items(id)
+ stock_snapshots         | stock_snapshots_warehouse_id_fkey             | f       | FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+ stock_snapshots         | stock_snapshots_pkey                          | p       | PRIMARY KEY (id)
+ stock_snapshots         | uq_stock_snapshots_grain_lot                  | u       | UNIQUE (snapshot_date, warehouse_id, item_id, lot_id)
+(64 rows)
