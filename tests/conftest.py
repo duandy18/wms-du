@@ -133,6 +133,20 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         # 2) 统一种子（items/barcodes/lots/stocks_lot + shipping + admin + RBAC）
         await seed_in_conn(conn)
 
+        # 2.1) Batch-as-Lot 终态测试基线（关键收口）：
+        # 很多合同/三账/出库链路测试依赖“可携带批次码”的物料；
+        # 在终态合同中这对应 expiry_policy=REQUIRED。
+        # 因此在 baseline seed 后，强制把常用测试 item 设为 REQUIRED，避免大量测试因 NONE 禁止 batch_code 而失败。
+        await conn.execute(
+            text(
+                """
+                UPDATE items
+                   SET expiry_policy = 'REQUIRED'::expiry_policy
+                 WHERE expiry_policy IS DISTINCT FROM 'REQUIRED'::expiry_policy
+                """
+            )
+        )
+
         # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）
         row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
         wh_id = int(row.scalar_one())
