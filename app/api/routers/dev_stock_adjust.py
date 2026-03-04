@@ -9,9 +9,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.api.deps import get_session
+from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.models.enums import MovementType
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 
 router = APIRouter(prefix="/dev", tags=["dev-stock"])
@@ -34,58 +35,23 @@ class DevStockAdjustIn(BaseModel):
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
     """
-    Lot-World 终态：SUPPLIER lot 的展示码来自 lots.lot_code（旧名 batch_code）。
+    Phase 2：SUPPLIER lot upsert 入口收口到 ensure_lot_full（唯一写 lots 的入口）。
     lots 不承载日期事实；仅结构身份 + 必要快照。
     """
-    row = (
-        await session.execute(
-            SA(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    created_at
-                )
-                SELECT
-                    :w,
-                    it.id,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    now()
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
-                WHERE lot_code IS NOT NULL
-                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
-                RETURNING id
-                """
-            ),
-            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+    try:
+        return await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(wh_id),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
         )
-    ).first()
-    if not row:
-        raise HTTPException(status_code=422, detail=f"failed to ensure SUPPLIER lot for item_id={item_id}")
-    return int(row[0])
+    except ValueError as e:
+        # ensure_lot_full 对空 lot_code 会 ValueError
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"failed to ensure SUPPLIER lot for item_id={item_id}: {e}") from e
 
 
 async def _create_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
@@ -190,7 +156,6 @@ async def dev_stock_adjust(
         raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
 
     requires_batch = str(pol_map[int(payload.item_id)]).upper() == "REQUIRED"
-    # ✅ 修复：validate_lot_code_contract 参数名为 lot_code（内部错误信息仍沿用 batch_code 文案）
     norm_batch = validate_lot_code_contract(requires_batch=requires_batch, lot_code=payload.batch_code)
 
     # 对 REQUIRED 商品：正向入库/加库存时，必须提供日期（让库存引擎能记 receipt 日期事实）
@@ -213,9 +178,7 @@ async def dev_stock_adjust(
         )
     else:
         # batch_code=None：优先从现有库存选 INTERNAL lot；否则创建一个新的 INTERNAL lot
-        lot_id = await _pick_any_internal_lot_with_stock(
-            session, wh_id=int(payload.warehouse_id), item_id=int(payload.item_id)
-        )
+        lot_id = await _pick_any_internal_lot_with_stock(session, wh_id=int(payload.warehouse_id), item_id=int(payload.item_id))
         if lot_id is None:
             lot_id = await _create_internal_lot(
                 session,
