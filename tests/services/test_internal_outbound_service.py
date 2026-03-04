@@ -73,6 +73,13 @@ async def test_internal_outbound_end_to_end():
     async with async_session_maker() as session:
         await ensure_warehouse(session, id=int(warehouse_id), name="WH-1")
         await ensure_item(session, id=int(item_id), sku=f"SKU-{item_id}", name=f"ITEM-{item_id}")
+
+        # 本测试走显式批次（SUPPLIER lot_code），因此必须把 item 设为 REQUIRED（终态合同）
+        await session.execute(
+            text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+            {"i": int(item_id)},
+        )
+
         await session.commit()
 
         # lots 终态：仅结构身份 + 必要快照，不承载 production/expiry 等日期事实列

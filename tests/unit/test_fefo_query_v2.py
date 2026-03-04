@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.stock_fallbacks import FefoAllocator
+from app.services.expiry_analytics_allocator import ExpiryAnalyticsAllocator
 from app.services.stock_service import StockService
 from tests.utils.ensure_minimal import ensure_item
 
@@ -15,9 +15,9 @@ UTC = timezone.utc
 
 
 @pytest.mark.asyncio
-async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
+async def test_expiry_analytics_query_returns_sorted_not_enforcing(session: AsyncSession):
     """
-    v2 FEFO 查询 smoke（lot-world）：
+    Expiry analytics 查询 smoke（lot-world）：
 
     终态事实：
     - lots 只承载 identity（lot_code）
@@ -52,7 +52,7 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
         item_id=3003,
         delta=3,
         reason=MovementType.RECEIPT,
-        ref="UT-FEFO-NEAR",
+        ref="UT-EXP-NEAR",
         ref_line=1,
         occurred_at=now,
         batch_code="A_NEAR",
@@ -65,7 +65,7 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
         item_id=3003,
         delta=3,
         reason=MovementType.RECEIPT,
-        ref="UT-FEFO-FAR",
+        ref="UT-EXP-FAR",
         ref_line=1,
         occurred_at=now,
         batch_code="B_FAR",
@@ -74,8 +74,8 @@ async def test_fefo_query_returns_sorted_not_enforcing(session: AsyncSession):
     )
     await session.commit()
 
-    fa = FefoAllocator()
-    plan = await fa.allocate(session, item_id=3003, need_qty=2, warehouse_id=1)
+    alloc = ExpiryAnalyticsAllocator()
+    plan = await alloc.allocate(session, item_id=3003, need_qty=2, warehouse_id=1)
 
     assert len(plan) >= 1
     assert plan[0]["batch_code"] == "A_NEAR"

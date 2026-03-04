@@ -12,7 +12,6 @@ from app.schemas.metrics_outbound_v2 import (
     OutboundMetricsV2,
 )
 
-
 # ----------------- PROD-only：测试店铺门禁（store_id 级别） -----------------
 # 用于 audit_events：依赖 meta->>'platform' + meta->>'shop_id'
 AUDIT_STORE_GATE = """
@@ -97,12 +96,13 @@ async def _calc_fallback_rate(
     return fallback_times, total_routing, fallback_rate
 
 
-async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date, platform: str) -> float:
+async def _calc_expiry_pick_hit_rate(session: AsyncSession, *, day: date, platform: str) -> float:
     """
-    Phase 4E（真收口）：
-    - 禁止读取 legacy 批次表
-    - FEFO 批次信息来自 lots（以“仍有库存的 lot”为准：stocks_lot.qty>0）
-    - 避免 N+1：一次性预取 item_id -> fefo_lot_code（最早 expiry_date）
+    分析域口径（非执行策略）：
+
+    计算 “临期优先贴合度”：
+    - pick 实际使用的 batch_code（lot_code）
+    - 对比当时“仍有库存的 lot”里，expiry_date 最早的 lot_code（stocks_lot.qty>0）
     """
     pick_sql = text(
         f"""
@@ -158,20 +158,20 @@ async def _calc_fefo_hit_rate(session: AsyncSession, *, day: date, platform: str
     fefo_rows = (await session.execute(fefo_sql, {"item_ids": item_ids})).fetchall()
     fefo_map = {int(r[0]): r[1] for r in fefo_rows}
 
-    fefo_correct = 0
-    fefo_total = 0
+    hit = 0
+    total = 0
 
     for item_id, batch_code, _wh_id, _qty, _occurred_at in rows:
         iid = int(item_id)
-        fefo_batch = fefo_map.get(iid)
-        if not fefo_batch:
+        expected = fefo_map.get(iid)
+        if not expected:
             continue
-        fefo_total += 1
-        if batch_code == fefo_batch:
-            fefo_correct += 1
+        total += 1
+        if batch_code == expected:
+            hit += 1
 
-    if fefo_total > 0:
-        return round(fefo_correct * 100.0 / fefo_total, 2)
+    if total > 0:
+        return round(hit * 100.0 / total, 2)
     return 0.0
 
 
@@ -251,7 +251,7 @@ async def load_day(
         day=day,
         platform=platform,
     )
-    fefo_hit_rate = await _calc_fefo_hit_rate(session, day=day, platform=platform)
+    expiry_pick_hit_rate = await _calc_expiry_pick_hit_rate(session, day=day, platform=platform)
     distribution = await _calc_distribution(session, day=day, platform=platform)
 
     return OutboundMetricsV2(
@@ -262,6 +262,6 @@ async def load_day(
         success_rate=success_rate,
         fallback_times=fallback_times,
         fallback_rate=fallback_rate,
-        fefo_hit_rate=fefo_hit_rate,
+        expiry_pick_hit_rate=expiry_pick_hit_rate,
         distribution=distribution,
     )

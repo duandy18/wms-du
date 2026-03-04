@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.lot_code_contract import fetch_item_expiry_policy_map
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
 from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
@@ -31,9 +32,7 @@ def _shortage_detail(
     }
 
 
-async def _load_total_available_qty(
-    session: AsyncSession, *, warehouse_id: int, item_id: int
-) -> int:
+async def _load_total_available_qty(session: AsyncSession, *, warehouse_id: int, item_id: int) -> int:
     row = (
         await session.execute(
             text(
@@ -49,6 +48,10 @@ async def _load_total_available_qty(
     return int((row[0] if row else 0) or 0)
 
 
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
+
+
 async def ship_commit_direct_lot_impl(
     *,
     session: AsyncSession,
@@ -59,6 +62,12 @@ async def ship_commit_direct_lot_impl(
     trace_id: Optional[str],
     adjust_lot_fn: AdjustLotFn,
 ) -> Dict[str, Any]:
+    """
+    Batch-as-Lot 终态：禁止执行域自动挑 lot（包括 FEFO）。
+
+    - REQUIRED 商品：必须显式批次（但本函数 lines 不含 batch_code），因此直接拒绝。
+    - NONE 商品：batch_code 必须为 null，统一扣 INTERNAL 槽位（lots.lot_code IS NULL）。
+    """
     ts = occurred_at or datetime.utcnow()
 
     need_by_item: Dict[int, int] = {}
@@ -70,11 +79,34 @@ async def ship_commit_direct_lot_impl(
     if not need_by_item:
         return {"idempotent": True, "applied": False, "ref": ref, "total_qty": 0}
 
+    pol_map = await fetch_item_expiry_policy_map(session, set(need_by_item.keys()))
+    missing = [i for i in sorted(need_by_item.keys()) if i not in pol_map]
+    if missing:
+        raise_problem(
+            status_code=422,
+            error_code="unknown_item",
+            message="未知商品，禁止出库。",
+            details=[{"type": "validation", "path": "lines", "item_ids": missing, "reason": "unknown_item"}],
+        )
+
     idempotent = True
     total = 0
     effects: list[Dict[str, Any]] = []
 
     for item_id, want in need_by_item.items():
+        requires_batch = _requires_batch_from_expiry_policy(pol_map.get(int(item_id)))
+
+        if requires_batch:
+            # 执行域必须显式批次；本函数没有 batch_code 入参 => 直接拒绝，防止暗中 FEFO
+            raise_problem(
+                status_code=422,
+                error_code="batch_required",
+                message="批次受控商品必须提供批次，禁止自动挑选批次出库。",
+                details=[{"type": "batch", "path": "lines[item_id]", "item_id": int(item_id), "reason": "batch_code_required"}],
+                next_actions=[{"action": "provide_batch_code", "label": "按行提供 batch_code 后重试"}],
+            )
+
+        # NONE：允许执行（扣 INTERNAL 槽位）
         existing = await session.execute(
             text(
                 """
@@ -94,113 +126,91 @@ async def ship_commit_direct_lot_impl(
             continue
 
         idempotent = False
-        remain = int(need)
 
-        rows = (
+        # 只选 INTERNAL 槽位：lots.lot_code IS NULL
+        row = (
             await session.execute(
                 text(
                     """
-                    SELECT
-                        s.lot_id,
-                        s.qty,
-                        lo.lot_code,
-                        lo.expiry_date
-                    FROM stocks_lot s
-                    LEFT JOIN lots lo ON lo.id = s.lot_id
-                    WHERE s.item_id = :i
-                      AND s.warehouse_id = :w
-                      AND s.qty > 0
-                    ORDER BY lo.expiry_date ASC NULLS LAST, s.lot_id ASC
-                    FOR UPDATE OF s
+                    SELECT s.lot_id, s.qty
+                      FROM stocks_lot s
+                      JOIN lots lo
+                        ON lo.id = s.lot_id
+                       AND lo.warehouse_id = s.warehouse_id
+                       AND lo.item_id = s.item_id
+                     WHERE s.item_id = :i
+                       AND s.warehouse_id = :w
+                       AND s.qty > 0
+                       AND lo.lot_code IS NULL
+                     ORDER BY s.lot_id ASC
+                     LIMIT 1
+                     FOR UPDATE OF s
                     """
                 ),
                 {"i": int(item_id), "w": int(warehouse_id)},
             )
-        ).all()
+        ).first()
 
-        if not rows:
-            available = await _load_total_available_qty(
-                session, warehouse_id=int(warehouse_id), item_id=int(item_id)
-            )
+        if not row:
+            available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
             raise_problem(
                 status_code=409,
                 error_code="insufficient_stock",
                 message="库存不足，禁止提交出库。",
-                details=[
-                    _shortage_detail(
-                        item_id=int(item_id),
-                        available_qty=int(available),
-                        required_qty=int(remain),
-                    )
-                ],
+                details=[_shortage_detail(item_id=int(item_id), available_qty=int(available), required_qty=int(need))],
             )
 
-        for r in rows:
-            if remain <= 0:
-                break
-
-            lot_id = int(r.lot_id)
-            on_hand = int(r.qty or 0)
-            lot_code = r.lot_code
-
-            if on_hand <= 0:
-                continue
-
-            take = min(remain, on_hand)
-            if take <= 0:
-                continue
-
-            ref_line = int(len(effects) + 1)
-
-            await adjust_lot_fn(
-                session=session,
-                item_id=int(item_id),
-                warehouse_id=int(warehouse_id),
-                lot_id=int(lot_id),
-                delta=-int(take),
-                reason=MovementType.SHIP,
-                ref=str(ref),
-                ref_line=int(ref_line),
-                occurred_at=ts,
-                trace_id=trace_id,
-                batch_code=(str(lot_code) if lot_code else None),
-                meta={"sub_reason": "ORDER_SHIP"},
-            )
-
-            effects.append(
-                {
-                    "warehouse_id": int(warehouse_id),
-                    "item_id": int(item_id),
-                    "lot_id": int(lot_id),
-                    "qty": -int(take),
-                    "ref": str(ref),
-                    "ref_line": int(ref_line),
-                }
-            )
-
-            remain -= int(take)
-            total += int(take)
-
-        if remain > 0:
-            available = await _load_total_available_qty(
-                session, warehouse_id=int(warehouse_id), item_id=int(item_id)
-            )
+        lot_id = int(row[0])
+        on_hand = int(row[1] or 0)
+        take = min(int(need), int(on_hand))
+        if take <= 0:
+            available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
             raise_problem(
                 status_code=409,
                 error_code="insufficient_stock",
                 message="库存不足，禁止提交出库。",
-                details=[
-                    _shortage_detail(
-                        item_id=int(item_id),
-                        available_qty=int(available),
-                        required_qty=int(remain),
-                    )
-                ],
+                details=[_shortage_detail(item_id=int(item_id), available_qty=int(available), required_qty=int(need))],
+            )
+
+        ref_line = int(len(effects) + 1)
+
+        await adjust_lot_fn(
+            session=session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_id=int(lot_id),
+            delta=-int(take),
+            reason=MovementType.SHIP,
+            ref=str(ref),
+            ref_line=int(ref_line),
+            occurred_at=ts,
+            trace_id=trace_id,
+            batch_code=None,
+            meta={"sub_reason": "ORDER_SHIP"},
+        )
+
+        effects.append(
+            {
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_id": int(lot_id),
+                "qty": -int(take),
+                "ref": str(ref),
+                "ref_line": int(ref_line),
+            }
+        )
+        total += int(take)
+
+        if int(need) > int(take):
+            available = await _load_total_available_qty(session, warehouse_id=int(warehouse_id), item_id=int(item_id))
+            raise_problem(
+                status_code=409,
+                error_code="insufficient_stock",
+                message="库存不足，禁止提交出库。",
+                details=[_shortage_detail(item_id=int(item_id), available_qty=int(available), required_qty=int(need - take))],
             )
 
     if effects:
-        await enforce_outbound_invariant_guard(
-            session, ref=str(ref), effects=effects, at=ts
-        )
+        await enforce_outbound_invariant_guard(session, ref=str(ref), effects=effects, at=ts)
 
     return {"idempotent": bool(idempotent), "applied": not bool(idempotent), "ref": str(ref), "total_qty": int(total)}

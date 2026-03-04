@@ -36,9 +36,10 @@
   快照 & 对账服务：从 `stocks + ledger` 刷新快照表，并夹带一致性检查逻辑。
   对应前端 `SnapshotPage`。
 
-- `stock_fallbacks.py`
-  FEFO 分配器（猫粮业务定制），只负责“如何从 stocks 选出批次计划”，
-  真正扣减仍在 `StockService.adjust` 里执行。
+- `expiry_analytics_allocator.py`
+  临期/老化分析建议器（expiry analytics，read-only）：
+  - 只用于风险/监控/报表口径（例如“临期优先贴合度”）
+  - ❌ 禁止参与执行域扣减；执行域只能显式 batch_code（REQUIRED）或 INTERNAL（NONE）
 
 ---
 
