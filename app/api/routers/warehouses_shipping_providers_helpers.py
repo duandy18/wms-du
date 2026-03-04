@@ -23,6 +23,7 @@ LIST_SQL = text(
       sp.id AS provider_id,
       sp.name AS provider_name,
       sp.code AS provider_code,
+      sp.external_outlet_code AS provider_external_outlet_code,
       sp.active AS provider_active
     FROM warehouse_shipping_providers AS wsp
     JOIN shipping_providers AS sp
@@ -45,6 +46,7 @@ def row_to_out(row: Dict[str, Any]) -> WarehouseShippingProviderOut:
             id=int(row["provider_id"]),
             name=str(row["provider_name"]),
             code=row.get("provider_code"),
+            external_outlet_code=row.get("provider_external_outlet_code"),
             active=bool(row["provider_active"]),
         ),
     )

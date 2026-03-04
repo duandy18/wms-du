@@ -6,8 +6,8 @@
 -- - baseline 禁止再写 legacy batches + stocks（避免双余额源 / 口径回退）
 
 -- ===== warehouses =====
-INSERT INTO warehouses (id, name)
-VALUES (1, 'WH-1')
+INSERT INTO warehouses (id, name, code)
+VALUES (1, 'WH-1', 'WH-1')
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== stores (TEST gate baseline) =====
@@ -38,6 +38,35 @@ VALUES
   (1, 'UT-SUP-1', 'UT-SUP-1', true),
   (3, 'UT-SUP-3', 'UT-SUP-3', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- ===== shipping_providers (minimal) =====
+-- 目的：
+-- - 快递/网点主数据最小集合（供 ship_confirm / pricing 绑定使用）
+-- - 注意：shipping_providers.code 为内部业务键（NOT NULL，且 DB 级不可变/规范化）
+INSERT INTO shipping_providers (id, name, code, external_outlet_code, active, priority, address)
+VALUES
+  (1, 'UT-CARRIER-1', 'UT-CAR-1', 'EXT-OUTLET-001', true, 100, 'UT-ADDR-1'),
+  (2, 'Fake Express', 'FAKE', 'FAKE-OUTLET', true, 100, 'UT-ADDR-FAKE')
+ON CONFLICT (id) DO NOTHING;
+
+-- 仓库启用网点（能力集合）
+INSERT INTO warehouse_shipping_providers (warehouse_id, shipping_provider_id, active, priority, pickup_cutoff_time, remark)
+VALUES (1, 1, true, 0, NULL, 'seed bind')
+ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
+  active = EXCLUDED.active,
+  priority = EXCLUDED.priority,
+  pickup_cutoff_time = EXCLUDED.pickup_cutoff_time,
+  remark = EXCLUDED.remark;
+
+-- 运价方案（最小可用：仅用于 confirm 的 scheme 绑定校验，不要求 brackets/zones）
+INSERT INTO shipping_provider_pricing_schemes (id, shipping_provider_id, name, active)
+VALUES (1, 1, 'UT-SCHEME-1', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- 方案适用仓绑定（confirm 的 scheme_warehouses 校验依赖）
+INSERT INTO shipping_provider_pricing_scheme_warehouses (scheme_id, warehouse_id, active)
+VALUES (1, 1, true)
+ON CONFLICT (scheme_id, warehouse_id) DO UPDATE SET active = EXCLUDED.active;
 
 -- ===== items =====
 -- Phase M-5：items.uom 已物理删除；items policy NOT NULL 且无默认，baseline 必须补齐。

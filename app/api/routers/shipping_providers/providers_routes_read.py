@@ -49,6 +49,8 @@ def register(router: APIRouter) -> None:
             where_clauses.append(
                 """(
                   s.name ILIKE :q
+                  OR s.code ILIKE :q
+                  OR COALESCE(s.external_outlet_code, '') ILIKE :q
                   OR EXISTS (
                     SELECT 1
                       FROM shipping_provider_contacts c
@@ -67,12 +69,10 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.external_outlet_code,
               s.address,
               s.active,
-              s.priority,
-              s.warehouse_id,
-              s.pricing_model,
-              s.region_rules
+              s.priority
             FROM shipping_providers AS s
             {where_sql}
             ORDER BY s.priority ASC, s.id ASC
@@ -138,12 +138,10 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.external_outlet_code,
               s.address,
               s.active,
-              s.priority,
-              s.warehouse_id,
-              s.pricing_model,
-              s.region_rules
+              s.priority
             FROM shipping_providers AS s
             WHERE s.id = :sid
             LIMIT 1

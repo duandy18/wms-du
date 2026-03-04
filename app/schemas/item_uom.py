@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ItemUomCreate(BaseModel):
@@ -24,6 +25,8 @@ class ItemUomUpdate(BaseModel):
 
 
 class ItemUomOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     item_id: int
     uom: str
@@ -33,6 +36,3 @@ class ItemUomOut(BaseModel):
     is_purchase_default: bool
     is_inbound_default: bool
     is_outbound_default: bool
-
-    class Config:
-        from_attributes = True

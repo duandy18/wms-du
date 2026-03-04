@@ -10,6 +10,7 @@ class ShippingProviderLiteOut(BaseModel):
     id: int
     name: str
     code: Optional[str] = None
+    external_outlet_code: Optional[str] = None
     active: bool = True
 
 
@@ -66,6 +67,7 @@ class WarehouseShippingProviderDeleteOut(BaseModel):
 # ✅ 批量幂等写入口（用于“勾选 + 保存”的页面心智）
 # =====================================================
 
+
 class WarehouseShippingProviderUpsertItemIn(BaseModel):
     shipping_provider_id: int = Field(..., ge=1)
     active: bool = True
@@ -81,6 +83,7 @@ class WarehouseShippingProviderBulkUpsertIn(BaseModel):
     - disable_missing=true 时：将该仓库中“未出现在 items 里的绑定”统一置为 active=false
       （符合“勾选保存”的真实心智；不会删除记录）
     """
+
     items: List[WarehouseShippingProviderUpsertItemIn] = Field(default_factory=list)
     disable_missing: bool = Field(
         default=True,

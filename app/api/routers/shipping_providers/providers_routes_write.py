@@ -58,12 +58,6 @@ async def _assert_code_unique_or_409(
         raise HTTPException(status_code=409, detail=f"shipping_provider code already exists: {code}")
 
 
-async def _assert_warehouse_exists_or_404(session: AsyncSession, warehouse_id: int) -> None:
-    chk = (await session.execute(text("SELECT 1 FROM warehouses WHERE id=:wid"), {"wid": int(warehouse_id)})).first()
-    if not chk:
-        raise HTTPException(status_code=404, detail="warehouse not found")
-
-
 def register(router: APIRouter) -> None:
     @router.post(
         "/shipping-providers",
@@ -77,18 +71,16 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ) -> ShippingProviderCreateOut:
         """
-        新建仓库可用快递网点（主体事实）。
+        新建运输网点（主体事实）。
 
         权限：config.store.write
 
         刚性合同：
-        - warehouse_id 必填且必须存在
         - code 必填（不允许 None / 空白）
         - code 全局唯一（strip + upper 后比较）
+        - 与仓库的绑定通过 warehouse_shipping_providers 另行配置（M:N）
         """
         _check_perm(db, current_user, ["config.store.write"])
-
-        await _assert_warehouse_exists_or_404(session, int(payload.warehouse_id))
 
         code = _norm_code(payload.code)
         if code is None:
@@ -96,17 +88,24 @@ def register(router: APIRouter) -> None:
 
         await _assert_code_unique_or_409(session, code)
 
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="name is required")
+
         addr = payload.address.strip() if payload.address is not None else None
         addr = addr if addr else None
+
+        ext = payload.external_outlet_code.strip() if payload.external_outlet_code is not None else None
+        ext = ext if ext else None
 
         sql = text(
             """
             INSERT INTO shipping_providers
-              (name, code, address, active, priority, warehouse_id, pricing_model, region_rules)
+              (name, code, external_outlet_code, address, active, priority)
             VALUES
-              (:name, :code, :address, :active, :priority, :warehouse_id, :pricing_model, :region_rules)
+              (:name, :code, :external_outlet_code, :address, :active, :priority)
             RETURNING
-              id, name, code, address, active, priority, warehouse_id, pricing_model, region_rules
+              id, name, code, external_outlet_code, address, active, priority
             """
         )
 
@@ -115,14 +114,12 @@ def register(router: APIRouter) -> None:
                 await session.execute(
                     sql,
                     {
-                        "name": payload.name.strip(),
+                        "name": name,
                         "code": code,
+                        "external_outlet_code": ext,
                         "address": addr,
                         "active": payload.active,
                         "priority": payload.priority if payload.priority is not None else 100,
-                        "warehouse_id": int(payload.warehouse_id),
-                        "pricing_model": payload.pricing_model,
-                        "region_rules": payload.region_rules,
                     },
                 )
             )
@@ -145,28 +142,25 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ) -> ShippingProviderUpdateOut:
         """
-        更新仓库可用快递网点（主体事实）。
+        更新运输网点（主体事实）。
 
         权限：config.store.write
 
         刚性合同：
-        - 如果更新 code：不允许置空；必须非空
-        - code 全局唯一（strip + upper 后比较）
-        - 如果更新 warehouse_id：必须存在
+        - code 不允许更新（DB 级不可变）
+        - 与仓库的绑定不在此接口更新（走 warehouse_shipping_providers）
         """
         _check_perm(db, current_user, ["config.store.write"])
 
         fields: Dict[str, Any] = {}
 
         if payload.name is not None:
-            fields["name"] = payload.name.strip()
+            name = payload.name.strip()
+            fields["name"] = name if name else None
 
-        if payload.code is not None:
-            code = _norm_code(payload.code)
-            if code is None:
-                raise HTTPException(status_code=422, detail="code cannot be empty")
-            await _assert_code_unique_or_409(session, code, exclude_provider_id=provider_id)
-            fields["code"] = code
+        if payload.external_outlet_code is not None:
+            ext = payload.external_outlet_code.strip()
+            fields["external_outlet_code"] = ext if ext else None
 
         if payload.address is not None:
             # 允许显式置空：传 "" => 存 null；传非空 => strip 后入库
@@ -178,14 +172,6 @@ def register(router: APIRouter) -> None:
 
         if payload.priority is not None:
             fields["priority"] = payload.priority
-        if payload.pricing_model is not None:
-            fields["pricing_model"] = payload.pricing_model
-        if payload.region_rules is not None:
-            fields["region_rules"] = payload.region_rules
-
-        if payload.warehouse_id is not None:
-            await _assert_warehouse_exists_or_404(session, int(payload.warehouse_id))
-            fields["warehouse_id"] = int(payload.warehouse_id)
 
         if not fields:
             sql_select = text(
@@ -194,12 +180,10 @@ def register(router: APIRouter) -> None:
                   s.id,
                   s.name,
                   s.code,
+                  s.external_outlet_code,
                   s.address,
                   s.active,
-                  s.priority,
-                  s.warehouse_id,
-                  s.pricing_model,
-                  s.region_rules
+                  s.priority
                 FROM shipping_providers AS s
                 WHERE s.id = :sid
                 LIMIT 1
@@ -244,7 +228,7 @@ def register(router: APIRouter) -> None:
                    updated_at = now()
              WHERE id = :sid
             RETURNING
-              id, name, code, address, active, priority, warehouse_id, pricing_model, region_rules
+              id, name, code, external_outlet_code, address, active, priority
             """
         )
 

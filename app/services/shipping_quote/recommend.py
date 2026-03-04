@@ -55,9 +55,7 @@ def recommend_quotes(
                   sp.name,
                   sp.code,
                   sp.active,
-                  sp.priority,
-                  sp.pricing_model,
-                  sp.region_rules
+                  sp.priority
                 FROM warehouse_shipping_providers AS wsp
                 JOIN shipping_providers AS sp
                   ON sp.id = wsp.shipping_provider_id
@@ -77,9 +75,7 @@ def recommend_quotes(
                   sp.name,
                   sp.code,
                   sp.active,
-                  sp.priority,
-                  sp.pricing_model,
-                  sp.region_rules
+                  sp.priority
                 FROM warehouse_shipping_providers AS wsp
                 JOIN shipping_providers AS sp
                   ON sp.id = wsp.shipping_provider_id
@@ -98,8 +94,6 @@ def recommend_quotes(
             p.code = r.get("code")
             p.active = bool(r.get("active", True))
             p.priority = int(r.get("priority") or 0)
-            p.pricing_model = r.get("pricing_model")
-            p.region_rules = r.get("region_rules")
             providers.append(p)
 
         # 若该仓无候选承运商：事实优先，直接空（不回退全局）

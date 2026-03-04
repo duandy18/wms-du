@@ -24,7 +24,9 @@ class InboundReceipt(Base):
 
     supplier_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("suppliers.id", name="fk_inbound_receipts_supplier", ondelete="SET NULL"),
+        # 供应商是主数据目录：禁止硬删除，只允许 active=false 下线。
+        # 终态：历史收货必须可追溯到供应商，因此收敛为 RESTRICT。
+        ForeignKey("suppliers.id", name="fk_inbound_receipts_supplier", ondelete="RESTRICT"),
         nullable=True,
     )
 
