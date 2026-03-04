@@ -13,6 +13,7 @@ from tests.helpers.inventory import ensure_wh_loc_item
 from app.services.order_service import OrderService
 from app.services.pick_task_commit_ship import commit_ship
 from app.services.pick_task_commit_ship_handoff import expected_handoff_code_from_task_ref
+from app.services.stock.lots import ensure_internal_lot_singleton
 
 UTC = timezone.utc
 pytestmark = pytest.mark.contract
@@ -114,65 +115,22 @@ async def _ensure_internal_lot_for_none_item(
     source_line_no: int,
 ) -> int:
     """
-    Phase M-5 / DB 事实：
+    Phase M-5 / DB 事实（终态合同）：
     - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
-    - “非批次商品”依然必须落在某个真实 lot_id 上，通常为 INTERNAL lot
-    - INTERNAL lot 以 (warehouse_id,item_id,source_receipt_id,source_line_no) 作为幂等锚点（partial unique）
-    - lots 需要冻结 policy snapshots（NOT NULL）
+    - “非批次商品”依然必须落在某个真实 lot_id 上，使用 INTERNAL lot 表达：
+        lot_code_source='INTERNAL' 且 lot_code IS NULL
+    - INTERNAL lot 是 (warehouse_id,item_id) 单例（partial unique index），
+      source_receipt_id/source_line_no 仅作为可选 provenance（要求成对填充），不参与唯一性锚点。
 
     返回 INTERNAL lot_id。
     """
-    row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    -- required policy snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional shelf-life snapshots (nullable)
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot
-                )
-                SELECT
-                    :w,
-                    :i,
-                    'INTERNAL',
-                    NULL,
-                    :srid,
-                    :slno,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, source_receipt_id, source_line_no)
-                WHERE lot_code_source = 'INTERNAL'
-                DO UPDATE SET source_line_no = EXCLUDED.source_line_no
-                RETURNING id
-                """
-            ),
-            {
-                "w": int(warehouse_id),
-                "i": int(item_id),
-                "srid": int(source_receipt_id),
-                "slno": int(source_line_no),
-            },
-        )
-    ).first()
-    assert row is not None, "failed to ensure INTERNAL lot"
-    return int(row[0])
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=int(source_receipt_id),
+        source_line_no=int(source_line_no),
+    )
 
 
 @pytest.mark.asyncio
@@ -193,7 +151,7 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 
     # 为“非批次商品”准备一个 INTERNAL lot 槽位，并 seed qty=10
-    # 用稳定的 source_receipt_id/source_line_no 作为幂等锚点（避免重复跑产生碎片 lot）
+    # INTERNAL lot 为 (warehouse,item) 单例；source_* 仅作为可选 provenance（成对填充）
     lot_id = await _ensure_internal_lot_for_none_item(
         session,
         warehouse_id=wh,

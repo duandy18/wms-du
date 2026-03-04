@@ -24,6 +24,15 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
 async def _resolve_lot_id_by_lot_code(
     session: AsyncSession,
     *,
@@ -33,8 +42,15 @@ async def _resolve_lot_id_by_lot_code(
 ) -> Optional[int]:
     """
     用展示码 lot_code（旧名 batch_code）解析 lot_id。
-    lot_code 非 NULL 时，(wh,item,lot_code) 应唯一（uq_lots_wh_item_lot_code）。
+
+    终态（Phase M-5+）：
+    - SUPPLIER 批次的唯一性以 lot_code_key 防漂移：
+      uq_lots_wh_item_lot_code_key (warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
     """
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
+
     row = (
         await session.execute(
             sa.text(
@@ -43,11 +59,12 @@ async def _resolve_lot_id_by_lot_code(
                   FROM lots
                  WHERE warehouse_id = :w
                    AND item_id      = :i
-                   AND lot_code     = :c
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
                  LIMIT 1
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
         )
     ).first()
     return int(row[0]) if row else None
@@ -136,8 +153,8 @@ class OutboundService:
 
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
             # ✅ 幂等查询以 ledger 为准：
-            # - batch_code 非空：可唯一解析 lot_id -> 幂等按 lot_id 精确统计
-            # - batch_code 为空：对“非批次商品”允许存在多个 INTERNAL lot，幂等按 (ref,item,wh) 汇总避免漂移
+            # - batch_code 非空：用 lot_code_key 唯一解析 lot_id -> 幂等按 lot_id 精确统计
+            # - batch_code 为空：NONE 商品走 INTERNAL 单例 lot；幂等仍可按 (ref,item,wh) 汇总（更宽松，避免历史脏数据影响）
             lot_id: int | None = None
             if batch_code is not None:
                 lot_id = await _resolve_lot_id_by_lot_code(

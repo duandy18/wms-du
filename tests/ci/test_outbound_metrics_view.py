@@ -70,7 +70,8 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
             {"r": ref},
         )
 
-        # 4) 写一笔 PICK 落账（lot-world：必须带 lot_id；metrics 视图不依赖 after_qty 的精确性）
+        # 4) 写一笔 PICK 落账（lot-world：必须带 lot_id）
+        # ✅ 终态约束：after_qty >= 0，因此不得写负数。
         await session.execute(
             text(
                 """
@@ -82,7 +83,7 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
                 VALUES (
                     'PICK', :r, 1,
                     :w, :i, :lot,
-                    -3, now(), -3
+                    -3, now(), 0
                 )
                 """
             ),

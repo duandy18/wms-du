@@ -16,7 +16,7 @@ async def ensure_warehouse(session: AsyncSession, *, id: int, name: Optional[str
             INSERT INTO warehouses (id, name)
             VALUES (:id, :name)
             ON CONFLICT (id) DO NOTHING
-        """
+            """
         ),
         {"id": int(id), "name": str(name)},
     )
@@ -80,6 +80,11 @@ async def ensure_item(
     )
 
 
+def _norm_lot_key(code_raw: str) -> str:
+    # tests baseline normalize: trim + lower (DB unique key is text; service uses upper, but tests just need stable key)
+    return str(code_raw).strip().lower()
+
+
 # ---------- lots / stocks_lot ----------
 async def ensure_supplier_lot(
     session: AsyncSession,
@@ -91,14 +96,14 @@ async def ensure_supplier_lot(
     """
     Phase M-5：创建/获取一个最小合法 SUPPLIER lot，并返回 lot_id。
 
-    注意（终态世界观）：
-    - lots 只承载 identity + policy snapshots（不承载时间事实 / 不承载单位快照）
-    - 时间事实（production/expiry 等）属于 ledger（RECEIPT 快照），不在 lots
-    - lots 的 SUPPLIER 唯一性是 partial unique index（ON CONFLICT ... WHERE）
+    Lot-World v2：
+    - UNIQUE (warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
     """
-    code = str(lot_code).strip()
-    if not code:
+    code_raw = str(lot_code).strip()
+    if not code_raw:
         raise ValueError("lot_code empty")
+
+    code_key = _norm_lot_key(code_raw)
 
     row = (
         await session.execute(
@@ -109,6 +114,7 @@ async def ensure_supplier_lot(
                     item_id,
                     lot_code_source,
                     lot_code,
+                    lot_code_key,
                     source_receipt_id,
                     source_line_no,
                     -- required policy snapshots (NOT NULL)
@@ -124,7 +130,8 @@ async def ensure_supplier_lot(
                     :w,
                     :i,
                     'SUPPLIER',
-                    :code,
+                    :code_raw,
+                    :code_key,
                     NULL,
                     NULL,
                     it.lot_source_policy,
@@ -133,41 +140,142 @@ async def ensure_supplier_lot(
                     it.uom_governance_enabled,
                     it.shelf_life_value,
                     it.shelf_life_unit
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
+                FROM items it
+                WHERE it.id = :i
+                ON CONFLICT (warehouse_id, item_id, lot_code_key)
+                WHERE lot_code IS NOT NULL
                 DO UPDATE SET lot_code = EXCLUDED.lot_code
                 RETURNING id
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
+            {"w": int(warehouse_id), "i": int(item_id), "code_raw": code_raw, "code_key": code_key},
         )
     ).first()
+
     if not row:
         raise ValueError(f"failed to ensure lot for wh={warehouse_id}, item={item_id}, code={lot_code}")
+
     return int(row[0])
+
+
+async def ensure_internal_lot_singleton(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    warehouse_id: int,
+) -> int:
+    """
+    INTERNAL 单例 lot（终态）：
+    - lot_code_source='INTERNAL'
+    - lot_code IS NULL
+    - UNIQUE (warehouse_id,item_id) WHERE lot_code_source='INTERNAL' AND lot_code IS NULL
+
+    注意：
+    - source_receipt_id/source_line_no 在 DB 中已变成 “成对可选”，tests baseline 不再强制写。
+    """
+    # 1) reuse
+    r0 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_code_source = 'INTERNAL'
+               AND lot_code IS NULL
+             ORDER BY id ASC
+             LIMIT 1
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id)},
+    )
+    got0 = r0.scalar_one_or_none()
+    if got0 is not None:
+        return int(got0)
+
+    # 2) create with ON CONFLICT DO NOTHING (partial unique index)
+    await session.execute(
+        text(
+            """
+            INSERT INTO lots(
+                warehouse_id,
+                item_id,
+                lot_code_source,
+                lot_code,
+                lot_code_key,
+                source_receipt_id,
+                source_line_no,
+                item_lot_source_policy_snapshot,
+                item_expiry_policy_snapshot,
+                item_derivation_allowed_snapshot,
+                item_uom_governance_enabled_snapshot,
+                item_shelf_life_value_snapshot,
+                item_shelf_life_unit_snapshot
+            )
+            SELECT
+                :w,
+                it.id,
+                'INTERNAL',
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                it.lot_source_policy,
+                it.expiry_policy,
+                it.derivation_allowed,
+                it.uom_governance_enabled,
+                it.shelf_life_value,
+                it.shelf_life_unit
+            FROM items it
+            WHERE it.id = :i
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id)},
+    )
+
+    # 3) read back
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_code_source = 'INTERNAL'
+               AND lot_code IS NULL
+             ORDER BY id ASC
+             LIMIT 1
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id)},
+    )
+    got1 = r1.scalar_one_or_none()
+    if got1 is None:
+        raise ValueError("failed to ensure INTERNAL lot singleton")
+    return int(got1)
 
 
 async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None) -> None:
     """
     Phase 4D+：创建 stocks_lot 槽位（测试工具）。
 
-    batch_code（历史命名）语义：
-    - None：lot_id=NULL 槽位（NONE 商品聚合槽位）
-    - 非空：作为 SUPPLIER lot_code，映射到 lots.id
+    终态语义：
+    - batch_code is None -> INTERNAL lot（lot_code NULL，但 lot_id 必须真实存在）
+    - batch_code non-empty -> SUPPLIER lot (lot_code_key)
     """
     if batch_code is None:
+        lot_id = await ensure_internal_lot_singleton(session, item_id=int(item_id), warehouse_id=int(warehouse_id))
         await session.execute(
             text(
                 """
                 INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
-                VALUES (:i, :w, NULL, 0)
+                VALUES (:i, :w, :lot, 0)
                 ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
                 DO NOTHING
                 """
             ),
-            {"i": int(item_id), "w": int(warehouse_id)},
+            {"i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
         )
         return
 
@@ -195,6 +303,7 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
     Phase 4D+：把 stocks_lot 槽位的 qty 设置为特定值（幂等重置，用于测试）。
     """
     if batch_code is None:
+        lot_id = await ensure_internal_lot_singleton(session, item_id=int(item_id), warehouse_id=int(warehouse_id))
         await session.execute(
             text(
                 """
@@ -202,10 +311,10 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
                    SET qty = :q
                  WHERE item_id = :i
                    AND warehouse_id = :w
-                   AND lot_id IS NULL
+                   AND lot_id = :lot
                 """
             ),
-            {"q": int(qty), "i": int(item_id), "w": int(warehouse_id)},
+            {"q": int(qty), "i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
         )
         return
 
@@ -231,9 +340,6 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
 
 # ---------- legacy-named helpers (kept for compatibility) ----------
 async def ensure_batch(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str) -> None:
-    """
-    兼容旧测试命名：ensure_batch -> 现在等价于 ensure_supplier_lot（lot-world）。
-    """
     _ = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
 
 
@@ -245,9 +351,6 @@ async def ensure_batch_with_stock(
     batch_code: str,
     qty: int,
 ) -> None:
-    """
-    组合式工具：补齐依赖 → item / warehouse / lot / stocks_lot 槽位，然后把 qty 设置到目标值。
-    """
     await ensure_item(session, id=int(item_id))
     await ensure_warehouse(session, id=int(warehouse_id))
     await ensure_batch(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code))

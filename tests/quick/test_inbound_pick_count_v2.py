@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
+from app.services.stock.lots import ensure_internal_lot_singleton
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -13,79 +14,16 @@ UTC = timezone.utc
 async def _ensure_internal_lot(session: AsyncSession, *, item_id: int, wh: int, ref: str) -> int:
     """
     Lot-World 终态：lot_id 是库存唯一身份。
-    “非批次商品的 NULL 槽位”由 INTERNAL lot 承载（lot_code 可为 NULL，但 lot_id 必须真实存在）。
+    “非批次商品的 NULL 槽位”由 INTERNAL 单例 lot 承载（lot_code=NULL，(wh,item) 只有一个）。
     """
-    r = await session.execute(
-        text(
-            """
-            INSERT INTO inbound_receipts (
-                warehouse_id,
-                source_type,
-                source_id,
-                ref,
-                trace_id,
-                status,
-                remark,
-                occurred_at
-            )
-            VALUES (
-                :wh,
-                'PO',
-                NULL,
-                :ref,
-                NULL,
-                'DRAFT',
-                'UT internal lot source receipt',
-                :occurred_at
-            )
-            RETURNING id
-            """
-        ),
-        {"wh": wh, "ref": ref, "occurred_at": datetime.now(UTC)},
+    _ = ref
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        source_receipt_id=None,
+        source_line_no=None,
     )
-    receipt_id = int(r.scalar_one())
-
-    r2 = await session.execute(
-        text(
-            """
-            INSERT INTO lots (
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                source_receipt_id,
-                source_line_no,
-                created_at,
-                item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot,
-                item_lot_source_policy_snapshot,
-                item_expiry_policy_snapshot,
-                item_derivation_allowed_snapshot,
-                item_uom_governance_enabled_snapshot
-            )
-            SELECT
-                :wh,
-                i.id,
-                'INTERNAL',
-                NULL,
-                :receipt_id,
-                1,
-                now(),
-                i.shelf_life_value,
-                i.shelf_life_unit,
-                i.lot_source_policy,
-                i.expiry_policy,
-                i.derivation_allowed,
-                i.uom_governance_enabled
-            FROM items i
-            WHERE i.id = :item_id
-            RETURNING id
-            """
-        ),
-        {"wh": wh, "item_id": item_id, "receipt_id": receipt_id},
-    )
-    lot_id = int(r2.scalar_one())
-    return lot_id
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, lot_id: int) -> int:

@@ -2,13 +2,13 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 测试辅助：按项目实际路径导入
 from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code
 
 from app.models.enums import MovementType
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -40,58 +40,15 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     ref = f"IN-{int(datetime.now(UTC).timestamp())}"
     exp = date.today() + timedelta(days=365)
 
-    # Lot-World 终态：lots 只承载“结构身份 + 必要快照”，不承载日期事实字段。
-    # 唯一性以 (warehouse_id,item_id,lot_code) WHERE lot_code IS NOT NULL 保证（真实索引 uq_lots_wh_item_lot_code）。
-    lot_row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    created_at
-                )
-                SELECT
-                    :w,
-                    it.id,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    now()
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
-                WHERE lot_code IS NOT NULL
-                DO UPDATE SET
-                    -- 兼容：若已存在同码 lot，确保其 source 标记为 SUPPLIER（不写日期事实）
-                    lot_code_source = EXCLUDED.lot_code_source
-                RETURNING id
-                """
-            ),
-            {"w": int(wh), "i": int(item), "code": str(code)},
-        )
-    ).first()
-    assert lot_row is not None, "failed to ensure lot"
-    lot_id = int(lot_row[0])
+    # ✅ 终态：supplier lot 必须走 ensure_lot_full（lot_code_key + partial unique index）
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item),
+        warehouse_id=int(wh),
+        lot_code=str(code),
+        production_date=None,
+        expiry_date=None,
+    )
 
     await session.commit()
     async with session.begin():
@@ -99,7 +56,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
             session=session,
             item_id=item,
             warehouse_id=wh,
-            lot_id=lot_id,
+            lot_id=int(lot_id),
             delta=6,
             reason=MovementType.RECEIPT,
             ref=ref,

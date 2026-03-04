@@ -171,6 +171,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
 
     # ensure SUPPLIER lot (lot_code 展示码)
     lot_code = "B-LIFE-1"
+    code_raw = str(lot_code).strip()
+    code_key = code_raw.upper()
     lot_row = (
         await session.execute(
             text(
@@ -180,6 +182,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                     item_id,
                     lot_code_source,
                     lot_code,
+                    lot_code_key,
                     source_receipt_id,
                     source_line_no,
                     -- required snapshots (NOT NULL)
@@ -196,7 +199,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                     :w,
                     it.id,
                     'SUPPLIER',
-                    :code,
+                    :code_raw,
+                    :code_key,
                     NULL,
                     NULL,
                     it.lot_source_policy,
@@ -208,13 +212,13 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                     now()
                   FROM items it
                  WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
+                ON CONFLICT (warehouse_id, item_id, lot_code_key)
                 WHERE lot_code IS NOT NULL
-                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                DO NOTHING
                 RETURNING id
                 """
             ),
-            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
+            {"w": int(wh_id), "i": int(item_id), "code_raw": code_raw, "code_key": code_key},
         )
     ).first()
     assert lot_row is not None, "failed to ensure lot"

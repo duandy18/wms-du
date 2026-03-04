@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,7 +27,7 @@ class Lot(Base):
 
     结构关键点：
       - lot_id（Lot.id）是库存身份锚点，独立于 lot_code
-      - lots 表不承载生产/效期等“时间事实”（时间真相在 stock_ledger）
+      - lot_code == batch_code（展示/来源码），业务需防“输入漂移”
       - lots 冻结 item 侧关键主数据（policy），防主数据漂移污染历史解释链
 
     Phase M-5（结构治理：unit_governance 二阶段）：
@@ -52,7 +53,13 @@ class Lot(Base):
     )
 
     lot_code_source: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # 展示/输入批次码（SUPPLIER lot 可填；INTERNAL lot 必须为 NULL）
     lot_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # 防批次漂移：lot_code 的归一化 key（至少 upper + trim）
+    # DB migration: lot_code_key = upper(btrim(lot_code))
+    lot_code_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     source_receipt_id: Mapped[Optional[int]] = mapped_column(
         Integer,
@@ -107,12 +114,21 @@ class Lot(Base):
             ")",
             name="ck_lots_sl_params_by_policy_snap",
         ),
+        # SUPPLIER lot：按归一化 key 唯一，防 lot_code 输入漂移（trim/upper）
         Index(
-            "uq_lots_wh_item_lot_code",
+            "uq_lots_wh_item_lot_code_key",
             "warehouse_id",
             "item_id",
-            "lot_code",
+            "lot_code_key",
             unique=True,
             postgresql_where=text("lot_code IS NOT NULL"),
+        ),
+        # INTERNAL lot：每 (warehouse,item) 单例（lot_code 必须为 NULL）
+        Index(
+            "uq_lots_internal_single_wh_item",
+            "warehouse_id",
+            "item_id",
+            unique=True,
+            postgresql_where=text("lot_code_source = 'INTERNAL' AND lot_code IS NULL"),
         ),
     )

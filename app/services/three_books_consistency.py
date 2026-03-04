@@ -23,6 +23,15 @@ def _norm_bc(v: Any) -> str | None:
     return s2
 
 
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
 async def _resolve_lot_id_by_lot_code(
     session: AsyncSession,
     *,
@@ -33,11 +42,15 @@ async def _resolve_lot_id_by_lot_code(
     """
     兼容入口：用展示码 lot_code（旧名 batch_code）解析 lot_id。
 
-    注意：
-    - lot_code 允许为 NULL；但 NULL 时可能存在多个 INTERNAL lot，无法唯一解析 => 返回 None
-    - 仅当能唯一解析到一个 lot_id 时才返回
+    终态：
+    - SUPPLIER 批次以 lot_code_key 唯一（防漂移）
+    - lot_code 为 NULL 时表示 INTERNAL，不参与此解析（应由上游显式给 lot_id）
     """
     if lot_code is None:
+        return None
+
+    k = _norm_lot_code_key(lot_code)
+    if not k:
         return None
 
     row = (
@@ -48,18 +61,19 @@ async def _resolve_lot_id_by_lot_code(
                   FROM lots
                  WHERE warehouse_id = :w
                    AND item_id      = :i
-                   AND lot_code     = :c
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
                  LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
         )
     ).fetchall()
 
     if not row:
         return None
     if len(row) > 1:
-        # 理论上 uq_lots_wh_item_lot_code 应保证非 NULL 唯一，但这里仍做防御
+        # uq_lots_wh_item_lot_code_key 应保证唯一，但这里仍做防御
         return None
     return int(row[0][0])
 
@@ -102,7 +116,7 @@ async def verify_commit_three_books(
 
         lot_id = e.get("lot_id")
         if lot_id is None:
-            # 兼容：尝试用 batch_code(展示码) 唯一解析 lot_id（仅非空码）
+            # 兼容：尝试用 batch_code(展示码) 唯一解析 lot_id（仅 SUPPLIER）
             bc = _norm_bc(e.get("batch_code"))
             lot_id = await _resolve_lot_id_by_lot_code(
                 session,

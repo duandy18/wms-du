@@ -5,37 +5,80 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
+from app.services.stock.lots import ensure_lot_full
+
+UTC = timezone.utc
+
+
+async def _ensure_seed_stock_slot(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    warehouse_id: int,
+    batch_code: str,
+    qty: int,
+) -> tuple[int, int, str, int]:
+    """
+    为出库测试提供稳定的库存槽位（Lot-World 终态）：
+
+    - 使用 ensure_lot_full 创建/复用 SUPPLIER lot（identity = lot_code_key）
+    - upsert stocks_lot(item_id, warehouse_id, lot_id) qty
+
+    返回：(item_id, warehouse_id, batch_code, qty_sum)
+    """
+    wh = int(warehouse_id)
+    it = int(item_id)
+    code_raw = str(batch_code).strip()
+    assert code_raw, "batch_code must be non-empty for supplier lot"
+    qty_i = int(qty)
+    assert qty_i > 0, "seed qty must be positive"
+
+    # 保证该商品走 REQUIRED（批次受控），避免执行域把 batch_code 清空导致走 INTERNAL
+    await session.execute(
+        text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+        {"i": it},
+    )
+
+    # ✅ 终态：supplier lot 必须走 ensure_lot_full（内部会写 lot_code_key，并匹配 partial unique index）
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=it,
+        warehouse_id=wh,
+        lot_code=code_raw,
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # ✅ upsert stocks_lot 余额（保证后续扣减一定命中）
+    await session.execute(
+        text(
+            """
+            INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
+            VALUES (:item_id, :wid, :lot_id, :qty)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
+            DO UPDATE SET qty = EXCLUDED.qty
+            """
+        ),
+        {"item_id": it, "wid": wh, "lot_id": int(lot_id), "qty": qty_i},
+    )
+
+    await session.flush()
+    return it, wh, code_raw, qty_i
 
 
 async def _pick_one_stock_slot(session: AsyncSession):
     """
-    从 stocks_lot 中挑一个 (item_id, warehouse_id, lot_code, sum_qty)。
+    旧版本是从 baseline 里“随机挑一个 qty>0 的 lot_code 槽位”，在终态合同下会引发偶发缺货/漂移。
 
-    终态合同下：
-    - REQUIRED 出库必须提供 batch_code（= lots.lot_code），因此这里只挑 lot_code 非 NULL 的槽位。
+    现在改为：显式 seed 一个稳定槽位，确保 OutboundService.commit 必然命中同一 lot_id。
     """
-    row = await session.execute(
-        text(
-            """
-            SELECT
-                sl.item_id,
-                sl.warehouse_id,
-                lo.lot_code AS batch_code,
-                SUM(sl.qty) AS qty
-            FROM stocks_lot sl
-            JOIN lots lo ON lo.id = sl.lot_id
-            WHERE sl.qty > 0
-              AND lo.lot_code IS NOT NULL
-            GROUP BY sl.item_id, sl.warehouse_id, lo.lot_code
-            ORDER BY sl.item_id, sl.warehouse_id, lo.lot_code
-            LIMIT 1
-            """
-        )
+    return await _ensure_seed_stock_slot(
+        session,
+        item_id=3001,
+        warehouse_id=1,
+        batch_code="B-CONC-1",
+        qty=20,
     )
-    r = row.first()
-    if not r:
-        pytest.skip("当前基线中没有 qty>0 且 lot_code 非空 的 stocks_lot 记录")
-    return int(r[0]), int(r[1]), r[2], int(r[3])
 
 
 @pytest.mark.asyncio
@@ -92,7 +135,7 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
 async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
     item_id, warehouse_id, batch_code, qty_sum = await _pick_one_stock_slot(session)
     if qty_sum < 3:
-        pytest.skip("库存太少 qty_sum={qty_sum}, 不适合测试")
+        pytest.skip(f"库存太少 qty_sum={qty_sum}, 不适合测试")
 
     order_id = "UT:PH3:OUT-TEST-2"
     lines = [
