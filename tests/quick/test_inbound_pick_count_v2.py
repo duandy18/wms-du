@@ -14,12 +14,7 @@ async def _ensure_internal_lot(session: AsyncSession, *, item_id: int, wh: int, 
     """
     Lot-World 终态：lot_id 是库存唯一身份。
     “非批次商品的 NULL 槽位”由 INTERNAL lot 承载（lot_code 可为 NULL，但 lot_id 必须真实存在）。
-
-    约束回顾（来自 DB 真实结构）：
-    - lots.lot_code_source='INTERNAL' 时必须提供 source_receipt_id + source_line_no
-    - lots snapshot 字段需与 items 对齐（not null snapshot：policy/expiry/derivation/uom_governance）
     """
-    # 1) 造一个 inbound_receipts 作为 INTERNAL lot 的来源（满足 FK + check）
     r = await session.execute(
         text(
             """
@@ -50,7 +45,6 @@ async def _ensure_internal_lot(session: AsyncSession, *, item_id: int, wh: int, 
     )
     receipt_id = int(r.scalar_one())
 
-    # 2) 基于 items 抽取快照字段，插入 INTERNAL lot（lot_code = NULL）
     r2 = await session.execute(
         text(
             """
@@ -117,14 +111,16 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     item_id = 1
     wh = 1
 
-    # Lot-World 终态：非批次商品不再用 sentinel/NULL 槽位表达，
-    # 而是用 INTERNAL lot 承载“原 batch_code=None 的库存身份”。
-    lot_id = await _ensure_internal_lot(session, item_id=item_id, wh=wh, ref="UT-IPC-INTERNAL-RECEIPT-1")
+    # 本用例要测 NONE/internal-lot 语义：局部把该 item 改回 NONE
+    await session.execute(
+        text("UPDATE items SET expiry_policy='NONE'::expiry_policy WHERE id=:i"),
+        {"i": int(item_id)},
+    )
+    await session.commit()
 
-    # 兼容字段：batch_code 仍可为 None（展示标签），但结构身份必须传 lot_id
+    lot_id = await _ensure_internal_lot(session, item_id=item_id, wh=wh, ref="UT-IPC-INTERNAL-RECEIPT-1")
     batch_code: str | None = None
 
-    # 1) 入库 +2（日期参数允许传入；lot_id 才是身份）
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -141,7 +137,6 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     q1 = await _qty(session, item_id, wh, lot_id)
     assert q1 >= 2
 
-    # 2) 拣货 -1
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -157,7 +152,6 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     q2 = await _qty(session, item_id, wh, lot_id)
     assert q2 == q1 - 1
 
-    # 3) 盘点：把数量调整为 1（delta = 1 - 当前）
     remain = await _qty(session, item_id, wh, lot_id)
     delta = 1 - remain
     if delta != 0:

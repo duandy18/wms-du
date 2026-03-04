@@ -1,4 +1,3 @@
-# tests/quick/test_inbound_reclassify_v2.py
 from datetime import date, datetime, timezone
 
 import pytest
@@ -36,7 +35,6 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id=:i
                    AND warehouse_id=:w
-                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),
@@ -69,10 +67,15 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     wh_returns = await _ensure_wh(session, "RETURNS")
     wh_main = await _ensure_wh(session, "MAIN")
 
-    # 强护栏口径：非批次商品用 NULL 槽位（lot_id IS NULL）
+    # 本用例要测 NONE/internal-lot 语义：局部把该 item 改回 NONE
+    await session.execute(
+        text("UPDATE items SET expiry_policy='NONE'::expiry_policy WHERE id=:i"),
+        {"i": int(item_id)},
+    )
+    await session.commit()
+
     batch_code: str | None = None
 
-    # 1) RETURNS：入库 +2
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -88,7 +91,6 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     r0 = await _qty(session, item_id, wh_returns, batch_code)
     assert r0 >= 2
 
-    # 2) 净零迁移：RETURNS -1 → MAIN +1
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -113,7 +115,6 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
         production_date=date.today(),
     )
 
-    # 3) 断言：RETURNS 减 1，MAIN 加 1，总量不变（仅验证两仓槽位变化，不引入 lot_id_key 概念）
     r1 = await _qty(session, item_id, wh_returns, batch_code)
     m1 = await _qty(session, item_id, wh_main, batch_code)
     assert r1 == r0 - 1

@@ -81,7 +81,6 @@ class AuditWriter:
             dedup = message.get("dedup")
             if isinstance(dedup, str) and dedup.strip():
                 trace_id = dedup
-            # payload_for_store 直接使用原始 dict
             payload_for_store = dict(message)
 
         if trace_id:
@@ -95,7 +94,6 @@ class AuditWriter:
                     trace_id=trace_id,
                 )
             except Exception:
-                # trace 写入失败不能影响主流程
                 pass
 
         # 3) 尝试 commit：保持原有“能见度”语义
@@ -106,23 +104,21 @@ class AuditWriter:
         return int(ev.id)
 
     async def path(self, session: AsyncSession, mode: str, payload: Mapping[str, Any]) -> int:
-        # payload 约定：包含 dedup=scan_ref
         return await self._write(session, f"scan_{mode}_path", "INFO", payload)
 
     async def probe(self, session: AsyncSession, mode: str, scan_ref: str) -> int:
-        # message=scan_ref（保持原行为），用于 event_log；
-        # _write 内部会自动识别 scan_ref 作为 trace_id，并写入 event_store。
         return await self._write(session, f"scan_{mode}_probe", "INFO", scan_ref)
 
     async def commit(self, session: AsyncSession, mode: str, payload: Mapping[str, Any]) -> int:
-        # payload 约定：包含 dedup=scan_ref
         return await self._write(session, f"scan_{mode}_commit", "INFO", payload)
+
+    async def idempotent(self, session: AsyncSession, mode: str, payload: Mapping[str, Any]) -> int:
+        return await self._write(session, f"scan_{mode}_idempotent", "INFO", payload)
 
     async def other(self, session: AsyncSession, scan_ref: str) -> int:
         return await self._write(session, "scan_other_mode", "INFO", scan_ref)
 
     async def error(self, session: AsyncSession, mode: str, scan_ref: str, err: str) -> int:
-        # 这里 payload 明确包含 dedup=scan_ref，便于 trace 识别
         return await self._write(
             session,
             f"scan_{mode}_error",

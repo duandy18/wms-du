@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
@@ -30,6 +31,13 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     # 准备两个仓的库存槽位
     await ensure_wh_loc_item(session, wh=wh1, loc=wh1, item=item_id)
     await ensure_wh_loc_item(session, wh=wh2, loc=wh2, item=item_id)
+
+    # 终态合同：本测试要用 batch_code，所以必须把该 item 设为 REQUIRED
+    await session.execute(
+        text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+        {"i": int(item_id)},
+    )
+    await session.commit()
 
     await seed_batch_slot(session, item=item_id, loc=wh1, code=batch1, qty=10, days=365)
     await seed_batch_slot(session, item=item_id, loc=wh2, code=batch2, qty=10, days=365)

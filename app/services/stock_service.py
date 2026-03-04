@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service_adjust import adjust_lot_impl
 from app.services.stock_service_ship import ship_commit_direct_lot_impl
 
@@ -31,6 +32,9 @@ class StockService:
             {"i": int(item_id)},
         )
         v = row.scalar_one_or_none()
+        if v is None:
+            # 重要：unknown item 必须先拦住，不能被 NONE/REQUIRED 合同判断遮蔽
+            raise ValueError("item_not_found")
         return str(v or "").upper() == "REQUIRED"
 
     async def _ensure_supplier_lot_id(
@@ -41,74 +45,15 @@ class StockService:
         item_id: int,
         lot_code: str,
     ) -> int:
-        code = str(lot_code).strip()
-        if not code:
-            raise ValueError("batch_code REQUIRED")
-
-        row = await session.execute(
-            SA(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot
-                )
-                SELECT
-                    :w,
-                    :i,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
-                WHERE lot_code IS NOT NULL
-                DO NOTHING
-                RETURNING id
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
+        # Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
+        return await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
         )
-        got = row.scalar_one_or_none()
-        if got is not None:
-            return int(got)
-
-        row2 = await session.execute(
-            SA(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
-        )
-        got2 = row2.scalar_one_or_none()
-        if got2 is None:
-            raise ValueError("lot_not_found")
-        return int(got2)
 
     async def _ensure_internal_lot_id(
         self,
@@ -145,7 +90,6 @@ class StockService:
             return int(got)
 
         # 2) create (or reuse) a synthetic inbound_receipt as INTERNAL lot source
-        # inbound_receipts.ref is unique; use deterministic ref so repeated calls are stable
         ts = occurred_at or datetime.now(UTC)
         src_ref = f"SYS:INTERNAL_LOT:{int(warehouse_id)}:{int(item_id)}"
         r = await session.execute(
@@ -280,7 +224,8 @@ class StockService:
 
         if "insufficient stock" in m.lower():
             return "insufficient_stock"
-
+        if "item_not_found" in m.lower():
+            return "item_not_found"
         if "lot_not_found" in m.lower():
             return "lot_not_found"
         if "lot_mismatch" in m.lower():
@@ -312,12 +257,16 @@ class StockService:
         lot_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
+            requires_batch = await self._requires_batch(session, item_id=int(item_id))
             bc_norm = (str(batch_code).strip() if batch_code is not None else None) or None
 
+            # Phase 3：NONE/REQUIRED 入库合同收口（服务层硬化，禁止 NONE 带 batch_code）
+            if (not requires_batch) and bc_norm is not None:
+                raise ValueError("batch_code must be null for expiry-policy NONE items. Do not send batch_code.")
+
             if bc_norm is None:
-                if await self._requires_batch(session, item_id=int(item_id)):
+                if requires_batch:
                     raise ValueError("batch_code REQUIRED")
-                # ✅ 终态：非批次商品也必须有 lot_id（INTERNAL lot，lot_code 可为 NULL）
                 resolved_lot_id = lot_id or await self._ensure_internal_lot_id(
                     session,
                     warehouse_id=int(warehouse_id),
@@ -369,6 +318,15 @@ class StockService:
                 "lot_id": lot_id,
                 "raw_error": msg,
             }
+
+            if kind == "item_not_found":
+                raise_problem(
+                    status_code=422,
+                    error_code="item_not_found",
+                    message="商品不存在，写入被拒绝。",
+                    context=ctx,
+                    details=[{"type": "item", "path": "stock_adjust", "item_id": int(item_id), "reason": msg}],
+                )
 
             if kind == "insufficient_stock":
                 if int(delta) < 0:

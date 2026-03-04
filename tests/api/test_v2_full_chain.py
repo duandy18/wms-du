@@ -199,13 +199,12 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     await db_session_like_pg.commit()
     print("[TEST] 已通过 StockService.adjust_lot 入库 10 件到 BATCH-001")
 
-    # 4) pick
+    # 4) pick（终态合同：batch_code 必须按行提供）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/pick",
         json={
             "warehouse_id": 1,
-            "batch_code": "BATCH-001",
-            "lines": [{"item_id": 3001, "qty": 1}],
+            "lines": [{"item_id": 3001, "qty": 1, "batch_code": "BATCH-001"}],
         },
     )
     print("[HTTP] pick status:", resp.status_code, "body:", resp.text)
