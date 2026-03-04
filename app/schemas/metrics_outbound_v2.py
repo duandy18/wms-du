@@ -26,7 +26,9 @@ class OutboundMetricsV2(BaseModel):
     - fallback_times    fallback 次数
     - fallback_rate     fallback 占比（%）
 
-    - fefo_hit_rate     FEFO 命中率（%）
+    - expiry_pick_hit_rate
+        “临期优先”贴合度（%）：
+        仅用于风险分析口径：对比拣货实际 batch_code 与“当前仍有库存的最早到期 lot_code”。
 
     - distribution      当天按小时的出库分布（orders + pick_qty）
     """
@@ -41,7 +43,7 @@ class OutboundMetricsV2(BaseModel):
     fallback_times: int
     fallback_rate: float
 
-    fefo_hit_rate: float
+    expiry_pick_hit_rate: float
 
     distribution: List[OutboundDistributionPoint] = []
 
@@ -54,7 +56,7 @@ class OutboundDaySummary(BaseModel):
     total_orders: int
     success_rate: float
     fallback_rate: float
-    fefo_hit_rate: float
+    expiry_pick_hit_rate: float
 
 
 class OutboundRangeMetricsResponse(BaseModel):
@@ -111,7 +113,7 @@ class OutboundFailuresMetricsResponse(BaseModel):
     details: List[OutboundFailureDetail] = []
 
 
-# --------- 4) FEFO 风险监控 --------------------------
+# --------- 4) FEFO 风险监控（分析域保留 FEFO 术语） --------------------------
 
 
 class FefoItemRisk(BaseModel):
@@ -119,7 +121,7 @@ class FefoItemRisk(BaseModel):
     sku: str
     name: str
     near_expiry_batches: int
-    fefo_hit_rate_7d: float
+    expiry_pick_hit_rate_7d: float
     risk_score: float  # 用于排序的简单分数（0-100）
 
 

@@ -13,13 +13,15 @@ from app.services.stock_service import StockService
 
 class PickService:
     """
-    v2 拣货（出库）Facade（location_id 已移除；FEFO 仅提示不刚性）：
+    v2 拣货（出库）Facade（location_id 已移除；执行域不允许 FEFO / 自动挑批次）：
 
     设计要点
     - 拣货即扣减：扫码确认后立刻扣减库存（原子 + 幂等由 StockService.adjust_lot 保障）
-    - 批次强制：仅对 requires_batch=true 的商品强制 batch_code；requires_batch=false 允许 NULL
+    - 批次强裁决：以 items.expiry_policy 为唯一真相源
+        - REQUIRED：必须显式 batch_code（精确扣某个 SUPPLIER lot）
+        - NONE：禁止 batch_code（统一扣 INTERNAL lot）
     - 粒度统一：库存槽位以 (item_id, warehouse_id, lot_id) 表达（Phase M-2 终态）
-    - FEFO 柔性：不强制 FEFO；未指定批次时仅选择“可扣减”的某个 lot 槽位（不依赖 expiry_date 事实）
+    - 分析域可提供“临期优先建议”（expiry analytics），但不参与执行扣减
 
     Phase M-2（结构封板）：
     - 禁止 fallback 到 batch-world（不允许双真相）
