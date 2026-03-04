@@ -16,46 +16,97 @@ echo "[dump] OUT=$OUT_DIR/$TS"
 
 # ============================================================
 # 核心对象集合（按“你库的真名”收口）
-# - 表：items / item_uoms / item_barcodes / lots
-# - 采购入库：purchase_orders / purchase_order_lines / inbound_receipts / inbound_receipt_lines
-# - 库存域：stock_ledger / stock_snapshots / stocks_lot / inventory_movements
-# - 出库域：internal_outbound_docs / internal_outbound_lines / outbound_*（v2 为主）
-# - 视图：v_stocks_lot_reconcile_receipt / vw_outbound_metrics（用于对账与指标）
+#
+# Phase 2（已完成）：Item 主数据收敛
+# - items / item_uoms / item_barcodes / lots
+#
+# Phase 3+（本阶段）：基础主数据域扩展（stores / shipping_providers ...）
+# - 先纳入结构与约束审计，后续逐域收敛合同与语义边界
+#
+# 采购入库：purchase_orders / purchase_order_lines / inbound_receipts / inbound_receipt_lines
+# 库存域：stock_ledger / stock_snapshots / stocks_lot / inventory_movements
+# 出库域：internal_outbound_docs / internal_outbound_lines / outbound_*（v2 为主）
+# 视图：v_stocks_lot_reconcile_receipt / vw_outbound_metrics（用于对账与指标）
 #
 # 脚本会过滤不存在的对象（表/视图/物化视图/分区父表），避免炸。
 # ============================================================
 OBJECTS=(
-  # master data
+  # ----------------------------------------------------------
+  # master data (item)
+  # ----------------------------------------------------------
   items
   item_uoms
   item_barcodes
   lots
 
+  # ----------------------------------------------------------
+  # master data (foundation domains) - real table names in this DB
+  # shops / stores
+  # ----------------------------------------------------------
+  stores
+  platform_shops
+  platform_test_shops
+  store_tokens
+  store_warehouse
+  store_province_routes
+
+  # warehouses / suppliers
+  warehouses
+  suppliers
+
+  # shipping providers (carriers / express / logistics)
+  shipping_providers
+  warehouse_shipping_providers
+  shipping_provider_contacts
+
+  # shipping pricing (audit first; no over-abstraction)
+  shipping_provider_pricing_schemes
+  shipping_provider_pricing_scheme_warehouses
+  shipping_provider_pricing_scheme_segments
+  shipping_provider_pricing_scheme_segment_templates
+  shipping_provider_pricing_scheme_segment_template_items
+  shipping_provider_zones
+  shipping_provider_zone_members
+  shipping_provider_zone_brackets
+  shipping_provider_surcharges
+
+  # ----------------------------------------------------------
   # purchase / inbound
+  # ----------------------------------------------------------
   purchase_orders
   purchase_order_lines
   inbound_receipts
   inbound_receipt_lines
 
+  # ----------------------------------------------------------
   # inventory domain
+  # ----------------------------------------------------------
   stock_ledger
   stock_snapshots
   stocks_lot
   inventory_movements
 
+  # ----------------------------------------------------------
   # internal outbound (doc/lines)
+  # ----------------------------------------------------------
   internal_outbound_docs
   internal_outbound_lines
 
+  # ----------------------------------------------------------
   # outbound domain (v2)
+  # ----------------------------------------------------------
   outbound_commits_v2
   outbound_lines_v2
   outbound_ship_ops
 
+  # ----------------------------------------------------------
   # outbound (legacy/other, keep for audit)
+  # ----------------------------------------------------------
   outbound_commits
 
+  # ----------------------------------------------------------
   # views
+  # ----------------------------------------------------------
   v_stocks_lot_reconcile_receipt
   vw_outbound_metrics
 )
