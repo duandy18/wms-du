@@ -44,7 +44,11 @@ async def test_blueprint_pick_does_not_touch_ledger_or_stocks_lot(
     item_id = int(first.get("item_id") or 0)
     assert item_id > 0, f"invalid item_id in pick_task.lines[0]: {first}"
 
-    await scan_pick(client_like, task_id=task_id, item_id=item_id, qty=1, batch_code=first.get("batch_code"))
+    # 终态合同：REQUIRED 必须提供 batch_code。
+    bc = first.get("batch_code")
+    bc_norm = (str(bc).strip() if bc is not None else "") or "UT-BLUEPRINT-BATCH"
+
+    await scan_pick(client_like, task_id=task_id, item_id=item_id, qty=1, batch_code=bc_norm)
 
     ledger1 = await ledger_count(db_session_like_pg)
     lot1 = await stocks_lot_count(db_session_like_pg)

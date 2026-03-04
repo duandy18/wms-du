@@ -1,10 +1,13 @@
 # tests/services/pick/test_pick_blueprint_db_evidence_contract.py
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.stock_service import StockService
 from tests.services.pick._helpers_pick_blueprint import (
     PLATFORM,
     SHOP_ID,
@@ -57,8 +60,6 @@ async def test_blueprint_commit_writes_db_evidence_and_is_idempotent(
     client_like,
     db_session_like_pg: AsyncSession,
 ) -> None:
-    ledger0 = await ledger_count(db_session_like_pg)
-
     order_id = await ensure_pickable_order(db_session_like_pg, warehouse_id=WAREHOUSE_ID)
     task = await create_pick_task_from_order(client_like, warehouse_id=WAREHOUSE_ID, order_id=order_id)
     task_id = int(task["id"])
@@ -73,7 +74,33 @@ async def test_blueprint_commit_writes_db_evidence_and_is_idempotent(
     item_id = int(first.get("item_id") or 0)
     assert item_id > 0
 
-    await scan_pick(client_like, task_id=task_id, item_id=item_id, qty=1, batch_code=first.get("batch_code"))
+    # 终态合同：REQUIRED 必须提供 batch_code
+    bc = first.get("batch_code")
+    bc_norm = (str(bc).strip() if bc is not None else "") or "UT-BLUEPRINT-BATCH"
+
+    await scan_pick(client_like, task_id=task_id, item_id=item_id, qty=1, batch_code=bc_norm)
+
+    # ✅ 为 commit 造库存（否则会 409 insufficient_stock）
+    now = datetime.now(timezone.utc)
+    stock = StockService()
+    await stock.adjust(
+        session=db_session_like_pg,
+        warehouse_id=int(WAREHOUSE_ID),
+        item_id=int(item_id),
+        delta=10,
+        reason="RECEIPT",
+        ref=f"UT:BLUEPRINT:SEED:{ref}",
+        ref_line=1,
+        occurred_at=now,
+        batch_code=bc_norm,
+        production_date=now.date(),
+        expiry_date=None,
+        trace_id="T-UT-SEED",
+        meta={"sub_reason": "UT_BLUEPRINT_SEED"},
+    )
+    await db_session_like_pg.commit()
+
+    ledger0 = await ledger_count(db_session_like_pg)
 
     # 1) 首次 commit：必须写台账 + 写 outbound_commits_v2
     trace_id = "T-UT-DB-1"

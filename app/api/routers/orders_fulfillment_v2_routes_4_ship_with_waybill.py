@@ -78,14 +78,29 @@ def register(router: APIRouter) -> None:
         tracking_no = wb_result.tracking_no
         occurred_at = datetime.now(timezone.utc)
 
+        # carrier_code -> shipping_provider_id（用于写 shipping_records 强链接）
+        carrier_code_norm = (body.carrier_code or "").strip().upper()
+        prow = (
+            await session.execute(
+                text("SELECT id, code, name, active FROM shipping_providers WHERE code = :code LIMIT 1"),
+                {"code": carrier_code_norm},
+            )
+        ).mappings().first()
+        if not prow or not bool(prow.get("active", True)):
+            raise HTTPException(status_code=422, detail="carrier_code not found or inactive")
+        shipping_provider_id = int(prow["id"])
+        provider_code = str(prow.get("code") or carrier_code_norm)
+        provider_name = str(prow.get("name") or (body.carrier_name or ""))
+
         meta: Dict[str, Any] = {
             "platform": plat,
             "shop_id": shop_id,
             "warehouse_id": int(body.warehouse_id),
             "occurred_at": occurred_at.isoformat(),
             "tracking_no": tracking_no,
-            "carrier_code": body.carrier_code,
-            "carrier_name": body.carrier_name,
+            "carrier_code": provider_code,
+            "carrier_name": provider_name,
+            "shipping_provider_id": shipping_provider_id,
             "gross_weight_kg": float(body.weight_kg or 0.0),
             "receiver": {
                 "name": body.receiver_name,
@@ -102,20 +117,21 @@ def register(router: APIRouter) -> None:
 
         svc = ShipService(session=session)
         try:
-            audit_res = await svc.commit(
-                ref=order_ref, platform=plat, shop_id=shop_id, trace_id=trace_id, meta=meta
-            )
+            audit_res = await svc.commit(ref=order_ref, platform=plat, shop_id=shop_id, trace_id=trace_id, meta=meta)
         except Exception:
             await session.rollback()
             raise
 
-        insert_sql = text(
+        # 幂等写入：以 (platform, shop_id, order_ref) 为唯一事实
+        # 需要 DB 侧唯一约束 uq_shipping_records_platform_shop_ref 支撑
+        upsert_sql = text(
             """
             INSERT INTO shipping_records (
                 order_ref,
                 platform,
                 shop_id,
                 warehouse_id,
+                shipping_provider_id,
                 carrier_code,
                 carrier_name,
                 tracking_no,
@@ -136,6 +152,7 @@ def register(router: APIRouter) -> None:
                 :platform,
                 :shop_id,
                 :warehouse_id,
+                :shipping_provider_id,
                 :carrier_code,
                 :carrier_name,
                 :tracking_no,
@@ -151,20 +168,38 @@ def register(router: APIRouter) -> None:
                 :error_message,
                 CAST(:meta AS jsonb)
             )
+            ON CONFLICT (platform, shop_id, order_ref) DO UPDATE SET
+                warehouse_id = EXCLUDED.warehouse_id,
+                shipping_provider_id = EXCLUDED.shipping_provider_id,
+                carrier_code = EXCLUDED.carrier_code,
+                carrier_name = EXCLUDED.carrier_name,
+                tracking_no = EXCLUDED.tracking_no,
+                trace_id = EXCLUDED.trace_id,
+                weight_kg = EXCLUDED.weight_kg,
+                gross_weight_kg = EXCLUDED.gross_weight_kg,
+                packaging_weight_kg = EXCLUDED.packaging_weight_kg,
+                cost_estimated = EXCLUDED.cost_estimated,
+                cost_real = EXCLUDED.cost_real,
+                delivery_time = EXCLUDED.delivery_time,
+                status = EXCLUDED.status,
+                error_code = EXCLUDED.error_code,
+                error_message = EXCLUDED.error_message,
+                meta = EXCLUDED.meta;
             """
         )
 
         json_meta = json.dumps(meta, ensure_ascii=False)
 
         await session.execute(
-            insert_sql,
+            upsert_sql,
             {
                 "order_ref": order_ref,
                 "platform": plat,
                 "shop_id": shop_id,
                 "warehouse_id": int(body.warehouse_id),
-                "carrier_code": body.carrier_code,
-                "carrier_name": body.carrier_name,
+                "shipping_provider_id": shipping_provider_id,
+                "carrier_code": provider_code,
+                "carrier_name": provider_name,
                 "tracking_no": tracking_no,
                 "trace_id": trace_id,
                 "weight_kg": None,
@@ -186,8 +221,8 @@ def register(router: APIRouter) -> None:
             ok=audit_res.get("ok", True),
             ref=order_ref,
             tracking_no=tracking_no,
-            carrier_code=body.carrier_code,
-            carrier_name=body.carrier_name,
+            carrier_code=provider_code,
+            carrier_name=provider_name,
             status="IN_TRANSIT",
             label_base64=None,
             label_format=None,

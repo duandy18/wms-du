@@ -14,18 +14,11 @@ pytestmark = pytest.mark.asyncio
 
 WAREHOUSE_ID = 1
 ITEM_ID = 3003
-# 强护栏口径：非批次商品 batch_code=None（展示码为 NULL；库存仍有 lot_id，通常为 INTERNAL lot）
 BATCH_CODE: str | None = None
 ORDER_NO = "P3-ORDER-001"
 
 
 async def _read_qty_lot(session: AsyncSession) -> int:
-    """
-    Phase M-5 / DB 事实：
-    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
-    - “非批次商品”用 INTERNAL lot 表达（lots.lot_code 可能为 NULL）
-    - 槽位定位统一用 lots.lot_code（可 NULL）过滤
-    """
     val = await session.execute(
         text(
             """
@@ -137,6 +130,13 @@ async def _ensure_seed_to_10(session: AsyncSession) -> None:
     """
     Phase 4E：不再依赖 legacy baseline(stocks)，测试自给自足 seed 到 qty=10（lot-world 余额）。
     """
+    # 本用例测试 NONE/internal-lot：局部把 item 改回 NONE
+    await session.execute(
+        text("UPDATE items SET expiry_policy='NONE'::expiry_policy WHERE id=:i"),
+        {"i": int(ITEM_ID)},
+    )
+    await session.commit()
+
     svc = StockService()
     before = await _read_qty_lot(session)
     if before >= 10:

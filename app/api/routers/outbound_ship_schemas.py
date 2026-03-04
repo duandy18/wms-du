@@ -150,8 +150,12 @@ class ShipConfirmRequest(BaseModel):
 
     warehouse_id: Optional[int] = Field(None, description="发货仓库 ID（建议必填）")
 
-    carrier: Optional[str] = Field(None, description="选用的物流公司编码，例如 ZTO / JT / SF")
-    carrier_name: Optional[str] = Field(None, description="物流公司名称（冗余字段）")
+    # ✅ 新合同：用 id 作为输入（稳定、不漂移）
+    shipping_provider_id: int = Field(..., ge=1, description="选用的运输网点 ID（必填）")
+
+    # 兼容展示字段（不作为选择依据）
+    carrier: Optional[str] = Field(None, description="deprecated：展示/历史兼容，不用于选择")
+    carrier_name: Optional[str] = Field(None, description="deprecated：展示/历史兼容，不用于选择")
 
     scheme_id: Optional[int] = Field(None, description="选用的运价方案 ID（建议必填）")
 

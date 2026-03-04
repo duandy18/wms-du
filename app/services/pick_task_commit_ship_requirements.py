@@ -13,9 +13,9 @@ async def item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
 
     批次受控唯一真相源：items.expiry_policy
     - expiry_policy='REQUIRED' => requires_batch=True
-    - 其他（'NONE'/NULL）       => requires_batch=False
+    - expiry_policy='NONE'     => requires_batch=False
 
-    重要：item 不存在时返回 False，不在此提前 raise（保持历史测试/调用约定）。
+    重要：item 不存在时必须明确失败（unknown item 不能默认成 NONE）。
     """
     row = (
         await session.execute(
@@ -30,12 +30,11 @@ async def item_requires_batch(session: AsyncSession, *, item_id: int) -> bool:
             {"item_id": int(item_id)},
         )
     ).first()
+
     if not row:
-        return False
-    try:
-        return str(row[0] or "").upper() == "REQUIRED"
-    except Exception:
-        return False
+        raise ValueError("item_not_found")
+
+    return str(row[0] or "").upper() == "REQUIRED"
 
 
 def normalize_batch_code(batch_code: Optional[str]) -> Optional[str]:

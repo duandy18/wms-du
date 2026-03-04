@@ -1,7 +1,7 @@
 # app/api/routers/warehouses_routes_write.py
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import text
@@ -19,6 +19,13 @@ from app.api.routers.warehouses_schemas import (
 from app.db.deps import get_db
 
 
+def _norm_str(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    s = v.strip()
+    return s if s else None
+
+
 def register(router: APIRouter) -> None:
     @router.post(
         "/warehouses",
@@ -32,6 +39,10 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ) -> WarehouseCreateOut:
         check_perm(db, current_user, ["config.store.write"])
+
+        name = _norm_str(payload.name)
+        if not name:
+            raise HTTPException(status_code=422, detail="name is required")
 
         sql = text(
             """
@@ -49,12 +60,13 @@ def register(router: APIRouter) -> None:
                 await session.execute(
                     sql,
                     {
-                        "name": payload.name,
-                        "code": payload.code,
+                        "name": name,
+                        # code 可选：仅展示/导入用；空字符串 -> NULL
+                        "code": _norm_str(payload.code),
                         "active": payload.active,
-                        "address": payload.address,
-                        "contact_name": payload.contact_name,
-                        "contact_phone": payload.contact_phone,
+                        "address": _norm_str(payload.address),
+                        "contact_name": _norm_str(payload.contact_name),
+                        "contact_phone": _norm_str(payload.contact_phone),
                         "area_sqm": payload.area_sqm,
                     },
                 )
@@ -80,18 +92,29 @@ def register(router: APIRouter) -> None:
         check_perm(db, current_user, ["config.store.write"])
 
         fields: Dict[str, Any] = {}
+
         if payload.name is not None:
-            fields["name"] = payload.name
+            name = _norm_str(payload.name)
+            if not name:
+                raise HTTPException(status_code=422, detail="name cannot be empty")
+            fields["name"] = name
+
         if payload.code is not None:
-            fields["code"] = payload.code
+            # 允许置空："" -> NULL
+            fields["code"] = _norm_str(payload.code)
+
         if payload.active is not None:
             fields["active"] = payload.active
+
         if payload.address is not None:
-            fields["address"] = payload.address
+            fields["address"] = _norm_str(payload.address)
+
         if payload.contact_name is not None:
-            fields["contact_name"] = payload.contact_name
+            fields["contact_name"] = _norm_str(payload.contact_name)
+
         if payload.contact_phone is not None:
-            fields["contact_phone"] = payload.contact_phone
+            fields["contact_phone"] = _norm_str(payload.contact_phone)
+
         if payload.area_sqm is not None:
             fields["area_sqm"] = payload.area_sqm
 

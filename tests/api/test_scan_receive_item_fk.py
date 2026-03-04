@@ -100,8 +100,15 @@ def _looks_like_missing_item_or_lot_guard(msg: str) -> bool:
     兼容不同错误包装/不同驱动/不同实现路径的文本差异：
     - 可能是 items FK 失败（旧路径）
     - 也可能是 lot_not_found（lot-world 护栏更早触发）
+    - 或者是服务层先拦截的 item_not_found（更明确的语义）
     """
     s = (msg or "").lower()
+
+    # 0) 明确的 unknown item 语义
+    if "item_not_found" in s:
+        return True
+    if "unknown item" in s:
+        return True
 
     # 1) items FK 语义（常见：psycopg/asyncpg 文本）
     if 'not present in table "items"' in s:

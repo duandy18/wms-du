@@ -22,15 +22,11 @@ async def _ensure_supplier_lot_id(
     expiry_date: date | None,
 ) -> int:
     """
-    Phase 4E：Count 写入以 lot-world 为准。
-    - 把 batch_code 视为展示码（lots.lot_code）
-    - COUNT 的维度需要落在一个确定的 lot 槽位上，因此这里确保 SUPPLIER lot 存在并返回 id
-
-    Phase M-5（结构治理启动：unit_governance 二阶段）：
-    - lots 不承载 production/expiry 时间事实（时间真相在 stock_ledger）
-    - lots 的单位快照列已移除（不再写入 base/purchase uom snapshot）
-      单位展示/推导应来自 item_uoms（结构层）与业务行快照（PO/Receipt）
+    Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
+    - Count 仍要求 batch_code（盘点维度必须落到确定 SUPPLIER lot 槽位）
     """
+    from app.services.stock.lots import ensure_lot_full
+
     _ = production_date
     _ = expiry_date
 
@@ -38,75 +34,14 @@ async def _ensure_supplier_lot_id(
     if not code:
         raise ValueError("盘点操作必须提供 batch_code。")
 
-    row = await session.execute(
-        sa.text(
-            """
-            INSERT INTO lots(
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                source_receipt_id,
-                source_line_no,
-                -- required snapshots (NOT NULL)
-                item_lot_source_policy_snapshot,
-                item_expiry_policy_snapshot,
-                item_derivation_allowed_snapshot,
-                item_uom_governance_enabled_snapshot,
-                -- optional snapshots (nullable)
-                item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot
-                -- Phase M-5: 单位快照列不再写入（保留列用于平滑迁移，后续 drop）
-            )
-            SELECT
-                :w,
-                :i,
-                'SUPPLIER',
-                :code,
-                NULL,
-                NULL,
-                it.lot_source_policy,
-                it.expiry_policy,
-                it.derivation_allowed,
-                it.uom_governance_enabled,
-                it.shelf_life_value,
-                it.shelf_life_unit
-              FROM items it
-             WHERE it.id = :i
-            ON CONFLICT (warehouse_id, item_id, lot_code)
-            WHERE lot_code IS NOT NULL
-            DO NOTHING
-            RETURNING id
-            """
-        ),
-        {
-            "w": int(warehouse_id),
-            "i": int(item_id),
-            "code": code,
-        },
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(code),
+        production_date=None,
+        expiry_date=None,
     )
-    got = row.scalar_one_or_none()
-    if got is not None:
-        return int(got)
-
-    row2 = await session.execute(
-        sa.text(
-            """
-            SELECT id
-              FROM lots
-             WHERE warehouse_id = :w
-               AND item_id      = :i
-               AND lot_code_source = 'SUPPLIER'
-               AND lot_code     = :code
-             LIMIT 1
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": code},
-    )
-    got2 = row2.scalar_one_or_none()
-    if got2 is None:
-        raise ValueError("lot_not_found")
-    return int(got2)
 
 
 async def _ensure_stocks_lot_slot_exists(

@@ -17,7 +17,7 @@ from app.services.ship_service import ShipService
 class ShipConfirmErrorCode:
     # 422 - missing/invalid fields
     WAREHOUSE_REQUIRED = "SHIP_CONFIRM_WAREHOUSE_REQUIRED"
-    CARRIER_REQUIRED = "SHIP_CONFIRM_CARRIER_REQUIRED"
+    CARRIER_REQUIRED = "SHIP_CONFIRM_CARRIER_REQUIRED"  # 复用错误码：现在指 provider_id 缺失
     SCHEME_REQUIRED = "SHIP_CONFIRM_SCHEME_REQUIRED"
 
     # 409 - contract conflicts
@@ -50,9 +50,9 @@ def register(router: APIRouter) -> None:
         合同（刚性）：
         - ref 在 (platform, shop_id) 维度必须幂等（防重复确认）
         - warehouse_id 必填
-        - carrier 必填且必须是该仓可服务
-        - scheme_id 必填且必须绑定该仓、有效期命中、且属于 carrier
-        - tracking_no 若提供：(carrier_code, tracking_no) 唯一
+        - shipping_provider_id 必填且必须是该仓可服务（warehouse_shipping_providers.active=true）
+        - scheme_id 必填且必须绑定该仓、有效期命中、且属于该 provider
+        - tracking_no 若提供：(carrier_code, tracking_no) 唯一（carrier_code 来自 provider.code）
 
         错误返回：
         - 422：缺字段/入参不合法（detail: {code,message}）
@@ -60,7 +60,7 @@ def register(router: APIRouter) -> None:
 
         失败审计（Phase 4 样板）：
         - 对所有 422/409，写 audit_events：flow=OUTBOUND, event=SHIP_CONFIRM_REJECT
-          meta 包含 error_code / message / platform / shop_id / ref / trace_id / warehouse_id / carrier / scheme_id
+          meta 包含 error_code / message / platform / shop_id / ref / trace_id / warehouse_id / provider_id / scheme_id
         """
         svc = ShipService(session)
         platform_norm = payload.platform.upper()
@@ -74,15 +74,12 @@ def register(router: APIRouter) -> None:
             }
             if payload.trace_id:
                 meta["trace_id"] = payload.trace_id
-            # 尽量把“当时输入”写进去，便于排障与统计
             if payload.warehouse_id is not None:
                 meta["warehouse_id"] = payload.warehouse_id
-            if payload.carrier:
-                meta["carrier"] = (payload.carrier or "").strip().upper()
+            meta["provider_id"] = int(payload.shipping_provider_id)
             if getattr(payload, "scheme_id", None) is not None:
                 meta["scheme_id"] = int(getattr(payload, "scheme_id"))
 
-            # 注意：reject 事件需要落库，不要被后续 raise 吃掉
             await AuditEventWriter.write(
                 session,
                 flow="OUTBOUND",
@@ -94,56 +91,32 @@ def register(router: APIRouter) -> None:
             )
 
         try:
-            # ----------------------------
-            # 0) 幂等守门：ref 不允许重复 confirm
-            # ----------------------------
-            dup_ref = (
-                await session.execute(
-                    text(
-                        """
-                        SELECT 1
-                          FROM shipping_records
-                         WHERE order_ref = :ref
-                           AND platform = :platform
-                           AND shop_id = :shop_id
-                         LIMIT 1
-                        """
-                    ),
-                    {"ref": payload.ref, "platform": platform_norm, "shop_id": payload.shop_id},
-                )
-            ).first()
-            if dup_ref:
-                _raise_409(ShipConfirmErrorCode.ORDER_DUP, "order already confirmed")
-
-            # ----------------------------
             # Phase 3：硬校验（合同守门）
-            # ----------------------------
             if payload.warehouse_id is None:
                 _raise_422(ShipConfirmErrorCode.WAREHOUSE_REQUIRED, "warehouse_id is required")
-            if not payload.carrier:
-                _raise_422(ShipConfirmErrorCode.CARRIER_REQUIRED, "carrier is required")
+            if int(payload.shipping_provider_id) <= 0:
+                _raise_422(ShipConfirmErrorCode.CARRIER_REQUIRED, "shipping_provider_id is required")
             if getattr(payload, "scheme_id", None) is None:
                 _raise_422(ShipConfirmErrorCode.SCHEME_REQUIRED, "scheme_id is required")
 
             wid = int(payload.warehouse_id)
-            carrier_code_in = (payload.carrier or "").strip().upper()
+            provider_id = int(payload.shipping_provider_id)
             sid = int(getattr(payload, "scheme_id"))
 
-            # 1) carrier_code -> provider
+            # 1) provider_id -> provider（active）
             prow = (
                 await session.execute(
-                    text("SELECT id, code, name, active FROM shipping_providers WHERE code = :code LIMIT 1"),
-                    {"code": carrier_code_in},
+                    text("SELECT id, code, name, active FROM shipping_providers WHERE id = :pid LIMIT 1"),
+                    {"pid": provider_id},
                 )
             ).mappings().first()
             if not prow or not bool(prow.get("active", True)):
                 _raise_409(ShipConfirmErrorCode.CARRIER_NOT_AVAILABLE, "carrier not available")
 
-            provider_id = int(prow["id"])
             provider_name = str(prow.get("name") or "")
-            provider_code = str(prow.get("code") or carrier_code_in)
+            provider_code = str(prow.get("code") or "")
 
-            # 2) carrier ∈ warehouse_shipping_providers
+            # 2) provider ∈ warehouse_shipping_providers
             wsp = (
                 await session.execute(
                     text(
@@ -200,9 +173,7 @@ def register(router: APIRouter) -> None:
                     "scheme does not belong to selected carrier",
                 )
 
-            # ----------------------------
-            # tracking_no 幂等校验（carrier 维度）
-            # ----------------------------
+            # tracking_no 幂等校验（carrier 维度：以 provider_code 为准）
             tno: Optional[str] = None
             if payload.tracking_no and payload.tracking_no.strip():
                 tno = payload.tracking_no.strip()
@@ -226,9 +197,7 @@ def register(router: APIRouter) -> None:
                         "tracking_no already exists for this carrier",
                     )
 
-            # ----------------------------
             # 审计 meta（结构化）
-            # ----------------------------
             meta: Dict[str, Any] = {}
             if payload.meta:
                 meta.update(payload.meta)
@@ -276,80 +245,93 @@ def register(router: APIRouter) -> None:
 
             json_meta = json.dumps(meta, ensure_ascii=False) if meta else None
 
-            # Step 2: 写 shipping_records
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO shipping_records (
-                        order_ref,
-                        platform,
-                        shop_id,
-                        carrier_code,
-                        carrier_name,
-                        tracking_no,
-                        trace_id,
-                        warehouse_id,
-                        weight_kg,
-                        gross_weight_kg,
-                        packaging_weight_kg,
-                        cost_estimated,
-                        cost_real,
-                        delivery_time,
-                        status,
-                        error_code,
-                        error_message,
-                        meta
-                    )
-                    VALUES (
-                        :order_ref,
-                        :platform,
-                        :shop_id,
-                        :carrier_code,
-                        :carrier_name,
-                        :tracking_no,
-                        :trace_id,
-                        :warehouse_id,
-                        :weight_kg,
-                        :gross_weight_kg,
-                        :packaging_weight_kg,
-                        :cost_estimated,
-                        :cost_real,
-                        :delivery_time,
-                        :status,
-                        :error_code,
-                        :error_message,
-                        :meta
-                    )
-                    """
-                ),
-                {
-                    "order_ref": payload.ref,
-                    "platform": platform_norm,
-                    "shop_id": payload.shop_id,
-                    "carrier_code": provider_code,
-                    "carrier_name": provider_name,
-                    "tracking_no": tno,
-                    "trace_id": payload.trace_id,
-                    "warehouse_id": wid,
-                    "weight_kg": None,
-                    "gross_weight_kg": payload.gross_weight_kg,
-                    "packaging_weight_kg": payload.packaging_weight_kg,
-                    "cost_estimated": payload.cost_estimated,
-                    "cost_real": payload.cost_real,
-                    "delivery_time": payload.delivery_time,
-                    "status": payload.status or "IN_TRANSIT",
-                    "error_code": payload.error_code,
-                    "error_message": payload.error_message,
-                    "meta": json_meta,
-                },
+            # Step 2: 幂等写 shipping_records（并发安全）
+            # 依赖 DB unique: (platform, shop_id, order_ref)
+            insert_sql = text(
+                """
+                INSERT INTO shipping_records (
+                    order_ref,
+                    platform,
+                    shop_id,
+                    warehouse_id,
+                    shipping_provider_id,
+                    carrier_code,
+                    carrier_name,
+                    tracking_no,
+                    trace_id,
+                    weight_kg,
+                    gross_weight_kg,
+                    packaging_weight_kg,
+                    cost_estimated,
+                    cost_real,
+                    delivery_time,
+                    status,
+                    error_code,
+                    error_message,
+                    meta
+                )
+                VALUES (
+                    :order_ref,
+                    :platform,
+                    :shop_id,
+                    :warehouse_id,
+                    :shipping_provider_id,
+                    :carrier_code,
+                    :carrier_name,
+                    :tracking_no,
+                    :trace_id,
+                    :weight_kg,
+                    :gross_weight_kg,
+                    :packaging_weight_kg,
+                    :cost_estimated,
+                    :cost_real,
+                    :delivery_time,
+                    :status,
+                    :error_code,
+                    :error_message,
+                    :meta
+                )
+                ON CONFLICT (platform, shop_id, order_ref) DO NOTHING
+                RETURNING id
+                """
             )
 
-            await session.commit()
+            inserted = (
+                await session.execute(
+                    insert_sql,
+                    {
+                        "order_ref": payload.ref,
+                        "platform": platform_norm,
+                        "shop_id": payload.shop_id,
+                        "warehouse_id": wid,
+                        "shipping_provider_id": provider_id,
+                        "carrier_code": provider_code,
+                        "carrier_name": provider_name,
+                        "tracking_no": tno,
+                        "trace_id": payload.trace_id,
+                        "weight_kg": None,
+                        "gross_weight_kg": payload.gross_weight_kg,
+                        "packaging_weight_kg": payload.packaging_weight_kg,
+                        "cost_estimated": payload.cost_estimated,
+                        "cost_real": payload.cost_real,
+                        "delivery_time": payload.delivery_time,
+                        "status": payload.status or "IN_TRANSIT",
+                        "error_code": payload.error_code,
+                        "error_message": payload.error_message,
+                        "meta": json_meta,
+                    },
+                )
+            ).scalar_one_or_none()
 
+            if inserted is None:
+                # 并发/重试导致已存在：幂等返回 409（合同冲突）
+                await session.rollback()
+                _raise_409(ShipConfirmErrorCode.ORDER_DUP, "order already confirmed")
+
+            await session.commit()
             return ShipConfirmResponse(ok=data.get("ok", True), ref=payload.ref, trace_id=payload.trace_id)
 
         except HTTPException as e:
-            # 只对“结构化 detail 且 422/409”写 reject 审计；其他异常放行
             if e.status_code in (422, 409) and isinstance(e.detail, dict):
                 code = e.detail.get("code")
                 msg = e.detail.get("message")
