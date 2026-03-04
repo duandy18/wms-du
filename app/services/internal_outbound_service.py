@@ -95,12 +95,14 @@ class InternalOutboundService:
         user_id: Optional[int] = None,
         occurred_at: Optional[datetime] = None,
     ) -> InternalOutboundDoc:
+        # ✅ 以 internal_outbound_ops.confirm 的真实签名为准：
+        # - 不传 stock_svc（不存在）
+        # - 不传 occurred_at（不存在）
+        _ = occurred_at
         return await _confirm(
             session,
-            stock_svc=self.stock_svc,
             doc_id=doc_id,
             user_id=user_id,
-            occurred_at=occurred_at,
         )
 
     async def cancel(

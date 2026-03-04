@@ -31,6 +31,15 @@ def _norm_bc(v: Any) -> Optional[str]:
     return s2
 
 
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
 async def _resolve_lot_id_by_lot_code(
     session: AsyncSession,
     *,
@@ -40,6 +49,9 @@ async def _resolve_lot_id_by_lot_code(
 ) -> Optional[int]:
     if lot_code is None:
         return None
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
     row = (
         await session.execute(
             text(
@@ -48,16 +60,18 @@ async def _resolve_lot_id_by_lot_code(
                   FROM lots
                  WHERE warehouse_id = :w
                    AND item_id      = :i
-                   AND lot_code     = :c
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
                  LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
         )
     ).fetchall()
     if not row:
         return None
     if len(row) > 1:
+        # uq_lots_wh_item_lot_code_key 应保证唯一，但仍做防御
         return None
     return int(row[0][0])
 

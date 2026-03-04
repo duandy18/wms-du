@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 
 
@@ -64,52 +65,20 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
 
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
-    row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    created_at
-                )
-                SELECT
-                    :w,
-                    it.id,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    now()
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
-                WHERE lot_code IS NOT NULL
-                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
-                RETURNING id
-                """
-            ),
-            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
-        )
-    ).first()
-    assert row is not None, "failed to ensure supplier lot"
-    return int(row[0])
+    """
+    Lot-World 终态：
+    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
+    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
 
 
 @pytest.mark.asyncio

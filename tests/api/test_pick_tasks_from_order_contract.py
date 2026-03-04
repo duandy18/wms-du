@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
@@ -37,138 +38,34 @@ async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
     """
-    Lot-World 终态：SUPPLIER lot 用 lots.lot_code 作为展示码（旧名 batch_code）。
-    lots 不承载日期事实；仅结构身份 + 必要快照。
+    Lot-World 终态：
+    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
+    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
     """
-    row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    created_at
-                )
-                SELECT
-                    :w,
-                    it.id,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    now()
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
-                WHERE lot_code IS NOT NULL
-                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
-                RETURNING id
-                """
-            ),
-            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
-        )
-    ).first()
-    assert row is not None, "failed to ensure supplier lot"
-    return int(row[0])
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
 
 
 async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
     """
-    Lot-World 终态：非批次商品用 INTERNAL lot 承载“展示码为空”的槽位。
-    DB 约束：INTERNAL 必须有 source_receipt_id + source_line_no。
+    Lot-World 终态：非批次商品用 INTERNAL lot（单例）承载“展示码为空”的槽位。
+    provenance 可选（成对填充或全空）；本用例不依赖 provenance，因此置空即可。
     """
-    r = await session.execute(
-        text(
-            """
-            INSERT INTO inbound_receipts (
-                warehouse_id,
-                source_type,
-                source_id,
-                ref,
-                trace_id,
-                status,
-                remark,
-                occurred_at,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :wh,
-                'PO',
-                NULL,
-                :ref,
-                NULL,
-                'DRAFT',
-                'UT internal lot source receipt',
-                :occurred_at,
-                now(),
-                now()
-            )
-            RETURNING id
-            """
-        ),
-        {"wh": int(wh_id), "ref": str(ref), "occurred_at": datetime.now(timezone.utc)},
+    _ = ref
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        source_receipt_id=None,
+        source_line_no=None,
     )
-    receipt_id = int(r.scalar_one())
-
-    r2 = await session.execute(
-        text(
-            """
-            INSERT INTO lots (
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                source_receipt_id,
-                source_line_no,
-                created_at,
-                item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot,
-                item_lot_source_policy_snapshot,
-                item_expiry_policy_snapshot,
-                item_derivation_allowed_snapshot,
-                item_uom_governance_enabled_snapshot
-            )
-            SELECT
-                :wh,
-                it.id,
-                'INTERNAL',
-                NULL,
-                :rid,
-                1,
-                now(),
-                it.shelf_life_value,
-                it.shelf_life_unit,
-                it.lot_source_policy,
-                it.expiry_policy,
-                it.derivation_allowed,
-                it.uom_governance_enabled
-            FROM items it
-            WHERE it.id = :i
-            RETURNING id
-            """
-        ),
-        {"wh": int(wh_id), "i": int(item_id), "rid": int(receipt_id)},
-    )
-    return int(r2.scalar_one())
 
 
 async def _seed_order_and_stock(session: AsyncSession) -> int:

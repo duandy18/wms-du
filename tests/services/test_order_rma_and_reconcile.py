@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.services.order_reconcile_service import OrderReconcileService
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_internal_lot_singleton
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -63,9 +64,16 @@ async def _pick_base_uom_and_ratio(session: AsyncSession, *, item_id: int) -> Tu
 
 async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, code: str) -> int:
     """
-    SUPPLIER lot：lot_code = code（展示码），source_receipt 可空。
-    必填快照从 items 取值。
+    SUPPLIER lot（终态合同）：
+    - identity = (warehouse_id, item_id, lot_code_key)
+    - unique index = UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    - lot_code 为展示码；lot_code_key 为 normalize(key) 防漂移（trim+upper）
+    - 必填快照从 items 取值。
     """
+    code_raw = str(code).strip()
+    assert code_raw, {"msg": "empty lot_code", "warehouse_id": warehouse_id, "item_id": item_id}
+    code_key = code_raw.upper()
+
     r = await session.execute(
         text(
             """
@@ -74,6 +82,7 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
               item_id,
               lot_code_source,
               lot_code,
+              lot_code_key,
               source_receipt_id,
               source_line_no,
               item_lot_source_policy_snapshot,
@@ -88,7 +97,8 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
               :w,
               it.id,
               'SUPPLIER',
-              :code,
+              :code_raw,
+              :code_key,
               NULL,
               NULL,
               it.lot_source_policy,
@@ -100,18 +110,19 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
               now()
             FROM items it
             WHERE it.id = :i
-            ON CONFLICT (warehouse_id, item_id, lot_code)
+            ON CONFLICT (warehouse_id, item_id, lot_code_key)
             WHERE lot_code IS NOT NULL
             DO NOTHING
             RETURNING id
             """
         ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
+        {"w": int(warehouse_id), "i": int(item_id), "code_raw": code_raw, "code_key": code_key},
     )
     got = r.scalar_one_or_none()
     if got is not None:
         return int(got)
 
+    # select-after-race / already exists
     r2 = await session.execute(
         text(
             """
@@ -120,84 +131,38 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
              WHERE warehouse_id = :w
                AND item_id = :i
                AND lot_code_source = 'SUPPLIER'
-               AND lot_code = :code
+               AND lot_code_key = :code_key
              LIMIT 1
             """
         ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
+        {"w": int(warehouse_id), "i": int(item_id), "code_key": code_key},
     )
     got2 = r2.scalar_one_or_none()
-    assert got2 is not None, {"msg": "failed to ensure supplier lot", "warehouse_id": warehouse_id, "item_id": item_id, "code": code}
+    assert got2 is not None, {
+        "msg": "failed to ensure supplier lot",
+        "warehouse_id": warehouse_id,
+        "item_id": item_id,
+        "code_raw": code_raw,
+        "code_key": code_key,
+    }
     return int(got2)
 
 
 async def _ensure_internal_lot_for_receipt(session: AsyncSession, *, warehouse_id: int, item_id: int, receipt_id: int) -> int:
     """
-    INTERNAL lot：lot_code NULL，且必须绑定 source_receipt_id/source_line_no（DB check）。
-    这里直接用当前 receipt 作为来源，保证“终态不变量”稳定。
+    INTERNAL lot（终态合同）：
+    - 单例：每 (warehouse_id,item_id) 只有一个 INTERNAL lot
+      UNIQUE (warehouse_id,item_id) WHERE lot_code_source='INTERNAL' AND lot_code IS NULL
+    - lot_code 必须为 NULL
+    - source_receipt_id/source_line_no 作为可选 provenance，要求成对填充（这里用当前 receipt + line_no=1）
     """
-    r = await session.execute(
-        text(
-            """
-            INSERT INTO lots(
-              warehouse_id,
-              item_id,
-              lot_code_source,
-              lot_code,
-              source_receipt_id,
-              source_line_no,
-              item_lot_source_policy_snapshot,
-              item_expiry_policy_snapshot,
-              item_derivation_allowed_snapshot,
-              item_uom_governance_enabled_snapshot,
-              item_shelf_life_value_snapshot,
-              item_shelf_life_unit_snapshot,
-              created_at
-            )
-            SELECT
-              :w,
-              it.id,
-              'INTERNAL',
-              NULL,
-              :rid,
-              1,
-              it.lot_source_policy,
-              it.expiry_policy,
-              it.derivation_allowed,
-              it.uom_governance_enabled,
-              it.shelf_life_value,
-              it.shelf_life_unit,
-              now()
-            FROM items it
-            WHERE it.id = :i
-            ON CONFLICT DO NOTHING
-            RETURNING id
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=int(receipt_id),
+        source_line_no=1,
     )
-    got = r.scalar_one_or_none()
-    if got is not None:
-        return int(got)
-
-    r2 = await session.execute(
-        text(
-            """
-            SELECT id
-              FROM lots
-             WHERE warehouse_id = :w
-               AND item_id = :i
-               AND lot_code_source = 'INTERNAL'
-               AND source_receipt_id = :rid
-               AND source_line_no = 1
-             LIMIT 1
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
-    )
-    got2 = r2.scalar_one_or_none()
-    assert got2 is not None, {"msg": "failed to ensure internal lot", "warehouse_id": warehouse_id, "item_id": item_id, "receipt_id": receipt_id}
-    return int(got2)
 
 
 async def _insert_confirmed_order_return_receipt(

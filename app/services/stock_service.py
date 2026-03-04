@@ -5,12 +5,11 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Union
 
 from fastapi import HTTPException
-from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.stock.lots import ensure_lot_full
+from app.services.stock.lot_resolver import LotResolver
 from app.services.stock_service_adjust import adjust_lot_impl
 from app.services.stock_service_ship import ship_commit_direct_lot_impl
 
@@ -26,198 +25,8 @@ class StockService:
     - 单位真相源 = item_uoms；冻结点 = PO/Receipt lines 的 *_ratio_to_base_snapshot + qty_base
     """
 
-    async def _requires_batch(self, session: AsyncSession, *, item_id: int) -> bool:
-        row = await session.execute(
-            SA("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
-            {"i": int(item_id)},
-        )
-        v = row.scalar_one_or_none()
-        if v is None:
-            # 重要：unknown item 必须先拦住，不能被 NONE/REQUIRED 合同判断遮蔽
-            raise ValueError("item_not_found")
-        return str(v or "").upper() == "REQUIRED"
-
-    async def _ensure_supplier_lot_id(
-        self,
-        session: AsyncSession,
-        *,
-        warehouse_id: int,
-        item_id: int,
-        lot_code: str,
-    ) -> int:
-        # Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
-        return await ensure_lot_full(
-            session,
-            item_id=int(item_id),
-            warehouse_id=int(warehouse_id),
-            lot_code=str(lot_code),
-            production_date=None,
-            expiry_date=None,
-        )
-
-    async def _ensure_internal_lot_id(
-        self,
-        session: AsyncSession,
-        *,
-        warehouse_id: int,
-        item_id: int,
-        ref: str,
-        occurred_at: Optional[datetime],
-    ) -> int:
-        """
-        Lot-only world（终态）：
-        - 即使是非批次商品，也必须落在一个确定的 lot_id 上。
-        - “无批次”不再用 lot_id=NULL 表达，而是 INTERNAL lot（lots.lot_code 为 NULL）表达。
-        """
-        # 1) reuse existing INTERNAL + lot_code IS NULL
-        row = await session.execute(
-            SA(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id      = :i
-                   AND lot_code_source = 'INTERNAL'
-                   AND lot_code IS NULL
-                 ORDER BY id ASC
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id)},
-        )
-        got = row.scalar_one_or_none()
-        if got is not None:
-            return int(got)
-
-        # 2) create (or reuse) a synthetic inbound_receipt as INTERNAL lot source
-        ts = occurred_at or datetime.now(UTC)
-        src_ref = f"SYS:INTERNAL_LOT:{int(warehouse_id)}:{int(item_id)}"
-        r = await session.execute(
-            SA(
-                """
-                INSERT INTO inbound_receipts (
-                  warehouse_id,
-                  source_type,
-                  source_id,
-                  ref,
-                  trace_id,
-                  status,
-                  remark,
-                  occurred_at
-                )
-                VALUES (
-                  :wh,
-                  'PO',
-                  NULL,
-                  :ref,
-                  NULL,
-                  'DRAFT',
-                  'SYS internal lot source receipt',
-                  :ts
-                )
-                ON CONFLICT (ref) DO UPDATE SET updated_at = now()
-                RETURNING id
-                """
-            ),
-            {"wh": int(warehouse_id), "ref": str(src_ref), "ts": ts},
-        )
-        receipt_id = int(r.scalar_one())
-
-        # 3) insert INTERNAL lot (must satisfy DB check: source_receipt_id/source_line_no NOT NULL)
-        r2 = await session.execute(
-            SA(
-                """
-                INSERT INTO lots (
-                  warehouse_id,
-                  item_id,
-                  lot_code_source,
-                  lot_code,
-                  source_receipt_id,
-                  source_line_no,
-                  created_at,
-                  item_shelf_life_value_snapshot,
-                  item_shelf_life_unit_snapshot,
-                  item_lot_source_policy_snapshot,
-                  item_expiry_policy_snapshot,
-                  item_derivation_allowed_snapshot,
-                  item_uom_governance_enabled_snapshot
-                )
-                SELECT
-                  :wh,
-                  it.id,
-                  'INTERNAL',
-                  NULL,
-                  :rid,
-                  1,
-                  now(),
-                  it.shelf_life_value,
-                  it.shelf_life_unit,
-                  it.lot_source_policy,
-                  it.expiry_policy,
-                  it.derivation_allowed,
-                  it.uom_governance_enabled
-                FROM items it
-                WHERE it.id = :i
-                ON CONFLICT DO NOTHING
-                RETURNING id
-                """
-            ),
-            {"wh": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
-        )
-        lot_id = r2.scalar_one_or_none()
-        if lot_id is not None:
-            return int(lot_id)
-
-        # 4) fallback: select the inserted lot
-        r3 = await session.execute(
-            SA(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :wh
-                   AND item_id = :i
-                   AND lot_code_source = 'INTERNAL'
-                   AND source_receipt_id = :rid
-                   AND source_line_no = 1
-                 LIMIT 1
-                """
-            ),
-            {"wh": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
-        )
-        got3 = r3.scalar_one_or_none()
-        if got3 is None:
-            raise ValueError("failed to ensure INTERNAL lot")
-        return int(got3)
-
-    async def _load_on_hand_qty(
-        self,
-        session: AsyncSession,
-        *,
-        warehouse_id: int,
-        item_id: int,
-        batch_code: Optional[str],
-    ) -> int:
-        row = (
-            await session.execute(
-                SA(
-                    """
-                    SELECT COALESCE(SUM(s.qty), 0) AS qty
-                      FROM stocks_lot s
-                      LEFT JOIN lots lo ON lo.id = s.lot_id
-                     WHERE s.warehouse_id = :w
-                       AND s.item_id      = :i
-                       AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
-                    """
-                ),
-                {"w": int(warehouse_id), "i": int(item_id), "c": batch_code},
-            )
-        ).first()
-        if not row:
-            return 0
-        try:
-            return int(row[0] or 0)
-        except Exception:
-            return 0
+    def __init__(self, lot_resolver: Optional[LotResolver] = None) -> None:
+        self.lot_resolver = lot_resolver or LotResolver()
 
     def _classify_adjust_value_error(self, msg: str) -> str:
         m = (msg or "").strip()
@@ -257,7 +66,7 @@ class StockService:
         lot_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
-            requires_batch = await self._requires_batch(session, item_id=int(item_id))
+            requires_batch = await self.lot_resolver.requires_batch(session, item_id=int(item_id))
             bc_norm = (str(batch_code).strip() if batch_code is not None else None) or None
 
             # Phase 3：NONE/REQUIRED 入库合同收口（服务层硬化，禁止 NONE 带 batch_code）
@@ -267,7 +76,7 @@ class StockService:
             if bc_norm is None:
                 if requires_batch:
                     raise ValueError("batch_code REQUIRED")
-                resolved_lot_id = lot_id or await self._ensure_internal_lot_id(
+                resolved_lot_id = lot_id or await self.lot_resolver.ensure_internal_lot_id(
                     session,
                     warehouse_id=int(warehouse_id),
                     item_id=int(item_id),
@@ -275,11 +84,12 @@ class StockService:
                     occurred_at=occurred_at,
                 )
             else:
-                resolved_lot_id = lot_id or await self._ensure_supplier_lot_id(
+                resolved_lot_id = lot_id or await self.lot_resolver.ensure_supplier_lot_id(
                     session,
                     warehouse_id=int(warehouse_id),
                     item_id=int(item_id),
                     lot_code=bc_norm,
+                    occurred_at=occurred_at,
                 )
 
             return await adjust_lot_impl(
@@ -330,7 +140,7 @@ class StockService:
 
             if kind == "insufficient_stock":
                 if int(delta) < 0:
-                    on_hand = await self._load_on_hand_qty(
+                    on_hand = await self.lot_resolver.load_on_hand_qty(
                         session,
                         warehouse_id=int(warehouse_id),
                         item_id=int(item_id),
@@ -339,7 +149,7 @@ class StockService:
                     required_qty = int(-int(delta))
                     short_qty = max(0, int(required_qty) - int(on_hand))
                 else:
-                    on_hand = await self._load_on_hand_qty(
+                    on_hand = await self.lot_resolver.load_on_hand_qty(
                         session,
                         warehouse_id=int(warehouse_id),
                         item_id=int(item_id),

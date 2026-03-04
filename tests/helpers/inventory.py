@@ -52,12 +52,12 @@ def _wh_from_loc(loc: int) -> int:
 
     历史测试 helper 里大量使用 ensure_wh_loc_item(..., loc=wh, ...) 这种“loc=wh”的写法。
     为了避免全量改调用点，又要保持终态一致（不复活 locations），这里统一将 loc 解释为 warehouse_id。
-
-    规则：
-    - loc 参数仍保留（兼容旧调用点）
-    - 但不再触碰 locations 表
     """
     return int(loc)
+
+
+def _norm_lot_key(code_raw: str) -> str:
+    return str(code_raw).strip().lower()
 
 
 async def ensure_wh_loc_item(
@@ -69,11 +69,6 @@ async def ensure_wh_loc_item(
     code: Optional[str] = None,
     name: Optional[str] = None,
 ) -> None:
-    """
-    Phase M-5+（终态）：
-    - locations 表已物理删除；此 helper 仅确保 warehouse + item 存在。
-    - loc/code/name 参数仅为兼容旧测试调用点，禁止再写入/查询 locations。
-    """
     _ = loc
     _ = code
     _ = name
@@ -83,15 +78,19 @@ async def ensure_wh_loc_item(
         {"w": int(wh)},
     )
 
-    # Phase M：items policy NOT NULL → 统一走最小合法 helper
     await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
 
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh: int, item: int, code: str) -> int:
     """
-    Lot-World 终态：lots 只承载结构身份 + 必要快照，不承载 production_date/expiry_date/expiry_source 等日期事实。
-    唯一性：uq_lots_wh_item_lot_code => (warehouse_id,item_id,lot_code) WHERE lot_code IS NOT NULL
+    Lot-World v2：SUPPLIER lot 幂等 upsert，唯一键使用 lot_code_key。
     """
+    code_raw = str(code).strip()
+    if not code_raw:
+        raise ValueError("lot_code empty")
+
+    code_key = _norm_lot_key(code_raw)
+
     row = (
         await session.execute(
             SA(
@@ -101,6 +100,7 @@ async def _ensure_supplier_lot(session: AsyncSession, *, wh: int, item: int, cod
                     item_id,
                     lot_code_source,
                     lot_code,
+                    lot_code_key,
                     source_receipt_id,
                     source_line_no,
                     -- required snapshots (NOT NULL)
@@ -117,7 +117,8 @@ async def _ensure_supplier_lot(session: AsyncSession, *, wh: int, item: int, cod
                     :w,
                     it.id,
                     'SUPPLIER',
-                    :code,
+                    :code_raw,
+                    :code_key,
                     NULL,
                     NULL,
                     it.lot_source_policy,
@@ -129,64 +130,61 @@ async def _ensure_supplier_lot(session: AsyncSession, *, wh: int, item: int, cod
                     now()
                   FROM items it
                  WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code)
+                ON CONFLICT (warehouse_id, item_id, lot_code_key)
                 WHERE lot_code IS NOT NULL
-                DO UPDATE SET lot_code_source = EXCLUDED.lot_code_source
+                DO UPDATE SET lot_code = EXCLUDED.lot_code
                 RETURNING id
                 """
             ),
-            {"w": int(wh), "i": int(item), "code": str(code)},
+            {"w": int(wh), "i": int(item), "code_raw": code_raw, "code_key": code_key},
         )
     ).first()
 
     if not row:
         raise ValueError(f"failed to ensure SUPPLIER lot for wh={wh}, item={item}, code={code}")
+
     return int(row[0])
 
 
 async def _ensure_internal_lot(session: AsyncSession, *, wh: int, item: int, ref: str) -> int:
     """
-    INTERNAL lot 必须满足：
-    - source_receipt_id/source_line_no NOT NULL（DB check）
+    INTERNAL 单例 lot（终态）：
+    - lot_code_source='INTERNAL'
+    - lot_code IS NULL
+    - UNIQUE (warehouse_id,item_id) WHERE INTERNAL & lot_code IS NULL
+
+    ref 参数仅保留调用点形态，不再用于 identity。
     """
-    r = await session.execute(
+    _ = ref
+
+    r0 = await session.execute(
         SA(
             """
-            INSERT INTO inbound_receipts (
-                warehouse_id,
-                source_type,
-                source_id,
-                ref,
-                trace_id,
-                status,
-                remark,
-                occurred_at
-            )
-            VALUES (
-                :wh,
-                'PO',
-                NULL,
-                :ref,
-                NULL,
-                'DRAFT',
-                'UT internal lot source receipt',
-                :occurred_at
-            )
-            RETURNING id
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_code_source = 'INTERNAL'
+               AND lot_code IS NULL
+             ORDER BY id ASC
+             LIMIT 1
             """
         ),
-        {"wh": int(wh), "ref": str(ref), "occurred_at": datetime.now(UTC)},
+        {"w": int(wh), "i": int(item)},
     )
-    receipt_id = int(r.scalar_one())
+    got0 = r0.scalar_one_or_none()
+    if got0 is not None:
+        return int(got0)
 
-    r2 = await session.execute(
+    await session.execute(
         SA(
             """
-            INSERT INTO lots (
+            INSERT INTO lots(
                 warehouse_id,
                 item_id,
                 lot_code_source,
                 lot_code,
+                lot_code_key,
                 source_receipt_id,
                 source_line_no,
                 created_at,
@@ -198,12 +196,13 @@ async def _ensure_internal_lot(session: AsyncSession, *, wh: int, item: int, ref
                 item_uom_governance_enabled_snapshot
             )
             SELECT
-                :wh,
+                :w,
                 it.id,
                 'INTERNAL',
                 NULL,
-                :receipt_id,
-                1,
+                NULL,
+                NULL,
+                NULL,
                 now(),
                 it.shelf_life_value,
                 it.shelf_life_unit,
@@ -213,12 +212,31 @@ async def _ensure_internal_lot(session: AsyncSession, *, wh: int, item: int, ref
                 it.uom_governance_enabled
             FROM items it
             WHERE it.id = :i
-            RETURNING id
+            ON CONFLICT DO NOTHING
             """
         ),
-        {"wh": int(wh), "i": int(item), "receipt_id": int(receipt_id)},
+        {"w": int(wh), "i": int(item)},
     )
-    return int(r2.scalar_one())
+
+    r1 = await session.execute(
+        SA(
+            """
+            SELECT id
+              FROM lots
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_code_source = 'INTERNAL'
+               AND lot_code IS NULL
+             ORDER BY id ASC
+             LIMIT 1
+            """
+        ),
+        {"w": int(wh), "i": int(item)},
+    )
+    got1 = r1.scalar_one_or_none()
+    if got1 is None:
+        raise ValueError("failed to ensure INTERNAL lot")
+    return int(got1)
 
 
 async def seed_batch_slot(
@@ -230,14 +248,8 @@ async def seed_batch_slot(
     qty: int,
     days: int = 365,
 ) -> None:
-    """
-    测试造数（Lot-World 终态）：
-    - 主事实：lots + stocks_lot
-    - code 语义：作为 lot_code（SUPPLIER）展示码
-    - locations 已删除：loc 视作 warehouse_id（历史兼容）
-    """
     wh = _wh_from_loc(loc)
-    _ = date.today() + timedelta(days=days)  # days 仅保留参数形态（lots 不再承载日期事实）
+    _ = date.today() + timedelta(days=days)  # lots 不再承载日期事实
     lot_id = await _ensure_supplier_lot(session, wh=int(wh), item=int(item), code=str(code))
 
     await session.execute(
@@ -259,10 +271,6 @@ async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str
 
 
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
-    """
-    测试口径：以 stocks_lot 为准。
-    locations 已删除：loc 视作 warehouse_id。
-    """
     wh = _wh_from_loc(loc)
     row = await session.execute(
         SA("SELECT COALESCE(SUM(qty),0) FROM stocks_lot WHERE item_id=:i AND warehouse_id=:w"),
@@ -272,18 +280,10 @@ async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
 
 
 async def available(session: AsyncSession, *, item: int, loc: int) -> int:
-    """
-    测试口径：当前可售与在库一致（以 stocks_lot 为准）。
-    locations 已删除：loc 视作 warehouse_id。
-    """
     return await sum_on_hand(session, item=item, loc=loc)
 
 
 async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:
-    """
-    按 lot_code 汇总 qty（stocks_lot + lots）。
-    locations 已删除：loc 视作 warehouse_id。
-    """
     wh = _wh_from_loc(loc)
     row = await session.execute(
         SA(
@@ -311,17 +311,10 @@ async def insert_snapshot(
     on_hand: int,
     available: int,
 ) -> None:
-    """
-    stock_snapshots 终态：
-    - 粒度：(snapshot_date, warehouse_id, item_id, lot_id)
-    - 不存在 batch_code 列
-    - qty_allocated/qty_available/qty 必须满足 ck_stock_snapshots_qty_balance
-    locations 已删除：loc 视作 warehouse_id。
-    """
     _ = ts
     wh = _wh_from_loc(loc)
 
-    # 快照必须绑定真实 lot_id；这里用 INTERNAL lot 承载“无指定展示码”的快照场景
+    # 快照必须绑定真实 lot_id；这里用 INTERNAL 单例 lot 承载“无指定展示码”的快照场景
     lot_id = await _ensure_internal_lot(
         session,
         wh=int(wh),

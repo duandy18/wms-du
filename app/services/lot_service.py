@@ -5,11 +5,11 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.item import Item
 from app.models.lot import Lot
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 
 
 def _snapshot_equal(existing: Lot, incoming: dict) -> bool:
@@ -40,9 +40,11 @@ async def resolve_or_create_lot(
 ) -> int:
     """
     兼容层 lot 创建/解析（Phase M-5）：
-    - lots 承载身份 + 主数据策略快照（lot_source/expiry/derivation/shelf_life/uom_governance）
-    - 时间事实（production/expiry）不写 lots，统一在 stock_ledger（reason_canon='RECEIPT'）体现
-    - Phase M-5：lots 的单位快照列已物理移除
+
+    终态收口：
+    - SUPPLIER lot 统一走 ensure_lot_full（写 lot_code_key 防漂移）
+    - INTERNAL lot 统一走 ensure_internal_lot_singleton（按 wh+item 单例）
+    - 本模块不再直接 new Lot()/flush，避免第二入口造成漂移与约束冲突
     """
     lot_code_source_u = str(lot_code_source or "").upper().strip()
     if lot_code_source_u not in ("SUPPLIER", "INTERNAL"):
@@ -68,57 +70,36 @@ async def resolve_or_create_lot(
         if not lot_code or not str(lot_code).strip():
             raise HTTPException(status_code=422, detail="supplier_lot_code_required")
 
-        stmt = select(Lot).where(
-            Lot.warehouse_id == int(warehouse_id),
-            Lot.item_id == int(item.id),
-            Lot.lot_code_source == "SUPPLIER",
-            Lot.lot_code == str(lot_code).strip(),
-        )
-    else:
-        if source_receipt_id is None or source_line_no is None:
-            raise HTTPException(status_code=422, detail="internal_lot_source_required")
-
-        stmt = select(Lot).where(
-            Lot.warehouse_id == int(warehouse_id),
-            Lot.item_id == int(item.id),
-            Lot.lot_code_source == "INTERNAL",
-            Lot.source_receipt_id == int(source_receipt_id),
-            Lot.source_line_no == int(source_line_no),
+        # ensure supplier lot by key (drift-proof)
+        lot_id = await ensure_lot_full(
+            db,
+            item_id=int(item.id),
+            warehouse_id=int(warehouse_id),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
         )
 
-    existing = (await db.execute(stmt)).scalars().first()
-    if existing:
-        if lot_code_source_u == "INTERNAL":
-            return int(existing.id)
+        # read back to verify snapshot compatibility (historical freeze)
+        stmt = select(Lot).where(Lot.id == int(lot_id))
+        existing = (await db.execute(stmt)).scalars().first()
+        if existing is None:
+            raise HTTPException(status_code=500, detail="lot_create_or_resolve_failed")
+
         if not _snapshot_equal(existing, snapshot):
             raise HTTPException(status_code=409, detail="lot_snapshot_conflict")
         return int(existing.id)
 
-    new_lot = Lot(
-        warehouse_id=int(warehouse_id),
-        item_id=int(item.id),
-        lot_code_source=lot_code_source_u,
-        lot_code=(str(lot_code).strip() if lot_code is not None else None),
-        source_receipt_id=int(source_receipt_id) if source_receipt_id is not None else None,
-        source_line_no=int(source_line_no) if source_line_no is not None else None,
-        item_shelf_life_value_snapshot=snapshot["item_shelf_life_value_snapshot"],
-        item_shelf_life_unit_snapshot=snapshot["item_shelf_life_unit_snapshot"],
-        item_lot_source_policy_snapshot=snapshot["item_lot_source_policy_snapshot"],
-        item_expiry_policy_snapshot=snapshot["item_expiry_policy_snapshot"],
-        item_derivation_allowed_snapshot=snapshot["item_derivation_allowed_snapshot"],
-        item_uom_governance_enabled_snapshot=snapshot["item_uom_governance_enabled_snapshot"],
-    )
-
-    db.add(new_lot)
+    # INTERNAL: singleton per (warehouse,item); provenance optional but paired
     try:
-        await db.flush()
-        return int(new_lot.id)
-    except IntegrityError:
-        await db.rollback()
-        existing2 = (await db.execute(stmt)).scalars().first()
-        if existing2 is None:
-            raise HTTPException(status_code=500, detail="lot_create_race_failed")
-        if lot_code_source_u == "SUPPLIER":
-            if not _snapshot_equal(existing2, snapshot):
-                raise HTTPException(status_code=409, detail="lot_snapshot_conflict")
-        return int(existing2.id)
+        lot_id2 = await ensure_internal_lot_singleton(
+            db,
+            item_id=int(item.id),
+            warehouse_id=int(warehouse_id),
+            source_receipt_id=int(source_receipt_id) if source_receipt_id is not None else None,
+            source_line_no=int(source_line_no) if source_line_no is not None else None,
+        )
+        return int(lot_id2)
+    except ValueError as e:
+        # internal provenance pair violated
+        raise HTTPException(status_code=422, detail=str(e)) from e

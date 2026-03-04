@@ -16,6 +16,15 @@ from app.services.pick_task_commit_ship_apply_stock_details import shortage_deta
 from app.services.pick_task_commit_ship_apply_stock_queries import load_on_hand_qty
 
 
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
 async def _resolve_supplier_lot_id(
     session: AsyncSession,
     *,
@@ -25,8 +34,15 @@ async def _resolve_supplier_lot_id(
 ) -> Optional[int]:
     """
     批次受控商品（展示码非空）：lot_code 视为 lots.lot_code（SUPPLIER）。
-    终态：lot_id 必须存在，否则属于业务数据缺失（应提示“lot_not_found”类问题）。
+
+    终态：
+    - SUPPLIER 批次按 lot_code_key 唯一（防漂移）
+    - 找不到 lot_id 属于业务数据缺失（应提示“lot_not_found”类问题）
     """
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
+
     row = (
         await session.execute(
             SA(
@@ -36,11 +52,11 @@ async def _resolve_supplier_lot_id(
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code     = :c
+                   AND lot_code_key = :k
                  LIMIT 1
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(lot_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
         )
     ).first()
     if not row:
@@ -55,9 +71,9 @@ async def _pick_one_lot_for_none_code(
     item_id: int,
 ) -> Optional[tuple[int, int]]:
     """
-    非批次商品（展示码为空）：允许存在多个 INTERNAL lot。
-    这里选择一个可扣减的 lot（qty>0），返回 (lot_id, qty)。
+    非批次商品（展示码为空）：终态为 INTERNAL 单例 lot。
 
+    这里从可扣减库存中挑一个 lot（qty>0），返回 (lot_id, qty)。
     选择策略：lot_id ASC（稳定、可解释）
     """
     row = (
@@ -184,7 +200,7 @@ async def apply_stock_deductions_impl(
         try:
             # --- lot_id 解析 + 扣减 ---
             if bc_norm:
-                # 批次受控：lot_code -> SUPPLIER lot_id（应唯一）
+                # 批次受控：lot_code -> SUPPLIER lot_id（按 lot_code_key 唯一）
                 lot_id = await _resolve_supplier_lot_id(
                     session,
                     warehouse_id=int(warehouse_id),
@@ -244,7 +260,7 @@ async def apply_stock_deductions_impl(
                 continue
 
             # 非批次商品：batch_code=None（展示码为空）
-            # 可能存在多个 INTERNAL lot；按 lot_id ASC 依次扣减，直到满足 need_total
+            # INTERNAL 单例 lot：仍按“从可扣减库存中找一个 lot”执行（更稳健）
             remain = int(need_total)
             while remain > 0:
                 pick = await _pick_one_lot_for_none_code(
