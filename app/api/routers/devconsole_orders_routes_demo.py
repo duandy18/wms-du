@@ -45,6 +45,7 @@ def register(router: APIRouter) -> None:
             raise HTTPException(400, "items 表为空，请先添加商品。")
 
         # 选一个仓库用于 seed 库存（仅库存事实，不代表订单执行仓）
+        wh_row = ((await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1"))).mappings().first())
         wh_row = (await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1"))).mappings().first()
         if not wh_row:
             raise HTTPException(400, "warehouses 表为空，请创建至少一个仓库。")
