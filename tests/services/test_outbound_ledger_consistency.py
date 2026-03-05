@@ -8,6 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
+from app.services.stock.lots import ensure_internal_lot_singleton
+from app.services.stock_service_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
@@ -111,12 +113,53 @@ async def _seed_minimal_order_for_outbound(
     return order_ref, wh_id, item_id, trace_id
 
 
+async def _seed_positive_internal_stock(session: AsyncSession, *, warehouse_id: int, item_id: int, qty: int) -> None:
+    """
+    baseline 不再提供隐式 stocks_lot qty>0，因此显式 seed 一笔 INTERNAL 库存。
+    """
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(warehouse_id)},
+    )
+
+    lot_id = await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
+
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_id=int(lot_id),
+        delta=int(qty),
+        reason="UT_OUTBOUND_LEDGER_SEED",
+        ref="ut:outbound_ledger:seed",
+        ref_line=1,
+        occurred_at=datetime.now(UTC),
+        meta=None,
+        batch_code=None,
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
+        shadow_write_stocks=False,
+    )
+    await session.commit()
+
+
 async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
     """
     从 lot-world 余额（stocks_lot）中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，
     返回 lot_code（映射到服务/台账中的 batch_code 字段，可能为 NULL）。
 
     DB 事实：stocks_lot.lot_id NOT NULL，因此是否“无批次”由 lots.lot_code 是否为 NULL 表达。
+
+    Phase M-5 收口后 baseline 可能不存在 qty>0 槽位；
+    若不存在则显式 seed 一笔 INTERNAL 库存，再重试。
     """
     row = (
         await session.execute(
@@ -138,7 +181,29 @@ async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: in
         )
     ).first()
     if not row:
-        pytest.skip("no lot slot with qty>0 for item/warehouse in baseline")
+        await _seed_positive_internal_stock(session, warehouse_id=int(warehouse_id), item_id=int(item_id), qty=5)
+        row2 = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      l.lot_code AS lot_code,
+                      sl.qty
+                    FROM stocks_lot sl
+                    LEFT JOIN lots l ON l.id = sl.lot_id
+                    WHERE sl.warehouse_id = :w
+                      AND sl.item_id = :i
+                      AND sl.qty > 0
+                    ORDER BY sl.id ASC
+                    LIMIT 1
+                    """
+                ),
+                {"w": int(warehouse_id), "i": int(item_id)},
+            )
+        ).first()
+        assert row2 is not None, {"msg": "failed to seed qty>0 slot for item/warehouse", "warehouse_id": warehouse_id, "item_id": item_id}
+        return row2[0]
+
     return row[0]
 
 

@@ -162,8 +162,9 @@ async def test_outbound_from_seed_10_to_7(session: AsyncSession):
 
     qty0 = await _read_qty_lot(session)
     assert qty0 == 10, f"seed qty must be 10, got {qty0}"
+
+    # 终态：seed 可能（并且通常应该）写入 stock_ledger，因此不要假设 led0==0
     led0 = await _sum_ledger(session)
-    assert led0 == 0, f"baseline ledger must be 0, got {led0}"
 
     o = await _ingest_order(session, ORDER_NO)
     assert o["status"] in ("OK", "IDEMPOTENT"), f"ingest returned: {o}"
@@ -173,6 +174,12 @@ async def test_outbound_from_seed_10_to_7(session: AsyncSession):
 
     qty_now = await _read_qty_lot(session)
     led_now = await _sum_ledger(session)
+
     assert qty_now == 7, f"qty should be 7 after ship, got {qty_now}"
-    assert led_now == -3, f"ledger sum should be -3, got {led_now}"
-    assert qty0 + led_now == qty_now, f"qty0({qty0}) + ledger({led_now}) != qty_now({qty_now})"
+
+    # 以 seed 后 ledger 为基线，验证本用例的“净出库效果”为 -3
+    delta_led = int(led_now) - int(led0)
+    assert delta_led == -3, f"ledger delta should be -3 relative to seed, got {delta_led}"
+
+    # 三账口径：qty 的变化必须等于 ledger 的净变化
+    assert qty0 + delta_led == qty_now, f"qty0({qty0}) + delta_led({delta_led}) != qty_now({qty_now})"

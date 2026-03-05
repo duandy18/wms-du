@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ledger_writer import write_ledger
+from app.services.stock.lots import ensure_lot_full
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
@@ -13,86 +14,23 @@ UTC = timezone.utc
 
 @pytest.mark.asyncio
 async def test_write_ledger_idempotent(session: AsyncSession):
+    # 确保基础主数据存在
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') ON CONFLICT (id) DO NOTHING")
+    )
     await ensure_item(session, id=3003, sku="SKU-3003", name="ITEM-3003", expiry_required=False)
 
-    # lots 终态：不再承载 item_uom_snapshot / item_case_*_snapshot 等历史列
-    # 也不依赖 ON CONFLICT 的具体 unique/index；先查再插最稳。
-    row0 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = 1
-                   AND item_id = 3003
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = 'IDEM'
-                 LIMIT 1
-                """
-            )
-        )
-    ).first()
-
-    if row0 is not None:
-        lot_id = int(row0[0])
-    else:
-        lot_row = (
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO lots(
-                        warehouse_id,
-                        item_id,
-                        lot_code_source,
-                        lot_code,
-                        source_receipt_id,
-                        source_line_no,
-                        -- required snapshots (NOT NULL)
-                        item_lot_source_policy_snapshot,
-                        item_expiry_policy_snapshot,
-                        item_derivation_allowed_snapshot,
-                        item_uom_governance_enabled_snapshot,
-                        -- optional snapshots (nullable)
-                        item_shelf_life_value_snapshot,
-                        item_shelf_life_unit_snapshot,
-                        created_at
-                    )
-                    SELECT
-                        1,
-                        3003,
-                        'SUPPLIER',
-                        'IDEM',
-                        NULL,
-                        NULL,
-                        it.lot_source_policy,
-                        it.expiry_policy,
-                        it.derivation_allowed,
-                        it.uom_governance_enabled,
-                        it.shelf_life_value,
-                        it.shelf_life_unit,
-                        now()
-                      FROM items it
-                     WHERE it.id = 3003
-                    RETURNING id
-                    """
-                )
-            )
-        ).first()
-        assert lot_row is not None
-        lot_id = int(lot_row[0])
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
-            VALUES (3003, 1, :lot_id, 5)
-            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
-            DO UPDATE SET qty = EXCLUDED.qty
-            """
-        ),
-        {"lot_id": int(lot_id)},
+    # 终态：lot 创建必须走 ensure_lot_full（禁止 tests 直接 INSERT INTO lots）
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=3003,
+        warehouse_id=1,
+        lot_code="IDEM",
+        production_date=None,
+        expiry_date=None,
     )
 
+    # 终态：本测试只验证 ledger writer 的幂等（不需要散装写 stocks_lot）
     id1 = await write_ledger(
         session,
         warehouse_id=1,

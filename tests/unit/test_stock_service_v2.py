@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
@@ -37,177 +38,46 @@ async def _ensure_supplier_lot(
     code: str,
 ) -> int:
     """
-    Phase M-5 终态：
-    - lots 只承载 identity + policy snapshots（不承载 production/expiry/expiry_source，也不承载 item_uom/case snapshot）
-    - 不依赖 ON CONFLICT 的具体 unique/index：先查再插
+    终态：SUPPLIER lot 创建必须走 ensure_lot_full（防漂移 + partial unique index 对齐）。
     """
     lot_code = str(code).strip()
     if not lot_code:
         raise ValueError("lot_code required")
 
-    row0 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(wh), "i": int(item_id), "code": lot_code},
+    return int(
+        await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
         )
-    ).first()
-    if row0 is not None:
-        return int(row0[0])
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO lots(
-              warehouse_id,
-              item_id,
-              lot_code_source,
-              lot_code,
-              source_receipt_id,
-              source_line_no,
-              -- required snapshots (NOT NULL)
-              item_lot_source_policy_snapshot,
-              item_expiry_policy_snapshot,
-              item_derivation_allowed_snapshot,
-              item_uom_governance_enabled_snapshot,
-              -- optional shelf-life snapshots (nullable)
-              item_shelf_life_value_snapshot,
-              item_shelf_life_unit_snapshot,
-              created_at
-            )
-            SELECT
-              :w,
-              it.id,
-              'SUPPLIER',
-              :code,
-              NULL,
-              NULL,
-              it.lot_source_policy,
-              it.expiry_policy,
-              it.derivation_allowed,
-              it.uom_governance_enabled,
-              it.shelf_life_value,
-              it.shelf_life_unit,
-              now()
-            FROM items it
-            WHERE it.id = :i
-            """
-        ),
-        {"w": int(wh), "i": int(item_id), "code": lot_code},
     )
-
-    row1 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(wh), "i": int(item_id), "code": lot_code},
-        )
-    ).first()
-    assert row1 is not None, {"msg": "failed to ensure supplier lot", "wh": wh, "item_id": item_id, "code": lot_code}
-    return int(row1[0])
 
 
 async def _ensure_internal_lot_for_test(session: AsyncSession, *, wh: int, item_id: int, ref: str) -> int:
     """
     Phase M-5 终态：非批次商品也必须落在一个真实 lot_id 上（不允许 NULL lot）。
-    INTERNAL lot 约束：
+    INTERNAL lot 终态：
+    - singleton per (warehouse_id,item_id)
     - lot_code_source='INTERNAL'
     - lot_code IS NULL
-    - source_receipt_id/source_line_no NOT NULL（DB check）
-    """
-    r = await session.execute(
-        text(
-            """
-            INSERT INTO inbound_receipts (
-              warehouse_id,
-              source_type,
-              source_id,
-              ref,
-              trace_id,
-              status,
-              remark,
-              occurred_at
-            )
-            VALUES (
-              :w,
-              'PO',
-              NULL,
-              :ref,
-              NULL,
-              'DRAFT',
-              'UT internal lot source',
-              now()
-            )
-            RETURNING id
-            """
-        ),
-        {"w": int(wh), "ref": str(ref)},
-    )
-    receipt_id = int(r.scalar_one())
 
-    lot_row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                  warehouse_id,
-                  item_id,
-                  lot_code_source,
-                  lot_code,
-                  source_receipt_id,
-                  source_line_no,
-                  -- required snapshots (NOT NULL)
-                  item_lot_source_policy_snapshot,
-                  item_expiry_policy_snapshot,
-                  item_derivation_allowed_snapshot,
-                  item_uom_governance_enabled_snapshot,
-                  -- optional shelf-life snapshots (nullable)
-                  item_shelf_life_value_snapshot,
-                  item_shelf_life_unit_snapshot,
-                  created_at
-                )
-                SELECT
-                  :w,
-                  it.id,
-                  'INTERNAL',
-                  NULL,
-                  :rid,
-                  1,
-                  it.lot_source_policy,
-                  it.expiry_policy,
-                  it.derivation_allowed,
-                  it.uom_governance_enabled,
-                  it.shelf_life_value,
-                  it.shelf_life_unit,
-                  now()
-                FROM items it
-                WHERE it.id = :i
-                RETURNING id
-                """
-            ),
-            {"w": int(wh), "i": int(item_id), "rid": int(receipt_id)},
+    旧实现通过 inbound_receipts + INSERT lots 来满足 provenance/check；
+    终态收口后：INTERNAL lot 不再以 receipt provenance 参与 identity，
+    本测试只需拿到合法 INTERNAL singleton lot_id。
+    """
+    _ = ref
+    return int(
+        await ensure_internal_lot_singleton(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            source_receipt_id=None,
+            source_line_no=None,
         )
-    ).first()
-    assert lot_row is not None, {"msg": "failed to ensure internal lot", "wh": wh, "item_id": item_id}
-    return int(lot_row[0])
+    )
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
@@ -453,74 +323,20 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
 async def _insert_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, lot_code: str) -> int:
     """
     用于构造“坏 lot_id”（lot_mismatch / not_found）测试场景。
-    终态：lots 不再承载 production/expiry/单位快照，仅冻结 policy snapshots。
+
+    终态收口后不允许 tests 直接 INSERT INTO lots。
+    这里通过 ensure_lot_full 造出一个合法 lot_id，再用于 mismatch 测试。
     """
-    code = str(lot_code).strip()
-    if not code:
-        raise ValueError("lot_code required")
-
-    row0 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
+    return int(
+        await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
         )
-    ).first()
-    if row0 is not None:
-        return int(row0[0])
-
-    row = await session.execute(
-        text(
-            """
-            INSERT INTO lots(
-              warehouse_id,
-              item_id,
-              lot_code_source,
-              lot_code,
-              source_receipt_id,
-              source_line_no,
-              -- required snapshots (NOT NULL)
-              item_lot_source_policy_snapshot,
-              item_expiry_policy_snapshot,
-              item_derivation_allowed_snapshot,
-              item_uom_governance_enabled_snapshot,
-              -- optional shelf-life snapshots (nullable)
-              item_shelf_life_value_snapshot,
-              item_shelf_life_unit_snapshot,
-              created_at
-            )
-            SELECT
-              :w,
-              it.id,
-              'SUPPLIER',
-              :code,
-              NULL,
-              NULL,
-              it.lot_source_policy,
-              it.expiry_policy,
-              it.derivation_allowed,
-              it.uom_governance_enabled,
-              it.shelf_life_value,
-              it.shelf_life_unit,
-              now()
-            FROM items it
-            WHERE it.id = :i
-            RETURNING id
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": code},
     )
-    lot_id = row.scalar_one()
-    return int(lot_id)
 
 
 @pytest.mark.asyncio
