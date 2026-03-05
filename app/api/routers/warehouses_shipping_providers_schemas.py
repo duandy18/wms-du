@@ -10,7 +10,6 @@ class ShippingProviderLiteOut(BaseModel):
     id: int
     name: str
     code: Optional[str] = None
-    external_outlet_code: Optional[str] = None
     active: bool = True
 
 

@@ -1,4 +1,0 @@
-internal_outbound_lines_pkey|CREATE UNIQUE INDEX internal_outbound_lines_pkey ON public.internal_outbound_lines USING btree (id)
-ix_internal_outbound_lines_doc_id|CREATE INDEX ix_internal_outbound_lines_doc_id ON public.internal_outbound_lines USING btree (doc_id)
-ix_internal_outbound_lines_item_id|CREATE INDEX ix_internal_outbound_lines_item_id ON public.internal_outbound_lines USING btree (item_id)
-uq_internal_outbound_lines_doc_line_no|CREATE UNIQUE INDEX uq_internal_outbound_lines_doc_line_no ON public.internal_outbound_lines USING btree (doc_id, line_no)

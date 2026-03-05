@@ -64,7 +64,7 @@ def register(router: APIRouter) -> None:
 
         prow = (
             await session.execute(
-                text("SELECT id, name, code, external_outlet_code, active FROM shipping_providers WHERE id=:pid"),
+                text("SELECT id, name, code, active FROM shipping_providers WHERE id=:pid"),
                 {"pid": int(payload.shipping_provider_id)},
             )
         ).mappings().first()
@@ -109,7 +109,6 @@ def register(router: APIRouter) -> None:
                 "provider_id": prow["id"],
                 "provider_name": prow["name"],
                 "provider_code": prow.get("code"),
-                "provider_external_outlet_code": prow.get("external_outlet_code"),
                 "provider_active": prow["active"],
             }
         )
@@ -166,7 +165,7 @@ def register(router: APIRouter) -> None:
 
         prow = (
             await session.execute(
-                text("SELECT id, name, code, external_outlet_code, active FROM shipping_providers WHERE id=:pid"),
+                text("SELECT id, name, code, active FROM shipping_providers WHERE id=:pid"),
                 {"pid": shipping_provider_id},
             )
         ).mappings().first()
@@ -181,7 +180,6 @@ def register(router: APIRouter) -> None:
                 "provider_id": prow["id"],
                 "provider_name": prow["name"],
                 "provider_code": prow.get("code"),
-                "provider_external_outlet_code": prow.get("external_outlet_code"),
                 "provider_active": prow["active"],
             }
         )

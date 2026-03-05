@@ -51,9 +51,24 @@ def register(router: APIRouter) -> None:
         validate_quote_snapshot(quote_snapshot)
         cost_estimated = extract_cost_estimated(quote_snapshot)
 
+        shipping_provider_id = int(body.shipping_provider_id)
+
+        prow = (
+            await session.execute(
+                text("SELECT id, code, name, active FROM shipping_providers WHERE id = :pid LIMIT 1"),
+                {"pid": shipping_provider_id},
+            )
+        ).mappings().first()
+        if not prow or not bool(prow.get("active", True)):
+            raise HTTPException(status_code=422, detail="shipping_provider_id not found or inactive")
+
+        provider_code = str(prow.get("code") or (body.carrier_code or ""))
+        provider_name = str(prow.get("name") or (body.carrier_name or ""))
+
         waybill_svc = WaybillService()
         wb_req = WaybillRequest(
-            provider_code=body.carrier_code,
+            shipping_provider_id=shipping_provider_id,
+            provider_code=provider_code or None,
             platform=plat,
             shop_id=shop_id,
             ext_order_no=ext_order_no,
@@ -77,20 +92,6 @@ def register(router: APIRouter) -> None:
 
         tracking_no = wb_result.tracking_no
         occurred_at = datetime.now(timezone.utc)
-
-        # carrier_code -> shipping_provider_id（用于写 shipping_records 强链接）
-        carrier_code_norm = (body.carrier_code or "").strip().upper()
-        prow = (
-            await session.execute(
-                text("SELECT id, code, name, active FROM shipping_providers WHERE code = :code LIMIT 1"),
-                {"code": carrier_code_norm},
-            )
-        ).mappings().first()
-        if not prow or not bool(prow.get("active", True)):
-            raise HTTPException(status_code=422, detail="carrier_code not found or inactive")
-        shipping_provider_id = int(prow["id"])
-        provider_code = str(prow.get("code") or carrier_code_norm)
-        provider_name = str(prow.get("name") or (body.carrier_name or ""))
 
         meta: Dict[str, Any] = {
             "platform": plat,
@@ -123,7 +124,6 @@ def register(router: APIRouter) -> None:
             raise
 
         # 幂等写入：以 (platform, shop_id, order_ref) 为唯一事实
-        # 需要 DB 侧唯一约束 uq_shipping_records_platform_shop_ref 支撑
         upsert_sql = text(
             """
             INSERT INTO shipping_records (
@@ -198,8 +198,8 @@ def register(router: APIRouter) -> None:
                 "shop_id": shop_id,
                 "warehouse_id": int(body.warehouse_id),
                 "shipping_provider_id": shipping_provider_id,
-                "carrier_code": provider_code,
-                "carrier_name": provider_name,
+                "carrier_code": provider_code or None,
+                "carrier_name": provider_name or None,
                 "tracking_no": tracking_no,
                 "trace_id": trace_id,
                 "weight_kg": None,
@@ -221,8 +221,9 @@ def register(router: APIRouter) -> None:
             ok=audit_res.get("ok", True),
             ref=order_ref,
             tracking_no=tracking_no,
-            carrier_code=provider_code,
-            carrier_name=provider_name,
+            shipping_provider_id=shipping_provider_id,
+            carrier_code=provider_code or None,
+            carrier_name=provider_name or None,
             status="IN_TRANSIT",
             label_base64=None,
             label_format=None,

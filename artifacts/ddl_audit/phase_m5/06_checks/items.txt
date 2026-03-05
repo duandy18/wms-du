@@ -1,4 +1,0 @@
-ck_items_expiry_policy_vs_shelf_life|CHECK (expiry_policy = 'REQUIRED'::expiry_policy OR shelf_life_value IS NULL AND shelf_life_unit IS NULL)
-ck_items_shelf_life_pair|CHECK ((shelf_life_value IS NULL) = (shelf_life_unit IS NULL))
-ck_items_shelf_life_unit_enum|CHECK (shelf_life_unit IS NULL OR (shelf_life_unit::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
-ck_items_shelf_life_value_pos|CHECK (shelf_life_value IS NULL OR shelf_life_value > 0)

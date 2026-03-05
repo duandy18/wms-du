@@ -1,7 +1,0 @@
-Schema Audit Dump
-DSN: postgres://wms:wms@127.0.0.1:5433/wms
-
-Fill alembic outputs here (optional):
-  - alembic history
-  - alembic current
-  - alembic upgrade head

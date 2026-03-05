@@ -1,4 +1,0 @@
-ck_stock_snapshots_qty_allocated_nonneg|CHECK (qty_allocated >= 0::numeric)
-ck_stock_snapshots_qty_available_nonneg|CHECK (qty_available >= 0::numeric)
-ck_stock_snapshots_qty_balance|CHECK ((qty_available + qty_allocated) = qty)
-ck_stock_snapshots_qty_nonneg|CHECK (qty >= 0::numeric)

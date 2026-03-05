@@ -95,17 +95,14 @@ def register(router: APIRouter) -> None:
         addr = payload.address.strip() if payload.address is not None else None
         addr = addr if addr else None
 
-        ext = payload.external_outlet_code.strip() if payload.external_outlet_code is not None else None
-        ext = ext if ext else None
-
         sql = text(
             """
             INSERT INTO shipping_providers
-              (name, code, external_outlet_code, address, active, priority)
+              (name, code, address, active, priority)
             VALUES
-              (:name, :code, :external_outlet_code, :address, :active, :priority)
+              (:name, :code, :address, :active, :priority)
             RETURNING
-              id, name, code, external_outlet_code, address, active, priority
+              id, name, code, address, active, priority
             """
         )
 
@@ -116,7 +113,6 @@ def register(router: APIRouter) -> None:
                     {
                         "name": name,
                         "code": code,
-                        "external_outlet_code": ext,
                         "address": addr,
                         "active": payload.active,
                         "priority": payload.priority if payload.priority is not None else 100,
@@ -158,10 +154,6 @@ def register(router: APIRouter) -> None:
             name = payload.name.strip()
             fields["name"] = name if name else None
 
-        if payload.external_outlet_code is not None:
-            ext = payload.external_outlet_code.strip()
-            fields["external_outlet_code"] = ext if ext else None
-
         if payload.address is not None:
             # 允许显式置空：传 "" => 存 null；传非空 => strip 后入库
             addr = payload.address.strip()
@@ -180,7 +172,6 @@ def register(router: APIRouter) -> None:
                   s.id,
                   s.name,
                   s.code,
-                  s.external_outlet_code,
                   s.address,
                   s.active,
                   s.priority
@@ -228,7 +219,7 @@ def register(router: APIRouter) -> None:
                    updated_at = now()
              WHERE id = :sid
             RETURNING
-              id, name, code, external_outlet_code, address, active, priority
+              id, name, code, address, active, priority
             """
         )
 

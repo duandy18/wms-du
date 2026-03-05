@@ -1,9 +1,0 @@
-1|id|bigint|int8|NO|nextval('internal_outbound_lines_id_seq'::regclass)
-2|doc_id|bigint|int8|NO|
-3|line_no|integer|int4|NO|
-4|item_id|bigint|int8|NO|
-5|batch_code|text|text|YES|
-6|requested_qty|integer|int4|NO|
-7|confirmed_qty|integer|int4|YES|
-9|note|text|text|YES|
-10|extra_meta|json|json|YES|

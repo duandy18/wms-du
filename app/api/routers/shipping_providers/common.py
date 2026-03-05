@@ -38,7 +38,6 @@ class ShippingProviderOut(BaseModel):
     - 本对象语义为「运输网点实体」（保留表名 shipping_providers）
     - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
     - code 为内部业务键（不可变）
-    - external_outlet_code 为外部网点号（展示/对接用）
     """
 
     id: int
@@ -46,9 +45,6 @@ class ShippingProviderOut(BaseModel):
 
     # 内部业务键（DB 级不可变 + 规范化 + NOT NULL）
     code: str
-
-    # 外部网点号（展示/对接用，可空、可改）
-    external_outlet_code: Optional[str] = Field(None, max_length=64)
 
     # 展示字段（不落库）
     display_label: str
@@ -79,13 +75,10 @@ class ShippingProviderCreateIn(BaseModel):
     """
     刚性契约（最新）：
     - code 必填（内部业务键，不可变）
-    - external_outlet_code 可选（外部网点号，仅展示/对接）
     """
 
     name: str = Field(..., min_length=1, max_length=255)
     code: str = Field(..., min_length=1, max_length=64)
-
-    external_outlet_code: Optional[str] = Field(None, min_length=1, max_length=64)
 
     # ✅ 网点地址（可选）
     address: Optional[str] = Field(None, max_length=255)
@@ -103,9 +96,6 @@ class ShippingProviderCreateOut(BaseModel):
 
 class ShippingProviderUpdateIn(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-
-    # 外部网点号（展示/对接用，可更新/可置空）
-    external_outlet_code: Optional[str] = Field(None, min_length=1, max_length=64)
 
     # ✅ 网点地址（可更新/可置空）
     address: Optional[str] = Field(None, max_length=255)
@@ -144,15 +134,13 @@ def _row_to_contact(row: Any) -> ShippingProviderContactOut:
 
 
 def _row_to_provider(row: Any, contacts: List[ShippingProviderContactOut]) -> ShippingProviderOut:
-    ext = row.get("external_outlet_code")
     name = row["name"]
-    display = f"{name}（{ext}）" if ext else name
+    display = name
 
     return ShippingProviderOut(
         id=row["id"],
         name=name,
         code=row["code"],
-        external_outlet_code=ext,
         display_label=display,
         address=row.get("address"),
         active=row.get("active", True),

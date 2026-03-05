@@ -1,5 +1,0 @@
-fk_internal_outbound_lines_doc_id|f|FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id) ON DELETE CASCADE
-fk_internal_outbound_lines_item_id|f|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
-internal_outbound_lines_doc_id_fkey|f|FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id)
-internal_outbound_lines_item_id_fkey|f|FOREIGN KEY (item_id) REFERENCES items(id)
-internal_outbound_lines_pkey|p|PRIMARY KEY (id)

@@ -50,7 +50,6 @@ def register(router: APIRouter) -> None:
                 """(
                   s.name ILIKE :q
                   OR s.code ILIKE :q
-                  OR COALESCE(s.external_outlet_code, '') ILIKE :q
                   OR EXISTS (
                     SELECT 1
                       FROM shipping_provider_contacts c
@@ -69,7 +68,6 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
-              s.external_outlet_code,
               s.address,
               s.active,
               s.priority
@@ -138,7 +136,6 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
-              s.external_outlet_code,
               s.address,
               s.active,
               s.priority

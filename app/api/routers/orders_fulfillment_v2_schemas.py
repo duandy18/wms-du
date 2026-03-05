@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, conint, constr
+from pydantic import BaseModel, Field, conint
 
 
 # ---------------------------------------------------------------------------
@@ -67,8 +67,12 @@ class ShipResponse(BaseModel):
 
 class ShipWithWaybillRequest(BaseModel):
     warehouse_id: conint(gt=0) = Field(..., description="发货仓库 ID")
-    carrier_code: constr(min_length=1) = Field(..., description="快递公司编码，例如 ZTO / JT / SF")
+    shipping_provider_id: conint(gt=0) = Field(..., description="承运商/网点 ID（强身份，必填）")
+
+    # 冗余展示字段（可选；不参与裁决）
+    carrier_code: Optional[str] = Field(None, description="快递公司编码（冗余展示字段）")
     carrier_name: Optional[str] = Field(None, description="快递公司名称（冗余字段）")
+
     weight_kg: float = Field(..., gt=0, description="包裹毛重（kg）")
 
     receiver_name: Optional[str] = None
@@ -85,8 +89,11 @@ class ShipWithWaybillResponse(BaseModel):
     ok: bool
     ref: str
     tracking_no: str
-    carrier_code: str
+
+    shipping_provider_id: int
+    carrier_code: Optional[str] = None
     carrier_name: Optional[str] = None
+
     status: str = "IN_TRANSIT"
     label_base64: Optional[str] = None
     label_format: Optional[str] = None

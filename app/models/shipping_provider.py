@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
 
@@ -19,7 +18,6 @@ class ShippingProvider(Base):
     - 本表一行 = 实际合作的运输网点（非快递公司总部）
     - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
     - code 为内部业务键（不可变、规范化）
-    - external_outlet_code 为外部网点号（展示/对接用，可空、可改）
     """
 
     __tablename__ = "shipping_providers"
@@ -36,10 +34,7 @@ class ShippingProvider(Base):
     # 内部业务键（已在 DB 侧强约束：NOT NULL + UNIQUE + upper/trim + 不可变 trigger）
     code: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    # 外部网点号：展示/对接用（可空、可改）
-    external_outlet_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-
-    address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     active: Mapped[bool] = mapped_column(
         Boolean,
@@ -96,13 +91,6 @@ class ShippingProvider(Base):
             if old is not None and v != old:
                 raise ValueError("shipping_provider.code 不允许修改（创建后不可变）")
         return v
-
-    @validates("external_outlet_code")
-    def _validate_external_outlet_code(self, _key: str, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        v = value.strip()
-        return v if v != "" else None
 
     @validates("name")
     def _validate_name(self, _key: str, value: str) -> str:
