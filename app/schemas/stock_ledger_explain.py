@@ -20,7 +20,6 @@ class ExplainReceipt(BaseModel):
     supplier_name: Optional[str] = None
     source_type: str
     source_id: Optional[int] = None
-    receive_task_id: Optional[int] = None
     ref: str
     trace_id: Optional[str] = None
     status: str
@@ -44,68 +43,18 @@ class ExplainReceiptLine(BaseModel):
 
     category: Optional[str] = None
     spec_text: Optional[str] = None
-    base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
 
     batch_code: str
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
 
     qty_received: int
-    units_per_case: int
-    qty_units: int
-
     unit_cost: Optional[Decimal] = None
     line_amount: Optional[Decimal] = None
     remark: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ExplainReceiveTaskLine(BaseModel):
-    id: int
-    task_id: int
-    po_line_id: Optional[int] = None
-
-    item_id: int
-    item_name: Optional[str] = None
-    item_sku: Optional[str] = None
-    category: Optional[str] = None
-    spec_text: Optional[str] = None
-    base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
-    units_per_case: Optional[int] = None
-
-    batch_code: Optional[str] = None
-    production_date: Optional[date] = None
-    expiry_date: Optional[date] = None
-
-    expected_qty: Optional[int] = None
-    scanned_qty: int
-    committed_qty: Optional[int] = None
-
-    status: str
-    remark: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ExplainReceiveTask(BaseModel):
-    id: int
-    source_type: str
-    source_id: Optional[int] = None
-    po_id: Optional[int] = None
-    supplier_id: Optional[int] = None
-    supplier_name: Optional[str] = None
-    warehouse_id: int
-    status: str
-    remark: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    lines: List[ExplainReceiveTaskLine] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -120,9 +69,6 @@ class ExplainPurchaseOrderLine(BaseModel):
     item_sku: Optional[str] = None
     category: Optional[str] = None
     spec_text: Optional[str] = None
-    base_uom: Optional[str] = None
-    purchase_uom: Optional[str] = None
-    units_per_case: Optional[int] = None
 
     qty_ordered: int
     qty_received: int
@@ -134,7 +80,6 @@ class ExplainPurchaseOrderLine(BaseModel):
 
 class ExplainPurchaseOrder(BaseModel):
     id: int
-    supplier: str
     supplier_id: Optional[int] = None
     supplier_name: Optional[str] = None
     warehouse_id: int
@@ -185,5 +130,4 @@ class LedgerExplainOut(BaseModel):
     ledger: List[ExplainLedgerRow]
     receipt: ExplainReceipt
     receipt_lines: List[ExplainReceiptLine]
-    receive_task: Optional[ExplainReceiveTask] = None
     purchase_order: Optional[ExplainPurchaseOrder] = None

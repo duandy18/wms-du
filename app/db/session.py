@@ -48,12 +48,13 @@ def _normalize_async_dsn(url: str) -> str:
     return url
 
 
-# 优先级：
-#  1) WMS_DATABASE_URL（你用来跑 Alembic / 本地 docker 的）
-#  2) DATABASE_URL
-#  3) 默认 dev DSN: 5433/wms
+# 优先级（关键修复）：
+#  1) WMS_TEST_DATABASE_URL（pytest / make test）
+#  2) WMS_DATABASE_URL（本地服务 / Alembic）
+#  3) DATABASE_URL
+#  4) 默认 dev DSN
 _DEFAULT_DSN = "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"
-_raw = os.getenv("WMS_DATABASE_URL") or os.getenv("DATABASE_URL") or _DEFAULT_DSN
+_raw = os.getenv("WMS_TEST_DATABASE_URL") or os.getenv("WMS_DATABASE_URL") or os.getenv("DATABASE_URL") or _DEFAULT_DSN
 
 # 有些环境会把值写成 '"postgresql+psycopg://.../wms"'，这里统一剥掉两侧引号
 _raw = _raw.strip()
@@ -78,7 +79,6 @@ SessionLocal: sessionmaker[Session] = sessionmaker(
 )
 
 # ---- 异步 Engine + AsyncSession（FastAPI / 异步服务） ----
-# 关键修复：PG (psycopg3) 下不传 connect_args['server_settings']；统一空 dict
 _async_connect_args = {}
 async_engine: AsyncEngine = create_async_engine(
     ASYNC_URL,

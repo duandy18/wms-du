@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     ZoneBracketCreateIn,
     ZoneBracketOut,
     ZoneBracketUpdateIn,
@@ -20,8 +20,22 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_brackets_shared im
     validate_bracket_range,
 )
 from app.db.deps import get_db
+from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_zone import ShippingProviderZone
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
+
+
+def _assert_zone_template_bound_or_422(z: ShippingProviderZone) -> None:
+    """
+    ✅ 新合同：区域（Zone）不必在 zones 子页绑定模板；
+    但“录价（brackets 写入）”必须建立在“已绑定模板”的事实之上。
+    """
+    tid = getattr(z, "segment_template_id", None)
+    if tid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="当前区域尚未绑定重量段模板：请先在二维价格表工作台为该区域绑定模板，再录入价格。",
+        )
 
 
 def register_brackets_crud_routes(router: APIRouter) -> None:
@@ -41,6 +55,13 @@ def register_brackets_crud_routes(router: APIRouter) -> None:
         z = db.get(ShippingProviderZone, zone_id)
         if not z:
             raise HTTPException(status_code=404, detail="Zone not found")
+
+        # ✅ 护栏：未绑定模板禁止录价（避免写入污染）
+        _assert_zone_template_bound_or_422(z)
+
+        sch = db.get(ShippingProviderPricingScheme, z.scheme_id)
+        if not sch:
+            raise HTTPException(status_code=404, detail="Scheme not found")
 
         validate_bracket_range(payload.min_kg, payload.max_kg)
 
@@ -86,6 +107,17 @@ def register_brackets_crud_routes(router: APIRouter) -> None:
         b = db.get(ShippingProviderZoneBracket, bracket_id)
         if not b:
             raise HTTPException(status_code=404, detail="Bracket not found")
+
+        z = db.get(ShippingProviderZone, b.zone_id)
+        if not z:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        # ✅ 护栏：未绑定模板禁止修改录价（避免出现“有 brackets 但无行结构”的脏状态）
+        _assert_zone_template_bound_or_422(z)
+
+        sch = db.get(ShippingProviderPricingScheme, z.scheme_id)
+        if not sch:
+            raise HTTPException(status_code=404, detail="Scheme not found")
 
         data = payload.dict(exclude_unset=True)
 

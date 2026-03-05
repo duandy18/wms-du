@@ -60,13 +60,14 @@ async def _load_order_state(session, order_id: int) -> dict:
             text(
                 """
                 SELECT
-                  fulfillment_status,
-                  warehouse_id,
-                  service_warehouse_id,
-                  blocked_reasons,
-                  blocked_detail
-                FROM orders
-                WHERE id = :oid
+                  f.fulfillment_status AS fulfillment_status,
+                  f.actual_warehouse_id AS warehouse_id,
+                  f.planned_warehouse_id AS service_warehouse_id,
+                  f.blocked_reasons AS blocked_reasons
+                FROM orders o
+                LEFT JOIN order_fulfillment f ON f.order_id = o.id
+                WHERE o.id = :oid
+                LIMIT 1
                 """
             ),
             {"oid": int(order_id)},
@@ -77,7 +78,7 @@ async def _load_order_state(session, order_id: int) -> dict:
 
 async def test_ingest_assigns_service_warehouse_by_province(db_session_like_pg, monkeypatch):
     """
-    新主线：省级服务范围命中 → SERVICE_ASSIGNED（只写 service_warehouse_id，不写 warehouse_id）
+    新主线：省级服务范围命中 → SERVICE_ASSIGNED（写 order_fulfillment.planned_warehouse_id，不写实际仓）
     """
     session = db_session_like_pg
 

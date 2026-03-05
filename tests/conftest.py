@@ -20,13 +20,11 @@ os.environ["FULL_ROUTES"] = "1"
 os.environ["WMS_FULL_ROUTES"] = "1"
 
 # Phase 5 Blueprint：禁止隐式省份兜底（必须显式提供 address.province）
-# - 旧版本曾在测试进程中 setdefault("WMS_TEST_DEFAULT_PROVINCE", "UT")，会导致“忘传 province”也能跑
-# - 现在改为：显式清理该 env，任何依赖默认省份的测试必须在用例内 monkeypatch.setenv(...)
 os.environ.pop("WMS_TEST_DEFAULT_PROVINCE", None)
 
-from app.main import app  # noqa: E402
-from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
-
+# ============================================================
+# ★★ 关键：在 import app.main 之前强制把 DB env 绑定到测试库 ★★
+# ============================================================
 WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
 WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
 ALLOW_TRUNCATE = str(os.getenv("WMS_TEST_DB_ALLOW_TRUNCATE", "")).strip().lower() in {"1", "true", "yes"}
@@ -51,6 +49,18 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+# ✅ 强制：API 侧（app.main -> app.db.session）也必须使用同一个测试库
+os.environ["WMS_DATABASE_URL"] = DATABASE_URL
+os.environ["WMS_TEST_DATABASE_URL"] = DATABASE_URL
+
+# 重新读取（确保后续变量一致）
+WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
+WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
+
+from app.main import app  # noqa: E402
+from app.api.deps import get_session as app_get_session  # noqa: E402
+from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
 
 
 def _load_truncate_sql() -> str:
@@ -120,30 +130,27 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         truncate_sql = _load_truncate_sql()
         await conn.execute(text(truncate_sql))
 
-        # 2) 统一种子（items/barcodes/batches/stocks + shipping + admin + RBAC）
-        old_dsn = os.environ.get("WMS_DATABASE_URL")
-        os.environ["WMS_DATABASE_URL"] = DATABASE_URL
-        try:
-            await seed_in_conn(conn)
-        finally:
-            if old_dsn is None:
-                os.environ.pop("WMS_DATABASE_URL", None)
-            else:
-                os.environ["WMS_DATABASE_URL"] = old_dsn
+        # 2) 统一种子（items/barcodes/lots/stocks_lot + shipping + admin + RBAC）
+        await seed_in_conn(conn)
+
+        # 2.1) Batch-as-Lot 终态测试基线（关键收口）：
+        # 很多合同/三账/出库链路测试依赖“可携带批次码”的物料；
+        # 在终态合同中这对应 expiry_policy=REQUIRED。
+        # 因此在 baseline seed 后，强制把常用测试 item 设为 REQUIRED，避免大量测试因 NONE 禁止 batch_code 而失败。
+        await conn.execute(
+            text(
+                """
+                UPDATE items
+                   SET expiry_policy = 'REQUIRED'::expiry_policy
+                 WHERE expiry_policy IS DISTINCT FROM 'REQUIRED'::expiry_policy
+                """
+            )
+        )
 
         # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）
-        # 3.1 取第一个仓库作为测试服务仓/默认绑定仓
         row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
         wh_id = int(row.scalar_one())
 
-        # 3.2 Route C：常用 UT 省码 -> wh_id（幂等）
-        #
-        # Phase 5 合同要求：
-        # - address.province 必须显式提供
-        # - 且必须能命中 service warehouse，否则 ingest 正确返回 FULFILLMENT_BLOCKED
-        #
-        # 但在多数非路由测试里，province 的具体字符串只是“占位符”。
-        # 为避免无意义的 BLOCKED 干扰其它链路测试，这里把常见 UT-* 省码统一映射到同一个 service warehouse。
         for prov in ("UT", "UT-P3", "UT-PROV"):
             await conn.execute(
                 text(
@@ -157,20 +164,28 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 {"wid": wh_id, "prov": prov},
             )
 
-        # 3.3 确保至少存在一个 store（stores.name NOT NULL）
-        row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))
-        any_store_id = row.scalar_one_or_none()
-        if any_store_id is None:
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO stores(platform, shop_id, name, active)
-                    VALUES('PDD', '1', 'UT-测试店铺', TRUE)
-                    """
-                )
+        # ✅ Baseline 需要覆盖多条合同测试使用的 (platform, shop_id)
+        # - PDD/1：历史 UT 默认
+        # - DEMO/1：merchant-code-bindings / order ingest 等合同测试依赖
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('PDD', '1', 'UT-测试店铺', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
             )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('DEMO', '1', 'DEMO-1', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
+            )
+        )
 
-        # 3.4 将所有 stores 设为 active，并确保 name 非空（防御性）
         await conn.execute(
             text(
                 """
@@ -181,7 +196,6 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
             )
         )
 
-        # 3.5 为所有 stores 绑定到 wh_id（幂等）
         rows = await conn.execute(text("SELECT id FROM stores"))
         store_ids = [int(x[0]) for x in rows.fetchall()]
         for sid in store_ids:
@@ -201,14 +215,27 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
+async def client(session: AsyncSession) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """
+    关键：让同一个 test function 内的多次 HTTP 请求共享同一个 AsyncSession，
+    以保证“写后读”在测试环境里可见（否则每个请求独立取连接，会出现 bind 后 ingest 看不到）。
+    """
+
+    async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        yield session
+
+    app.dependency_overrides[app_get_session] = _override_get_session
+
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://testserver",
-        timeout=httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0),
-    ) as c:
-        yield c
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            timeout=httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0),
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(app_get_session, None)
 
 
 @pytest_asyncio.fixture

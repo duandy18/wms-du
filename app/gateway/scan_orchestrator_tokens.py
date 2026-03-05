@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
-# 只允许这三种 scan 模式（putaway 在 v2 中禁用）
+# v2 只允许这三种 scan 模式（历史 putaway 已下线）
 ALLOWED_SCAN_MODES = {"receive", "pick", "count"}
 
 # ---------------- token parsing ----------------

@@ -31,16 +31,27 @@ class ShippingProviderPricingSchemeSegmentTemplate(Base):
         server_default="draft",
     )
 
-    # 同一 scheme 仅允许一个 is_active=true（由服务层 + 部分索引保证）
+    # ✅ 多活允许：同一 scheme 可存在多条 is_active=true（互斥已移除）
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
-    scheme = relationship("ShippingProviderPricingScheme", back_populates="segment_templates", lazy="selectin")
+    # ✅ 关键：显式 foreign_keys，避免与 scheme.default_segment_template_id 形成两条 FK 路径导致歧义
+    scheme = relationship(
+        "ShippingProviderPricingScheme",
+        back_populates="segment_templates",
+        lazy="selectin",
+        foreign_keys=[scheme_id],
+    )
 
     items = relationship(
         "ShippingProviderPricingSchemeSegmentTemplateItem",

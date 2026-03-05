@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime, date as date_type
 from typing import List, Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, func
+import sqlalchemy as sa
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,31 +18,27 @@ class InboundReceipt(Base):
 
     warehouse_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        ForeignKey("warehouses.id", name="fk_inbound_receipts_warehouse", ondelete="RESTRICT"),
         nullable=False,
     )
 
     supplier_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        # 供应商是主数据目录：禁止硬删除，只允许 active=false 下线。
+        # 终态：历史收货必须可追溯到供应商，因此收敛为 RESTRICT。
+        ForeignKey("suppliers.id", name="fk_inbound_receipts_supplier", ondelete="RESTRICT"),
         nullable=True,
     )
+
     supplier_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    source_type: Mapped[str] = mapped_column(String(16), nullable=False)  # PO / ORDER / OTHER
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
     source_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    receive_task_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("receive_tasks.id", ondelete="SET NULL"),
-        nullable=True,
-        unique=True,  # 幂等锚点（NULL 可重复）
-    )
 
     ref: Mapped[str] = mapped_column(String(128), nullable=False)
     trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CONFIRMED")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -51,6 +48,7 @@ class InboundReceipt(Base):
         nullable=False,
         server_default=func.now(),
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -68,11 +66,28 @@ class InboundReceipt(Base):
 class InboundReceiptLine(Base):
     __tablename__ = "inbound_receipt_lines"
 
+    __table_args__ = (
+        CheckConstraint(
+            "(production_date IS NULL) OR (expiry_date IS NULL) OR (production_date <= expiry_date)",
+            name="ck_inbound_receipt_lines_prod_le_exp",
+        ),
+        CheckConstraint(
+            "qty_base = (qty_input * ratio_to_base_snapshot)",
+            name="ck_receipt_qty_base_consistent",
+        ),
+        sa.UniqueConstraint(
+            "receipt_id",
+            "line_no",
+            name="uq_inbound_receipt_lines_receipt_line",
+        ),
+        {"info": {"skip_autogen": True}},
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
     receipt_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("inbound_receipts.id", ondelete="CASCADE"),
+        ForeignKey("inbound_receipts.id", name="fk_inbound_receipt_lines_receipt", ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -80,32 +95,45 @@ class InboundReceiptLine(Base):
 
     po_line_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        ForeignKey("purchase_order_lines.id", name="fk_inbound_receipt_lines_po_line", ondelete="SET NULL"),
         nullable=True,
     )
 
     item_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("items.id", ondelete="RESTRICT"),
+        ForeignKey("items.id", name="fk_inbound_receipt_lines_item", ondelete="RESTRICT"),
         nullable=False,
     )
 
-    item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    item_sku: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 新字段：供应商批次输入
+    lot_code_input: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # ✅ 新增：商品/采购行快照字段（事实层可解释）
-    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    spec_text: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    base_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    purchase_uom: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    lot_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    batch_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_status_snapshot: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="DRAFT",
+    )
+
+    warehouse_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("warehouses.id", name="fk_inbound_receipt_lines_warehouse", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
     production_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
 
-    qty_received: Mapped[int] = mapped_column(Integer, nullable=False)
-    units_per_case: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    qty_units: Mapped[int] = mapped_column(Integer, nullable=False)
+    uom_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("item_uoms.id", name="fk_receipt_line_uom"),
+        nullable=False,
+    )
+
+    qty_input: Mapped[int] = mapped_column(Integer, nullable=False)
+    ratio_to_base_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    qty_base: Mapped[int] = mapped_column(Integer, nullable=False)
 
     unit_cost: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
     line_amount: Mapped[Optional[float]] = mapped_column(Numeric(14, 2), nullable=True)
@@ -117,10 +145,14 @@ class InboundReceiptLine(Base):
         nullable=False,
         server_default=func.now(),
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
 
-    receipt: Mapped["InboundReceipt"] = relationship("InboundReceipt", back_populates="lines")
+    receipt: Mapped["InboundReceipt"] = relationship(
+        "InboundReceipt",
+        back_populates="lines",
+    )

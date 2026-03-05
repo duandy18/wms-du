@@ -9,10 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.lot_code_contract import normalize_optional_lot_code
+from app.api.routers.stock_ledger_helpers import build_base_ids_stmt, infer_movement_type
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
+from app.models.lot import Lot
 from app.models.purchase_order import PurchaseOrder
-from app.models.receive_task import ReceiveTask
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import LedgerList, LedgerQuery, LedgerRow
 from app.schemas.stock_ledger_explain import (
@@ -22,11 +24,8 @@ from app.schemas.stock_ledger_explain import (
     ExplainPurchaseOrderLine,
     ExplainReceipt,
     ExplainReceiptLine,
-    ExplainReceiveTask,
-    ExplainReceiveTaskLine,
     LedgerExplainOut,
 )
-from app.api.routers.stock_ledger_helpers import build_base_ids_stmt, infer_movement_type
 
 UTC = timezone.utc
 MAX_HISTORY_DAYS = 3650  # 10 years
@@ -106,11 +105,11 @@ def register(router: APIRouter) -> None:
         session: AsyncSession = Depends(get_session),
     ) -> LedgerExplainOut:
         """
-        台账解释（ledger → receipt → receive_task → PO）
+        台账解释（终态口径）：
 
-        说明：
-        - 以 ref 为主锚点，trace_id 为强约束（可选，但建议传）
-        - Receipt 是事实源：优先用 inbound_receipts(ref, trace_id) 定位
+        - ledger → receipt → PO（可选）
+        - 不再解释 receive_task（执行层已移除）
+        - Receipt 是事实源：用 inbound_receipts(ref, trace_id) 定位
         - Ledger 是动作流水：用 stock_ledger(ref, trace_id) 拉取
         """
         ref = (ref or "").strip()
@@ -137,54 +136,26 @@ def register(router: APIRouter) -> None:
         ledger_stmt = select(StockLedger).where(StockLedger.ref == ref)
         if trace_id and trace_id.strip():
             ledger_stmt = ledger_stmt.where(StockLedger.trace_id == trace_id.strip())
-        ledger_stmt = ledger_stmt.order_by(StockLedger.occurred_at.asc(), StockLedger.ref_line.asc(), StockLedger.id.asc()).limit(limit)
+        ledger_stmt = (
+            ledger_stmt.order_by(StockLedger.occurred_at.asc(), StockLedger.ref_line.asc(), StockLedger.id.asc())
+            .limit(limit)
+        )
         ledger_rows = (await session.execute(ledger_stmt)).scalars().all()
 
-        # 4) 向上解释：receive_task / po
-        task_obj: Optional[ReceiveTask] = None
+        # 4) 向上解释：PO（仅基于 Receipt 的 source_type/source_id）
         po_obj: Optional[PurchaseOrder] = None
+        if getattr(receipt, "source_type", None) == "PO" and getattr(receipt, "source_id", None) is not None:
+            po_obj = await _load_po_with_lines(session, int(receipt.source_id))
 
-        if receipt.receive_task_id is not None:
-            task_stmt = (
-                select(ReceiveTask)
-                .options(selectinload(ReceiveTask.lines))
-                .where(ReceiveTask.id == int(receipt.receive_task_id))
-            )
-            task_obj = (await session.execute(task_stmt)).scalars().first()
-            if task_obj and task_obj.lines:
-                task_obj.lines.sort(key=lambda ln: (ln.id,))
-
-            if task_obj and task_obj.po_id is not None:
-                po_obj = await _load_po_with_lines(session, int(task_obj.po_id))
-
-        # 5) 组装响应
+        # 5) 组装响应（终态：不再提供 receive_task）
         out = LedgerExplainOut(
             anchor=ExplainAnchor(ref=ref, trace_id=trace_id.strip() if trace_id else None),
             ledger=[ExplainLedgerRow.model_validate(r) for r in ledger_rows],
             receipt=ExplainReceipt.model_validate(receipt),
             receipt_lines=[ExplainReceiptLine.model_validate(ln) for ln in receipt_lines],
-            receive_task=(
-                ExplainReceiveTask(
-                    id=task_obj.id,
-                    source_type=task_obj.source_type,
-                    source_id=task_obj.source_id,
-                    po_id=task_obj.po_id,
-                    supplier_id=task_obj.supplier_id,
-                    supplier_name=task_obj.supplier_name,
-                    warehouse_id=task_obj.warehouse_id,
-                    status=task_obj.status,
-                    remark=task_obj.remark,
-                    created_at=task_obj.created_at,
-                    updated_at=task_obj.updated_at,
-                    lines=[ExplainReceiveTaskLine.model_validate(ln) for ln in (task_obj.lines or [])],
-                )
-                if task_obj is not None
-                else None
-            ),
             purchase_order=(
                 ExplainPurchaseOrder(
                     id=po_obj.id,
-                    supplier=po_obj.supplier,
                     supplier_id=po_obj.supplier_id,
                     supplier_name=po_obj.supplier_name,
                     warehouse_id=po_obj.warehouse_id,
@@ -216,6 +187,11 @@ def register(router: APIRouter) -> None:
         - 必须提供锚点（trace_id/ref/item_id/reason_canon/sub_reason 任意一项）；
         - 返回结构与 /stock/ledger/query 一致（LedgerList）。
         """
+        # ✅ 查询级 batch_code 归一（None/空串/'None' -> None）
+        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
+        if getattr(payload, "batch_code", None) != norm_bc:
+            payload = payload.model_copy(update={"batch_code": norm_bc})
+
         if not _has_anchor(payload):
             raise HTTPException(
                 status_code=400,
@@ -238,6 +214,14 @@ def register(router: APIRouter) -> None:
         )
         rows = (await session.execute(list_stmt)).scalars().all()
 
+        # ✅ 批量补齐 batch_code（展示码）
+        lot_ids = sorted({int(getattr(r, "lot_id")) for r in rows if getattr(r, "lot_id", None) is not None})
+        lot_code_map: dict[int, str | None] = {}
+        if lot_ids:
+            res = await session.execute(select(Lot.id, Lot.lot_code).where(Lot.id.in_(lot_ids)))
+            for lot_id, lot_code in res.all():
+                lot_code_map[int(lot_id)] = lot_code
+
         return LedgerList(
             total=total,
             items=[
@@ -255,7 +239,9 @@ def register(router: APIRouter) -> None:
                     item_id=r.item_id,
                     item_name=getattr(r, "item_name", None),
                     warehouse_id=r.warehouse_id,
-                    batch_code=r.batch_code,
+                    batch_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
+                    lot_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
+                    lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,
                     movement_type=infer_movement_type(r.reason),
                 )

@@ -17,11 +17,11 @@ async def test_scan_count_v2_adjusts_stock(client):
     """
 
     warehouse_id = 1
-    item_id = 3001
+    # ✅ 用基线更稳的 item_id，避免依赖隐式 seed
+    item_id = 1
     batch_code = "BATCH-COUNT-V2"
     expiry_date = "2030-12-31"
 
-    # 1) 先收货 5 件
     recv_payload = {
         "mode": "receive",
         "item_id": item_id,
@@ -37,7 +37,6 @@ async def test_scan_count_v2_adjusts_stock(client):
     assert d1["ok"] is True, f"d1={d1}"
     assert d1["committed"] is True
 
-    # 2) 再通过 count 把库存改为 2
     count_payload = {
         "mode": "count",
         "item_id": item_id,

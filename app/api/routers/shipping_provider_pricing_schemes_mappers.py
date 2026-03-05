@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import List
 
-from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+    DestAdjustmentOut,
     SchemeOut,
     SchemeSegmentOut,
     SurchargeOut,
@@ -11,6 +12,7 @@ from app.api.routers.shipping_provider_pricing_schemes_schemas import (
     ZoneMemberOut,
     ZoneOut,
 )
+from app.models.pricing_scheme_dest_adjustment import PricingSchemeDestAdjustment
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
@@ -51,6 +53,8 @@ def to_zone_out(
         scheme_id=z.scheme_id,
         name=z.name,
         active=bool(z.active),
+        # ✅ 新合同：允许为空（zones 页面不再负责绑定模板）
+        segment_template_id=getattr(z, "segment_template_id", None),
         members=[to_member_out(x) for x in members],
         brackets=[to_bracket_out(x) for x in brackets],
     )
@@ -67,6 +71,25 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
     )
 
 
+def to_dest_adjustment_out(x: PricingSchemeDestAdjustment) -> DestAdjustmentOut:
+    return DestAdjustmentOut(
+        id=int(x.id),
+        scheme_id=int(x.scheme_id),
+        scope=str(x.scope),
+        province_code=str(x.province_code),
+        city_code=str(x.city_code) if x.city_code is not None else None,
+        province_name=str(x.province_name) if x.province_name is not None else None,
+        city_name=str(x.city_name) if x.city_name is not None else None,
+        province=str(x.province),
+        city=str(x.city) if x.city is not None else None,
+        amount=float(x.amount),
+        active=bool(x.active),
+        priority=int(x.priority or 100),
+        created_at=x.created_at,
+        updated_at=x.updated_at,
+    )
+
+
 def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSegmentOut:
     return SchemeSegmentOut(
         id=seg.id,
@@ -78,6 +101,23 @@ def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSe
     )
 
 
+def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
+    """
+    ✅ Phase 6：刚性契约
+    - SchemeOut.shipping_provider_name 必须由后端提供
+    - 不允许前端推导/猜测
+    - 若 ORM 关系未加载或数据异常，直接抛错（让契约早爆）
+    """
+    sp = getattr(sch, "shipping_provider", None)
+    name = getattr(sp, "name", None) if sp is not None else None
+    if not isinstance(name, str) or not name.strip():
+        raise RuntimeError(
+            f"ShippingProvider name is required for scheme_id={sch.id} "
+            f"shipping_provider_id={sch.shipping_provider_id}"
+        )
+    return name.strip()
+
+
 def to_scheme_out(
     sch: ShippingProviderPricingScheme,
     zones: List[ZoneOut],
@@ -87,10 +127,12 @@ def to_scheme_out(
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
 
     segs = getattr(sch, "segments", None) or []
+    das = getattr(sch, "dest_adjustments", None) or []
 
     return SchemeOut(
         id=sch.id,
         shipping_provider_id=sch.shipping_provider_id,
+        shipping_provider_name=_must_get_shipping_provider_name(sch),
         name=sch.name,
         active=bool(sch.active),
         currency=sch.currency,
@@ -98,9 +140,13 @@ def to_scheme_out(
         effective_to=sch.effective_to,
         default_pricing_mode=dpm,
         billable_weight_rule=sch.billable_weight_rule,
+        archived_at=getattr(sch, "archived_at", None),
+        # ✅ 显式默认回退模板（核心新增）
+        default_segment_template_id=getattr(sch, "default_segment_template_id", None),
         segments_json=getattr(sch, "segments_json", None),
         segments_updated_at=getattr(sch, "segments_updated_at", None),
         segments=[to_scheme_segment_out(x) for x in segs],
         zones=zones,
         surcharges=surcharges,
+        dest_adjustments=[to_dest_adjustment_out(x) for x in das],
     )

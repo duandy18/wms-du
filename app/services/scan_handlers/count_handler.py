@@ -12,6 +12,137 @@ from app.services.three_books_enforcer import enforce_three_books
 from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
 
+async def _ensure_supplier_lot_id(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+    production_date: date | None,
+    expiry_date: date | None,
+) -> int:
+    """
+    Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
+    - Count 仍要求 batch_code（盘点维度必须落到确定 SUPPLIER lot 槽位）
+    """
+    from app.services.stock.lots import ensure_lot_full
+
+    _ = production_date
+    _ = expiry_date
+
+    code = str(lot_code).strip()
+    if not code:
+        raise ValueError("盘点操作必须提供 batch_code。")
+
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
+async def _ensure_stocks_lot_slot_exists(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_id: int,
+) -> None:
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
+            VALUES (:i, :w, :lot, 0)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot DO NOTHING
+            """
+        ),
+        {"i": int(item_id), "w": int(warehouse_id), "lot": int(lot_id)},
+    )
+
+
+async def _lock_current_qty_by_lot(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_id: int,
+) -> int:
+    await _ensure_stocks_lot_slot_exists(session, warehouse_id=warehouse_id, item_id=item_id, lot_id=lot_id)
+
+    row = await session.execute(
+        sa.text(
+            """
+            SELECT qty
+              FROM stocks_lot
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_id       = :lot
+             FOR UPDATE
+            """
+        ),
+        {"w": int(warehouse_id), "i": int(item_id), "lot": int(lot_id)},
+    )
+    return int(row.scalar_one_or_none() or 0)
+
+
+async def _refresh_snapshot_for_item(
+    session: AsyncSession,
+    *,
+    snapshot_date: date,
+    warehouse_id: int,
+    item_id: int,
+) -> None:
+    await session.execute(
+        sa.text(
+            """
+            DELETE FROM stock_snapshots
+            WHERE snapshot_date = :d
+              AND warehouse_id  = :w
+              AND item_id       = :i
+            """
+        ),
+        {"d": snapshot_date, "w": int(warehouse_id), "i": int(item_id)},
+    )
+
+    # Lot-world: snapshot grain is (snapshot_date, warehouse_id, item_id, lot_id).
+    # Do NOT write batch_code into stock_snapshots (column no longer exists).
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO stock_snapshots (
+                snapshot_date,
+                warehouse_id,
+                item_id,
+                lot_id,
+                qty,
+                qty_available,
+                qty_allocated
+            )
+            SELECT
+                :d AS snapshot_date,
+                s.warehouse_id,
+                s.item_id,
+                s.lot_id,
+                s.qty,
+                s.qty AS qty_available,
+                0    AS qty_allocated
+              FROM stocks_lot s
+             WHERE s.warehouse_id = :w
+               AND s.item_id      = :i
+            ON CONFLICT (snapshot_date, warehouse_id, item_id, lot_id)
+            DO UPDATE SET
+                qty = EXCLUDED.qty,
+                qty_available = EXCLUDED.qty_available,
+                qty_allocated = EXCLUDED.qty_allocated
+            """
+        ),
+        {"d": snapshot_date, "w": int(warehouse_id), "i": int(item_id)},
+    )
+
+
 async def handle_count(
     session: AsyncSession,
     *,
@@ -24,14 +155,6 @@ async def handle_count(
     expiry_date: date | None = None,
     trace_id: str | None = None,
 ) -> dict:
-    """
-    盘点（Count）—— v2：按 仓库 + 商品 + 批次 粒度。
-
-    Phase 3 合同：
-    - delta != 0：写 ledger + 改 stocks + snapshot 可观测一致
-    - delta == 0：也写一条“确认类事件台账”（ledger），stocks 不变
-      * 通过 StockService.adjust 的 allow_zero_delta_ledger + sub_reason 实现
-    """
     if actual < 0:
         raise ValueError("Actual quantity must be non-negative.")
     if not batch_code or not str(batch_code).strip():
@@ -41,21 +164,26 @@ async def handle_count(
 
     bcode = str(batch_code).strip()
 
-    # 当前库存（按 warehouse + item + batch 粒度加锁读取）
-    row = await session.execute(
-        sa.text(
-            "SELECT qty FROM stocks "
-            "WHERE item_id=:i AND warehouse_id=:w AND batch_code=:c "
-            "FOR UPDATE"
-        ),
-        {"i": item_id, "w": warehouse_id, "c": bcode},
+    lot_id = await _ensure_supplier_lot_id(
+        session,
+        warehouse_id=int(warehouse_id),
+        item_id=int(item_id),
+        lot_code=bcode,
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
-    current = int(row.scalar_one_or_none() or 0)
-    delta = int(actual) - current
-    before = current
-    after = current + delta
 
-    # 只有盘盈需要按“入库”逻辑补齐日期
+    current = await _lock_current_qty_by_lot(
+        session,
+        warehouse_id=int(warehouse_id),
+        item_id=int(item_id),
+        lot_id=int(lot_id),
+    )
+
+    delta = int(actual) - int(current)
+    before = int(current)
+    after = int(current) + int(delta)
+
     if delta > 0:
         if production_date is None and expiry_date is None:
             raise ValueError("盘盈为入库行为，必须提供 production_date 或 expiry_date。")
@@ -67,9 +195,7 @@ async def handle_count(
             expiry_date=expiry_date,
         )
 
-    meta = {
-        "sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM",
-    }
+    meta = {"sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM"}
     if delta == 0:
         meta["allow_zero_delta_ledger"] = True
 
@@ -77,19 +203,29 @@ async def handle_count(
     await stock_svc.adjust(
         session=session,
         item_id=item_id,
-        warehouse_id=warehouse_id,
-        delta=delta,
+        warehouse_id=int(warehouse_id),
+        delta=int(delta),
         reason=MovementType.COUNT,
-        ref=ref,
+        ref=str(ref),
         ref_line=1,
         batch_code=bcode,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
         meta=meta,
+        lot_id=int(lot_id),
     )
 
     ts = datetime.now(timezone.utc)
+
+    if delta != 0:
+        await _refresh_snapshot_for_item(
+            session,
+            snapshot_date=ts.date(),
+            warehouse_id=int(warehouse_id),
+            item_id=int(item_id),
+        )
+
     await enforce_three_books(
         session,
         ref=str(ref),

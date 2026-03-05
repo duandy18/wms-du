@@ -23,6 +23,14 @@ class PurchaseOrderLine(Base):
             "line_no",
             name="uq_purchase_order_lines_po_id_line_no",
         ),
+        sa.CheckConstraint(
+            "discount_amount >= 0",
+            name="ck_po_lines_discount_amount_nonneg",
+        ),
+        sa.CheckConstraint(
+            "qty_ordered_base > 0",
+            name="ck_po_lines_qty_ordered_base_positive",
+        ),
     )
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
@@ -33,52 +41,61 @@ class PurchaseOrderLine(Base):
         nullable=False,
         index=True,
     )
+
     line_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
-    item_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
+    item_id: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
     item_name: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
     item_sku: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True, index=True)
-
-    category: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
-
     spec_text: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
-    base_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
-    purchase_uom: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
 
-    supply_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    retail_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    promo_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
-    min_price: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(12, 2), nullable=True)
+    purchase_uom_id_snapshot: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("item_uoms.id", name="fk_po_line_purchase_uom"),
+        nullable=False,
+    )
 
-    qty_cases: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
-    units_per_case: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    purchase_ratio_to_base_snapshot: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+    )
 
-    # 采购单位订购量（兼容/输入快照）
-    qty_ordered: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    qty_ordered_input: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+    )
 
-    # ✅ 最小单位订购量（事实字段，Phase 2 最终形态）
     qty_ordered_base: Mapped[int] = mapped_column(
         sa.Integer,
         nullable=False,
         default=0,
         server_default="0",
-        comment="订购数量（最小单位，事实字段）",
+        comment="订购数量（最小单位 base，事实字段）",
     )
 
-    # ✅ 最小单位已收量（事实字段，现状已如此）
-    qty_received: Mapped[int] = mapped_column(
-        sa.Integer,
+    supply_price: Mapped[Optional[Decimal]] = mapped_column(
+        sa.Numeric(12, 2),
+        nullable=True,
+    )
+
+    discount_amount: Mapped[Decimal] = mapped_column(
+        sa.Numeric(14, 2),
         nullable=False,
-        default=0,
+        default=Decimal("0"),
         server_default="0",
+        comment="整行减免金额（>=0）",
     )
 
-    line_amount: Mapped[Optional[Decimal]] = mapped_column(sa.Numeric(14, 2), nullable=True)
-    status: Mapped[str] = mapped_column(
-        sa.String(32),
-        nullable=False,
-        default="CREATED",
-        server_default="CREATED",
+    discount_note: Mapped[Optional[str]] = mapped_column(
+        sa.Text,
+        nullable=True,
+        comment="折扣说明（可选）",
     )
 
     remark: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
@@ -88,6 +105,7 @@ class PurchaseOrderLine(Base):
         server_default=func.now(),
         nullable=False,
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         server_default=func.now(),
@@ -104,6 +122,7 @@ class PurchaseOrderLine(Base):
         return (
             f"<POLine id={self.id} po_id={self.po_id} "
             f"line_no={self.line_no} item_id={self.item_id} "
-            f"ordered={self.qty_ordered}/{self.qty_ordered_base} "
-            f"received={self.qty_received} status={self.status}>"
+            f"input={self.qty_ordered_input} "
+            f"ratio={self.purchase_ratio_to_base_snapshot} "
+            f"base={self.qty_ordered_base}>"
         )

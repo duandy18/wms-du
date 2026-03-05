@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional, Set
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +15,65 @@ from app.services.stock_service import StockService
 from app.services.three_books_enforcer import enforce_three_books
 
 UTC = timezone.utc
+
+
+def _norm_bc(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str | None,
+) -> Optional[int]:
+    if lot_code is None:
+        return None
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
+                 LIMIT 2
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+        )
+    ).fetchall()
+    if not row:
+        return None
+    if len(row) > 1:
+        # uq_lots_wh_item_lot_code_key 应保证唯一，但仍做防御
+        return None
+    return int(row[0][0])
 
 
 class ReturnTaskServiceImpl:
@@ -32,11 +91,12 @@ class ReturnTaskServiceImpl:
         self.stock_svc = stock_svc or StockService()
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
+        # ✅ lot-only：以 lot_id 聚合 shipped 事实；展示码来自 lots.lot_code
         res = await session.execute(
             select(
                 StockLedger.item_id,
                 StockLedger.warehouse_id,
-                StockLedger.batch_code,
+                StockLedger.lot_id,
                 StockLedger.delta,
                 StockLedger.reason,
             )
@@ -44,25 +104,36 @@ class ReturnTaskServiceImpl:
             .where(StockLedger.delta < 0)
         )
 
-        agg: dict[tuple[int, int, str], int] = {}
+        agg: dict[tuple[int, int, int], int] = {}
 
-        for item_id, wh_id, batch_code, delta, reason in res.all():
+        for item_id, wh_id, lot_id, delta, reason in res.all():
             r = str(reason or "").strip().upper()
             if r not in self.SHIP_OUT_REASONS:
                 continue
-
-            key = (int(item_id), int(wh_id), str(batch_code))
+            key = (int(item_id), int(wh_id), int(lot_id))
             agg[key] = agg.get(key, 0) + int(-int(delta or 0))
 
+        # 批量补齐展示码
+        lot_ids = sorted({k[2] for k in agg.keys()})
+        lot_code_map: dict[int, str | None] = {}
+        if lot_ids:
+            r2 = await session.execute(
+                text("SELECT id, lot_code FROM lots WHERE id = ANY(:ids)"),
+                {"ids": lot_ids},
+            )
+            for x in r2.mappings().all():
+                lot_code_map[int(x["id"])] = x.get("lot_code")
+
         out: list[dict[str, Any]] = []
-        for (item_id, wh_id, batch_code), shipped_qty in agg.items():
+        for (item_id, wh_id, lot_id), shipped_qty in agg.items():
             if shipped_qty <= 0:
                 continue
             out.append(
                 {
                     "item_id": item_id,
                     "warehouse_id": wh_id,
-                    "batch_code": batch_code,
+                    "lot_id": lot_id,
+                    "batch_code": lot_code_map.get(lot_id),
                     "shipped_qty": shipped_qty,
                 }
             )
@@ -120,14 +191,14 @@ class ReturnTaskServiceImpl:
 
         for x in shipped:
             item_id = int(x["item_id"])
-            batch_code = str(x["batch_code"])
+            batch_code = _norm_bc(x.get("batch_code"))
             expected_qty = int(x["shipped_qty"])
 
             line = ReturnTaskLine(
                 task_id=task.id,
                 order_line_id=None,
                 item_id=item_id,
-                batch_code=batch_code,
+                batch_code=batch_code,  # ✅ 展示/兼容字段（lots.lot_code）
                 expected_qty=expected_qty,
                 picked_qty=0,
                 committed_qty=0,
@@ -218,31 +289,48 @@ class ReturnTaskServiceImpl:
                 continue
 
             ref_line = int(getattr(ln, "id", 1) or 1)
+            bc = _norm_bc(ln.batch_code)
+
+            # Batch-as-Lot：
+            # - 若 bc 非空：return 入库应复用该 SUPPLIER lot（lot=批次身份）
+            # - 若 bc 为空：交给 StockService.adjust 走 INTERNAL 槽位（非批次商品）
+            resolved_lot_id: Optional[int] = None
+            if bc is not None:
+                resolved_lot_id = await _resolve_lot_id_by_lot_code(
+                    session,
+                    warehouse_id=int(task.warehouse_id),
+                    item_id=int(ln.item_id),
+                    lot_code=str(bc),
+                )
+                if resolved_lot_id is None:
+                    raise ValueError("lot_not_found_for_batch_code")
 
             res = await self.stock_svc.adjust(
                 session=session,
                 item_id=int(ln.item_id),
                 delta=+picked,
-                reason=MovementType.RETURN,
+                reason=MovementType.RETURN,  # canon='RECEIPT'
                 ref=str(task.order_id),
                 ref_line=ref_line,
                 occurred_at=ts,
-                batch_code=str(ln.batch_code),
+                batch_code=bc,  # 展示/输入标签
                 warehouse_id=int(task.warehouse_id),
                 trace_id=trace_id,
+                lot_id=resolved_lot_id,
                 meta={"sub_reason": "RETURN_RECEIPT"},
             )
+
+            applied_lot_id = int(res.get("lot_id") or (resolved_lot_id or 0) or 0)
 
             effects.append(
                 {
                     "warehouse_id": int(task.warehouse_id),
                     "item_id": int(ln.item_id),
-                    "batch_code": str(ln.batch_code),
+                    "lot_id": int(applied_lot_id),
+                    "batch_code": bc,
                     "qty": int(picked),
                     "ref": str(task.order_id),
                     "ref_line": ref_line,
-                    # ✅ 关键：同 ref/ref_line 下可能存在多种 reason（例如 OUTBOUND_SHIP 与 RETURN）
-                    # 用 adjust 返回的 reason 作为硬锚点，避免误命中其他事件
                     "reason": str(res.get("reason") or ""),
                 }
             )
@@ -260,4 +348,4 @@ class ReturnTaskServiceImpl:
         if effects:
             await enforce_three_books(session, ref=str(task.order_id), effects=effects, at=ts)
 
-        return await self.get_with_lines(session, task_id=task_id, for_update=False)
+        return await self.get_with_lines(session, task_id=int(task.id), for_update=False)

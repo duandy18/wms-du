@@ -2,14 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import warnings
 from logging.config import fileConfig
 from typing import Any
 
 from alembic import context
 from sqlalchemy import MetaData, create_engine
 from sqlalchemy.pool import NullPool
+
+# ---------------------------------------------------------------------------
+# 降噪：只静音已知无害 warning / log，不改变 compare 行为
+# ---------------------------------------------------------------------------
+
+# 1) Alembic 在 autogenerate 遇到 computed/generated 列会发 UserWarning：
+#    "Computed default on <table>.<column> cannot be modified"
+#    这类 warning 对我们是已知无害噪音（不会产生 upgrade_ops），直接过滤。
+warnings.filterwarnings(
+    "ignore",
+    message=r"Computed default on .* cannot be modified",
+    category=UserWarning,
+    module=r"alembic\.autogenerate\.compare",
+)
+
+# 2) Postgres DDL 反射会在 INFO 级别打印大量“Detected sequence ... assuming SERIAL”提示
+#    把该 logger 提升到 WARNING，避免刷屏。
+logging.getLogger("alembic.ddl.postgresql").setLevel(logging.WARNING)
 
 # Alembic 基本配置
 config = context.config
@@ -30,7 +50,6 @@ PHASE2_TABLES = {
     "order_items",
     "order_lines",
     "order_state_snapshot",
-    "reservation_lines",
     "pick_tasks",
     "pick_task_lines",
     "outbound_commits",

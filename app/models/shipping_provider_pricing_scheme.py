@@ -28,6 +28,11 @@ from app.models.shipping_provider_pricing_scheme_warehouse import (  # noqa: F40
     ShippingProviderPricingSchemeWarehouse,
 )
 
+# ✅ 新增：目的地附加费模型（结构化）
+from app.models.pricing_scheme_dest_adjustment import (  # noqa: F401
+    PricingSchemeDestAdjustment,
+)
+
 
 class ShippingProviderPricingScheme(Base):
     __tablename__ = "shipping_provider_pricing_schemes"
@@ -44,12 +49,15 @@ class ShippingProviderPricingScheme(Base):
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
+    # ✅ 归档：archived_at != null => 已归档（不删除，保留历史解释器）
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="CNY", server_default="CNY")
 
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ✅ 方案默认口径（方案级：一套表一个口径）
+    # ✅ 方案默认口径
     default_pricing_mode: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -59,11 +67,17 @@ class ShippingProviderPricingScheme(Base):
 
     billable_weight_rule: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
-    # ✅ Phase 4.3：列结构（重量分段模板）方案级真相（后端落库）
-    # ⚠️ 继续保留该字段用于兼容/镜像（由“启用模板”同步写回）
+    # ✅ 兼容字段：scheme 级 segments_json
     segments_json: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     segments_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ✅ 显式默认回退模板
+    default_segment_template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_scheme_segment_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -73,10 +87,28 @@ class ShippingProviderPricingScheme(Base):
         onupdate=func.now(),
     )
 
+    # =========================
+    # relationships
+    # =========================
+
+    shipping_provider = relationship("ShippingProvider", lazy="selectin")
+
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
+
+    # 旧：JSON surcharge（保留，用于 bulky / flags）
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
 
-    # ✅ Phase 3：显式关系（方案适用哪些仓作为起运地）
+    # ✅ 新：目的地附加费（结构化事实）
+    dest_adjustments = relationship(
+        "PricingSchemeDestAdjustment",
+        back_populates="scheme",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PricingSchemeDestAdjustment.id.asc()",
+    )
+
+    # Phase 3：方案适用起运仓
     scheme_warehouses: Mapped[list["ShippingProviderPricingSchemeWarehouse"]] = relationship(
         "ShippingProviderPricingSchemeWarehouse",
         back_populates="scheme",
@@ -85,7 +117,7 @@ class ShippingProviderPricingScheme(Base):
         passive_deletes=True,
     )
 
-    # ✅ 现有：段表 relationship（前端当前仍在使用）
+    # 现有：段表
     segments = relationship(
         "ShippingProviderPricingSchemeSegment",
         back_populates="scheme",
@@ -94,14 +126,25 @@ class ShippingProviderPricingScheme(Base):
         cascade="all, delete-orphan",
     )
 
-    # ✅ 新增：模板列表（路线 1 的真相）
+    # 模板列表
     segment_templates = relationship(
         "ShippingProviderPricingSchemeSegmentTemplate",
         back_populates="scheme",
         lazy="selectin",
         order_by="ShippingProviderPricingSchemeSegmentTemplate.id.asc()",
         cascade="all, delete-orphan",
+        foreign_keys="ShippingProviderPricingSchemeSegmentTemplate.scheme_id",
+    )
+
+    default_segment_template = relationship(
+        "ShippingProviderPricingSchemeSegmentTemplate",
+        lazy="selectin",
+        foreign_keys=[default_segment_template_id],
+        post_update=True,
     )
 
     def __repr__(self) -> str:
-        return f"<ShippingProviderPricingScheme id={self.id} provider_id={self.shipping_provider_id} name={self.name!r}>"
+        return (
+            f"<ShippingProviderPricingScheme id={self.id} "
+            f"provider_id={self.shipping_provider_id} name={self.name!r}>"
+        )

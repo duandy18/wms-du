@@ -34,20 +34,33 @@ async def load_order_head(
     session: AsyncSession,
     order_id: int,
 ) -> Optional[Dict[str, Any]]:
+    """
+    一步到位迁移后：
+    - orders 只承载订单头（platform/shop/ext/trace）
+    - 执行仓/服务仓/履约状态在 order_fulfillment
+
+    兼容输出字段：
+    - warehouse_id：这里返回执行仓（actual_warehouse_id）
+    - service_warehouse_id：返回计划/归属仓（planned_warehouse_id）
+    - fulfillment_status：返回履约状态
+    """
     row = (
         (
             await session.execute(
                 SA(
                     """
                 SELECT
-                    id,
-                    platform,
-                    shop_id,
-                    ext_order_no,
-                    warehouse_id,
-                    trace_id
-                  FROM orders
-                 WHERE id = :oid
+                    o.id,
+                    o.platform,
+                    o.shop_id,
+                    o.ext_order_no,
+                    f.actual_warehouse_id AS warehouse_id,
+                    f.planned_warehouse_id AS service_warehouse_id,
+                    f.fulfillment_status AS fulfillment_status,
+                    o.trace_id
+                  FROM orders o
+                  LEFT JOIN order_fulfillment f ON f.order_id = o.id
+                 WHERE o.id = :oid
                  LIMIT 1
                 """
                 ),

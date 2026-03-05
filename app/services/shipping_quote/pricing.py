@@ -5,8 +5,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
 
-from .weight import _round_weight
-
 
 def _calc_base_amount(
     bracket: ShippingProviderZoneBracket,
@@ -18,9 +16,17 @@ def _calc_base_amount(
     - flat         : flat_amount（元/票）
     - linear_total : base_amount(面单费/基础费, 元/票) + rate_per_kg(元/kg) * billable_weight_kg
     - manual_quote : 人工报价
+
+    ✅ 重要合同（本轮落地）：
+    - billable_weight_kg 已由 _compute_billable_weight_kg 计算并完成 rounding（进位/取整）。
+    - 此处不得对 weight 再做第二次 rounding，避免 double-rounding 造成误差与不可解释。
+    - scheme_rounding 参数保留以兼容旧调用链/调试信息，但不再参与计费重计算。
     """
-    # rounding：Bracket 不再覆盖 Scheme（你说删字段了，这里只走 scheme_rounding）
-    w = _round_weight(float(billable_weight_kg), scheme_rounding)
+    # ✅ 最终计费重：不再二次取整
+    w = float(billable_weight_kg)
+
+    # scheme_rounding 已不再用于计算，但保留参数避免牵连
+    _ = scheme_rounding
 
     mode = (getattr(bracket, "pricing_mode", None) or "").strip().lower()
 

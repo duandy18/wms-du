@@ -8,49 +8,30 @@ from pydantic import BaseModel, Field, conint, constr
 
 
 # ---------------------------------------------------------------------------
-# 1) 订单预占 v2
-# ---------------------------------------------------------------------------
-
-
-class ReserveLineIn(BaseModel):
-    item_id: conint(gt=0)
-    qty: conint(gt=0)
-
-
-class ReserveRequest(BaseModel):
-    lines: List[ReserveLineIn] = Field(default_factory=list)
-
-
-class ReserveResponse(BaseModel):
-    status: str
-    ref: str
-    reservation_id: Optional[int] = None
-    lines: int
-
-
-# ---------------------------------------------------------------------------
-# 2) 订单拣货 v2
+# 1) 订单拣货 v2
 # ---------------------------------------------------------------------------
 
 
 class PickLineIn(BaseModel):
     item_id: conint(gt=0)
     qty: conint(gt=0)
+    # 终态：按行 batch_code（REQUIRED 必填；NONE 必须为 null；校验在 API 层完成）
+    batch_code: Optional[str] = Field(
+        default=None,
+        description="批次编码：expiry-policy REQUIRED 的商品必填且非空；expiry-policy NONE 的商品必须为 null（合同校验在 API 层完成）",
+    )
 
 
 class PickRequest(BaseModel):
     warehouse_id: conint(gt=0) = Field(..., description="拣货仓库 ID（>0，允许 1）")
-    batch_code: constr(min_length=1)
     lines: List[PickLineIn] = Field(default_factory=list)
-    occurred_at: Optional[datetime] = Field(
-        default=None, description="拣货时间（缺省为当前 UTC 时间）"
-    )
+    occurred_at: Optional[datetime] = Field(default=None, description="拣货时间（缺省为当前 UTC 时间）")
 
 
 class PickResponse(BaseModel):
     item_id: int
     warehouse_id: int
-    batch_code: str
+    batch_code: Optional[str]
     picked: int
     stock_after: Optional[int] = None
     ref: str
@@ -58,7 +39,7 @@ class PickResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 3) 订单发运 v2（只写审计）
+# 2) 订单发运 v2（只写审计）
 # ---------------------------------------------------------------------------
 
 
@@ -70,9 +51,7 @@ class ShipLineIn(BaseModel):
 class ShipRequest(BaseModel):
     warehouse_id: conint(gt=0)
     lines: List[ShipLineIn] = Field(default_factory=list)
-    occurred_at: Optional[datetime] = Field(
-        default=None, description="发运时间（缺省为当前 UTC 时间）"
-    )
+    occurred_at: Optional[datetime] = Field(default=None, description="发运时间（缺省为当前 UTC 时间）")
 
 
 class ShipResponse(BaseModel):
@@ -82,7 +61,7 @@ class ShipResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 4) ship-with-waybill（模式 2：强制固化“可解释证据包”）
+# 3) ship-with-waybill（模式 2：强制固化“可解释证据包”）
 # ---------------------------------------------------------------------------
 
 
@@ -99,10 +78,7 @@ class ShipWithWaybillRequest(BaseModel):
     district: Optional[str] = None
     address_detail: Optional[str] = None
 
-    # ✅ 新标准：必须包含 quote_snapshot（input + selected_quote），并且 selected_quote.reasons 非空
-    meta: Optional[Dict[str, Any]] = Field(
-        default=None, description="必须包含 quote_snapshot（input + selected_quote）"
-    )
+    meta: Optional[Dict[str, Any]] = Field(default=None, description="必须包含 quote_snapshot（input + selected_quote）")
 
 
 class ShipWithWaybillResponse(BaseModel):

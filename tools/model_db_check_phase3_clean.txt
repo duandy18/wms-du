@@ -1,9 +1,0 @@
-  FAILED: New upgrade operations detected: [('remove_column', None,
-  'batches', Column('shelf_life_days', INTEGER(), table=<batches>)),
-  ('remove_column', None, 'batches', Column('expiry_date', DATE(),
-  table=<batches>)), ('remove_column', None, 'batches',
-  Column('production_date', DATE(), table=<batches>)),
-  [('modify_default', None, 'stocks', 'qty', {'existing_nullable':
-  False, 'existing_type': INTEGER(), 'existing_comment': None},
-  DefaultClause(<sqlalchemy.sql.elements.TextClause object at
-  0x7fcd5d9d98e0>, for_update=False), None)]]

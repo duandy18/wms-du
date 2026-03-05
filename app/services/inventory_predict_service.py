@@ -15,6 +15,9 @@ class InventoryPredictService:
 
     简化模型（极稳健）：
       future_qty = current_qty - avg_daily_outbound * N_days
+
+    Phase 4B-3（切读到 lot）：
+      current_qty = SUM(stocks_lot.qty)
     """
 
     @staticmethod
@@ -25,20 +28,18 @@ class InventoryPredictService:
         warehouse_id: int,
         days: int = 7,
     ) -> Dict[str, Any]:
-        # 当前数量
+        # 当前数量（lot 维度余额聚合）
         rs = await session.execute(
             text(
                 """
-                SELECT qty
-                FROM stocks
+                SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM stocks_lot
                 WHERE warehouse_id=:w AND item_id=:i
-                LIMIT 1
             """
             ),
-            {"w": warehouse_id, "i": item_id},
+            {"w": int(warehouse_id), "i": int(item_id)},
         )
-        row = rs.mappings().first()
-        current_qty = int(row["qty"]) if row else 0
+        current_qty = int(rs.scalar() or 0)
 
         # 出库量（最近 30 天）
         rs = await session.execute(
@@ -51,20 +52,20 @@ class InventoryPredictService:
                   AND occurred_at >= NOW() - INTERVAL '30 days'
             """
             ),
-            {"w": warehouse_id, "i": item_id},
+            {"w": int(warehouse_id), "i": int(item_id)},
         )
 
         outbound_30 = -int(rs.scalar() or 0)
         avg_daily = outbound_30 / 30.0
 
-        future_qty = int(current_qty - avg_daily * days)
+        future_qty = int(current_qty - avg_daily * int(days))
 
         return {
-            "warehouse_id": warehouse_id,
-            "item_id": item_id,
-            "current_qty": current_qty,
+            "warehouse_id": int(warehouse_id),
+            "item_id": int(item_id),
+            "current_qty": int(current_qty),
             "avg_daily_outbound": avg_daily,
-            "predicted_qty": future_qty,
-            "days": days,
+            "predicted_qty": int(future_qty),
+            "days": int(days),
             "risk": "OOS" if future_qty <= 0 else "SAFE",
         }

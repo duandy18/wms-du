@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 
 
@@ -46,7 +48,7 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
         {"sid": store_id},
     )
 
-    # 省路由 → 仓 1
+    # 省路由 → 仓 1（仅为兼容旧测试数据，不作为主线依赖）
     await session.execute(
         text("DELETE FROM store_province_routes WHERE store_id=:sid AND province=:prov"),
         {"sid": store_id, "prov": province},
@@ -62,25 +64,46 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
     )
 
 
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：
+    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
+    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
-    Phase 5 世界观下的“订单驱动履约链”核心验收：
+    Phase 5+ 下的“订单驱动履约链”核心验收（当前主线）：
 
-    1) ingest：只写服务归属（SERVICE_ASSIGNED，写 service_warehouse_id，不写 warehouse_id）
-    2) 人工履约决策：显式指定执行仓（warehouse_id / fulfillment_warehouse_id）
-    3) reserve：现在应当允许（>= READY_TO_FULFILL 且 warehouse_id 存在）
-    4) pick(ledger) → ship_commit → trace 聚合
+    1) ingest：创建订单并写 trace_id
+    2) 人工履约决策：调用 manual-assign 指定执行仓，并标记可进入履约
+    3) 入库（为后续 pick/ship 准备库存）
+    4) pick → ship_commit
+    5) debug trace：至少出现 ORDER_CREATED + SHIPMENT/SHIP_COMMIT
     """
     plat = "PDD"
     shop_id = "1"
-    ext = "ORD-TEST-3001"
+    uniq = uuid4().hex[:10]
+    ext = f"ORD-TEST-3001-{uniq}"
     order_ref = f"ORD:{plat}:{shop_id}:{ext}"
     now = datetime.now(timezone.utc)
 
     province = "UT-PROV"
     await _ensure_store_route_to_wh1(db_session_like_pg, plat=plat, shop_id=shop_id, province=province)
     await db_session_like_pg.commit()
+
+    trace_id = f"TEST-TRACE-ORDER-3001-{uniq}"
 
     print(f"[TEST] 准备订单 {order_ref}")
 
@@ -98,74 +121,59 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         items=[{"item_id": 3001, "qty": 1, "title": "猫粮"}],
         address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
         extras=None,
-        trace_id="TEST-TRACE-ORDER-3001",
+        trace_id=trace_id,
     )
     await db_session_like_pg.commit()
     print(f"[TEST] ingest 返回: {r}")
     assert r["ref"] == order_ref
 
-    # Phase 5：ingest 只到 SERVICE_ASSIGNED，不自动写 warehouse_id
-    # 人工决策层（最小可用）：显式指定执行仓
-    #
-    # 说明：当前项目里 reserve API 仍要求订单满足：
-    # - fulfillment_status=READY_TO_FULFILL
-    # - warehouse_id 非空
-    #
-    # 因此测试里用 DB 直写模拟“人工指定执行仓 + 标记可进入履约”。
-    await db_session_like_pg.execute(
-        text(
-            """
-            UPDATE orders
-               SET warehouse_id = 1,
-                   fulfillment_warehouse_id = 1,
-                   fulfillment_status = 'READY_TO_FULFILL',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
-            """
-        ),
-        {"oid": int(r["id"])},
-    )
-    await db_session_like_pg.commit()
+    # 2) manual-assign（需要登录；测试环境一般用 admin/admin123）
+    login = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
 
-    # 2) reserve（现在应为 READY_TO_FULFILL 且 warehouse_id 存在才会 200）
     resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/reserve",
-        json={"lines": [{"item_id": 3001, "qty": 1}]},
+        f"/orders/{plat}/{shop_id}/{ext}/fulfillment/manual-assign",
+        json={"warehouse_id": 1, "reason": "UT assign", "note": "test"},
+        headers=headers,
     )
-    print("[HTTP] reserve status:", resp.status_code, "body:", resp.text)
+    print("[HTTP] manual-assign status:", resp.status_code, "body:", resp.text)
     assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["status"] == "OK"
-    assert data["ref"] == order_ref
-    assert data["reservation_id"] is not None
-    assert data["lines"] == 1
+    body = resp.json()
+    assert body["status"] == "OK"
+    assert body["ref"] == order_ref
+    assert int(body["to_warehouse_id"]) == 1
 
-    # 3) 入库
+    # 3) 入库（Lot-World：必须锚定 lot_id）
     stock_svc = StockService()
-    await stock_svc.adjust(
+    lot_code = "BATCH-001"
+    lot_id = await _ensure_supplier_lot(db_session_like_pg, wh_id=1, item_id=3001, lot_code=lot_code)
+
+    await stock_svc.adjust_lot(
         session=db_session_like_pg,
         item_id=3001,
+        warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason="RECEIPT",
-        ref="UNIT-TEST-IN-3001",
+        ref=f"UNIT-TEST-IN-3001-{uniq}",
         ref_line=1,
         occurred_at=now,
-        batch_code="BATCH-001",
+        batch_code=lot_code,
         production_date=now.date(),
-        warehouse_id=1,
+        expiry_date=None,
         trace_id=None,
     )
     await db_session_like_pg.commit()
-    print("[TEST] 已通过 StockService.adjust 入库 10 件到 BATCH-001")
+    print("[TEST] 已通过 StockService.adjust_lot 入库 10 件到 BATCH-001")
 
-    # 4) pick
+    # 4) pick（终态合同：batch_code 必须按行提供）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/pick",
         json={
             "warehouse_id": 1,
-            "batch_code": "BATCH-001",
-            "lines": [{"item_id": 3001, "qty": 1}],
+            "lines": [{"item_id": 3001, "qty": 1, "batch_code": "BATCH-001"}],
         },
     )
     print("[HTTP] pick status:", resp.status_code, "body:", resp.text)
@@ -194,11 +202,11 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert resp.status_code == 200, resp.text
     ov = resp.json()
     print("[HTTP] dev/orders 返回:", json.dumps(ov, ensure_ascii=False))
-    trace_id = ov.get("trace_id") or ov["order"]["trace_id"]
-    assert trace_id
+    trace_id2 = ov.get("trace_id") or ov["order"]["trace_id"]
+    assert trace_id2
 
     # 7) trace
-    resp = await client.get(f"/debug/trace/{trace_id}")
+    resp = await client.get(f"/debug/trace/{trace_id2}")
     print("[HTTP] /debug/trace status:", resp.status_code)
     assert resp.status_code == 200, resp.text
     trace = resp.json()
@@ -207,54 +215,5 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     summaries = [e["summary"] for e in events]
 
     assert any("ORDER_CREATED" in s for s in summaries), summaries
-    assert any(k.startswith("reservation_") or k == "reservation_line" for k in kinds), kinds
     assert any(k == "SHIPMENT" for k in kinds), kinds
     assert any("SHIP_COMMIT" in s for s in summaries), summaries
-
-
-@pytest.mark.asyncio
-async def test_v2_order_reserve_requires_warehouse(
-    client: AsyncClient,
-    db_session_like_pg: AsyncSession,
-    monkeypatch,
-):
-    """
-    没有 READY_TO_FULFILL / warehouse_id 的订单，调用订单驱动预占时应失败，防止“未定仓预占”。
-    """
-    monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
-    monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
-
-    plat = "PDD"
-    shop_id = "1"
-    ext = "ORD-NO-WH"
-    now = datetime.now(timezone.utc)
-
-    # 不提供 province（应 FULFILLMENT_BLOCKED），reserve 必须失败
-    r = await OrderService.ingest(
-        db_session_like_pg,
-        platform=plat,
-        shop_id=shop_id,
-        ext_order_no=ext,
-        occurred_at=now,
-        buyer_name="tester",
-        buyer_phone="",
-        order_amount=0,
-        pay_amount=0,
-        items=[{"item_id": 3002, "qty": 1, "title": "测试品"}],
-        address=None,
-        extras=None,
-        trace_id="TEST-TRACE-NO-WH",
-    )
-    await db_session_like_pg.commit()
-    print("[TEST] ingest(no-wh) 返回:", r)
-
-    resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/reserve",
-        json={"lines": [{"item_id": 3002, "qty": 1}]},
-    )
-    print("[HTTP] reserve(no-wh) status:", resp.status_code, "body:", resp.text)
-    assert resp.status_code in (409, 422, 500)
-
-    body = resp.json()
-    s = json.dumps(body, ensure_ascii=False)
-    assert ("blocked" in s) or ("FULFILLMENT_BLOCKED" in s) or ("warehouse_id" in s) or ("insufficient" in s), s

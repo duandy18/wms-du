@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_member_out
-from app.api.routers.shipping_provider_pricing_schemes_schemas import (
+from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     ZoneMemberCreateIn,
     ZoneMemberOut,
 )

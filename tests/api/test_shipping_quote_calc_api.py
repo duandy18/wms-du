@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._problem import as_problem
 from tests.api._helpers_shipping_quote import (
     auth_headers,
     bind_scheme_to_warehouse,
@@ -34,7 +35,13 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
         json={
             "warehouse_id": wid,
             "scheme_id": ids["scheme_id"],
-            "dest": {"province": "北京市", "city": "北京市", "district": "朝阳区"},
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": "朝阳区",
+                "province_code": "110000",
+                "city_code": "110100",
+            },
             "real_weight_kg": 0.8,
             "flags": [],
         },
@@ -61,7 +68,13 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
         json={
             "warehouse_id": wid,
             "scheme_id": ids["scheme_id"],
-            "dest": {"province": "北京市", "city": "北京市", "district": "朝阳区"},
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": "朝阳区",
+                "province_code": "110000",
+                "city_code": "110100",
+            },
             "real_weight_kg": 3.6,
             "flags": [],
         },
@@ -82,8 +95,20 @@ def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> 
     r = client.post(
         "/shipping-quote/calc",
         headers=auth_headers(token),
-        json={"warehouse_id": wid, "scheme_id": 999999, "dest": {"province": "北京市"}, "real_weight_kg": 1.0, "flags": []},
+        json={
+            "warehouse_id": wid,
+            "scheme_id": 999999,
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": None,
+                "province_code": "110000",
+                "city_code": "110100",
+            },
+            "real_weight_kg": 1.0,
+            "flags": [],
+        },
     )
     assert r.status_code == 422, r.text
-    detail = r.json()["detail"]
-    assert detail["code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
+    p = as_problem(r.json())
+    assert p["error_code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"

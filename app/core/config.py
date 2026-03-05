@@ -1,5 +1,6 @@
 # app/core/config.py
 from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,8 +26,8 @@ class AppSettings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
     JSON_LOG: bool = Field(default=False)
 
-    # 出库策略
-    ALLOW_SHIP_WITHOUT_RESERVE: bool = Field(default=True)
+    # 出库策略（Phase 5：PICK 是进入执行链路的起点）
+    ALLOW_SHIP_WITHOUT_PICK: bool = Field(default=True)
 
     # 允许从 .env 文件读取配置
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

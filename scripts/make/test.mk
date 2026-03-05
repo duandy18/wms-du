@@ -9,31 +9,67 @@
 upgrade-dev-test-db: venv
 	@bash -c 'set -euo pipefail; \
 	  dsn="$(DEV_TEST_DB_DSN)"; \
+	  dev="$(DEV_DB_DSN)"; \
 	  echo ">>> Alembic upgrade head on DEV_TEST_DB_DSN ($${dsn})"; \
+	  if [ -z "$${dsn}" ]; then \
+	    echo "[FATAL] DEV_TEST_DB_DSN is empty"; \
+	    exit 1; \
+	  fi; \
+	  if [ -z "$${dev}" ]; then \
+	    echo "[FATAL] DEV_DB_DSN is empty"; \
+	    exit 1; \
+	  fi; \
+	  if [ "$${dsn}" = "$${dev}" ]; then \
+	    echo "[FATAL] DEV_TEST_DB_DSN == DEV_DB_DSN (refuse to run tests on DEV DB!)"; \
+	    echo "  DEV_DB_DSN      = $${dev}"; \
+	    echo "  DEV_TEST_DB_DSN = $${dsn}"; \
+	    exit 1; \
+	  fi; \
 	  if echo "$${dsn}" | grep -q "wms_test"; then \
 	    echo "  MODE = TEST (wms_test) ✅"; \
 	  else \
-	    echo "  MODE = DEV / OTHER ⚠️  (CHECK!)"; \
+	    echo "[FATAL] DEV_TEST_DB_DSN does not look like wms_test (refuse to run)"; \
+	    echo "  DEV_TEST_DB_DSN = $${dsn}"; \
+	    exit 1; \
 	  fi; \
-	  WMS_DATABASE_URL="$${dsn}" WMS_TEST_DATABASE_URL="$${dsn}" $(ALEMB) upgrade head'
+	  WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$${dsn}" WMS_TEST_DATABASE_URL="$${dsn}" $(ALEMB) upgrade head'
 
 .PHONY: test-core
 test-core: venv audit-all upgrade-dev-test-db
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_core -s
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_core -s
 
 .PHONY: test-flow
 test-flow: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Flow tests (explicit file set)"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
 	  tests/services/test_order_outbound_flow_v3.py \
 	  tests/services/test_outbound_ledger_consistency.py \
-	  tests/services/test_outbound_idempotency.py \
-	  tests/services/test_trace_full_chain_order_reserve_outbound.py
+	  tests/services/test_outbound_idempotency.py
 
 .PHONY: test-snapshot
 test-snapshot: venv audit-all upgrade-dev-test-db
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_snapshot -s
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q -m grp_snapshot -s
+
+# ---------------------------------
+# ✅ Phase 5：seed-opening-ledger-test（按 stocks_lot 补齐 opening ledger，使 Σledger == stocks_lot）
+# ---------------------------------
+.PHONY: seed-opening-ledger-test
+seed-opening-ledger-test: venv audit-all upgrade-dev-test-db
+	@echo ">>> seed-opening-ledger-test: reconcile opening ledger on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 \
+	  WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	  $(PY) scripts/seed_opening_ledger_test.py
+
+# ---------------------------------
+# ✅ Phase 5：audit-three-books（TEST DB 上验证 Σledger == stocks_lot）
+# ---------------------------------
+.PHONY: audit-three-books
+audit-three-books: venv audit-all upgrade-dev-test-db
+	@echo ">>> audit-three-books: verify Σ(stock_ledger.delta) == stocks_lot.qty on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 \
+	  WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	  $(PY) scripts/audit_three_books_test.py
 
 # ---------------------------------
 # 通用 pytest 入口（支持 TESTS=...）
@@ -42,17 +78,36 @@ test-snapshot: venv audit-all upgrade-dev-test-db
 test: venv audit-all upgrade-dev-test-db
 	@bash -c 'set -euo pipefail; \
 	  export PYTHONPATH=. ; \
+	  export WMS_ENV=test; \
+	  export WMS_ENABLE_DEV_ROUTES=1; \
 	  export WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
 	  export WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
+	  dev="$(DEV_DB_DSN)"; \
 	  echo ""; \
 	  echo "=================================================="; \
 	  echo "[pytest] USING DATABASE:"; \
+	  echo "  WMS_ENV               = $${WMS_ENV}"; \
+	  echo "  WMS_ENABLE_DEV_ROUTES = $${WMS_ENABLE_DEV_ROUTES}"; \
 	  echo "  WMS_DATABASE_URL      = $${WMS_DATABASE_URL}"; \
 	  echo "  WMS_TEST_DATABASE_URL = $${WMS_TEST_DATABASE_URL}"; \
+	  if [ -z "$${WMS_DATABASE_URL}" ] || [ -z "$${WMS_TEST_DATABASE_URL}" ]; then \
+	    echo "[FATAL] WMS_DATABASE_URL / WMS_TEST_DATABASE_URL is empty"; \
+	    exit 1; \
+	  fi; \
+	  if [ -z "$${dev}" ]; then \
+	    echo "[FATAL] DEV_DB_DSN is empty"; \
+	    exit 1; \
+	  fi; \
+	  if [ "$${WMS_DATABASE_URL}" = "$${dev}" ] || [ "$${WMS_TEST_DATABASE_URL}" = "$${dev}" ]; then \
+	    echo "[FATAL] Tests are pointing to DEV_DB_DSN (refuse to run!)"; \
+	    echo "  DEV_DB_DSN = $${dev}"; \
+	    exit 1; \
+	  fi; \
 	  if echo "$${WMS_DATABASE_URL}" | grep -q "wms_test"; then \
 	    echo "  MODE = TEST (wms_test) ✅"; \
 	  else \
-	    echo "  MODE = DEV / OTHER ⚠️  (CHECK!)"; \
+	    echo "[FATAL] Not a wms_test DSN (refuse to run)"; \
+	    exit 1; \
 	  fi; \
 	  echo "=================================================="; \
 	  echo ""; \
@@ -71,7 +126,7 @@ test: venv audit-all upgrade-dev-test-db
 .PHONY: test-rbac
 test-rbac: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] RBAC tests – tests/api/test_user_api.py"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/api/test_user_api.py
 
 # ---------------------------------
@@ -80,20 +135,32 @@ test-rbac: venv audit-all upgrade-dev-test-db
 .PHONY: test-internal-outbound
 test-internal-outbound: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Internal Outbound Golden Flow E2E"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s tests/services/test_internal_outbound_service.py
 
 # =================================
 # Phase 5 CI Gate：Service Assignment（Route C 简化世界观）
-# - 只写 service_warehouse_id
-# - 不自动写 warehouse_id
-# - ingest 阶段不 reserve
+# - 写入 order_fulfillment.planned_warehouse_id（兼容字段名 service_warehouse_id）
+# - 不自动写 order_fulfillment.actual_warehouse_id（执行仓由后续作业/人工决定）
 # =================================
 .PHONY: test-phase5-service-assignment
 test-phase5-service-assignment: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Phase 5 service-assignment tests (Route C simplified worldview)"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q tests/phase5_service_assignment
+
+# =================================
+# ✅ Pick 蓝皮书：最小主线（scan facts + commit judgment + insufficient_stock + db evidence）
+# =================================
+.PHONY: test-pick-blueprint
+test-pick-blueprint: venv audit-all upgrade-dev-test-db
+	@echo "[pytest] Pick Blueprint (scan facts + commit judgment + insufficient_stock + db evidence)"
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	$(PYTEST) -q -s \
+	  tests/services/pick/test_pick_blueprint_contract.py \
+	  tests/services/pick/test_pick_blueprint_commit_idempotency_contract.py \
+	  tests/services/pick/test_pick_blueprint_insufficient_stock_contract.py \
+	  tests/services/pick/test_pick_blueprint_db_evidence_contract.py
 
 # =================================
 # 全量回归
@@ -101,7 +168,7 @@ test-phase5-service-assignment: venv audit-all upgrade-dev-test-db
 .PHONY: test-all
 test-all: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Running full test suite on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q
 
 # =================================
 # 核心服务 CRUD/UoW
@@ -109,7 +176,7 @@ test-all: venv audit-all upgrade-dev-test-db
 .PHONY: test-svc-core
 test-svc-core: venv audit-all upgrade-dev-test-db
 	@echo "[pytest] Core Service CRUD/UoW"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" $(PYTEST) -q \
 		tests/services/test_store_service.py \
 		tests/services/test_user_service.py \
 		tests/services/test_uow.py
@@ -120,12 +187,16 @@ test-svc-core: venv audit-all upgrade-dev-test-db
 .PHONY: test-phase2p9-core
 test-phase2p9-core: venv
 	@echo ">>> Running phase2p9 core tests on $(TEST_DB_DSN)"
+	WMS_ENV=test \
+	WMS_ENABLE_DEV_ROUTES=1 \
 	WMS_DATABASE_URL=$(TEST_DB_DSN) \
 	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
 	PYTHONPATH=. $(PYTEST) -q tests/phase2p9
 
 .PHONY: test-diagnostics-core
 test-diagnostics-core: venv
+	WMS_ENV=test \
+	WMS_ENABLE_DEV_ROUTES=1 \
 	WMS_DATABASE_URL=$(TEST_DB_DSN) \
 	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
 	PYTHONPATH=. $(PYTEST) -q \
@@ -138,7 +209,7 @@ test-diagnostics-core: venv
 .PHONY: test-backend-smoke
 test-backend-smoke: dev-reset-test-db audit-all
 	@echo "[smoke] Running quick backend smoke tests on DEV_TEST_DB_DSN ($(DEV_TEST_DB_DSN))..."
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q tests/services/test_store_service.py
 
 # =================================
@@ -147,9 +218,11 @@ test-backend-smoke: dev-reset-test-db audit-all
 .PHONY: test-pricing-smoke
 test-pricing-smoke: dev-reset-test-db audit-all
 	@echo "[pytest] Pricing smoke (quote + recommend + scheme binding + constraints)"
-	@PYTHONPATH=. WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
+	@PYTHONPATH=. WMS_ENV=test WMS_ENABLE_DEV_ROUTES=1 WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
 	  tests/api/test_shipping_quote_calc_api.py \
 	  tests/api/test_shipping_quote_recommend_contract.py \
 	  tests/api/test_shipping_quote_scheme_warehouses_api.py \
-	  tests/api/test_zone_brackets_constraints_and_copy.py
+	  tests/api/test_zone_brackets_constraints_and_copy.py \
+	  tests/api/test_zone_brackets_matrix_unbound_contract.py \
+	  tests/api/test_zone_brackets_matrix_grouped_contract.py

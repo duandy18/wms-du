@@ -3,7 +3,7 @@ from app.services.platform_events import _classify
 
 def test_classify_paid_aliases():
     for s in ["PAID", "paid", "Paid", "NEW", "WAIT_SELLER_SEND_GOODS"]:
-        assert _classify(s) == "RESERVE"
+        assert _classify(s) == "PICK"
 
 
 def test_classify_cancel_aliases():

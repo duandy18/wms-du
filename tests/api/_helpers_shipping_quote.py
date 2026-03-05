@@ -98,12 +98,18 @@ def assert_scheme_bound_to_warehouse(client: TestClient, token: str, scheme_id: 
 
 
 def ensure_second_provider(client: TestClient, token: str) -> int:
+    """
+    Phase 6 刚性契约：
+    - POST /shipping-providers 创建必须带 warehouse_id
+    """
     h = auth_headers(token)
     pr = client.get("/shipping-providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"] or []
     if len(pdata) >= 2:
         return int(pdata[1]["id"])
+
+    wid = pick_warehouse_id(client, token)
 
     cr = client.post(
         "/shipping-providers",
@@ -113,6 +119,7 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
             "code": "TP2",
             "active": True,
             "priority": 100,
+            "warehouse_id": int(wid),
             "pricing_model": None,
             "region_rules": None,
         },
@@ -121,10 +128,67 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
+def _pick_template_id(data: dict) -> int:
+    # 兼容常见响应形态
+    for k in ("id", "template_id", "segment_template_id"):
+        if k in data and data[k] is not None:
+            return int(data[k])
+    if "data" in data and isinstance(data["data"], dict):
+        return _pick_template_id(data["data"])
+    raise AssertionError(f"cannot resolve template_id from response: {data}")
+
+
+def _publish_template(client: TestClient, token: str, template_id: int) -> None:
+    # ✅ 新合同：Zone 绑定模板必须为 published
+    h = auth_headers(token)
+    r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
+    assert r.status_code in (200, 201), r.text
+
+
+def _put_min_items(client: TestClient, token: str, template_id: int) -> None:
+    # ✅ publish 需要 items>=1，且 items 连续；统一写入最小行结构
+    h = auth_headers(token)
+    r = client.put(
+        f"/segment-templates/{int(template_id)}/items",
+        headers=h,
+        json={
+            "items": [
+                {"ord": 0, "min_kg": "0.000", "max_kg": "1.000", "active": True},
+                {"ord": 1, "min_kg": "1.000", "max_kg": None, "active": True},
+            ]
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
+    """
+    Zone 新合同：必须绑定 segment_template_id（且模板必须 published）。
+    这里创建一个最小模板（create -> put items -> publish）。
+    """
+    h = auth_headers(token)
+
+    # create：不假设 create endpoint 能持久化 items
+    r = client.post(
+        f"/pricing-schemes/{scheme_id}/segment-templates",
+        headers=h,
+        json={"name": name},
+    )
+    assert r.status_code in (200, 201), r.text
+    tid = _pick_template_id(r.json())
+
+    # put items：满足 publish 校验
+    _put_min_items(client, token, tid)
+
+    # publish：满足 zone bind 合同
+    _publish_template(client, token, tid)
+    return tid
+
+
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     """
     创建一套最小可算的 scheme：
-    provider -> scheme -> zone_atomic -> brackets + surcharge
+    provider -> scheme -> segment_template(published) -> zone_atomic -> brackets + surcharge
     """
     h = auth_headers(token)
 
@@ -148,6 +212,9 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    # ✅ 新合同：Zone 必绑模板（published）
+    tpl_id = _create_min_template(client, token, scheme_id, name="TEST-TPL-BASE")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -156,6 +223,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
             "priority": 100,
             "active": True,
             "provinces": ["北京市", "天津市", "河北省"],
+            "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
@@ -184,7 +252,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id}
+    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
 
 
 def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_id: int, *, name_suffix: str) -> Dict[str, int]:
@@ -207,6 +275,9 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    # ✅ 新合同：Zone 必绑模板（published）
+    tpl_id = _create_min_template(client, token, scheme_id, name=f"TEST-TPL-{name_suffix}")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -215,6 +286,7 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
             "priority": 100,
             "active": True,
             "provinces": ["河北省"],
+            "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
@@ -234,4 +306,4 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     )
     assert br.status_code == 201, br.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id}
+    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}

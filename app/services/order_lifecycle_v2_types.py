@@ -14,12 +14,12 @@ class LifecycleStage:
     """
     订单生命周期阶段（v2，基于 trace_id 推断，纯“表驱动版”）：
 
-    - key           : created / reserved / reserved_consumed / outbound / shipped / returned / delivered
+    - key           : created / outbound / shipped / returned / delivered
     - label         : 中文标签
     - ts            : 事件时间（可能为 None）
     - present       : 是否存在该阶段
-    - description   : 解释说明（不再提及 ref/fallback）
-    - source        : 事件来源（ledger / reservation / outbound / audit / order / reservation_consumed / shipping_records）
+    - description   : 解释说明
+    - source        : 事件来源（ledger / outbound / audit / order 等）
     - ref           : 业务 ref（仅作展示，生命周期逻辑不依赖它）
     - sla_bucket    : SLA 粗分级（ok / warn / breach）
     - evidence_type : 证据类型（explicit_*）

@@ -14,7 +14,7 @@ logger = logging.getLogger("wmsdu.audit")
 class AuditLogger:
     """
     通用审计记录器。
-    所有服务层（如 Reservation、Outbound、Inbound）均通过该类写入 audit_events。
+    所有服务层（如 Outbound、Inbound 等）均通过该类写入 audit_events。
     """
 
     @staticmethod

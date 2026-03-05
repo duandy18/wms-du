@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 _PAID_ALIASES = {
@@ -27,9 +27,16 @@ _SHIPPED_ALIASES = {
 
 
 def classify(state: str) -> str:
+    """
+    Phase 5：彻底消除“预占/RESERVE”概念后，平台事件只分三类动作：
+
+    - PICK  ：进入拣货主线（生成 pick_task / 打印队列；不做库存裁决）
+    - CANCEL：取消执行态（撤销拣货任务等）
+    - SHIP  ：进入硬出库链路（库存裁决点在 ship_commit）
+    """
     u = (state or "").upper()
     if u in _PAID_ALIASES:
-        return "RESERVE"
+        return "PICK"
     if u in _CANCEL_ALIASES:
         return "CANCEL"
     if u in _SHIPPED_ALIASES:
@@ -37,15 +44,39 @@ def classify(state: str) -> str:
     return "IGNORE"
 
 
+def _norm_bc(v: Any) -> Optional[str]:
+    """
+    统一归一 batch_code：
+    - None / "" / "None" -> None
+    - 其他字符串 -> strip 后的值
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() == "none":
+            return None
+        return s
+    s2 = str(v).strip()
+    if not s2 or s2.lower() == "none":
+        return None
+    return s2
+
+
 def merge_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    acc: Dict[tuple, int] = defaultdict(int)
+    """
+    合并同一 (item_id, warehouse_id, batch_code) 的 qty。
+    ✅ 关键：batch_code 允许 None，且绝对不能 str(None) -> "None"。
+    """
+    acc: Dict[tuple[int, int, str | None], int] = defaultdict(int)
     for x in lines:
         key = (
             int(x["item_id"]),
             int(x["warehouse_id"]),
-            str(x["batch_code"]),
+            _norm_bc(x.get("batch_code")),
         )
         acc[key] += int(x["qty"])
+
     return [
         {
             "item_id": k[0],

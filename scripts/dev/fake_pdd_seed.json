@@ -1,0 +1,23 @@
+{
+  "platform": "PDD",
+  "shops": [
+    {
+      "shop_id": "12345",
+      "title_prefix": "【FAKE-PDD】",
+      "links": [
+        {
+          "spu_key": "PDD-LINK-12345-001",
+          "title": "顽皮猫粮 冻干拌粮（模拟链接）",
+          "variants": [
+            { "variant_name": "自动-绑定-FSKU-1", "filled_code": "FSKU-1" },
+            { "variant_name": "自动-绑定-FSKU-2", "filled_code": "FSKU-2" },
+            { "variant_name": "半自动-fallback-UT-REPLAY-FSKU-1", "filled_code": "UT-REPLAY-FSKU-1" },
+            { "variant_name": "人工-未绑定-001", "filled_code": "FAKE-UNBOUND-001" },
+            { "variant_name": "人工-未绑定-002", "filled_code": "FAKE-UNBOUND-002" },
+            { "variant_name": "自动-绑定-FSKU-17", "filled_code": "FSKU-17" }
+          ]
+        }
+      ]
+    }
+  ]
+}

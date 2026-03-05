@@ -32,11 +32,24 @@ async def load_by_warehouse(
              AND ae.category='OUTBOUND'
              AND (ae.meta->>'platform') = :platform
             WHERE l.delta < 0
+              AND l.ref LIKE 'ORD:%'
               AND l.reason IN ('PICK','OUTBOUND_SHIP','OUTBOUND_V2_SHIP','SHIP')
               AND (l.occurred_at AT TIME ZONE 'utc')::date = :day
+              AND (ae.meta->>'shop_id') IS NOT NULL
+
+              -- PROD-only：测试店铺门禁（store_id）
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM stores s
+                  JOIN platform_test_shops pts
+                    ON pts.store_id = s.id
+                   AND pts.code = 'DEFAULT'
+                 WHERE upper(s.platform) = upper(ae.meta->>'platform')
+                   AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(ae.meta->>'shop_id' AS text))
+              )
             GROUP BY l.warehouse_id, l.ref
         ),
-        orders AS (
+        order_refs AS (
             SELECT
                 p.warehouse_id,
                 p.ref,
@@ -48,16 +61,16 @@ async def load_by_warehouse(
             GROUP BY p.warehouse_id, p.ref
         )
         SELECT
-            o.warehouse_id,
+            r.warehouse_id,
             count(*) AS total_orders,
-            count(*) FILTER (WHERE o.shipped) AS success_orders,
+            count(*) FILTER (WHERE r.shipped) AS success_orders,
             sum(p.pick_qty) AS pick_qty
-        FROM orders o
+        FROM order_refs r
         JOIN picks p
-          ON p.warehouse_id = o.warehouse_id
-         AND p.ref = o.ref
-        GROUP BY o.warehouse_id
-        ORDER BY o.warehouse_id
+          ON p.warehouse_id = r.warehouse_id
+         AND p.ref = r.ref
+        GROUP BY r.warehouse_id
+        ORDER BY r.warehouse_id
         """
     )
     rows = (await session.execute(sql, {"platform": platform, "day": day})).fetchall()

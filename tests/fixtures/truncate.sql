@@ -3,6 +3,10 @@
 -- - 每个 test function 开始前清库
 -- - 目标：可重复、无脏数据累积
 -- - 注意：这里会清掉主数据（items/warehouses）与运费域（shipping_*）以及库存/台账事实
+--
+-- Phase 4E：
+-- - stocks / batches 已退场并在预演中 rename 为 *_legacy；
+-- - tests 清库不再触碰 legacy 表，避免 drop 后脚本再次炸裂。
 
 TRUNCATE TABLE
   -- orders / order_items
@@ -12,19 +16,11 @@ TRUNCATE TABLE
   -- stock / ledger / snapshots
   stock_ledger,
   stock_snapshots,
-  stocks,
-  batches,
 
   -- outbound commits
   outbound_commits,
 
-  -- reservations
-  reservation_allocations,
-  reservation_lines,
-  reservations,
-
-  -- channel inventory / store_items
-  channel_inventory,
+  -- store_items
   store_items,
 
   -- errors

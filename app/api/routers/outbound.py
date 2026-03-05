@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Set
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, constr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.api.deps import get_session
 from app.core.audit import new_trace
 from app.services.outbound_service import OutboundService
@@ -17,12 +18,20 @@ router = APIRouter(prefix="/outbound", tags=["outbound"])
 PlatformStr = constr(min_length=1, max_length=32)
 
 
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
+
+
 class OutboundLineIn(BaseModel):
     """出库行：按 (warehouse_id, item_id, batch_code) 粒度扣减。"""
 
     warehouse_id: int
     item_id: int
-    batch_code: str
+
+    # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
+    lot_code: Optional[str] = Field(default=None, description="Lot 展示码（优先使用；等价于 batch_code）")
+    batch_code: Optional[str] = None
+
     qty: int = Field(gt=0)
 
 
@@ -65,8 +74,40 @@ async def outbound_ship_commit(
     - 幂等：以 (platform, shop_id, ref) 组成的 order_id 作为业务键，
       OutboundService 会通过 stock_ledger 中已有 delta 判断“已扣数量”，
       只扣“剩余需要扣”的部分；若 total_qty=0，则视为完全幂等。
+
+    Phase M：
+    - 策略真相源：items.expiry_policy（NONE/REQUIRED）
+    - requires_batch 由 expiry_policy 投影
+
+    Phase M-4 governance：
+    - lot_code 正名；batch_code 兼容别名（内部仍沿用 batch_code key）
     """
     trace = new_trace("http:/outbound/ship/commit")
+
+    # ✅ 主线 A：API 合同收紧（422 拦假码）
+    item_ids: Set[int] = {ln.item_id for ln in payload.lines}
+    expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
+
+    missing_items = [str(i) for i in sorted(item_ids) if i not in expiry_policy_map]
+    if missing_items:
+        raise HTTPException(status_code=422, detail=f"unknown item_id(s): {', '.join(missing_items)}")
+
+    normalized_lines = []
+    for ln in payload.lines:
+        pol = expiry_policy_map.get(ln.item_id, "NONE")
+        requires_batch = _requires_batch_from_expiry_policy(pol)
+
+        lot_code = ln.lot_code or ln.batch_code
+        norm_batch = validate_lot_code_contract(requires_batch=requires_batch, lot_code=lot_code)
+
+        normalized_lines.append(
+            {
+                "warehouse_id": ln.warehouse_id,
+                "item_id": ln.item_id,
+                "batch_code": norm_batch,  # 兼容：内部仍使用 batch_code 字段名
+                "qty": ln.qty,
+            }
+        )
 
     svc = OutboundService()
 
@@ -76,15 +117,7 @@ async def outbound_ship_commit(
     result = await svc.commit(
         session=session,
         order_id=order_id,
-        lines=[
-            {
-                "warehouse_id": ln.warehouse_id,
-                "item_id": ln.item_id,
-                "batch_code": ln.batch_code,
-                "qty": ln.qty,
-            }
-            for ln in payload.lines
-        ],
+        lines=normalized_lines,
         occurred_at=payload.occurred_at,
         trace_id=trace.trace_id,
     )

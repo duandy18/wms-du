@@ -8,9 +8,14 @@ from typing import Optional
 
 @dataclass
 class Dest:
+    # ✅ 兼容期展示字段（允许只传 name）
     province: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
+
+    # ✅ 事实字段（GB2260 code）
+    province_code: Optional[str] = None
+    city_code: Optional[str] = None
 
 
 def _utcnow() -> datetime:

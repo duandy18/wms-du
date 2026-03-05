@@ -6,9 +6,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, constr
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
+from app.api.routers import orders_availability_routes, orders_summary_routes
+from app.api.routers import orders_view_facts_routes
 from app.core.audit import new_trace
 from app.services.order_service import OrderService
 from app.services.store_service import StoreService
@@ -61,10 +64,95 @@ class OrderCreateIn(BaseModel):
     store_name: Optional[str] = None
 
 
+class OrderFulfillmentOut(BaseModel):
+    """
+    Phase 5（路 A）：履约事实快照（产品化输出）
+
+    对外字段名：
+    - service_warehouse_id：服务归属仓（planned_warehouse_id）
+    - warehouse_id：执行出库仓（actual_warehouse_id）
+    - execution_stage：✅ 显式执行阶段真相（PICK / SHIP；NULL=未进入执行链路）
+    - ship_committed_at：✅ 进入出库裁决链路锚点（事实）
+    - shipped_at：✅ 出库完成时间（事实）
+    - fulfillment_status：降级字段，仅路由/阻断/人工干预语义（禁止承载 SHIP_COMMITTED/SHIPPED）
+
+    ✅ 系统事实来源：order_fulfillment
+    """
+
+    service_warehouse_id: Optional[int] = None
+    warehouse_id: Optional[int] = None
+
+    execution_stage: Optional[str] = None
+    ship_committed_at: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+
+    fulfillment_status: Optional[str] = None
+
+    route_status: Optional[str] = None
+    ingest_state: Optional[str] = None
+    auto_assign_status: Optional[str] = None
+
+
 class OrderCreateOut(BaseModel):
     status: str
     id: Optional[int] = None
     ref: str
+
+    # ✅ Phase 5：把关键履约事实带出去（前端/运营不必再查 DB）
+    fulfillment: Optional[OrderFulfillmentOut] = None
+
+
+async def _load_fulfillment_snapshot(session: AsyncSession, *, order_id: int) -> Dict[str, Any]:
+    """
+    从 order_fulfillment 表读取履约事实快照（以 DB 为准）。
+
+    兼容输出字段名：
+      - service_warehouse_id := planned_warehouse_id
+      - warehouse_id := actual_warehouse_id
+      - execution_stage := execution_stage
+      - ship_committed_at / shipped_at := 出库事实字段
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      planned_warehouse_id,
+                      actual_warehouse_id,
+                      fulfillment_status,
+                      execution_stage,
+                      ship_committed_at,
+                      shipped_at
+                    FROM order_fulfillment
+                    WHERE order_id = :oid
+                    LIMIT 1
+                    """
+                ),
+                {"oid": int(order_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        return {
+            "service_warehouse_id": None,
+            "warehouse_id": None,
+            "fulfillment_status": None,
+            "execution_stage": None,
+            "ship_committed_at": None,
+            "shipped_at": None,
+        }
+
+    return {
+        "service_warehouse_id": int(row["planned_warehouse_id"]) if row.get("planned_warehouse_id") is not None else None,
+        "warehouse_id": int(row["actual_warehouse_id"]) if row.get("actual_warehouse_id") is not None else None,
+        "fulfillment_status": str(row["fulfillment_status"]) if row.get("fulfillment_status") is not None else None,
+        "execution_stage": str(row["execution_stage"]) if row.get("execution_stage") is not None else None,
+        "ship_committed_at": row.get("ship_committed_at"),
+        "shipped_at": row.get("shipped_at"),
+    }
 
 
 @router.post("/orders", response_model=OrderCreateOut)
@@ -101,9 +189,28 @@ async def create_order(
         trace_id=trace.trace_id,
     )
 
-    # 4) 提交，确保后续读取（例如测试里立即查询 stores）可见
+    # 4) 提交，确保写入可见
     await session.commit()
-    return OrderCreateOut(**r)
+
+    # 5) 组装 Phase 5 履约快照（DB 事实 + ingest 解释字段）
+    oid = int(r.get("id") or 0) if r.get("id") is not None else None
+    fulfillment: Optional[OrderFulfillmentOut] = None
+    if oid:
+        snap = await _load_fulfillment_snapshot(session, order_id=oid)
+        auto_assign = r.get("auto_assign") or {}
+        fulfillment = OrderFulfillmentOut(
+            service_warehouse_id=snap.get("service_warehouse_id"),
+            warehouse_id=snap.get("warehouse_id"),
+            fulfillment_status=snap.get("fulfillment_status"),
+            execution_stage=snap.get("execution_stage"),
+            ship_committed_at=snap.get("ship_committed_at"),
+            shipped_at=snap.get("shipped_at"),
+            route_status=str(r.get("route_status")) if r.get("route_status") is not None else None,
+            ingest_state=str(r.get("ingest_state")) if r.get("ingest_state") is not None else None,
+            auto_assign_status=str(auto_assign.get("status")) if auto_assign.get("status") is not None else None,
+        )
+
+    return OrderCreateOut(status=str(r.get("status") or "OK"), id=oid, ref=str(r.get("ref")), fulfillment=fulfillment)
 
 
 @router.post("/orders/raw", response_model=OrderCreateOut)
@@ -124,4 +231,33 @@ async def create_order_raw(
         session, platform=platform, shop_id=shop_id, payload=payload, trace_id=trace.trace_id
     )
     await session.commit()
-    return OrderCreateOut(**r)
+
+    oid = int(r.get("id") or 0) if r.get("id") is not None else None
+    fulfillment: Optional[OrderFulfillmentOut] = None
+    if oid:
+        snap = await _load_fulfillment_snapshot(session, order_id=oid)
+        auto_assign = r.get("auto_assign") or {}
+        fulfillment = OrderFulfillmentOut(
+            service_warehouse_id=snap.get("service_warehouse_id"),
+            warehouse_id=snap.get("warehouse_id"),
+            fulfillment_status=snap.get("fulfillment_status"),
+            execution_stage=snap.get("execution_stage"),
+            ship_committed_at=snap.get("ship_committed_at"),
+            shipped_at=snap.get("shipped_at"),
+            route_status=str(r.get("route_status")) if r.get("route_status") is not None else None,
+            ingest_state=str(r.get("ingest_state")) if r.get("ingest_state") is not None else None,
+            auto_assign_status=str(auto_assign.get("status")) if auto_assign.get("status") is not None else None,
+        )
+
+    return OrderCreateOut(status=str(r.get("status") or "OK"), id=oid, ref=str(r.get("ref")), fulfillment=fulfillment)
+
+
+# ✅ Phase 5.2：订单管理列表（正统出口）
+# 注入 /orders/summary，确保 orders 域只有一个 router 作为权威出口
+orders_summary_routes.register(router)
+
+# ✅ 平台订单镜像（view/facts，只读）
+orders_view_facts_routes.register(router)
+
+# ✅ Phase 5.3：订单 × 仓库库存对齐（Explain 层，只读）
+orders_availability_routes.register(router)

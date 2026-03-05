@@ -1,0 +1,6 @@
+ix_purchase_order_lines_item_id|CREATE INDEX ix_purchase_order_lines_item_id ON public.purchase_order_lines USING btree (item_id)
+ix_purchase_order_lines_item_sku|CREATE INDEX ix_purchase_order_lines_item_sku ON public.purchase_order_lines USING btree (item_sku)
+ix_purchase_order_lines_po_id|CREATE INDEX ix_purchase_order_lines_po_id ON public.purchase_order_lines USING btree (po_id)
+ix_purchase_order_lines_po_id_qty_ordered_base|CREATE INDEX ix_purchase_order_lines_po_id_qty_ordered_base ON public.purchase_order_lines USING btree (po_id, qty_ordered_base)
+purchase_order_lines_pkey|CREATE UNIQUE INDEX purchase_order_lines_pkey ON public.purchase_order_lines USING btree (id)
+uq_purchase_order_lines_po_id_line_no|CREATE UNIQUE INDEX uq_purchase_order_lines_po_id_line_no ON public.purchase_order_lines USING btree (po_id, line_no)

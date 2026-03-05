@@ -7,9 +7,16 @@ from pydantic import BaseModel, Field
 
 
 class QuoteDestIn(BaseModel):
+    # ✅ 兼容期展示字段（允许只传 name）
     province: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
+
+    # ✅ 事实字段：GB2260 code（主线真相）
+    # - province_code：强制必填（护栏 B）
+    # - city_code：可选（直辖市可由前端/后端推导；普通省份若有 city 规则则建议传）
+    province_code: str = Field(..., min_length=1)
+    city_code: Optional[str] = Field(default=None, min_length=1)
 
 
 class QuoteCalcIn(BaseModel):

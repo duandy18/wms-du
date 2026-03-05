@@ -1,6 +1,12 @@
-from __future__ import annotations
+# app/services/stock_helpers.py
+"""
+Legacy shim (库存辅助入口)
 
-# Legacy shim
+- 项目已进入 warehouse 主维度世界观（以 warehouse_id 为核心维度）。
+- 本模块仅做薄封装，统一从 stock_helpers_impl re-export
+"""
+
+from __future__ import annotations
 
 from app.services.stock_helpers_impl import (
     batch_code_attr,
@@ -13,7 +19,6 @@ from app.services.stock_helpers_impl import (
     ensure_stock_slot,
     exec_retry,
     get_current_qty,
-    resolve_warehouse_by_location,
     stock_qty_col,
 )
 
@@ -23,7 +28,6 @@ __all__ = [
     "batch_qty_col",
     "batch_code_attr",
     "ensure_item",
-    "resolve_warehouse_by_location",
     "ensure_stock_slot",
     "ensure_stock_row",
     "bump_stock_by_stock_id",

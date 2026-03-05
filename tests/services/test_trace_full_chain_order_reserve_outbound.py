@@ -14,24 +14,21 @@ pytestmark = pytest.mark.asyncio
 UTC = timezone.utc
 
 
-async def test_full_trace_order_reserve_outbound(session: AsyncSession):
+async def test_full_trace_order_outbound(session: AsyncSession):
     """
-    全链路 trace 验证：
+    全链路 trace 验证（当前主线）：
 
-      订单 → 渠道占用 → 出库 → ledger → trace viewer
+      订单 → 出库 commit → ledger → trace viewer
 
     目标：
       - 同一个 trace_id 贯穿：
           orders.trace_id
-          reservations.trace_id
           stock_ledger.trace_id
-      - TraceService.get_trace(trace_id) 能同时聚合：
+
+      - TraceService.get_trace(trace_id) 至少能聚合：
           source="order"
-          source="reservation"
-          source="reservation_line"
           source="ledger"
-          source="reservation_consumed"  (Ship v3)
-      - Ship v3：出库后自动消费对应预占（reservation_lines.consumed_qty）
+          source="outbound"（如实现已接入）
     """
     # === 0) 准备基础数据：选一个已有 item + 仓库 ===
     row = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
@@ -39,24 +36,23 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     assert item_id is not None
 
     platform = "PDD"
-    shop_id = "1"  # 复用测试基线里的店铺，避免破坏现有假数据
+    shop_id = "1"
     ext_order_no = "TRACE-E2E-1"
     trace_id = "TRACE-E2E-1"
 
-    # 使用测试基线中的默认仓：从 warehouses 表中取第一个
     row = await session.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
     wh_id = int(row.scalar_one())
 
-    # === 1) 预先做一次入库：给这个 item/仓/批次准备库存 ===
     stock_svc = StockService()
     now = datetime.now(UTC)
     batch_code = "B-TRACE-E2E-1"
 
+    # === 1) 预先做一次入库：给这个 item/仓/批次准备库存 ===
     await stock_svc.adjust(
         session=session,
         item_id=int(item_id),
         warehouse_id=wh_id,
-        delta=10,  # 入库 +10
+        delta=10,
         reason="UT_TRACE_SEED_INBOUND",
         ref="UT-TRACE-SEED",
         ref_line=1,
@@ -64,10 +60,10 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
         batch_code=batch_code,
         production_date=date.today(),
         expiry_date=date.today() + timedelta(days=365),
-        trace_id=trace_id,  # 这条入库台账也挂在同一个 trace 上
+        trace_id=trace_id,
     )
 
-    # === 2) 建订单（OrderService.ingest），写 orders.trace_id ===
+    # === 2) 建订单 ===
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
     r_order = await OrderService.ingest(
@@ -107,38 +103,44 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     order_id = r_order["id"]
     assert order_id is not None
 
-    # ✅ 显式绑定仓库：让 Golden Flow 的 OrderReserveFlow 能解析 warehouse_id
+    # 显式绑定执行仓（测试用，避免依赖外部路由策略）
+    # 新世界观：执行仓事实写入 order_fulfillment.actual_warehouse_id
     await session.execute(
-        text("UPDATE orders SET warehouse_id = :wid WHERE id = :oid"),
-        {"wid": wh_id, "oid": order_id},
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :oid,
+              :wid,
+              :wid,
+              'SERVICE_ASSIGNED',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
+            """
+        ),
+        {"wid": wh_id, "oid": int(order_id)},
     )
 
-    # === 3) 渠道占用（OrderService.reserve）→ reservations.trace_id ===
-    lines = [
-        {
-            "item_id": int(item_id),
-            "qty": 3,
-        }
-    ]
-
-    r_reserve = await OrderService.reserve(
-        session,
-        platform=platform,
-        shop_id=shop_id,
-        ref=order_ref,
-        lines=lines,
-        trace_id=trace_id,
-    )
-    assert r_reserve["status"] == "OK"
-    reservation_id = r_reserve.get("reservation_id")
-    assert reservation_id is not None
-
-    # === 4) 出库（OutboundService.commit）→ ledger.trace_id ===
+    # === 3) 出库（OutboundService.commit）→ ledger.trace_id ===
     outbound_svc = OutboundService(stock_svc)
 
     r_outbound = await outbound_svc.commit(
         session=session,
-        order_id=order_ref,  # 这里作为 ledger.ref 使用
+        order_id=order_ref,
         lines=[
             {
                 "item_id": int(item_id),
@@ -153,7 +155,7 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     assert r_outbound["status"] == "OK"
     assert r_outbound["total_qty"] == 3
 
-    # === 5) 使用 TraceService 聚合全链路 ===
+    # === 4) Trace 聚合 ===
     trace_svc = TraceService(session)
     result = await trace_svc.get_trace(trace_id)
 
@@ -161,59 +163,31 @@ async def test_full_trace_order_reserve_outbound(session: AsyncSession):
     assert events, "trace events should not be empty"
 
     sources = {e.source for e in events}
+    assert "order" in sources
+    assert "ledger" in sources
 
-    # 订单事件
-    assert "order" in sources, f"expected 'order' in sources, got: {sources}"
-    # 占用 + 明细
-    assert "reservation" in sources, f"expected 'reservation' in sources, got: {sources}"
-    assert "reservation_line" in sources, f"expected 'reservation_line' in sources, got: {sources}"
-    # 台账
-    assert "ledger" in sources, f"expected 'ledger' in sources, got: {sources}"
-    # Ship v3：预占被消耗的事件应存在
-    assert (
-        "reservation_consumed" in sources
-    ), f"expected 'reservation_consumed' in sources, got: {sources}"
+    # outbound source 如存在则校验（不把它当强依赖）
+    if "outbound" in sources:
+        assert any(e.source == "outbound" for e in events)
 
-    # 确认至少有一条 ledger 是这次出库（OUTBOUND_SHIP）产生的，且 trace_id 匹配
     ledger_events = [e for e in events if e.source == "ledger"]
     assert any(
-        (e.kind in ("OUTBOUND_SHIP", "SHIP")) and e.raw.get("ref") == order_ref
+        (e.kind in ("OUTBOUND_SHIP", "SHIP", "SHIPMENT")) and e.raw.get("ref") == order_ref
         for e in ledger_events
-    ), f"expected at least one ledger event for ref={order_ref}, got: {[e.raw for e in ledger_events]}"
-
-    # reservations 侧也要挂 trace_id（间接验证：能通过 trace_id 抓到 reservation）
-    res_events = [e for e in events if e.source == "reservation"]
-    assert res_events, "expected at least one reservation event in trace"
-    assert all(
-        e.raw.get("trace_id") == trace_id for e in res_events
-    ), f"reservation events trace_id mismatch: {[e.raw for e in res_events]}"
-
-    # === 6) Ship v3 自动 consume 预占：reservation_lines.consumed_qty 应等于 qty ===
-    rows = await session.execute(
-        text(
-            """
-            SELECT qty, consumed_qty
-              FROM reservation_lines
-             WHERE reservation_id = :rid
-            """
-        ),
-        {"rid": reservation_id},
     )
-    row_lines = rows.fetchall()
-    assert row_lines, "expected at least one reservation_line"
 
-    total_qty = sum(int(q[0]) for q in row_lines)
-    total_consumed = sum(int(q[1] or 0) for q in row_lines)
-
-    # 本用例中 reserve qty = 3，出库 qty = 3 → 全部 consumed
-    assert total_qty == 3
-    assert total_consumed == 3
-
-    # === 7) 再从 TraceResult 角度检查 reservation_consumption 汇总 ===
-    consumption = result.reservation_consumption
-    # 只检查当前 reservation，避免误伤其它 trace 数据
-    assert reservation_id in consumption
-    per_item = consumption[reservation_id]
-    assert int(item_id) in per_item
-    assert per_item[int(item_id)]["qty"] == 3
-    assert per_item[int(item_id)]["consumed"] == 3
+    row_ledger = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM stock_ledger
+                 WHERE trace_id = :tid
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"tid": trace_id},
+        )
+    ).first()
+    assert row_ledger

@@ -1,0 +1,8 @@
+1|id|integer|int4|NO|nextval('stock_snapshots_id_seq'::regclass)
+2|snapshot_date|date|date|NO|
+3|warehouse_id|integer|int4|NO|
+4|item_id|integer|int4|NO|
+7|qty_allocated|numeric|numeric|NO|0
+8|qty_available|numeric|numeric|NO|0
+10|qty|numeric|numeric|NO|
+12|lot_id|integer|int4|NO|

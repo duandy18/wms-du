@@ -1,0 +1,14 @@
+1|id|integer|int4|NO|nextval('lots_id_seq'::regclass)
+2|warehouse_id|integer|int4|NO|
+3|item_id|integer|int4|NO|
+4|lot_code_source|character varying|varchar|NO|
+5|lot_code|character varying|varchar|YES|
+6|source_receipt_id|integer|int4|YES|
+7|source_line_no|integer|int4|YES|
+12|created_at|timestamp with time zone|timestamptz|NO|now()
+14|item_shelf_life_value_snapshot|integer|int4|YES|
+15|item_shelf_life_unit_snapshot|character varying|varchar|YES|
+19|item_lot_source_policy_snapshot|USER-DEFINED|lot_source_policy|NO|
+20|item_expiry_policy_snapshot|USER-DEFINED|expiry_policy|NO|
+21|item_derivation_allowed_snapshot|boolean|bool|NO|
+22|item_uom_governance_enabled_snapshot|boolean|bool|NO|

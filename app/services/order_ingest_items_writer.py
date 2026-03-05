@@ -2,12 +2,26 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_utils import to_dec_str
+
+
+def _norm_str(v: Any, *, max_len: int) -> Optional[str]:
+    """
+    统一字符串快照写入口径（非常重要）：
+    - None / 空串 / 全空白 => 写 NULL（避免污染快照）
+    - 其他 => strip 后截断
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s[: int(max_len)]
 
 
 async def insert_order_items(
@@ -71,10 +85,11 @@ async def insert_order_items(
 
     for it in items:
         params = {
-            "oid": order_id,
+            "oid": int(order_id),
             "item_id": it.get("item_id"),
-            "sku_id": (it.get("sku_id") or "")[:128],
-            "title": (it.get("title") or "")[:255],
+            # ✅ 写入层归一：空串=>NULL，避免污染快照/聚合
+            "sku_id": _norm_str(it.get("sku_id"), max_len=128),
+            "title": _norm_str(it.get("title"), max_len=255),
             "qty": int(it.get("qty") or 0),
             "price": to_dec_str(it.get("price")),
             "disc": to_dec_str(it.get("discount")),

@@ -14,12 +14,16 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
     """
     Snapshot /inventory 主列表（事实视图）：
 
-    ✅ Phase 2 硬规则：禁止“隐性汇总”
-    - 展示维度：至少 warehouse_id + item_id + batch_code（每个批次必须分行可审计）
-    - 库存事实：来自 stocks（不做二次按 item 聚合）
+    Phase 4B-3（切读到 lot）：
+    - 展示维度：至少 warehouse_id + item_id + lot（对外字段仍使用 batch_code 作为展示字符串）
+    - 库存事实：来自 stocks_lot（不做二次按 item 聚合）
+    - 展示字段（批次/日期）：来自 lots（lot_code / production_date / expiry_date）
     - 主数据字段：来自 items（1:1 join，不放大）
     - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
     - 日期相关：后端统一 UTC 计算，前端不推导
+
+    Phase M-5：
+    - items.uom 已物理移除；此接口不再输出 uom 字段
     """
     rows = (
         (
@@ -30,16 +34,15 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                     s.item_id,
                     i.name      AS item_name,
                     i.sku       AS item_code,
-                    i.unit      AS uom,
                     i.spec      AS spec,
                     i.brand     AS brand,
                     i.category  AS category,
 
                     s.warehouse_id,
-                    s.batch_code,
+                    l.lot_code AS batch_code,
                     s.qty,
 
-                    b.expiry_date AS expiry_date,
+                    l.expiry_date AS expiry_date,
 
                     (
                         SELECT ib.barcode
@@ -50,15 +53,13 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                         LIMIT 1
                     ) AS main_barcode
 
-                FROM stocks AS s
+                FROM stocks_lot AS s
                 JOIN items AS i
                   ON i.id = s.item_id
-                LEFT JOIN batches AS b
-                  ON b.item_id      = s.item_id
-                 AND b.warehouse_id = s.warehouse_id
-                 AND b.batch_code   = s.batch_code
+                LEFT JOIN lots AS l
+                  ON l.id = s.lot_id
                 WHERE s.qty <> 0
-                ORDER BY s.item_id, s.warehouse_id, s.batch_code
+                ORDER BY s.item_id, s.warehouse_id, l.lot_code NULLS FIRST
                 """
                 )
             )
@@ -87,13 +88,13 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 "item_id": int(r["item_id"]),
                 "item_name": r["item_name"],
                 "item_code": r["item_code"],
-                "uom": r["uom"],
                 "spec": r["spec"],
                 "brand": r["brand"],
                 "category": r["category"],
                 "main_barcode": r["main_barcode"],
                 "warehouse_id": int(r["warehouse_id"]),
-                "batch_code": r["batch_code"],
+                "batch_code": r["batch_code"],  # Phase 4B-3: 实际来自 lots.lot_code
+                "lot_code": r["batch_code"],
                 "qty": qty,
                 "expiry_date": expiry_date,
                 "near_expiry": near_expiry,

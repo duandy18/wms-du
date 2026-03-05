@@ -1,0 +1,6 @@
+item_uoms_pkey|CREATE UNIQUE INDEX item_uoms_pkey ON public.item_uoms USING btree (id)
+uq_item_uoms_item_uom|CREATE UNIQUE INDEX uq_item_uoms_item_uom ON public.item_uoms USING btree (item_id, uom)
+uq_item_uoms_one_base_per_item|CREATE UNIQUE INDEX uq_item_uoms_one_base_per_item ON public.item_uoms USING btree (item_id) WHERE (is_base = true)
+uq_item_uoms_one_inbound_default_per_item|CREATE UNIQUE INDEX uq_item_uoms_one_inbound_default_per_item ON public.item_uoms USING btree (item_id) WHERE (is_inbound_default = true)
+uq_item_uoms_one_outbound_default_per_item|CREATE UNIQUE INDEX uq_item_uoms_one_outbound_default_per_item ON public.item_uoms USING btree (item_id) WHERE (is_outbound_default = true)
+uq_item_uoms_one_purchase_default_per_item|CREATE UNIQUE INDEX uq_item_uoms_one_purchase_default_per_item ON public.item_uoms USING btree (item_id) WHERE (is_purchase_default = true)

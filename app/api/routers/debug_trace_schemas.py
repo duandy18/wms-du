@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field
 class TraceEventModel(BaseModel):
     ts: Optional[datetime] = Field(None, description="事件时间戳（可能为空）")
     source: str = Field(
-        ..., description="事件来源，例如 ledger / reservation / outbound / audit 等"
+        ..., description="事件来源，例如 ledger / outbound / audit 等"
     )
     kind: str = Field(..., description="事件类型 / 动作名")
-    ref: Optional[str] = Field(None, description="业务 ref（订单号 / reservation ref 等）")
+    ref: Optional[str] = Field(None, description="业务 ref（订单号 等）")
     summary: str = Field(..., description="人类可读的事件摘要（向后兼容字段）")
     raw: dict[str, Any] = Field(..., description="原始字段明细（调试用）")
 

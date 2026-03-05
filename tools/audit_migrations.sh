@@ -25,7 +25,7 @@ hr
 grn "[2/5] 扫描关键表的无守卫 DDL（ALTER/DROP）"
 hr
 # 这些最好用 DO $$ + information_schema/pg_catalog 守卫；这里仅报告
-grep -RIn -E 'ALTER TABLE\s+.*\s+(orders|batches|stock_ledger|event_log|event_error_log|reservations)\b' "$VERS" | grep -v to_regclass || true
+grep -RIn -E 'ALTER TABLE\s+.*\s+(orders|batches|stock_ledger|event_log|event_error_log)\b' "$VERS" | grep -v to_regclass || true
 grep -RIn -E 'DROP (INDEX|TABLE|VIEW)\b(?!.*IF EXISTS)' "$VERS" || true
 
 hr

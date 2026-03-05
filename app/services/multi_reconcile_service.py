@@ -13,20 +13,12 @@ class MultiReconcileService:
     Multi-dimension Reconcile Engine
     --------------------------------
 
-    统一对账引擎（Phase 3.x）：
-    支持 4 层维度的库存对账：
-
-    1) movement_type 汇总差异
-    2) ref 维度（单据级对账）
-    3) trace_id 链路级对账
-    4) 账账平衡：ledger vs stocks vs snapshot_v3
-
-    未来可以扩展 GSI 索引/分布式校验。
+    Phase 3 终态（lot-only）：
+    - three_books_compare：stocks 侧为 stocks_lot（lot-world）
+    - 对齐维度： (warehouse_id, item_id, lot_id)
+    - batch_code 仅为展示值：lots.lot_code
     """
 
-    # -----------------------------------------------
-    # Helper：取得 ledger_cut（在某个时间点）
-    # -----------------------------------------------
     @staticmethod
     async def _ledger_cut(
         session: AsyncSession,
@@ -36,22 +28,21 @@ class MultiReconcileService:
         stmt = text(
             """
             SELECT
-                warehouse_id,
-                item_id,
-                batch_code,
-                SUM(delta) AS qty
-            FROM stock_ledger
-            WHERE occurred_at <= :cut
-            GROUP BY 1,2,3
-            HAVING SUM(delta) != 0
+                l.warehouse_id,
+                l.item_id,
+                l.lot_id,
+                lo.lot_code AS batch_code,
+                SUM(l.delta) AS qty
+            FROM stock_ledger l
+            JOIN lots lo ON lo.id = l.lot_id
+            WHERE l.occurred_at <= :cut
+            GROUP BY 1,2,3,4
+            HAVING SUM(l.delta) != 0
         """
         )
         rows = (await session.execute(stmt, {"cut": cut})).mappings().all()
         return [dict(r) for r in rows]
 
-    # -----------------------------------------------
-    # movement_type 汇总
-    # -----------------------------------------------
     @staticmethod
     async def movement_type_summary(
         session: AsyncSession,
@@ -88,9 +79,6 @@ class MultiReconcileService:
             for r in rs
         }
 
-    # -----------------------------------------------
-    # ref（单据级）对账
-    # -----------------------------------------------
     @staticmethod
     async def ref_summary(
         session: AsyncSession,
@@ -110,9 +98,6 @@ class MultiReconcileService:
         rows = (await session.execute(stmt, {"t1": time_from, "t2": time_to})).mappings().all()
         return [dict(r) for r in rows]
 
-    # -----------------------------------------------
-    # trace 维度链路对账
-    # -----------------------------------------------
     @staticmethod
     async def trace_summary(
         session: AsyncSession,
@@ -133,9 +118,6 @@ class MultiReconcileService:
         rows = (await session.execute(stmt, {"t1": time_from, "t2": time_to})).mappings().all()
         return [dict(r) for r in rows]
 
-    # -----------------------------------------------
-    # 三账一致性（ledger_cut vs stocks vs snapshot_v3）
-    # -----------------------------------------------
     @staticmethod
     async def three_books_compare(
         session: AsyncSession,
@@ -147,28 +129,44 @@ class MultiReconcileService:
             SELECT
                 x.warehouse_id,
                 x.item_id,
+                x.lot_id,
                 x.batch_code,
                 x.ledger_qty,
                 COALESCE(st.qty, 0) AS stock_qty,
-                COALESCE(sn.qty_on_hand, 0) AS snapshot_qty,
+                COALESCE(sn.qty, 0) AS snapshot_qty,
                 (x.ledger_qty - COALESCE(st.qty,0)) AS diff_stock,
-                (x.ledger_qty - COALESCE(sn.qty_on_hand,0)) AS diff_snapshot
+                (x.ledger_qty - COALESCE(sn.qty,0)) AS diff_snapshot
             FROM (
-                SELECT warehouse_id, item_id, batch_code, SUM(delta) AS ledger_qty
-                FROM stock_ledger
-                WHERE occurred_at <= :cut
-                GROUP BY 1,2,3
+                SELECT
+                    l.warehouse_id,
+                    l.item_id,
+                    l.lot_id,
+                    lo.lot_code AS batch_code,
+                    SUM(l.delta) AS ledger_qty
+                FROM stock_ledger l
+                JOIN lots lo
+                  ON lo.id = l.lot_id
+                WHERE l.occurred_at <= :cut
+                GROUP BY 1,2,3,4
             ) AS x
-            LEFT JOIN stocks st
-                ON st.warehouse_id=x.warehouse_id
-               AND st.item_id=x.item_id
-               AND st.batch_code=x.batch_code
+            LEFT JOIN (
+                SELECT
+                  s.warehouse_id,
+                  s.item_id,
+                  s.lot_id,
+                  SUM(s.qty)::integer AS qty
+                FROM stocks_lot s
+                GROUP BY 1,2,3
+            ) st
+                ON st.warehouse_id = x.warehouse_id
+               AND st.item_id      = x.item_id
+               AND st.lot_id       = x.lot_id
             LEFT JOIN stock_snapshots sn
                 ON sn.snapshot_date = :cut::date
-               AND sn.warehouse_id=x.warehouse_id
-               AND sn.item_id=x.item_id
-               AND sn.batch_code=x.batch_code
-            ORDER BY x.warehouse_id, x.item_id, x.batch_code
+               AND sn.warehouse_id  = x.warehouse_id
+               AND sn.item_id       = x.item_id
+               AND sn.lot_id        = x.lot_id
+            ORDER BY x.warehouse_id, x.item_id, x.lot_id
         """
         )
         rows = (await session.execute(stmt, {"cut": cut})).mappings().all()

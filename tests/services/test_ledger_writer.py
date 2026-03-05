@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.inbound_service import InboundService
+from tests.utils.ensure_minimal import ensure_item, ensure_warehouse
 
 UTC = timezone.utc
 
@@ -24,22 +25,10 @@ async def test_ledger_conservation(session: AsyncSession):
     """
     wh, item, code = 1, 7631, "LGD-7631"
 
-    # 准备最小仓库 + 商品
-    await session.execute(
-        text("INSERT INTO warehouses (id,name) VALUES (1,'WH-1') ON CONFLICT (id) DO NOTHING")
-    )
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id,sku,name)
-            VALUES (:i,:s,:n)
-            ON CONFLICT (id) DO UPDATE
-              SET sku=EXCLUDED.sku,
-                  name=EXCLUDED.name
-            """
-        ),
-        {"i": item, "s": f"SKU-{item}", "n": f"ITEM-{item}"},
-    )
+    # 准备最小仓库 + 商品（Phase M：items policy NOT NULL，必须走合法插入）
+    await ensure_warehouse(session, id=int(wh), name="WH-1")
+    await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
+
     await session.commit()
 
     ref = f"IN-LGD-{int(datetime.now(UTC).timestamp())}"

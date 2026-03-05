@@ -6,23 +6,31 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ledger_writer import write_ledger
+from app.services.stock.lots import ensure_lot_full
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
 
 @pytest.mark.asyncio
 async def test_write_ledger_idempotent(session: AsyncSession):
-    # 先给 stocks 插个槽位并赋量（统一写 qty）
+    # 确保基础主数据存在
     await session.execute(
-        text(
-            """
-        INSERT INTO stocks(item_id, warehouse_id, batch_code, qty)
-        VALUES (3003, 1, 'IDEM', 5)
-        ON CONFLICT (item_id, warehouse_id, batch_code) DO UPDATE SET qty=5
-    """
-        )
+        text("INSERT INTO warehouses (id, name) VALUES (1, 'WH-1') ON CONFLICT (id) DO NOTHING")
     )
-    # 首次写
+    await ensure_item(session, id=3003, sku="SKU-3003", name="ITEM-3003", expiry_required=False)
+
+    # 终态：lot 创建必须走 ensure_lot_full（禁止 tests 直接 INSERT INTO lots）
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=3003,
+        warehouse_id=1,
+        lot_code="IDEM",
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # 终态：本测试只验证 ledger writer 的幂等（不需要散装写 stocks_lot）
     id1 = await write_ledger(
         session,
         warehouse_id=1,
@@ -34,9 +42,10 @@ async def test_write_ledger_idempotent(session: AsyncSession):
         ref="LED-IDEM-1",
         ref_line=1,
         occurred_at=datetime.now(UTC),
+        lot_id=int(lot_id),
     )
     assert id1 > 0
-    # 幂等命中
+
     id2 = await write_ledger(
         session,
         warehouse_id=1,
@@ -48,5 +57,6 @@ async def test_write_ledger_idempotent(session: AsyncSession):
         ref="LED-IDEM-1",
         ref_line=1,
         occurred_at=datetime.now(UTC),
+        lot_id=int(lot_id),
     )
     assert id2 == 0

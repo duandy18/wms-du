@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,18 +11,101 @@ from app.services.stock_service import StockService
 UTC = timezone.utc
 
 
-async def _qty(session: AsyncSession, item_id: int, wh: int, code: str) -> int:
+async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
+    row = await session.execute(
+        text("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
+        {"i": int(item_id)},
+    )
+    v = row.scalar_one_or_none()
+    return str(v or "").strip().upper() == "REQUIRED"
+
+
+async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
+    return "NEAR" if await _requires_batch(session, item_id) else None
+
+
+async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        r = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
+                 LIMIT 1
+                """
+            ),
+            {"i": int(item_id), "w": int(wh)},
+        )
+        return int(r.scalar_one_or_none() or 0)
+
     r = await session.execute(
-        text("SELECT qty FROM stocks WHERE item_id=:i AND warehouse_id=:w AND batch_code=:c"),
-        {"i": item_id, "w": wh, "c": code},
+        text(
+            """
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id), "w": int(wh), "c": str(code)},
     )
     return int(r.scalar_one_or_none() or 0)
+
+
+async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
+    svc = StockService()
+    before = await _qty(session, item_id, wh, code)
+    if before >= qty:
+        return
+
+    need = qty - before
+    if code is None:
+        await svc.adjust(
+            session=session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            delta=int(need),
+            reason=MovementType.INBOUND,
+            ref=f"UT-SEED-OUTCORE-{item_id}-{wh}-NULL",
+            ref_line=1,
+            occurred_at=datetime.now(UTC),
+            batch_code=None,
+        )
+    else:
+        await svc.adjust(
+            session=session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            delta=int(need),
+            reason=MovementType.INBOUND,
+            ref=f"UT-SEED-OUTCORE-{item_id}-{wh}-{code}",
+            ref_line=1,
+            occurred_at=datetime.now(UTC),
+            batch_code=str(code),
+            production_date=date.today(),
+        )
+    await session.commit()
 
 
 @pytest.mark.asyncio
 async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     svc = StockService()
-    item_id, wh, code = 3003, 1, "NEAR"
+    item_id, wh = 3003, 1
+    code = await _slot_code(session, item_id)
+
+    # ✅ 显式 seed，保证 before >= 1
+    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=10)
+
     before = await _qty(session, item_id, wh, code)
     assert before >= 1
 
@@ -54,9 +138,9 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     )
     assert res.get("idempotent") is True
 
-    # 不足
+    # 不足：新世界观为 409 + Problem（HTTPException）
     remain = await _qty(session, item_id, wh, code)
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPException) as exc:
         await svc.adjust(
             session=session,
             item_id=item_id,
@@ -68,3 +152,7 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
             batch_code=code,
             warehouse_id=wh,
         )
+
+    assert exc.value.status_code == 409
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("error_code") == "insufficient_stock"

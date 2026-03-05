@@ -40,6 +40,8 @@ def register(router: APIRouter) -> None:
                     province=payload.dest.province,
                     city=payload.dest.city,
                     district=payload.dest.district,
+                    province_code=payload.dest.province_code,
+                    city_code=payload.dest.city_code,
                 ),
                 real_weight_kg=float(payload.real_weight_kg),
                 dims_cm=dims,

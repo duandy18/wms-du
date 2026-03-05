@@ -118,16 +118,23 @@ async def seed_world_phase5(session: AsyncSession) -> Tuple[int, int, int]:
     wh_ids = await _ensure_n_warehouses(session, 3)
     wh1, wh2, wh3 = int(wh_ids[0]), int(wh_ids[1]), int(wh_ids[2])
 
-    # 确保 stores 存在（name NOT NULL）
+    # stores 终态约束：
+    # - UNIQUE(platform, shop_id)
+    # - UNIQUE(platform, store_code)
+    # 且 store_code 有默认触发器，但不能依赖触发器避免冲突；必须显式写入并用正确 conflict target。
     await session.execute(
         sa.text(
             """
-            INSERT INTO stores (platform, shop_id, name, active)
+            INSERT INTO stores (platform, shop_id, store_code, name, active)
             VALUES
-              ('PDD','S1','S1',TRUE),
-              ('PDD','S2','S2',TRUE),
-              ('PDD','S3','S3',TRUE)
-            ON CONFLICT (platform, shop_id) DO NOTHING;
+              ('PDD','S1','S1','S1',TRUE),
+              ('PDD','S2','S2','S2',TRUE),
+              ('PDD','S3','S3','S3',TRUE)
+            ON CONFLICT (platform, store_code) DO UPDATE
+              SET shop_id = EXCLUDED.shop_id,
+                  name    = EXCLUDED.name,
+                  active  = EXCLUDED.active,
+                  updated_at = now();
             """
         )
     )
@@ -187,20 +194,25 @@ def generate_orders(n: int, *, item_ids: List[int]) -> List[SandboxOrder]:
 
 async def collect_order_summary_phase5(session: AsyncSession):
     """
-    Phase 5：直接从 orders 聚合“服务归属事实 / 阻断事实”，不依赖 Phase4 的 routing metrics view。
+    Phase 5：从 orders + order_fulfillment 聚合“服务归属事实 / 阻断事实”。
+
+    兼容口径：
+      - service_warehouse_id := order_fulfillment.planned_warehouse_id
+      - fulfillment_status  := order_fulfillment.fulfillment_status
     """
     res = await session.execute(
         sa.text(
             """
             SELECT
-              platform,
-              shop_id,
-              fulfillment_status,
-              COALESCE(service_warehouse_id, 0) AS service_warehouse_id,
+              o.platform,
+              o.shop_id,
+              f.fulfillment_status AS fulfillment_status,
+              COALESCE(f.planned_warehouse_id, 0) AS service_warehouse_id,
               COUNT(*) AS n
-            FROM orders
-            GROUP BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0)
-            ORDER BY platform, shop_id, fulfillment_status, COALESCE(service_warehouse_id, 0);
+            FROM orders o
+            LEFT JOIN order_fulfillment f ON f.order_id = o.id
+            GROUP BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0)
+            ORDER BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0);
             """
         )
     )

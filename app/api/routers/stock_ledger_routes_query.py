@@ -8,20 +8,22 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
-from app.models.stock_ledger import StockLedger
-from app.schemas.stock_ledger import (
-    LedgerEnums,
-    LedgerList,
-    LedgerRow,
-    LedgerQuery,
-    ReasonCanon,
-    SubReason,
-)
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.api.routers.stock_ledger_helpers import (
     build_base_ids_stmt,
     infer_movement_type,
     normalize_time_range,
+)
+from app.db.session import get_session
+from app.models.lot import Lot
+from app.models.stock_ledger import StockLedger
+from app.schemas.stock_ledger import (
+    LedgerEnums,
+    LedgerList,
+    LedgerQuery,
+    LedgerRow,
+    ReasonCanon,
+    SubReason,
 )
 
 UTC = timezone.utc
@@ -48,9 +50,14 @@ def register(router: APIRouter) -> None:
         """
         普通查询（<=90 天限制由 normalize_time_range 控制）：
         - 默认按 occurred_at 降序 + id 降序排序；
-        - 支持 item_id/item_keyword/warehouse_id/batch_code/reason/reason_canon/sub_reason/ref/trace_id 过滤；
-        - 返回 item_name（当前页批量补齐）。
+        - 支持 item_id/item_keyword/warehouse_id/batch_code(展示码)/lot_id/reason/reason_canon/sub_reason/ref/trace_id 过滤；
+        - 返回 item_name + batch_code(展示码)（当前页批量补齐）。
         """
+        # ✅ 查询级 batch_code 归一（None/空串/'None' -> None）
+        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
+        if getattr(payload, "batch_code", None) != norm_bc:
+            payload = payload.model_copy(update={"batch_code": norm_bc})
+
         time_from, time_to = normalize_time_range(payload)
 
         # ✅ 过滤合同统一收敛到 helper（build_common_filters -> build_base_ids_stmt）
@@ -88,6 +95,16 @@ def register(router: APIRouter) -> None:
                 if nm:
                     item_name_map[iid] = nm
 
+        # ✅ 批量补齐 batch_code（展示码）：lots.lot_code by lot_id
+        lot_ids = sorted({int(getattr(r, "lot_id")) for r in rows if getattr(r, "lot_id", None) is not None})
+        lot_code_map: dict[int, str | None] = {}
+        if lot_ids:
+            res = await session.execute(
+                select(Lot.id, Lot.lot_code).where(Lot.id.in_(lot_ids))
+            )
+            for lot_id, lot_code in res.all():
+                lot_code_map[int(lot_id)] = lot_code
+
         return LedgerList(
             total=total,
             items=[
@@ -105,7 +122,9 @@ def register(router: APIRouter) -> None:
                     item_id=r.item_id,
                     item_name=item_name_map.get(int(r.item_id)) if r.item_id is not None else None,
                     warehouse_id=r.warehouse_id,
-                    batch_code=r.batch_code,
+                    batch_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
+                    lot_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
+                    lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,
                     movement_type=infer_movement_type(r.reason),
                 )

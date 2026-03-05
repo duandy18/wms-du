@@ -7,6 +7,11 @@ from typing import Iterable, List, Optional, Tuple
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.lot_service import ensure_internal_lot_singleton as ensure_internal_lot_singleton_svc
+from app.services.lot_service import ensure_lot_full as ensure_lot_full_svc
+from app.services.stock_service_adjust import adjust_lot_impl
+from tests.utils.ensure_minimal import ensure_item
+
 UTC = timezone.utc
 
 __all__ = [
@@ -17,14 +22,9 @@ __all__ = [
     "seed_many",
     "qty_by_code",
     "sum_on_hand",
-    "sum_reserved_active",
     "available",
     "insert_snapshot",
 ]
-
-# ------------------------------------------------------------------------------
-# 元信息探测
-# ------------------------------------------------------------------------------
 
 
 async def _has_table(session: AsyncSession, tbl: str) -> bool:
@@ -49,9 +49,22 @@ async def _columns_of(session: AsyncSession, tbl: str) -> List[str]:
     return [r[0] for r in rows.fetchall()]
 
 
-# ------------------------------------------------------------------------------
-# 基础造数：仓库 / 库位 / 商品
-# ------------------------------------------------------------------------------
+def _wh_from_loc(loc: int) -> int:
+    """
+    Phase M-5+：locations 表已物理删除。
+
+    历史测试 helper 里大量使用 ensure_wh_loc_item(..., loc=wh, ...) 这种“loc=wh”的写法。
+    为了避免全量改调用点，又要保持终态一致（不复活 locations），这里统一将 loc 解释为 warehouse_id。
+    """
+    return int(loc)
+
+
+def _as_lot_id(v: object) -> int:
+    """
+    lot_service 的 ensure_* 可能返回 int(lot_id) 或 ORM 对象（带 .id）。
+    tests 侧用这个函数统一兼容，避免类型漂移导致的 AttributeError。
+    """
+    return int(getattr(v, "id", v))
 
 
 async def ensure_wh_loc_item(
@@ -63,46 +76,42 @@ async def ensure_wh_loc_item(
     code: Optional[str] = None,
     name: Optional[str] = None,
 ) -> None:
-    """
-    建仓库/库位/商品（幂等）：
-      - warehouses(id, name)
-      - locations(id, warehouse_id, code, name)
-      - items(id, sku, name)
-    """
+    _ = loc
+    _ = code
+    _ = name
+
     await session.execute(
         SA("INSERT INTO warehouses (id, name) VALUES (:w, 'WH') ON CONFLICT (id) DO NOTHING"),
-        {"w": wh},
+        {"w": int(wh)},
     )
-    await session.execute(
+
+    await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
+
+
+async def _load_item_expiry_policy(session: AsyncSession, *, item_id: int) -> str:
+    row = await session.execute(SA("SELECT expiry_policy::text FROM items WHERE id=:i"), {"i": int(item_id)})
+    v = row.scalar_one_or_none()
+    if v is None:
+        raise ValueError(f"item_not_found: {item_id}")
+    return str(v)
+
+
+async def _get_stock_qty(session: AsyncSession, *, item: int, wh: int, lot_id: int) -> int:
+    r = await session.execute(
         SA(
-            "INSERT INTO locations (id, warehouse_id, code, name) "
-            "VALUES (:l, :w, :code, :name) ON CONFLICT (id) DO NOTHING"
+            """
+            SELECT qty
+              FROM stocks_lot
+             WHERE item_id = :i
+               AND warehouse_id = :w
+               AND lot_id = :lot
+             LIMIT 1
+            """
         ),
-        {"l": loc, "w": wh, "code": code or f"LOC-{loc}", "name": name or code or f"LOC-{loc}"},
+        {"i": int(item), "w": int(wh), "lot": int(lot_id)},
     )
-    await session.execute(
-        SA(
-            "INSERT INTO items (id, sku, name) VALUES (:i, :s, :n) "
-            "ON CONFLICT (id) DO UPDATE SET sku=EXCLUDED.sku, name=EXCLUDED.name"
-        ),
-        {"i": item, "s": f"SKU-{item}", "n": f"ITEM-{item}"},
-    )
-
-
-# ------------------------------------------------------------------------------
-# 批次与库存槽位造数（v2：按 (warehouse_id, item_id, batch_code)）
-# ------------------------------------------------------------------------------
-
-
-async def _resolve_wh_by_loc(session: AsyncSession, loc: int) -> int:
-    row = await session.execute(
-        SA("SELECT warehouse_id FROM locations WHERE id=:loc"),
-        {"loc": loc},
-    )
-    wh = row.scalar_one_or_none()
-    if wh is None:
-        raise ValueError(f"no warehouse_id for location id={loc}")
-    return int(wh)
+    v = r.scalar_one_or_none()
+    return int(v) if v is not None else 0
 
 
 async def seed_batch_slot(
@@ -115,148 +124,139 @@ async def seed_batch_slot(
     days: int = 365,
 ) -> None:
     """
-    为给定 (item, loc, code) 构造一个批次 + 对应库存槽位（v2 模型）。
+    ✅ 统一 seed 入口（Phase M-5 终态）：
 
-    - batches：按 (item_id, warehouse_id, batch_code, expiry_date) 插入；
-    - warehouse_id 通过 locations.warehouse_id 解析；
-    - stocks：按 (item_id, warehouse_id, batch_code) 维度存 qty。
+    - lot 创建：ensure_lot_full（禁止 tests 直接 INSERT INTO lots）
+    - 库存写入：adjust_lot_impl（禁止 tests 直接 INSERT/UPDATE stocks_lot）
+    - “设置为某个 qty”语义：读当前 qty -> delta -> adjust_lot_impl 写入
+      （等价于旧实现的 ON CONFLICT DO UPDATE SET qty）
+
+    关键：日期合同必须认真对待
+    - 若 item.expiry_policy == 'REQUIRED' 且发生入库（delta>0），必须提供 expiry_date（production_date 可为空）
+    - 若 item.expiry_policy == 'NONE'，日期一律传 None（避免伪造日期事实）
     """
-    wh = await _resolve_wh_by_loc(session, loc)
-    expiry = date.today() + timedelta(days=days)
+    wh = _wh_from_loc(loc)
+    code_raw = str(code).strip()
+    if not code_raw:
+        raise ValueError("code empty")
 
-    # 1) 批次建档
+    # 确保主数据存在（很多测试假设 item/wh 已存在）
     await session.execute(
-        SA(
-            """
-            INSERT INTO batches (item_id, warehouse_id, batch_code, expiry_date)
-            VALUES (:i, :w, :code, :exp)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
-            """
-        ),
-        {"i": item, "w": wh, "code": code, "exp": expiry},
+        SA("INSERT INTO warehouses (id, name) VALUES (:w, 'WH') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh)},
+    )
+    await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
+
+    expiry_policy = await _load_item_expiry_policy(session, item_id=int(item))
+
+    # 先确保 lot（满足 ensure_lot_full 的强制入参）
+    if expiry_policy == "REQUIRED":
+        expiry_date: Optional[date] = date.today() + timedelta(days=int(days))
+        production_date: Optional[date] = None
+    else:
+        expiry_date = None
+        production_date = None
+
+    got = await ensure_lot_full_svc(
+        session,
+        warehouse_id=int(wh),
+        item_id=int(item),
+        lot_code=code_raw,
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+    lot_id = _as_lot_id(got)
+
+    cur = await _get_stock_qty(session, item=int(item), wh=int(wh), lot_id=int(lot_id))
+    target = int(qty)
+    delta = target - int(cur)
+    if delta == 0:
+        return
+
+    # 入库合同：REQUIRED 且 delta>0 必须提供 expiry_date
+    if expiry_policy == "REQUIRED" and int(delta) > 0 and expiry_date is None:
+        expiry_date = date.today() + timedelta(days=int(days))
+
+    # 用 ref 携带 target，保证“重复 seed 同 qty”幂等，
+    # 但“不同 qty 的 overwrite”不会被 idem 吃掉（等价于旧 DO UPDATE）。
+    ref = f"ut:seed_batch_slot:set:{int(wh)}:{int(item)}:{code_raw}:{int(target)}"
+
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item),
+        warehouse_id=int(wh),
+        lot_id=int(lot_id),
+        delta=int(delta),
+        reason="UT_SEED_BATCH_SLOT",
+        ref=str(ref),
+        ref_line=1,
+        occurred_at=None,
+        meta=None,
+        batch_code=code_raw,
+        production_date=production_date,
+        expiry_date=expiry_date,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
+        shadow_write_stocks=False,
     )
 
-    # 2) 库存槽位建档
-    await session.execute(
-        SA(
-            """
-            INSERT INTO stocks (item_id, warehouse_id, batch_code, qty)
-            VALUES (:i, :w, :code, 0)
-            ON CONFLICT (item_id, warehouse_id, batch_code) DO NOTHING
-            """
-        ),
-        {"i": item, "w": wh, "code": code},
-    )
 
-    # 3) 设置该槽位数量
-    await session.execute(
-        SA(
-            """
-            UPDATE stocks
-               SET qty = :q
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :code
-            """
-        ),
-        {"q": qty, "i": item, "w": wh, "code": code},
-    )
-
-
-async def seed_many(
-    session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]
-) -> None:
+async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]) -> None:
     for item, loc, code, qty, days in entries:
         await seed_batch_slot(session, item=item, loc=loc, code=code, qty=qty, days=days)
 
 
-# ------------------------------------------------------------------------------
-# 查询与聚合（通过 loc 推导 wh）
-# ------------------------------------------------------------------------------
-
-
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
-    wh = await _resolve_wh_by_loc(session, loc)
+    wh = _wh_from_loc(loc)
     row = await session.execute(
-        SA("SELECT COALESCE(SUM(qty),0) FROM stocks WHERE item_id=:i AND warehouse_id=:w"),
-        {"i": item, "w": wh},
+        SA("SELECT COALESCE(SUM(qty),0) FROM stocks_lot WHERE item_id=:i AND warehouse_id=:w"),
+        {"i": int(item), "w": int(wh)},
     )
     return int(row.scalar_one() or 0)
 
 
-async def sum_reserved_active(session: AsyncSession, *, item: int, loc: int) -> int:
-    """
-    旧世界使用 reservations(item_id, location_id, qty, status='ACTIVE')。
-    v2/v3 中 reservations 已经换成 Soft Reserve 新 schema，不再有 location_id。
-
-    为避免在新 schema 上乱查：
-      - 若检测到 reservations 表存在且包含 (item_id, location_id, qty, status)，按旧逻辑统计；
-      - 否则直接返回 0（由StockAvailabilityService/OrderService 负责可用量计算）。
-    """
-    cols = await _columns_of(session, "reservations")
-    if {"item_id", "location_id", "qty", "status"}.issubset(set(cols)):
-        row = await session.execute(
-            SA(
-                "SELECT COALESCE(SUM(qty),0) FROM reservations "
-                "WHERE item_id=:i AND location_id=:l AND status='ACTIVE'"
-            ),
-            {"i": item, "l": loc},
-        )
-        return int(row.scalar_one() or 0)
-    # 新 schema 下交由上层服务负责“reserved”计算
-    return 0
-
-
 async def available(session: AsyncSession, *, item: int, loc: int) -> int:
-    return await sum_on_hand(session, item=item, loc=loc) - await sum_reserved_active(
-        session, item=item, loc=loc
-    )
+    return await sum_on_hand(session, item=item, loc=loc)
 
 
 async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:
-    wh = await _resolve_wh_by_loc(session, loc)
+    wh = _wh_from_loc(loc)
     row = await session.execute(
         SA(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :code
-             LIMIT 1
+            SELECT COALESCE(SUM(s.qty), 0)
+              FROM stocks_lot s
+              JOIN lots lo ON lo.id = s.lot_id
+             WHERE s.item_id = :i
+               AND s.warehouse_id = :w
+               AND lo.lot_code = :code
             """
         ),
-        {"i": item, "w": wh, "code": code},
+        {"i": int(item), "w": int(wh), "code": str(code)},
     )
-    return int(row.scalar_one_or_none() or 0)
-
-
-# ------------------------------------------------------------------------------
-# 快照插入（v2：按 (snapshot_date, warehouse_id, item_id, batch_code) 粒度）
-# ------------------------------------------------------------------------------
+    return int(row.scalar_one() or 0)
 
 
 async def insert_snapshot(
     session: AsyncSession,
     *,
-    ts: datetime,  # 保留参数兼容旧签名；当前实现只使用 day
+    ts: datetime,
     day: date,
     item: int,
     loc: int,
     on_hand: int,
     available: int,
 ) -> None:
-    """
-    向 v2 stock_snapshots 表插入/累加一条快照记录。
+    _ = ts
+    wh = _wh_from_loc(loc)
 
-    v2/v3 语义：
-    - 粒度 = snapshot_date + warehouse_id + item_id + batch_code；
-    - 测试仍按 (day, item, loc) 造数，我们：
-        * loc → 解析出 warehouse_id；
-        * batch_code 固定为 'SNAP-TEST'（测试专用）；
-        * 多次调用同一 (day, wh, item, 'SNAP-TEST') 时，qty_on_hand/qty_available 累加。
-    """
-    wh = await _resolve_wh_by_loc(session, loc)
+    # 快照必须绑定真实 lot_id；这里用 INTERNAL 单例 lot 承载“无指定展示码”的快照场景
+    got = await ensure_internal_lot_singleton_svc(
+        session,
+        warehouse_id=int(wh),
+        item_id=int(item),
+    )
+    lot_id = _as_lot_id(got)
 
     await session.execute(
         SA(
@@ -265,17 +265,26 @@ async def insert_snapshot(
                 snapshot_date,
                 warehouse_id,
                 item_id,
-                batch_code,
-                qty_on_hand,
+                lot_id,
+                qty,
                 qty_available,
                 qty_allocated
             )
-            VALUES (:day, :w, :i, 'SNAP-TEST', :oh, :av, 0)
-            ON CONFLICT (snapshot_date, warehouse_id, item_id, batch_code)
+            VALUES (:day, :w, :i, :lot, :q, :av, :al)
+            ON CONFLICT ON CONSTRAINT uq_stock_snapshots_grain_lot
             DO UPDATE SET
-                qty_on_hand   = stock_snapshots.qty_on_hand + EXCLUDED.qty_on_hand,
-                qty_available = stock_snapshots.qty_available + EXCLUDED.qty_available
+                qty           = EXCLUDED.qty,
+                qty_available = EXCLUDED.qty_available,
+                qty_allocated = EXCLUDED.qty_allocated
             """
         ),
-        {"day": day, "w": wh, "i": item, "oh": on_hand, "av": available},
+        {
+            "day": day,
+            "w": int(wh),
+            "i": int(item),
+            "lot": int(lot_id),
+            "q": int(on_hand),
+            "av": int(available),
+            "al": int(on_hand) - int(available),
+        },
     )

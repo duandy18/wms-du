@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -10,37 +11,76 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def _seed_order_and_stock(session: AsyncSession) -> int:
+async def _get_item_expiry_policy(session: AsyncSession, item_id: int) -> str:
+    row = (
+        await session.execute(
+            text("SELECT expiry_policy FROM items WHERE id = :id LIMIT 1"),
+            {"id": int(item_id)},
+        )
+    ).scalar_one_or_none()
+    return str(row or "")
+
+
+async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控真相源：items.expiry_policy == 'REQUIRED'
+    """
+    pol = await _get_item_expiry_policy(session, item_id)
+    return pol.strip().upper() == "REQUIRED"
+
+
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：SUPPLIER lot 必须走 ensure_lot_full（lot_code_key + partial unique index）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
+async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
+    """
+    Lot-World 终态：非批次商品用 INTERNAL lot（单例）承载“展示码为空”的槽位。
+    provenance 用 receipt_id/line_no 可以填，但不参与唯一锚点。
+    这里不再直插 lots，而统一走 ensure_internal_lot_singleton。
+    """
+    _ = ref
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
+
+
+async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None, str]:
     """
     用 OrderService.ingest 落一张简单订单，并为其准备足够的库存：
-
-    - 订单：
-        platform = PDD
-        shop_id = "1"
-        item_id = 1, qty = 2
-    - 库存：
-        warehouse_id = 1
-        item_id      = 1
-        batch_code   = "BATCH-TEST-001"
-        qty          = 10 (RECEIPT)
-
-    假定测试环境里：
-        - items 表中已存在 id=1 的商品
-        - warehouses 表中已存在 id=1 的仓库
+    - 订单：PDD / shop_id=1 / item_id=1 qty=2
+    - 库存：warehouse_id=1 / item_id=1 / qty=10（Lot-World：必须锚定 lot_id）
     """
     platform = "PDD"
     shop_id = "1"
-    ext_order_no = "PICK-TASK-CASE-1"
-    trace_id = "TRACE-PICK-TASK-CASE-1"
+
+    uniq = uuid4().hex[:10]
+    ext_order_no = f"PICK-TASK-CASE-1-{uniq}"
+    trace_id = f"TRACE-PICK-TASK-CASE-1-{uniq}"
+
     now = datetime.now(timezone.utc)
 
-    # 1) 落订单（Route C 下 address=None 可能导致 FULFILLMENT_BLOCKED，
-    # 但我们在测试里将显式把订单置为 READY_TO_FULFILL 来跑 happy path）
     result = await OrderService.ingest(
         session,
         platform=platform,
@@ -51,9 +91,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         buyer_phone="13800000000",
         order_amount=100,
         pay_amount=100,
-        items=[
-            {"item_id": 1, "qty": 2},
-        ],
+        items=[{"item_id": 1, "qty": 2}],
         address=None,
         extras=None,
         trace_id=trace_id,
@@ -61,77 +99,91 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
     order_id = int(result["id"])
 
     # ✅ Route C 测试基线：显式设置“可履约事实”
-    # - 不依赖默认仓/兜底
-    # - 清空 blocked
+    # 新世界观：不再写 orders.warehouse_id/service_warehouse_id/fulfillment_warehouse_id
+    # 统一写入 order_fulfillment（planned/actual/status），blocked 只保留 blocked_reasons（不保留 detail）
     await session.execute(
         text(
             """
-            UPDATE orders
-               SET warehouse_id = :wid,
-                   service_warehouse_id = :wid,
-                   fulfillment_warehouse_id = :wid,
-                   fulfillment_status = 'READY_TO_FULFILL',
-                   blocked_reasons = NULL,
-                   blocked_detail = NULL
-             WHERE id = :oid
+            INSERT INTO order_fulfillment (
+                order_id,
+                planned_warehouse_id,
+                actual_warehouse_id,
+                fulfillment_status,
+                blocked_reasons,
+                updated_at
+            )
+            VALUES (
+                :oid,
+                :wid,
+                :wid,
+                'SERVICE_ASSIGNED',
+                NULL,
+                now()
+            )
+            ON CONFLICT (order_id) DO UPDATE
+               SET planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+                   actual_warehouse_id  = EXCLUDED.actual_warehouse_id,
+                   fulfillment_status   = EXCLUDED.fulfillment_status,
+                   blocked_reasons      = NULL,
+                   updated_at           = now()
             """
         ),
         {"wid": 1, "oid": order_id},
     )
 
-    # 2) Seed 库存：给 item_id=1 / wh=1 / batch=BATCH-TEST-001 做一笔入库
+    requires_batch = await _item_requires_batch(session, 1)
+    expected_batch_code: str | None = "BATCH-TEST-001" if requires_batch else None
+
     stock = StockService()
     prod = date.today()
     exp = prod + timedelta(days=365)
 
-    await stock.adjust(
+    # Lot-World：seed 库存必须锚定真实 lot_id
+    if requires_batch:
+        lot_id = await _ensure_supplier_lot(session, wh_id=1, item_id=1, lot_code=str(expected_batch_code))
+    else:
+        lot_id = await _ensure_internal_lot(
+            session, wh_id=1, item_id=1, ref=f"UT-INTERNAL-LOT-PICK-TASK-CASE-1-{uniq}"
+        )
+
+    await stock.adjust_lot(
         session=session,
         item_id=1,
         warehouse_id=1,
-        delta=10,  # 入库 10 件，够出库 2 件
+        lot_id=int(lot_id),
+        delta=10,
         reason=MovementType.RECEIPT,
-        ref="SEED-STOCK-PICK-TASK-CASE-1",
+        ref=f"SEED-STOCK-PICK-TASK-CASE-1-{uniq}",
         ref_line=1,
         occurred_at=now,
-        batch_code="BATCH-TEST-001",
-        production_date=prod,
-        expiry_date=exp,
+        batch_code=expected_batch_code,
+        production_date=(prod if requires_batch else None),
+        expiry_date=(exp if requires_batch else None),
         trace_id=trace_id,
     )
 
     await session.commit()
-    return order_id
+    return order_id, requires_batch, expected_batch_code, trace_id
 
 
 async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, monkeypatch):
     """
-    pick-tasks API 全流程测试：
-
-    1) 落一张订单，并为其准备足够库存；
-    2) /pick-tasks/from-order/{order_id} 创建拣货任务；
-    3) /pick-tasks/{task_id}/scan 录入拣货（带 batch_code）；
-    4) /pick-tasks/{task_id}/commit 执行出库；
-    5) 验证：
-       - 任务状态为 DONE；
-       - outbound_commits_v2 有记录；
-       - diff 结构正常；
-       - 若实现写入 stock_ledger 的出库行，则必须正确（delta<0，尽量按批次校验）。
+    pick-tasks API 全流程测试（Phase 2：删除确认码）：
+      1) 落订单 + seed 库存
+      2) from-order 创建 pick_task
+      3) scan 写入 picked 事实
+      4) commit（不需要 handoff_code）
+      5) ledger/outbound_commits_v2 证据存在性
     """
-    # Route C 测试护栏：避免测试辅助 fallback 让 address=None 产生不可控的路由/预占行为
     monkeypatch.delenv("WMS_TEST_DEFAULT_PROVINCE", raising=False)
     monkeypatch.delenv("WMS_TEST_DEFAULT_CITY", raising=False)
 
-    # 1) 落订单 + seed 库存
-    order_id = await _seed_order_and_stock(session)
+    order_id, requires_batch, expected_batch_code, trace_id = await _seed_order_and_stock(session)
 
     # 2) 创建拣货任务
     resp = await client.post(
         f"/pick-tasks/from-order/{order_id}",
-        json={
-            "warehouse_id": 1,
-            "source": "ORDER",
-            "priority": 100,
-        },
+        json={"warehouse_id": 1, "source": "ORDER", "priority": 100},
     )
     assert resp.status_code == 200, resp.text
     task = resp.json()
@@ -139,7 +191,6 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     assert task["warehouse_id"] == 1
     assert task["status"] in ("READY", "ASSIGNED", "PICKING", "OPEN", "DONE")
 
-    # 任务行：应至少有一行 req_qty=2, picked_qty=0
     lines = task["lines"]
     assert len(lines) >= 1
     line = lines[0]
@@ -147,30 +198,28 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     assert line["req_qty"] == 2
     assert line["picked_qty"] == 0
 
-    # 3) 扫描拣货：拣两件，指定 batch_code
+    # 3) 扫描拣货：拣两件
+    scan_payload = {"item_id": 1, "qty": 2}
+    if requires_batch:
+        scan_payload["batch_code"] = expected_batch_code
+
     resp2 = await client.post(
         f"/pick-tasks/{task_id}/scan",
-        json={
-            "item_id": 1,
-            "qty": 2,
-            "batch_code": "BATCH-TEST-001",
-        },
+        json=scan_payload,
     )
     assert resp2.status_code == 200, resp2.text
     task_after_scan = resp2.json()
     lines_after = task_after_scan["lines"]
 
-    # 找到 item_id=1, batch_code=BATCH-TEST-001 的行
     target_line = None
     for ln in lines_after:
-        if ln["item_id"] == 1 and ln["batch_code"] == "BATCH-TEST-001":
+        if ln["item_id"] == 1 and ln.get("batch_code") == expected_batch_code:
             target_line = ln
             break
     assert target_line is not None
     assert target_line["picked_qty"] == 2
 
-    # 4) commit 出库：写 outbound_commits_v2（以及可能写 ledger）
-    trace_id = "TRACE-PICK-TASK-CASE-1"
+    # ✅ 4) commit 出库（Phase 2：不再需要 handoff_code）
     resp3 = await client.post(
         f"/pick-tasks/{task_id}/commit",
         json={
@@ -193,11 +242,9 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
 
     diff = result["diff"]
     assert diff["task_id"] == task_id
-    # 本场景 req_qty=2, picked_qty=2，应当没有 over/under
     assert diff["has_over"] is False
     assert diff["has_under"] is False
 
-    # Route C：diff.lines 允许为空（摘要模式）；若存在则必须自洽
     assert isinstance(diff.get("lines"), list)
     if diff["lines"]:
         diff_line = diff["lines"][0]
@@ -205,23 +252,28 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
         assert diff_line["picked_qty"] == 2
         assert diff_line["status"] == "OK"
 
-    # 5) ledger 校验（可选：只有当系统实际写出了“出库行”时才做硬校验）
+    # 5) ledger 校验（可选）
+    # Lot-World：stock_ledger 不再含 batch_code；展示码来自 lots.lot_code
     res = await session.execute(
         text(
             """
             SELECT
-                reason,
-                batch_code,
-                delta,
-                warehouse_id,
-                item_id,
-                ref,
-                trace_id
-              FROM stock_ledger
-             WHERE warehouse_id = 1
-               AND item_id = 1
-               AND (trace_id = :trace_id OR ref = :ref)
-             ORDER BY id DESC
+                sl.reason,
+                lo.lot_code AS batch_code,
+                sl.delta,
+                sl.warehouse_id,
+                sl.item_id,
+                sl.ref,
+                sl.trace_id
+              FROM stock_ledger sl
+              JOIN lots lo
+                ON lo.id = sl.lot_id
+               AND lo.warehouse_id = sl.warehouse_id
+               AND lo.item_id = sl.item_id
+             WHERE sl.warehouse_id = 1
+               AND sl.item_id = 1
+               AND (sl.trace_id = :trace_id OR sl.ref = :ref)
+             ORDER BY sl.id DESC
              LIMIT 50
             """
         ),
@@ -229,7 +281,6 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
     )
     ledger_rows = res.fetchall()
 
-    # 只要存在 delta<0 的出库行，就必须正确；如果只有 RECEIPT(+delta) 等非出库行，不强制要求
     outbound_rows = [r for r in ledger_rows if int(r[2] or 0) < 0]
     if outbound_rows:
         reason, batch_code, delta, warehouse_id, item_id, ref2, trace2 = outbound_rows[0]
@@ -237,16 +288,16 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
         assert int(item_id) == 1
         assert int(delta) < 0
 
-        if batch_code is not None:
-            assert str(batch_code) == "BATCH-TEST-001"
+        if requires_batch:
+            assert batch_code is not None
+            assert str(batch_code) == str(expected_batch_code)
+        else:
+            assert batch_code is None
 
-        # reason 允许 PICK 或 SHIPMENT（实现细节不绑死）
         assert str(reason) in ("PICK", "SHIPMENT") or reason in (MovementType.PICK, MovementType.SHIPMENT), reason
-
-        # trace/ref 至少命中其一
         assert (trace2 == trace_id) or (ref2 == ref)
 
-    # 6) 验证 outbound_commits_v2 中存在记录（这是本测试的硬事实）
+    # 6) outbound_commits_v2 必须存在
     row2 = (
         await session.execute(
             text(

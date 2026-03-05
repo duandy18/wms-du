@@ -10,6 +10,7 @@ from app.api.routers import (
     stock_ledger_routes_summary,
     stock_ledger_routes_reconcile,
     stock_ledger_routes_export,
+    stock_ledger_routes_shadow_lot,  # ✅ Phase 4A-2a Step C: lot 影子对账
 )
 
 logger = logging.getLogger(__name__)
@@ -22,17 +23,19 @@ def _register_all_routes() -> None:
     """
     库存台账相关路由聚合点（唯一）：
 
-    - /query            ≤90 天普通查询
-    - /query-history    >90 天历史查询（强约束）
-    - /summary          统计
-    - /reconcile        对账
-    - /export           导出
+    - /query                ≤90 天普通查询
+    - /query-history        >90 天历史查询（强约束）
+    - /summary              统计
+    - /reconcile            对账
+    - /export               导出
+    - /shadow-reconcile-lot lot 维度影子对账（Phase 4A-2a）
     """
     stock_ledger_routes_query.register(router)
     stock_ledger_routes_query_history.register(router)
     stock_ledger_routes_summary.register(router)
     stock_ledger_routes_reconcile.register(router)
     stock_ledger_routes_export.register(router)
+    stock_ledger_routes_shadow_lot.register(router)  # ✅ 新增
 
 
 _register_all_routes()

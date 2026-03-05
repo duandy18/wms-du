@@ -1,7 +1,0 @@
-341:  table=<pick_task_line_reservations>, nullable=False))), ('remove_index',
-343:  table=<pick_task_line_reservations>, nullable=False))), ('remove_table',
-344:  Table('pick_task_line_reservations', MetaData(), Column('id', BIGINT(),
-345:  table=<pick_task_line_reservations>, primary_key=True, nullable=False),
-347:  table=<pick_task_line_reservations>, nullable=False),
-348:  Column('reservation_id', BIGINT(), table=<pick_task_line_reservations>,
-350:  table=<pick_task_line_reservations>, nullable=False), schema=None))]

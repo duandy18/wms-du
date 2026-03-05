@@ -33,6 +33,56 @@ def _auth_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _pick_template_id(data: dict) -> int:
+    for k in ("id", "template_id", "segment_template_id"):
+        if k in data and data[k] is not None:
+            return int(data[k])
+    if "data" in data and isinstance(data["data"], dict):
+        return _pick_template_id(data["data"])
+    raise AssertionError(f"cannot resolve template_id from response: {data}")
+
+
+def _publish_template(client: TestClient, token: str, template_id: int) -> None:
+    h = _auth_headers(token)
+    r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
+    assert r.status_code in (200, 201), r.text
+
+
+def _put_min_items(client: TestClient, token: str, template_id: int) -> None:
+    h = _auth_headers(token)
+    r = client.put(
+        f"/segment-templates/{int(template_id)}/items",
+        headers=h,
+        json={
+            "items": [
+                {"ord": 0, "min_kg": "0.000", "max_kg": "1.000", "active": True},
+                {"ord": 1, "min_kg": "1.000", "max_kg": None, "active": True},
+            ]
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
+    """
+    ✅ 新合同：Zone 绑定模板必须为 published 且 items>=1。
+    流程：create(draft) -> put items -> publish
+    """
+    h = _auth_headers(token)
+
+    r = client.post(
+        f"/pricing-schemes/{scheme_id}/segment-templates",
+        headers=h,
+        json={"name": name},
+    )
+    assert r.status_code in (200, 201), r.text
+    tid = _pick_template_id(r.json())
+
+    _put_min_items(client, token, tid)
+    _publish_template(client, token, tid)
+    return tid
+
+
 def _create_scheme_zone(client: TestClient, token: str, zone_name: str, provinces: list[str]) -> Dict[str, int]:
     h = _auth_headers(token)
     pr = client.get("/shipping-providers", headers=h)
@@ -53,6 +103,8 @@ def _create_scheme_zone(client: TestClient, token: str, zone_name: str, province
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
+    tpl_id = _create_min_template(client, token, scheme_id, name=f"TPL-{zone_name}")
+
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
@@ -61,11 +113,12 @@ def _create_scheme_zone(client: TestClient, token: str, zone_name: str, province
             "priority": 100,
             "active": True,
             "provinces": provinces,
+            "segment_template_id": tpl_id,
         },
     )
     assert zr.status_code == 201, zr.text
     zone_id = int(zr.json()["id"])
-    return {"scheme_id": scheme_id, "zone_id": zone_id}
+    return {"scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
 
 
 def test_bracket_unique_range_conflict_returns_409(client: TestClient) -> None:
@@ -99,7 +152,6 @@ def test_copy_zone_brackets_api(client: TestClient) -> None:
     ids_tgt = _create_scheme_zone(client, token, "目标Zone", ["天津市"])
 
     # 让它们属于同一个 scheme：为了简单，直接在同一个 scheme 下再建 target zone
-    # 重新建一个 target zone（同 scheme）
     zr = client.post(
         f"/pricing-schemes/{ids_src['scheme_id']}/zones-atomic",
         headers=h,
@@ -108,6 +160,8 @@ def test_copy_zone_brackets_api(client: TestClient) -> None:
             "priority": 110,
             "active": True,
             "provinces": ["天津市"],
+            # ✅ 必填：绑定模板（复用源 scheme 下创建的模板，且其为 published）
+            "segment_template_id": ids_src["template_id"],
         },
     )
     assert zr.status_code == 201, zr.text

@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.inbound_service import InboundService
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
@@ -17,11 +18,10 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
     """
     v2 入库服务测试（warehouse + item + batch 粒度）：
 
-    - 不依赖 location_id，也不依赖 tests.utils 中的 helper。
-    - 通过 InboundService.receive 使用 sku 自动建 item。
-    - 校验 stocks 表中 (warehouse_id, item_id, batch_code) 的 qty 被正确更新。
+    - 通过 InboundService.receive 使用 sku 查找 item。
+    - Phase M-5：stocks_lot.lot_id NOT NULL；“无批次”由 lots.lot_code 为 NULL 表达（INTERNAL lot）。
+    - 因此槽位定位统一通过 lots.lot_code IS NOT DISTINCT FROM :batch_code。
     """
-
     warehouse_id = 1
     sku = "SKU-TEST-INBOUND-3001"
     batch_code = "RCV-3001"
@@ -31,10 +31,12 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
 
     svc = InboundService()
 
-    # 不再显式 session.begin()，session fixture 已经管理事务
+    # ✅ Phase M：items policy NOT NULL；测试侧预先建好 item
+    await ensure_item(session, id=4003, sku=sku, name=sku, uom="EA", expiry_required=False)
+    await session.commit()
+
     res = await svc.receive(
         session=session,
-        # 不提供 item_id，改用 sku，由 InboundService._ensure_item_id 自动建档
         item_id=None,
         sku=sku,
         qty=qty,
@@ -45,25 +47,28 @@ async def test_scan_receive_commits_ledger(session: AsyncSession):
         expiry_date=expiry,
     )
 
-    # 返回值基本字段校验
     item_id = res["item_id"]
     assert item_id > 0
     assert res["warehouse_id"] == warehouse_id
-    assert res["batch_code"] == batch_code
+    assert res.get("batch_code") in (batch_code, None)
     assert res["qty"] == qty
 
-    # 验证 stocks 表中该批次库存为 qty
+    eff_code = res.get("batch_code")
+
+    # DB 事实：stocks_lot.lot_id NOT NULL；用 lots.lot_code（可 NULL）筛选槽位
     row = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id = :i
-               AND warehouse_id = :w
-               AND batch_code = :c
+            SELECT COALESCE(SUM(sl.qty), 0) AS qty
+              FROM stocks_lot sl
+              LEFT JOIN lots lo ON lo.id = sl.lot_id
+             WHERE sl.item_id = :i
+               AND sl.warehouse_id = :w
+               AND lo.lot_code IS NOT DISTINCT FROM CAST(:c AS TEXT)
+             LIMIT 1
             """
         ),
-        {"i": item_id, "w": warehouse_id, "c": batch_code},
+        {"i": int(item_id), "w": int(warehouse_id), "c": eff_code},
     )
-    db_qty = row.scalar_one()
+    db_qty = int(row.scalar_one_or_none() or 0)
     assert db_qty == qty

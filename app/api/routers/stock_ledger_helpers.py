@@ -11,7 +11,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.models.item import Item
+from app.models.lot import Lot
 from app.models.stock_ledger import StockLedger
 from app.schemas.stock_ledger import LedgerQuery
 
@@ -95,7 +97,7 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     - reason_canon：稳定口径（RECEIPT/SHIPMENT/ADJUSTMENT）
     - sub_reason：业务动作细分（PO_RECEIPT / ORDER_SHIP / COUNT_ADJUST 等）
     """
-    conditions = [
+    conditions: list[sa.ColumnElement[bool]] = [
         StockLedger.occurred_at >= time_from,
         StockLedger.occurred_at <= time_to,
     ]
@@ -106,8 +108,40 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if q.warehouse_id is not None:
         conditions.append(StockLedger.warehouse_id == q.warehouse_id)
 
-    if q.batch_code:
-        conditions.append(StockLedger.batch_code == q.batch_code)
+    # Phase 4A-2a: lot 维度过滤（精确）
+    if getattr(q, "lot_id", None) is not None:
+        conditions.append(StockLedger.lot_id == getattr(q, "lot_id"))
+
+    # ✅ lot-only：batch_code 仅作为展示码（lots.lot_code）过滤
+    # - 不传 batch_code：不加过滤
+    # - 传 "" / "None"：归一为 None -> lots.lot_code IS NULL（无批次标签槽位）
+    # - 传 "B2026..."：lots.lot_code = 'B2026...'
+    fields_set = getattr(q, "model_fields_set", set())
+    if "batch_code" in fields_set:
+        norm_bc = normalize_optional_lot_code(getattr(q, "batch_code", None))
+        # 通过 EXISTS 约束到 lots.lot_code（支持 NULL 语义）
+        if norm_bc is None:
+            conditions.append(
+                sa.exists(
+                    select(1).select_from(Lot).where(
+                        sa.and_(
+                            Lot.id == StockLedger.lot_id,
+                            Lot.lot_code.is_(None),
+                        )
+                    )
+                )
+            )
+        else:
+            conditions.append(
+                sa.exists(
+                    select(1).select_from(Lot).where(
+                        sa.and_(
+                            Lot.id == StockLedger.lot_id,
+                            Lot.lot_code == norm_bc,
+                        )
+                    )
+                )
+            )
 
     if q.reason:
         conditions.append(StockLedger.reason == q.reason)
@@ -130,7 +164,7 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
         if x:
             if ":" in x:
                 base = x.split(":")[-1].strip()
-                parts = []
+                parts: list[sa.ColumnElement[bool]] = []
                 parts.append(StockLedger.ref == x)
                 if base and base != x:
                     parts.append(StockLedger.ref == base)
@@ -177,7 +211,7 @@ def build_base_ids_stmt(q: LedgerQuery, time_from: datetime, time_to: datetime):
     """
     按查询条件构造基础 SQL（只选中符合条件的 id 列表）：
 
-    - 支持按 item_id / warehouse_id / batch_code / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
+    - 支持按 item_id / warehouse_id / lot_id / batch_code(展示码) / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
     - 支持按 item_keyword 模糊匹配 items.name / items.sku；
     - 不再依赖 stock_id / batch_id，完全对齐当前 StockLedger 模型。
     """

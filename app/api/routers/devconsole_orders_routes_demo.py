@@ -11,8 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.models.enums import MovementType
 from app.api.routers.devconsole_orders_schemas import DevDemoOrderOut
+from app.models.enums import MovementType
 from app.services.order_service import OrderService
 from app.services.stock_service import StockService
 
@@ -32,6 +32,11 @@ def register(router: APIRouter) -> None:
         - 订单 ingest：给出 province=UT，让其进入 SERVICE_ASSIGNED（只写 service_warehouse_id）
         - ❌ 不再写 orders.warehouse_id（devconsole 禁止后门写入）
         - 库存 seed：仍然可以往某个仓库里落库存（这不是“订单执行仓”）
+
+        Batch-as-Lot 说明（Phase 1+）：
+        - stock_ledger 允许同一 (warehouse_id, lot_id) 多次 RECEIPT（幂等由 ref/ref_line 等约束保证）
+        - demo seed 的批次码仍做“每次生成唯一值”，目的是隔离每次 demo 的库存样本，便于排查与回滚；
+          不再是为了规避任何 ledger 唯一约束。
         """
         # 1) 随机物品（从已存在 items 里抽）
         rows = (await session.execute(text("SELECT id FROM items ORDER BY id LIMIT 10"))).fetchall()
@@ -41,6 +46,7 @@ def register(router: APIRouter) -> None:
 
         # 选一个仓库用于 seed 库存（仅库存事实，不代表订单执行仓）
         wh_row = ((await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1"))).mappings().first())
+        wh_row = (await session.execute(text("SELECT id FROM warehouses ORDER BY id LIMIT 1"))).mappings().first()
         if not wh_row:
             raise HTTPException(400, "warehouses 表为空，请创建至少一个仓库。")
         seed_warehouse_id = int(wh_row["id"])
@@ -96,11 +102,14 @@ def register(router: APIRouter) -> None:
 
         seed_uid = uuid.uuid4().hex[:6]
         seed_trace_id = f"demo-seed-trace:{order_id}:{seed_uid}"
-        batch_code = "AUTO"
 
         for idx, (item_id, qty) in enumerate(order_lines, start=1):
             seed_qty = max(20, qty * 10)
             seed_ref = f"demo-seed-ref:{order_id}:{seed_uid}:{idx}"
+
+            # 为了隔离不同 demo run 的库存样本，这里仍生成唯一 batch_code。
+            # （不再是为了规避任何 stock_ledger 的 RECEIPT 唯一约束）
+            batch_code = f"DEMO-SEED-{order_id}-{seed_uid}-{item_id}-{idx}"
 
             await stock_service.adjust(
                 session=session,

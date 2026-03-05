@@ -104,12 +104,22 @@ async def test_ingest_assigns_service_warehouse_by_province(db_session_like_pg, 
     assert int(res["route"].get("service_warehouse_id")) == int(wh_id)
 
     order_id = int(res["id"])
+
+    # ✅ 新世界观：履约/仓库快照在 order_fulfillment
     row = await session.execute(
-        text("SELECT service_warehouse_id, warehouse_id, fulfillment_status FROM orders WHERE id=:id"),
+        text(
+            """
+            SELECT planned_warehouse_id, actual_warehouse_id, fulfillment_status
+              FROM order_fulfillment
+             WHERE order_id = :id
+             LIMIT 1
+            """
+        ),
         {"id": order_id},
     )
-    swid, wid, fstat = row.first()
-    assert int(swid) == int(wh_id)
+    pwid, awid, fstat = row.first()
+
+    assert int(pwid) == int(wh_id)
     # ✅ 新世界观：不自动写实际出库仓
-    assert wid in (None, 0)
+    assert awid in (None, 0)
     assert str(fstat) == "SERVICE_ASSIGNED"

@@ -7,7 +7,11 @@ from typing import Any, Dict, Protocol, Sequence
 class ChannelAdapter(Protocol):
     """
     平台适配接口（最小骨架）
-    - 仅定义我们现阶段需要的“库存拉取/推送/签名”形状
+
+    设计约束（已收敛）：
+    - 不处理 SKU / PSKU / mirror
+    - 不承担商品域 / 库存域的映射职责
+    - 只保留库存拉取 / 推送 / 签名等能力
     """
 
     async def fetch_inventory(self, *, store_id: int, item_ids: Sequence[int]) -> Dict[int, int]:

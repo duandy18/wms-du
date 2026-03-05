@@ -15,7 +15,7 @@ from app.services.three_books_consistency import verify_receive_commit_three_boo
 
 async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
     """
-    尽量挑 has_shelf_life=false 的 item，避免入库日期推导依赖 shelf_life 参数。
+    尽量挑 expiry_policy=NONE 的 item，避免入库日期推导依赖 shelf_life 参数。
     若找不到，就退回任意 item，并在入库时显式填 expiry_date。
     """
     row = (
@@ -24,7 +24,7 @@ async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
                 """
                 SELECT id
                   FROM items
-                 WHERE COALESCE(has_shelf_life, false) = false
+                 WHERE COALESCE(expiry_policy::text, 'NONE') <> 'REQUIRED'
                  ORDER BY id ASC
                  LIMIT 1
                 """
@@ -44,9 +44,9 @@ async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
 async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
     """
     Phase 3 合同测试（出库链路）：
-    - 先用 StockService.adjust(delta>0) 造库存（写 ledger + stocks）
-    - 再用 OutboundService.commit 出库（写 ledger + stocks + snapshot 尾门）
-    - 最后用三账校验器兜底复验：ledger(ref/ref_line) + stocks + snapshot(today) 一致
+    - 先用 StockService.adjust(delta>0) 造库存（写 ledger + stocks_lot）
+    - 再用 OutboundService.commit 出库（写 ledger + stocks_lot + snapshot 尾门）
+    - 最后用三账校验器兜底复验：ledger(ref/ref_line) + stocks_lot + snapshot(today) 一致
     """
     utc = timezone.utc
     now = datetime.now(utc)

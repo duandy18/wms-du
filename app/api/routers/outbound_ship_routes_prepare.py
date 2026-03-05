@@ -1,7 +1,7 @@
 # app/api/routers/outbound_ship_routes_prepare.py
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
@@ -32,6 +32,39 @@ def _normalize_province_soft(raw: Optional[str]) -> Optional[str]:
     if not any(p.endswith(s) for s in _ALLOWED_PROVINCE_SUFFIX):
         return None
     return p
+
+
+async def _load_fulfillment_brief(
+    session: AsyncSession,
+    *,
+    order_id: int,
+) -> Tuple[Optional[str], Optional[Any], Optional[Any]]:
+    """
+    路 A 展示口径：
+    - execution_stage：阶段真相（PICK/SHIP）
+    - ship_committed_at：进入出库裁决链路锚点（事实）
+    - shipped_at：出库完成事实
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT execution_stage, ship_committed_at, shipped_at
+                      FROM order_fulfillment
+                     WHERE order_id = :oid
+                     LIMIT 1
+                    """
+                ),
+                {"oid": int(order_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        return None, None, None
+    return row.get("execution_stage"), row.get("ship_committed_at"), row.get("shipped_at")
 
 
 async def _load_candidate_warehouses_by_province(
@@ -104,6 +137,8 @@ def register(router: APIRouter) -> None:
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
     ) -> ShipPrepareResponse:
+        _ = current_user
+
         plat = payload.platform.upper()
         shop_id = payload.shop_id
         ext_order_no = payload.ext_order_no
@@ -155,16 +190,7 @@ def register(router: APIRouter) -> None:
         )
 
         row = (
-            (
-                await session.execute(
-                    sql,
-                    {
-                        "platform": plat,
-                        "shop_id": shop_id,
-                        "ext_order_no": ext_order_no,
-                    },
-                )
-            )
+            (await session.execute(sql, {"platform": plat, "shop_id": shop_id, "ext_order_no": ext_order_no}))
             .mappings()
             .first()
         )
@@ -189,6 +215,9 @@ def register(router: APIRouter) -> None:
 
         trace_id = row.get("trace_id")
         ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
+
+        # 路 A：展示字段（是否已进入出库/是否已出库完成）
+        execution_stage, ship_committed_at, shipped_at = await _load_fulfillment_brief(session, order_id=order_id)
 
         # ===== store_id 对齐（店铺档案是事实入口）=====
         store_id = await StoreService.ensure_store(
@@ -217,13 +246,15 @@ def register(router: APIRouter) -> None:
                 total_qty=total_qty,
                 weight_kg=weight_kg,
                 trace_id=trace_id,
+                execution_stage=execution_stage,
+                ship_committed_at=ship_committed_at,
+                shipped_at=shipped_at,
                 warehouse_id=None,
                 warehouse_reason="PROVINCE_MISSING_OR_INVALID",
                 candidate_warehouses=[],
                 fulfillment_scan=[],
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["PROVINCE_MISSING_OR_INVALID"],
-                blocked_detail={"province": province},
             )
 
         # ===== 候选仓：省级路由命中集合 =====
@@ -246,13 +277,15 @@ def register(router: APIRouter) -> None:
                 total_qty=total_qty,
                 weight_kg=weight_kg,
                 trace_id=trace_id,
+                execution_stage=execution_stage,
+                ship_committed_at=ship_committed_at,
+                shipped_at=shipped_at,
                 warehouse_id=None,
                 warehouse_reason="NO_PROVINCE_ROUTE_MATCH",
                 candidate_warehouses=[],
                 fulfillment_scan=[],
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["NO_PROVINCE_ROUTE_MATCH"],
-                blocked_detail={"province": prov_norm},
             )
 
         # ===== 扫描：对每个候选仓做整单同仓可履约检查 =====
@@ -280,7 +313,6 @@ def register(router: APIRouter) -> None:
                 ok_wh_ids.append(int(r.warehouse_id))
 
         if not ok_wh_ids:
-            # 所有候选仓都不足：明确不可履约（用于退货/取消）
             return ShipPrepareResponse(
                 ok=True,
                 order_id=order_id,
@@ -298,20 +330,17 @@ def register(router: APIRouter) -> None:
                 total_qty=total_qty,
                 weight_kg=weight_kg,
                 trace_id=trace_id,
+                execution_stage=execution_stage,
+                ship_committed_at=ship_committed_at,
+                shipped_at=shipped_at,
                 warehouse_id=None,
                 warehouse_reason="ALL_CANDIDATE_WAREHOUSES_INSUFFICIENT",
                 candidate_warehouses=candidates,
                 fulfillment_scan=scan_out,
                 fulfillment_status="FULFILLMENT_BLOCKED",
                 blocked_reasons=["INSUFFICIENT_QTY"],
-                blocked_detail={
-                    "province": prov_norm,
-                    "candidates": [c.warehouse_id for c in candidates],
-                    "scan": [x.model_dump() for x in scan_out],
-                },
             )
 
-        # 有可履约仓：不预设 warehouse_id，让人选；但给出扫描证据
         return ShipPrepareResponse(
             ok=True,
             order_id=order_id,
@@ -329,11 +358,13 @@ def register(router: APIRouter) -> None:
             total_qty=total_qty,
             weight_kg=weight_kg,
             trace_id=trace_id,
+            execution_stage=execution_stage,
+            ship_committed_at=ship_committed_at,
+            shipped_at=shipped_at,
             warehouse_id=None,
             warehouse_reason="MANUAL_SELECT_REQUIRED",
             candidate_warehouses=candidates,
             fulfillment_scan=scan_out,
             fulfillment_status="OK",
             blocked_reasons=[],
-            blocked_detail=None,
         )

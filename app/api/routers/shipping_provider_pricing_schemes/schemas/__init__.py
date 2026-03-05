@@ -11,6 +11,7 @@ from .zone import (
     ZoneProvinceMembersReplaceIn,
 )
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
+from .dest_adjustment import DestAdjustmentOut, DestAdjustmentUpsertIn, DestAdjustmentUpdateIn
 from .scheme import (
     SchemeOut,
     SchemeSegmentOut,
@@ -28,6 +29,11 @@ from .segment_template import (
     SegmentTemplateCreateIn,
     SegmentTemplateItemsPutIn,
     SegmentTemplateItemActivePatchIn,
+)
+from .zone_brackets_matrix import (
+    ZoneBracketsMatrixOut,
+    ZoneBracketsMatrixGroupOut,
+    SegmentRangeOut,
 )
 
 __all__ = [
@@ -49,6 +55,10 @@ __all__ = [
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
+    # dest adjustment
+    "DestAdjustmentOut",
+    "DestAdjustmentUpsertIn",
+    "DestAdjustmentUpdateIn",
     # scheme
     "SchemeOut",
     "SchemeSegmentOut",
@@ -65,4 +75,8 @@ __all__ = [
     "SegmentTemplateCreateIn",
     "SegmentTemplateItemsPutIn",
     "SegmentTemplateItemActivePatchIn",
+    # zone brackets matrix
+    "ZoneBracketsMatrixOut",
+    "ZoneBracketsMatrixGroupOut",
+    "SegmentRangeOut",
 ]

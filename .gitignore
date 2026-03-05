@@ -124,3 +124,7 @@ out/
 __pycache__/
 *.pyc
 # ============================================================
+openapi/_items_schemas.json
+
+# local schema dump artifacts
+tools/schema_dump/
