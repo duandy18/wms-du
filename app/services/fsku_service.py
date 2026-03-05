@@ -29,8 +29,17 @@ class FskuService:
     def create_draft(self, *, name: str, code: str | None, shape: str | None) -> FskuDetailOut:
         return _create_draft(self.db, name=name, code=code, shape=shape)
 
-    def list_fskus(self, *, query: str | None, status: str | None, limit: int, offset: int) -> FskuListOut:
-        return _list_fskus(self.db, query=query, status=status, limit=limit, offset=offset)
+    def list_fskus(
+        self,
+        *,
+        query: str | None,
+        status: str | None,
+        store_id: int | None = None,
+        limit: int,
+        offset: int,
+    ) -> FskuListOut:
+        # 透传 store_id：用于 PROD 店铺过滤测试 FSKU；TEST 店铺不过滤
+        return _list_fskus(self.db, query=query, status=status, store_id=store_id, limit=limit, offset=offset)
 
     def get_detail(self, fsku_id: int) -> FskuDetailOut | None:
         return _get_detail(self.db, fsku_id)

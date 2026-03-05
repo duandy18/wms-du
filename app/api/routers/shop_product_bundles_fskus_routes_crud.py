@@ -8,7 +8,6 @@ from app.api.deps import get_current_user
 from app.api.problem import make_problem
 from app.api.schemas.fsku import FskuCreateIn, FskuDetailOut, FskuListOut, FskuNameUpdateIn
 from app.db.deps import get_db
-from app.services import fsku_service_read
 from app.services.fsku_service import FskuService
 
 from .shop_product_bundles_fskus_routes_base import _check_write_perm, _svc
@@ -56,9 +55,11 @@ def register(r: APIRouter) -> None:
         offset: int = Query(0, ge=0),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
+        svc: FskuService = Depends(_svc),
     ) -> FskuListOut:
         _check_write_perm(db, current_user)
-        return fsku_service_read.list_fskus(db, query=query, status=status_, store_id=store_id, limit=limit, offset=offset)
+        # 统一入口：读写都走 FskuService（避免 router 同时依赖 fsku_service_read 与 service class）
+        return svc.list_fskus(query=query, status=status_, store_id=store_id, limit=limit, offset=offset)
 
     @r.get("/{fsku_id}", response_model=FskuDetailOut)
     def detail(
