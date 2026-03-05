@@ -2,6 +2,19 @@
 -- Lot-World baseline (v2)
 -- - supplier lots keyed by lot_code_key
 -- - internal lots are singleton per (warehouse_id,item_id)
+--
+-- Phase M-5 收口约定（工程级）：
+-- ✅ base_seed.sql 只负责“主数据种子”（master data）
+-- ❌ 禁止在 baseline 中写入任何库存事实：
+--    - lots
+--    - stocks_lot
+--    - stock_ledger
+--    - stock_snapshots
+--
+-- 库存/lot 事实必须在 tests 中显式通过统一入口构造：
+--   - ensure_lot_full / ensure_internal_lot_singleton
+--   - adjust_lot_impl / StockService.adjust*
+--   - tests/helpers/inventory.py: seed_batch_slot 等
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name, code)
@@ -106,7 +119,9 @@ SELECT
 FROM items i
 WHERE NOT EXISTS (SELECT 1 FROM item_barcodes b WHERE b.item_id = i.id);
 
--- ===== inbound_receipts (kept for compatibility; no longer required by INTERNAL lot) =====
+-- ===== inbound_receipts (compat placeholder) =====
+-- 注意：当前 INTERNAL lot 的终态 identity 不应依赖 inbound_receipts。
+-- 但某些历史路径/测试可能仍假设有一条 receipt seed，因此保留这条 placeholder。
 INSERT INTO inbound_receipts (
   id, warehouse_id, supplier_id, supplier_name,
   source_type, source_id, ref, trace_id,
@@ -139,106 +154,7 @@ SELECT setval(
   true
 );
 
--- ===== lots (SUPPLIER) =====
-INSERT INTO lots (
-  warehouse_id,
-  item_id,
-  lot_code_source,
-  lot_code,
-  lot_code_key,
-  source_receipt_id,
-  source_line_no,
-  item_lot_source_policy_snapshot,
-  item_expiry_policy_snapshot,
-  item_derivation_allowed_snapshot,
-  item_uom_governance_enabled_snapshot,
-  item_shelf_life_value_snapshot,
-  item_shelf_life_unit_snapshot
-)
-VALUES
-  (1, 3001, 'SUPPLIER', 'B-CONC-1', lower('B-CONC-1'),
-   NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true,
-   NULL, NULL),
-  (1, 3002, 'SUPPLIER', 'B-OOO-1', lower('B-OOO-1'),
-   NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true,
-   NULL, NULL),
-  (1, 4001, 'SUPPLIER', 'B-MERGE-1', lower('B-MERGE-1'),
-   NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true,
-   NULL, NULL),
-  (1, 4002, 'SUPPLIER', 'B-PO-1', lower('B-PO-1'),
-   NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true,
-   NULL, NULL)
-ON CONFLICT (warehouse_id, item_id, lot_code_key)
-WHERE lot_code IS NOT NULL
-DO UPDATE SET lot_code = EXCLUDED.lot_code;
-
--- ===== lots (INTERNAL singleton for NONE-slot) =====
-INSERT INTO lots (
-  warehouse_id,
-  item_id,
-  lot_code_source,
-  lot_code,
-  lot_code_key,
-  source_receipt_id,
-  source_line_no,
-  item_lot_source_policy_snapshot,
-  item_expiry_policy_snapshot,
-  item_derivation_allowed_snapshot,
-  item_uom_governance_enabled_snapshot,
-  item_shelf_life_value_snapshot,
-  item_shelf_life_unit_snapshot
-)
-VALUES
-  (1, 1,    'INTERNAL', NULL, NULL, NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true, NULL, NULL),
-  (1, 3003, 'INTERNAL', NULL, NULL, NULL, NULL,
-   'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true, NULL, NULL)
-ON CONFLICT DO NOTHING;
-
--- ===== stocks_lot =====
--- INTERNAL: join by (wh,item) + INTERNAL + lot_code IS NULL (singleton)
-INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
-SELECT
-  x.item_id,
-  x.warehouse_id,
-  l.id AS lot_id,
-  x.qty
-FROM (
-  VALUES
-    (1,    1, 10),
-    (3003, 1, 10)
-) AS x(item_id, warehouse_id, qty)
-JOIN lots l
-  ON l.warehouse_id = x.warehouse_id
- AND l.item_id      = x.item_id
- AND l.lot_code_source = 'INTERNAL'
- AND l.lot_code IS NULL
-ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
-DO UPDATE SET qty = EXCLUDED.qty;
-
--- SUPPLIER: seed by lot_code (display) is fine because we just inserted them
-INSERT INTO stocks_lot (item_id, warehouse_id, lot_id, qty)
-SELECT x.item_id, x.warehouse_id, l.id AS lot_id, x.qty
-FROM (
-  VALUES
-    (3001, 1, 'B-CONC-1',  3),
-    (3002, 1, 'B-OOO-1',   3),
-    (4001, 1, 'B-MERGE-1', 10),
-    (4002, 1, 'B-PO-1',    0)
-) AS x(item_id, warehouse_id, lot_code, qty)
-JOIN lots l
-  ON l.warehouse_id = x.warehouse_id
- AND l.item_id      = x.item_id
- AND l.lot_code_source = 'SUPPLIER'
- AND l.lot_code     = x.lot_code
-ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
-DO UPDATE SET qty = EXCLUDED.qty;
-
--- ===== supplier bindings =====
+-- ===== supplier bindings / policies =====
 UPDATE items
 SET supplier_id = 1,
     enabled = true

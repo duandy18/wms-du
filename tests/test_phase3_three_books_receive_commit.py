@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.snapshot_run import run_snapshot
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 from app.services.three_books_consistency import verify_receive_commit_three_books
 
@@ -109,175 +110,44 @@ async def _ensure_base_uom(session: AsyncSession, *, item_id: int) -> Tuple[int,
 async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, lot_code: str) -> int:
     """
     确保 SUPPLIER lot 存在，返回 lot_id。
-    不猜 unique/index：先查再插。
+
+    ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
+    -> 统一走 app/services/stock/lots.py: ensure_lot_full
     """
     code = str(lot_code).strip()
     if not code:
         raise ValueError("lot_code required for supplier lot")
 
-    row0 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
-        )
-    ).first()
-    if row0 is not None:
-        return int(row0[0])
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO lots(
-              warehouse_id,
-              item_id,
-              lot_code_source,
-              lot_code,
-              source_receipt_id,
-              source_line_no,
-              item_lot_source_policy_snapshot,
-              item_expiry_policy_snapshot,
-              item_derivation_allowed_snapshot,
-              item_uom_governance_enabled_snapshot,
-              item_shelf_life_value_snapshot,
-              item_shelf_life_unit_snapshot,
-              created_at
-            )
-            SELECT
-              :w,
-              it.id,
-              'SUPPLIER',
-              :code,
-              NULL,
-              NULL,
-              it.lot_source_policy,
-              it.expiry_policy,
-              it.derivation_allowed,
-              it.uom_governance_enabled,
-              it.shelf_life_value,
-              it.shelf_life_unit,
-              now()
-            FROM items it
-            WHERE it.id = :i
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": code},
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(code),
+        production_date=None,
+        expiry_date=None,
     )
-
-    row1 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": code},
-        )
-    ).first()
-    assert row1 is not None, {"msg": "failed to ensure supplier lot", "warehouse_id": warehouse_id, "item_id": item_id, "code": code}
-    return int(row1[0])
+    return int(lot_id)
 
 
 async def _ensure_internal_lot_for_receipt(
     session: AsyncSession, *, warehouse_id: int, item_id: int, receipt_id: int
 ) -> int:
     """
-    INTERNAL lot：lot_code NULL，且必须绑定 source_receipt_id/source_line_no（DB check）。
-    这里用当前 receipt 作为来源，保证 CONFIRMED receipt_line 的 lot_id 合法。
+    INTERNAL lot：lot_code NULL。
+
+    ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
+    -> 统一走 app/services/stock/lots.py: ensure_internal_lot_singleton
+
+    这里仍然把 receipt_id/line_no 作为 provenance 成对传入，满足成对可选规则。
     """
-    row0 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'INTERNAL'
-                   AND source_receipt_id = :rid
-                   AND source_line_no = 1
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
-        )
-    ).first()
-    if row0 is not None:
-        return int(row0[0])
-
-    await session.execute(
-        text(
-            """
-            INSERT INTO lots(
-              warehouse_id,
-              item_id,
-              lot_code_source,
-              lot_code,
-              source_receipt_id,
-              source_line_no,
-              item_lot_source_policy_snapshot,
-              item_expiry_policy_snapshot,
-              item_derivation_allowed_snapshot,
-              item_uom_governance_enabled_snapshot,
-              item_shelf_life_value_snapshot,
-              item_shelf_life_unit_snapshot,
-              created_at
-            )
-            SELECT
-              :w,
-              it.id,
-              'INTERNAL',
-              NULL,
-              :rid,
-              1,
-              it.lot_source_policy,
-              it.expiry_policy,
-              it.derivation_allowed,
-              it.uom_governance_enabled,
-              it.shelf_life_value,
-              it.shelf_life_unit,
-              now()
-            FROM items it
-            WHERE it.id = :i
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
+    lot_id = await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=int(receipt_id),
+        source_line_no=1,
     )
-
-    row1 = (
-        await session.execute(
-            text(
-                """
-                SELECT id
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND lot_code_source = 'INTERNAL'
-                   AND source_receipt_id = :rid
-                   AND source_line_no = 1
-                 LIMIT 1
-                """
-            ),
-            {"w": int(warehouse_id), "i": int(item_id), "rid": int(receipt_id)},
-        )
-    ).first()
-    assert row1 is not None, {"msg": "failed to ensure internal lot", "warehouse_id": warehouse_id, "item_id": item_id, "receipt_id": receipt_id}
-    return int(row1[0])
+    return int(lot_id)
 
 
 async def _insert_confirmed_receipt_with_line(
