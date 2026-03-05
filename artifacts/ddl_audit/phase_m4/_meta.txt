@@ -1,5 +1,0 @@
-# ddl_audit baseline
-# generated_at: 2026-03-01T11:48:54.894741
-# dsn: postgres://wms:wms@127.0.0.1:5433/wms
-# db_version:
-PostgreSQL 14.19 on x86_64-pc-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit
