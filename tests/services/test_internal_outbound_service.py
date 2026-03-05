@@ -5,6 +5,7 @@ from datetime import date
 from sqlalchemy import text
 
 from app.db.session import async_session_maker
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 from app.services.internal_outbound_service import InternalOutboundService
 from tests.utils.ensure_minimal import ensure_item, ensure_warehouse
@@ -19,6 +20,10 @@ async def test_internal_outbound_end_to_end():
       3) 添加一行 item_id=1, qty=4，指定同一 lot_code（batch_code 展示码）
       4) 确认内部出库（扣 stocks_lot）
       5) 验证：stocks_lot 减少 / ledger 写入 INTERNAL_OUT 记录
+
+    Phase M-3：
+      - items.case_ratio/case_uom 已删除；lots 不再承载 item_case_*_snapshot / item_uom_snapshot 等历史残影列
+      - lots 也不再承载 production_date/expiry_date/expiry_source（日期事实在 receipt/ledger 侧表达）
     """
 
     warehouse_id = 1
@@ -27,11 +32,12 @@ async def test_internal_outbound_end_to_end():
     qty_outbound = 4
     batch_code = "INT-SEED-TEST-001"  # 作为 SUPPLIER lot_code 使用
 
+    code_key = str(batch_code).strip().upper()
+
     # STEP 0 — 清理现场：删除旧的 seed 测试台账 + lot-world 库存
     async with async_session_maker() as session:
         await session.execute(text("DELETE FROM stock_ledger WHERE ref = 'INT-SEED-TEST-001'"))
 
-        # 删除对应 lot 的 stocks_lot 槽位
         await session.execute(
             text(
                 """
@@ -44,14 +50,13 @@ async def test_internal_outbound_end_to_end():
                         WHERE warehouse_id = :w
                           AND item_id      = :i
                           AND lot_code_source = 'SUPPLIER'
-                          AND lot_code = :c
+                          AND lot_code_key = :k
                    )
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(batch_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
         )
 
-        # 删除 lot（可选：保持库干净）
         await session.execute(
             text(
                 """
@@ -59,94 +64,48 @@ async def test_internal_outbound_end_to_end():
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code     = :c
+                   AND lot_code_key = :k
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "c": str(batch_code)},
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
         )
 
         await session.commit()
 
     # STEP 1 — 种子库存 +10（特定 lot_code）
     async with async_session_maker() as session:
-        # ✅ 确保最小维度存在（本测试不依赖 baseline seed）
         await ensure_warehouse(session, id=int(warehouse_id), name="WH-1")
         await ensure_item(session, id=int(item_id), sku=f"SKU-{item_id}", name=f"ITEM-{item_id}")
+
+        # 本测试走显式批次（SUPPLIER lot_code），因此必须把 item 设为 REQUIRED（终态合同）
+        await session.execute(
+            text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+            {"i": int(item_id)},
+        )
+
         await session.commit()
 
-        # Phase M：lots 必须冻结 item_*_snapshot（NOT NULL）→ 必须从 items 真相源读取
-        lot_row = (
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO lots(
-                        warehouse_id,
-                        item_id,
-                        lot_code_source,
-                        lot_code,
-                        source_receipt_id,
-                        source_line_no,
-                        production_date,
-                        expiry_date,
-                        expiry_source,
-                        -- required snapshots (NOT NULL)
-                        item_lot_source_policy_snapshot,
-                        item_expiry_policy_snapshot,
-                        item_derivation_allowed_snapshot,
-                        item_uom_governance_enabled_snapshot,
-                        -- optional snapshots (nullable)
-                        item_has_shelf_life_snapshot,
-                        item_shelf_life_value_snapshot,
-                        item_shelf_life_unit_snapshot,
-                        item_uom_snapshot,
-                        item_case_ratio_snapshot,
-                        item_case_uom_snapshot
-                    )
-                    SELECT
-                        :w,
-                        :i,
-                        'SUPPLIER',
-                        :code,
-                        NULL,
-                        NULL,
-                        CURRENT_DATE,
-                        CURRENT_DATE + INTERVAL '365 day',
-                        'EXPLICIT',
-                        it.lot_source_policy,
-                        it.expiry_policy,
-                        it.derivation_allowed,
-                        it.uom_governance_enabled,
-                        it.has_shelf_life,
-                        it.shelf_life_value,
-                        it.shelf_life_unit,
-                        it.uom,
-                        it.case_ratio,
-                        it.case_uom
-                      FROM items it
-                     WHERE it.id = :i
-                    ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                    WHERE lot_code_source = 'SUPPLIER'
-                    DO UPDATE SET expiry_date = EXCLUDED.expiry_date
-                    RETURNING id
-                    """
-                ),
-                {"w": int(warehouse_id), "i": int(item_id), "code": str(batch_code)},
-            )
-        ).first()
-        assert lot_row is not None, "failed to ensure lot"
-        lot_id = int(lot_row[0])
+        # ✅ 终态：supplier lot 必须走 ensure_lot_full（lot_code_key + partial unique index）
+        lot_id = await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_code=str(batch_code),
+            production_date=None,
+            expiry_date=None,
+        )
 
         stock_svc = StockService()
         res = await stock_svc.adjust_lot(
             session=session,
             item_id=item_id,
             warehouse_id=warehouse_id,
-            lot_id=lot_id,
+            lot_id=int(lot_id),
             delta=qty_seed,
             reason="TEST_SEED",
             ref="INT-SEED-TEST-001",
             ref_line=1,
-            batch_code=batch_code,  # 展示码
+            batch_code=batch_code,
             production_date=date.today(),
             expiry_date=None,
             trace_id="INT-SEED-TRACE",
@@ -179,7 +138,6 @@ async def test_internal_outbound_end_to_end():
             item_id=item_id,
             qty=qty_outbound,
             batch_code=batch_code,
-            uom="PCS",
             note="测试行",
         )
         await session.commit()
@@ -216,10 +174,10 @@ async def test_internal_outbound_end_to_end():
                      WHERE sl.warehouse_id = :w
                        AND sl.item_id      = :i
                        AND l.lot_code_source = 'SUPPLIER'
-                       AND l.lot_code     = :c
+                       AND l.lot_code_key = :k
                     """
                 ),
-                {"w": int(warehouse_id), "i": int(item_id), "c": str(batch_code)},
+                {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
             )
         ).scalar()
 

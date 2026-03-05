@@ -15,8 +15,8 @@ async def _rebuild_snapshot_today_from_lot(session: AsyncSession, *, today) -> i
     Phase 4C：强一致快照生成（lot-world）
 
     - 永远以 stocks_lot 作为快照来源（主余额）
-    - batch_code 字段作为展示码，存 lots.lot_code（可能为 NULL）
-    - 删除当日快照后重建，确保按 (warehouse_id,item_id,lot_code) 分布与 stocks_lot 精确一致
+    - 快照 grain： (snapshot_date, warehouse_id, item_id, lot_id)
+    - 删除当日快照后重建，确保与 stocks_lot 精确一致
     """
     await session.execute(
         text("DELETE FROM stock_snapshots WHERE snapshot_date = :d"),
@@ -29,7 +29,7 @@ async def _rebuild_snapshot_today_from_lot(session: AsyncSession, *, today) -> i
                 snapshot_date,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 qty,
                 qty_available,
                 qty_allocated
@@ -38,14 +38,12 @@ async def _rebuild_snapshot_today_from_lot(session: AsyncSession, *, today) -> i
                 :d AS snapshot_date,
                 s.warehouse_id,
                 s.item_id,
-                lo.lot_code AS batch_code,
+                s.lot_id,
                 SUM(s.qty) AS qty,
                 SUM(s.qty) AS qty_available,
                 0 AS qty_allocated
             FROM stocks_lot AS s
-            LEFT JOIN lots AS lo
-              ON lo.id = s.lot_id
-            GROUP BY s.warehouse_id, s.item_id, lo.lot_code
+            GROUP BY s.warehouse_id, s.item_id, s.lot_id
             """
         ),
         {"d": today},

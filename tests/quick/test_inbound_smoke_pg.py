@@ -17,35 +17,61 @@ async def _ensure_min_domain_v2(
     item_id: int = 777,
 ) -> None:
     """
-    Phase 4E：lot-world 下确保最小域存在（不再创建/触碰 legacy stocks）。
+    Phase M-5：lot-world 下确保最小域存在（不再创建/触碰 legacy stocks）。
     - warehouses: id = warehouse_id
-    - items     : id = item_id
+    - items     : id = item_id（policy NOT NULL）
+    - item_uoms : 每 item 至少一个 base uom（PCS, ratio=1），并作为默认
     """
-
     # 仓库（最小一行）
     await session.execute(
         text("INSERT INTO warehouses(id, name) VALUES (:w, :name) ON CONFLICT (id) DO NOTHING"),
         {"w": warehouse_id, "name": f"WH-{warehouse_id}"},
     )
 
-    # 商品（最小一行，Phase M：policy NOT NULL + has_shelf_life CHECK）
+    # 商品（最小一行，Phase M-5：policy NOT NULL）
+    # 设为 REQUIRED：让 smoke 用 batch_code + production_date 跑稳定的 supplier-lot 路径
     await session.execute(
         text(
             """
             INSERT INTO items(
-              id, sku, name, uom,
+              id, sku, name,
               lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
-              has_shelf_life
+              shelf_life_value, shelf_life_unit
             )
             VALUES(
-              :i, :sku, :name, 'bag',
-              'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
-              FALSE
+              :i, :sku, :name,
+              'SUPPLIER_ONLY'::lot_source_policy, 'REQUIRED'::expiry_policy, TRUE, TRUE,
+              30, 'DAY'
             )
             ON CONFLICT (id) DO NOTHING
             """
         ),
         {"i": int(item_id), "sku": f"SKU-{item_id}", "name": f"ITEM-{item_id}"},
+    )
+
+    # 单位真相：item_uoms（base+defaults）
+    await session.execute(
+        text(
+            """
+            INSERT INTO item_uoms(
+              item_id, uom, ratio_to_base, display_name,
+              is_base, is_purchase_default, is_inbound_default, is_outbound_default
+            )
+            VALUES(
+              :i, 'PCS', 1, 'PCS',
+              TRUE, TRUE, TRUE, TRUE
+            )
+            ON CONFLICT ON CONSTRAINT uq_item_uoms_item_uom
+            DO UPDATE SET
+              ratio_to_base = EXCLUDED.ratio_to_base,
+              display_name = EXCLUDED.display_name,
+              is_base = EXCLUDED.is_base,
+              is_purchase_default = EXCLUDED.is_purchase_default,
+              is_inbound_default = EXCLUDED.is_inbound_default,
+              is_outbound_default = EXCLUDED.is_outbound_default
+            """
+        ),
+        {"i": int(item_id)},
     )
 
     await session.commit()
@@ -60,7 +86,7 @@ async def _qty_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, ba
                   FROM stocks_lot
                  WHERE warehouse_id = :w
                    AND item_id = :i
-                   AND lot_id_key = 0
+                   AND lot_id IS NULL
                  LIMIT 1
                 """
             ),
@@ -87,7 +113,7 @@ async def _qty_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, ba
 
 async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
     """
-    Phase 4E 入库烟雾测试（最小闭环，lot-world 余额 + ledger 一致性）：
+    入库烟雾测试（最小闭环，lot-world 余额 + ledger 一致性）：
 
     场景：
     1. 确保最小维度存在；
@@ -97,7 +123,6 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
        - stock_ledger 中对应 ref/ref_line 的 after_qty 与余额一致。
 
     注意：
-    - reason/reason_canon 可能被系统规范化（例如统一为 RECEIPT），测试不绑定具体字符串；
     - 本测试只验证“ledger 唯一事实 → 余额一致”的闭环。
     """
     WH, ITEM, BATCH = 1, 777, "SMOKE-BATCH-001"

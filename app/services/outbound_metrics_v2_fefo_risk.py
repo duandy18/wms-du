@@ -98,9 +98,9 @@ async def load_fefo_risk(
         if pick_codes:
             total_picks = len(pick_codes)
             fefo_picks = sum(1 for c in pick_codes if c == fefo_lot_code)
-            fefo_hit = round(fefo_picks * 100.0 / total_picks, 2)
+            expiry_pick_hit = round(fefo_picks * 100.0 / total_picks, 2)
         else:
-            fefo_hit = 0.0
+            expiry_pick_hit = 0.0
 
         item_sql = text("SELECT id, sku, name FROM items WHERE id = :item_id")
         ir = (await session.execute(item_sql, {"item_id": int(item_id)})).fetchone()
@@ -109,7 +109,7 @@ async def load_fefo_risk(
 
         risk_score = min(
             100.0,
-            max(0.0, float(near_lots) * 10.0 + max(0.0, 50.0 - float(fefo_hit))),
+            max(0.0, float(near_lots) * 10.0 + max(0.0, 50.0 - float(expiry_pick_hit))),
         )
 
         payload = {
@@ -117,7 +117,7 @@ async def load_fefo_risk(
             "sku": str(sku),
             "name": str(name),
             _k_near_expiry(): int(near_lots),
-            "fefo_hit_rate_7d": float(fefo_hit),
+            "expiry_pick_hit_rate_7d": float(expiry_pick_hit),
             "risk_score": round(float(risk_score), 2),
         }
         items_risk.append(FefoItemRisk.model_validate(payload))

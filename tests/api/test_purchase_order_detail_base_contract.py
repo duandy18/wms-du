@@ -44,10 +44,6 @@ def _extract_po_id(payload: Dict[str, Any]) -> int:
     return 0
 
 
-def _is_required_expiry_policy(v: Any) -> bool:
-    return str(v or "").strip().upper() == "REQUIRED"
-
-
 def _assert_line_base_contract(line: Dict[str, Any]) -> None:
     # ✅ 第一公民：事实口径（base）
     for k in ("qty_ordered_base", "qty_received_base", "qty_remaining_base"):
@@ -63,26 +59,20 @@ def _assert_line_base_contract(line: Dict[str, Any]) -> None:
     assert remaining_base >= 0
     assert remaining_base == max(ordered_base - received_base, 0), line
 
-    # ✅ 第一公民：快照解释器（Phase2 合同）
-    for k in (
-        "uom_snapshot",
-        "case_ratio_snapshot",
-        "case_uom_snapshot",
-        "qty_ordered_case_input",
-    ):
+    # ✅ Phase M-5：结构化输入单位快照（用于解释 & 一致性校验）
+    for k in ("qty_ordered_input", "purchase_ratio_to_base_snapshot"):
         assert k in line, line
+        assert isinstance(line[k], int), line
 
-    # 一致性：若存在 case_input & ratio，则必须能解释回 base
-    case_input = line.get("qty_ordered_case_input")
-    ratio = line.get("case_ratio_snapshot")
-    if case_input is not None and ratio is not None:
-        assert isinstance(case_input, int), line
-        assert isinstance(ratio, int), line
-        assert int(ratio) > 0, line
-        assert ordered_base == int(case_input) * int(ratio), line
+    qty_input = int(line["qty_ordered_input"])
+    ratio = int(line["purchase_ratio_to_base_snapshot"])
+    assert qty_input > 0, line
+    assert ratio >= 1, line
+    assert ordered_base == qty_input * ratio, line
 
 
 def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
+    # item name/sku 作为后端快照（必须非空）
     assert "item_name" in line, line
     assert "item_sku" in line, line
 
@@ -92,46 +82,40 @@ def _assert_line_snapshot_contract(line: Dict[str, Any]) -> None:
     assert name, f"item_name must be non-empty (backend-generated snapshot), line={line}"
     assert sku, f"item_sku must be non-empty (backend-generated snapshot), line={line}"
 
-    # ✅ Phase M：真相源为 expiry_policy；has_shelf_life 仅镜像输出（兼容字段）
-    expiry_policy = line.get("expiry_policy")
-    has_sl = bool(line.get("has_shelf_life") or False)
-    if expiry_policy is not None:
-        assert has_sl == _is_required_expiry_policy(expiry_policy), {
-            "msg": "has_shelf_life must mirror expiry_policy",
-            "expiry_policy": expiry_policy,
-            "has_shelf_life": has_sl,
-            "line": line,
-        }
-
 
 def _pick_line_for_receive(lines: list[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    优先挑 expiry_policy!=REQUIRED 的行，避免受控批次/日期约束带来噪音。
-    若找不到，则退回任意一个行（REQUIRED 也行，测试会显式填日期）。
-    """
-    for ln in lines:
-        if not _is_required_expiry_policy(ln.get("expiry_policy")):
-            return ln
+    # Phase M-5：行里不再保证携带 expiry_policy；直接取第一行即可
     return lines[0]
 
 
-def _build_receive_payload(line: Dict[str, Any]) -> Dict[str, Any]:
+def _get_item_lot_source_policy(client: TestClient, token: str, item_id: int) -> str:
+    r = client.get(f"/items/{int(item_id)}", headers=_auth_headers(token))
+    assert r.status_code == 200, r.text
+    it = r.json()
+    assert isinstance(it, dict), it
+    return str(it.get("lot_source_policy") or "")
+
+
+def _build_receive_payload(client: TestClient, token: str, line: Dict[str, Any]) -> Dict[str, Any]:
     line_id = int(line.get("id") or 0)
     assert line_id > 0, line
 
-    payload: Dict[str, Any] = {"line_id": line_id, "qty": 1}
-
-    requires_batch = _is_required_expiry_policy(line.get("expiry_policy"))
-    if not requires_batch:
-        return payload
+    item_id = int(line.get("item_id") or 0)
+    assert item_id > 0, line
 
     today = date.today()
-    payload["production_date"] = today.isoformat()
+    payload: Dict[str, Any] = {
+        "line_id": line_id,
+        "qty": 1,
+        # 为兼容 REQUIRED 商品：直接补齐日期（多给字段一般不会阻断）
+        "production_date": today.isoformat(),
+        "expiry_date": (today + timedelta(days=30)).isoformat(),
+    }
 
-    sv = line.get("shelf_life_value")
-    su = line.get("shelf_life_unit")
-    if sv is None or su is None or not str(su).strip():
-        payload["expiry_date"] = (today + timedelta(days=30)).isoformat()
+    # 标签层：lot_source_policy=SUPPLIER_ONLY 时，供应商批次码必填
+    lsp = _get_item_lot_source_policy(client, token, item_id).strip().upper()
+    if lsp == "SUPPLIER_ONLY":
+        payload["batch_code"] = f"UT-PO-BC-{item_id}-{today.isoformat()}"
 
     return payload
 
@@ -161,7 +145,7 @@ def test_purchase_order_detail_base_contract_and_receive_line_updates() -> None:
         _assert_line_snapshot_contract(ln)
 
     target = _pick_line_for_receive(lines)
-    payload = _build_receive_payload(target)
+    payload = _build_receive_payload(client, token, target)
     target_line_no = int(target.get("line_no") or 0)
     assert target_line_no > 0, target
 

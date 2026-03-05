@@ -6,6 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.stock.lots import ensure_lot_full
+from app.services.stock_service_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
 
 pytestmark = pytest.mark.grp_snapshot  # 分组标记，可按需调整
@@ -19,12 +21,12 @@ async def _seed_wh_item_lot_stock(
     lot_code: str = "LEDGER-TEST-LOT",
 ) -> int:
     """
-    Phase 4D 最小种子数据（lot-world）：
+    Phase M-5 最小种子数据（lot-world，终态写入入口）：
 
     - warehouses：确保存在
     - items：确保存在（Phase M policy NOT NULL）
-    - lots：插入 SUPPLIER lot（lot_code 非空，且冻结 item_*_snapshot）
-    - stocks_lot：插入对应槽位（qty=0）
+    - lots：ensure_lot_full（唯一入口，禁止 tests 直接 INSERT INTO lots）
+    - ledger+stocks_lot：adjust_lot_impl（唯一写入器，禁止 tests 直接 INSERT/UPDATE stocks_lot/stock_ledger）
 
     返回 lot_id。
     """
@@ -39,80 +41,35 @@ async def _seed_wh_item_lot_stock(
         {"wh_id": int(wh_id)},
     )
 
-    # Phase M：items policy NOT NULL + has_shelf_life CHECK → 统一走最小合法 helper
     await ensure_item(session, id=int(item_id), sku=f"SKU-{int(item_id)}", name=f"Item-{int(item_id)}")
 
-    lot_row = (
-        await session.execute(
-            text(
-                """
-                INSERT INTO lots(
-                    warehouse_id,
-                    item_id,
-                    lot_code_source,
-                    lot_code,
-                    source_receipt_id,
-                    source_line_no,
-                    production_date,
-                    expiry_date,
-                    expiry_source,
-                    -- required snapshots (NOT NULL)
-                    item_lot_source_policy_snapshot,
-                    item_expiry_policy_snapshot,
-                    item_derivation_allowed_snapshot,
-                    item_uom_governance_enabled_snapshot,
-                    -- optional snapshots (nullable)
-                    item_has_shelf_life_snapshot,
-                    item_shelf_life_value_snapshot,
-                    item_shelf_life_unit_snapshot,
-                    item_uom_snapshot,
-                    item_case_ratio_snapshot,
-                    item_case_uom_snapshot
-                )
-                SELECT
-                    :w,
-                    :i,
-                    'SUPPLIER',
-                    :code,
-                    NULL,
-                    NULL,
-                    CURRENT_DATE,
-                    CURRENT_DATE + INTERVAL '365 day',
-                    'EXPLICIT',
-                    it.lot_source_policy,
-                    it.expiry_policy,
-                    it.derivation_allowed,
-                    it.uom_governance_enabled,
-                    it.has_shelf_life,
-                    it.shelf_life_value,
-                    it.shelf_life_unit,
-                    it.uom,
-                    it.case_ratio,
-                    it.case_uom
-                  FROM items it
-                 WHERE it.id = :i
-                ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-                WHERE lot_code_source = 'SUPPLIER'
-                DO UPDATE SET expiry_date = EXCLUDED.expiry_date
-                RETURNING id
-                """
-            ),
-            {"w": int(wh_id), "i": int(item_id), "code": str(lot_code)},
-        )
-    ).first()
-    assert lot_row is not None, "failed to ensure lot"
-    lot_id = int(lot_row[0])
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO stocks_lot (warehouse_id, item_id, lot_id, qty)
-            VALUES (:w, :i, :lot, 0)
-            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
-            DO UPDATE SET qty = EXCLUDED.qty
-            """
-        ),
-        {"w": int(wh_id), "i": int(item_id), "lot": int(lot_id)},
+    # 用唯一写入器写一条 COUNT（delta=1 -> after=1），同时确保 stocks_lot 槽位存在且与 ledger 一致
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
+        delta=1,
+        reason="COUNT",
+        ref="TRG-TEST",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+        meta=None,
+        batch_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(timezone.utc),
+        shadow_write_stocks=False,
     )
 
     await session.commit()
@@ -122,57 +79,35 @@ async def _seed_wh_item_lot_stock(
 @pytest.mark.asyncio
 async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     """
-    lot-world 行为验证：
+    lot-world 行为验证（终态口径）：
 
-    - 先造一个 stocks_lot 槽位 (warehouse_id, item_id, lot_id, qty)
-    - 再往 stock_ledger 写一条 COUNT 记录（显式写 lot_id 与 batch_code=lot_code）
-    - 通过 JOIN stocks_lot/lots 校验 ledger 的维度与 lot-world 槽位一致
+    - 通过 adjust_lot_impl 写入一条 COUNT（显式 lot_id）
+    - 再 JOIN stocks_lot/lots 校验 ledger 的维度与 lot-world 槽位一致（展示码来自 lots.lot_code）
     """
     wh_id, item_id = 1, 99901
     lot_code = "LEDGER-TEST-LOT"
 
     lot_id = await _seed_wh_item_lot_stock(session, wh_id=wh_id, item_id=item_id, lot_code=lot_code)
 
-    now = datetime.now(timezone.utc)
+    # 通过 ref/ref_line 定位刚刚写入的 ledger 行（避免直接 INSERT stock_ledger）
     row = await session.execute(
         text(
             """
-            INSERT INTO stock_ledger (
-                warehouse_id,
-                item_id,
-                lot_id,
-                batch_code,
-                reason,
-                ref,
-                ref_line,
-                delta,
-                occurred_at,
-                after_qty
-            )
-            VALUES (
-                :wh_id,
-                :item_id,
-                :lot_id,
-                :batch_code,
-                'COUNT',
-                'TRG-TEST',
-                1,
-                1,
-                :ts,
-                1
-            )
-            RETURNING id
+            SELECT id
+              FROM stock_ledger
+             WHERE warehouse_id = :wh_id
+               AND item_id = :item_id
+               AND lot_id = :lot_id
+               AND ref = 'TRG-TEST'
+               AND ref_line = 1
+             ORDER BY id DESC
+             LIMIT 1
             """
         ),
-        {
-            "wh_id": int(wh_id),
-            "item_id": int(item_id),
-            "lot_id": int(lot_id),
-            "batch_code": str(lot_code),
-            "ts": now,
-        },
+        {"wh_id": int(wh_id), "item_id": int(item_id), "lot_id": int(lot_id)},
     )
-    ledger_id = int(row.scalar_one())
+    ledger_id = row.scalar_one_or_none()
+    assert ledger_id is not None, "ledger row not found"
 
     row2 = await session.execute(
         text(
@@ -181,17 +116,18 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
               l.warehouse_id AS l_wh,
               l.item_id      AS l_item,
               l.lot_id       AS l_lot,
-              l.batch_code   AS l_code,
+              lo_l.lot_code  AS l_code,
               sl.warehouse_id AS s_wh,
               sl.item_id      AS s_item,
               sl.lot_id       AS s_lot,
-              lo.lot_code     AS s_code
+              lo_s.lot_code   AS s_code
             FROM stock_ledger AS l
+            LEFT JOIN lots lo_l ON lo_l.id = l.lot_id
             JOIN stocks_lot AS sl
               ON sl.warehouse_id = l.warehouse_id
              AND sl.item_id      = l.item_id
-             AND sl.lot_id_key   = COALESCE(l.lot_id, 0)
-            LEFT JOIN lots lo ON lo.id = sl.lot_id
+             AND sl.lot_id       = l.lot_id
+            LEFT JOIN lots lo_s ON lo_s.id = sl.lot_id
            WHERE l.id = :lid
             """
         ),

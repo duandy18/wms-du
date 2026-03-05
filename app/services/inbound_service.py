@@ -147,11 +147,26 @@ class InboundService:
         if found is not None:
             return int(found)
 
+        # Phase M-5: items.uom 已移除；必须补齐 items 的 NOT NULL 策略字段
         ins = await session.execute(
             sa.text(
                 """
-                INSERT INTO items (sku, name, uom)
-                VALUES (:s, :n, 'EA')
+                INSERT INTO items (
+                    sku,
+                    name,
+                    lot_source_policy,
+                    expiry_policy,
+                    derivation_allowed,
+                    uom_governance_enabled
+                )
+                VALUES (
+                    :s,
+                    :n,
+                    'SUPPLIER_ONLY',
+                    'NONE',
+                    true,
+                    false
+                )
                 ON CONFLICT (sku) DO UPDATE SET name = EXCLUDED.name
                 RETURNING id
                 """

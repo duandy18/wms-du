@@ -24,7 +24,14 @@ _INITIALIZED: bool = False  # 防重复初始化
 # ✅ 规则：主线 metadata 禁止加载它们（不允许双真相 / 不复活旧表）。
 _DEFAULT_EXCLUDE: Set[str] = {
     "app.models.batch",
-    "app.models.stock",
+}
+
+# Phase M-5：表名级别的 legacy 黑名单（防止未来模块改名/移动导致 ex 失效）
+# 一旦被导入，必须从 Base.metadata 移除，避免 alembic-check 噪音。
+_LEGACY_TABLE_NAMES: Set[str] = {
+    "stocks",
+    "batches",
+    "snapshots",  # 若未来有人误复活 v1 快照表
 }
 
 
@@ -58,6 +65,17 @@ def _safe_import(mod: str) -> bool:
         return False
 
 
+def _purge_legacy_tables_from_metadata() -> None:
+    """
+    防腐层：即便某个 legacy 模型被意外导入（例如改名/移动导致 _DEFAULT_EXCLUDE 失效），
+    也要保证 Base.metadata 不包含这些 legacy 表名，以免 alembic-check / autogenerate 误报。
+    """
+    for tname in list(Base.metadata.tables.keys()):
+        if tname in _LEGACY_TABLE_NAMES:
+            Base.metadata.remove(Base.metadata.tables[tname])
+            log.warning("purged legacy table from Base.metadata: %s", tname)
+
+
 def init_models(
     *,
     extra_modules: Iterable[str] | None = None,
@@ -71,7 +89,7 @@ def init_models(
       3) 最后统一 configure_mappers()
 
     Phase 5 约束（硬）：
-    - 主线 metadata 禁止加载 legacy 的 batch/stock（对应表不存在），避免 alembic-check 误报。
+    - 主线 metadata 禁止加载 legacy 的 batch（对应表不存在），避免 alembic-check 误报。
     """
     global _INITIALIZED
     if _INITIALIZED and not force:
@@ -104,7 +122,7 @@ def init_models(
         if _safe_import(mod):
             loaded.append(mod)
 
-    # ✅ 递归补齐：仍然允许导入其它模型，但要尊重 ex（避免 batch/stock 被扫进来）
+    # ✅ 递归补齐：仍然允许导入其它模型，但要尊重 ex（避免 legacy 被扫进来）
     for mod in _iter_model_modules_recursive("app.models"):
         if mod in ex or mod in loaded:
             continue
@@ -117,6 +135,8 @@ def init_models(
                 continue
             if _safe_import(mod):
                 loaded.append(mod)
+
+    _purge_legacy_tables_from_metadata()
 
     configure_mappers()
     _INITIALIZED = True

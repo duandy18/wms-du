@@ -23,13 +23,7 @@ TABLES = [
 ]
 
 def run(cmd: list[str]) -> str:
-    p = subprocess.run(
-        cmd,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    p = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return p.stdout
 
 def main() -> None:
@@ -50,7 +44,7 @@ def main() -> None:
         f.write("\n".join(meta) + "\n")
 
     for t in TABLES:
-        print(f"[ddl_audit] exporting \\\\d+ {t} ...")
+        print(f"[ddl_audit] exporting \\d+ {t} ...")
         out = run(["psql", DSN, "-X", "-v", "ON_ERROR_STOP=1", "-c", f"\\d+ {t}"])
         with open(os.path.join(OUT_DIR, f"{t}.ddl.txt"), "w", encoding="utf-8") as f:
             f.write(out)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
+from app.api.lot_code_contract import normalize_optional_lot_code
 from app.api.routers.stock_ledger_helpers import normalize_time_range
 from app.db.session import get_session
 from app.schemas.stock_ledger import LedgerQuery
@@ -31,7 +31,7 @@ def register(router: APIRouter) -> None:
             raise HTTPException(status_code=400, detail="shadow-reconcile-lot 必须指定 warehouse_id + item_id。")
 
         # 对齐你现有查询行为：batch_code 先归一（None/空串/'None' -> None）
-        norm_bc = normalize_optional_batch_code(getattr(payload, "batch_code", None))
+        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
         if getattr(payload, "batch_code", None) != norm_bc:
             payload = payload.model_copy(update={"batch_code": norm_bc})
 

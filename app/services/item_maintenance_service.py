@@ -22,6 +22,10 @@ class ItemMaintenanceService:
     - create_item_by_id：历史兼容/修复
     - 默认关闭（WMS_ALLOW_CREATE_ITEM_BY_ID=1 才允许）
     - 不承担正常业务 create/update
+
+    Phase M-5：
+    - items.uom 已物理移除；此通道不再接收/写入 uom
+    - 必须补齐 items 的 NOT NULL 策略字段
     """
 
     def __init__(self, db: Session) -> None:
@@ -35,9 +39,6 @@ class ItemMaintenanceService:
         sku: Optional[str] = None,
         name: Optional[str] = None,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
@@ -64,36 +65,35 @@ class ItemMaintenanceService:
 
         name_val = (name or f"ITEM-{id}").strip()
         spec_val = spec.strip() if isinstance(spec, str) else None
-        uom_val = (uom or "PCS").strip().upper() or "PCS"
         enabled_val = True if enabled is None else bool(enabled)
 
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
         category_val = category.strip() if isinstance(category, str) and category.strip() else None
 
-        case_ratio_val: Optional[int] = None
-        if case_ratio is not None:
-            if int(case_ratio) < 1:
-                raise ValueError("case_ratio must be >= 1")
-            case_ratio_val = int(case_ratio)
-
-        case_uom_val = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
+        # Phase M：根据 legacy has_shelf_life 推导 expiry_policy（避免违反 items 的 CHECK）
+        exp_policy = "REQUIRED" if bool(has_shelf_life) else "NONE"
+        if exp_policy != "REQUIRED":
+            shelf_life_value = None
+            shelf_life_unit = None
 
         obj = Item(
             id=int(id),
             sku=sku_val,
             name=name_val,
-            uom=uom_val,
             spec=spec_val,
             enabled=enabled_val,
             supplier_id=supplier_id,
             brand=brand_val,
             category=category_val,
-            has_shelf_life=bool(has_shelf_life) if has_shelf_life is not None else False,
+            # Phase M policy（items NOT NULL）
+            lot_source_policy="SUPPLIER_ONLY",
+            expiry_policy=exp_policy,
+            derivation_allowed=True,
+            uom_governance_enabled=False,
+            # shelf_life params
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
-            case_ratio=case_ratio_val,
-            case_uom=case_uom_val,
         )
 
         self.db.add(obj)

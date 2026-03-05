@@ -80,6 +80,10 @@ class MasterDataService:
         - baseline 兜底只保证 id 存在；
         - 冲突时绝不更新 sku（禁止“后门改码”）；
         - 允许更新 name（作为兜底描述）。
+
+        Phase M-5：
+        - items.uom 已删除
+        - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 均 NOT NULL 且无默认
         """
         for it_raw in item_ids:
             try:
@@ -91,8 +95,17 @@ class MasterDataService:
 
             await session.execute(
                 SA(
-                    "INSERT INTO items(id, sku, name) VALUES (:i, :s, :n) "
-                    "ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name"
+                    """
+                    INSERT INTO items(
+                      id, sku, name,
+                      lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled
+                    )
+                    VALUES(
+                      :i, :s, :n,
+                      'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, TRUE
+                    )
+                    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+                    """
                 ),
                 {"i": it, "s": f"SKU-{it}", "n": f"ITEM-{it}"},
             )

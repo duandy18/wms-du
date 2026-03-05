@@ -5,9 +5,9 @@ from typing import Set
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import (
+from app.api.lot_code_contract import (
     fetch_item_expiry_policy_map,
-    validate_batch_code_contract,
+    validate_lot_code_contract,
 )
 from app.db.session import get_session
 from app.schemas.internal_outbound import (
@@ -43,9 +43,9 @@ async def upsert_internal_outbound_line(
             expiry_policy_map.get(payload.item_id)
         )
 
-        batch_code = validate_batch_code_contract(
+        batch_code = validate_lot_code_contract(
             requires_batch=requires_batch,
-            batch_code=payload.batch_code,
+            lot_code=payload.batch_code,
         )
 
         await svc.upsert_line(
@@ -54,7 +54,7 @@ async def upsert_internal_outbound_line(
             item_id=payload.item_id,
             qty=payload.qty,
             batch_code=batch_code,
-            uom=payload.uom,
+            # Phase M-5: internal_outbound 行不再承载 uom（单位真相源 = item_uoms）
             note=payload.note,
         )
         await session.commit()

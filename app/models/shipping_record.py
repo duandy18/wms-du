@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, Numeric, String, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,12 @@ class ShippingRecord(Base):
 
     - 一条记录对应一次发货行为（通常对应一个订单 / 包裹）
     - Phase 2：扩展为“可对账 / 可核算 / 可追踪”的正式账本
+
+    终态合同（Phase 3 收口）：
+    - (platform, shop_id, order_ref) 为硬幂等键（数据库 unique）
+    - warehouse_id 为事实（NOT NULL + FK）
+    - shipping_provider_id 为事实（NOT NULL + FK）
+    - carrier_code/name 仅为冗余展示字段（来源于 provider）
     """
 
     __tablename__ = "shipping_records"
@@ -27,15 +33,25 @@ class ShippingRecord(Base):
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
     shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    # 发货仓库（预留，用于“按仓库统计发货成本”）
-    warehouse_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 发货仓库：事实（NOT NULL + FK）
+    warehouse_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
-    # 承运商编码（如 ZTO / JT / SF）
+    # 承运商/网点：事实（NOT NULL + FK）
+    shipping_provider_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("shipping_providers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    # 冗余展示字段（来自 provider）
     carrier_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # 冗余名称，方便报表展示
     carrier_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    # 电子面单 / 运单号
+    # 电子面单 / 运单号（允许空：先落记录后补运单号）
     tracking_no: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # 链路 ID（用于 Trace / Lifecycle 关联）
@@ -94,6 +110,7 @@ class ShippingRecord(Base):
         Index("ix_shipping_records_ref_time", "order_ref", "created_at"),
         Index("ix_shipping_records_trace_id", "trace_id"),
         Index("ix_shipping_records_tracking_no", "tracking_no"),
+        Index("ix_shipping_records_provider_id", "shipping_provider_id"),
     )
 
     def __repr__(self) -> str:
@@ -101,5 +118,6 @@ class ShippingRecord(Base):
             f"<ShippingRecord id={self.id} ref={self.order_ref} "
             f"carrier={self.carrier_code} tracking_no={self.tracking_no} "
             f"warehouse_id={self.warehouse_id} "
+            f"provider_id={self.shipping_provider_id} "
             f"trace_id={self.trace_id}>"
         )

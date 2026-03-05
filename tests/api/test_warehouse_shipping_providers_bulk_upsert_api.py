@@ -8,9 +8,9 @@
 # - 不依赖手工 seed（尽量自动补齐 shipping_providers）
 # - 不强行猜 warehouses 表字段（仓库没有就 skip）
 #
-# Phase 6 刚性契约：
-# - shipping_providers.warehouse_id NOT NULL
-# - 因此测试补种 shipping_providers 时必须写入 warehouse_id（使用当前选中的 warehouse）
+# 最新合同：
+# - shipping_providers 为“网点实体”，不再包含 warehouse_id
+# - 绑定关系通过 warehouse_shipping_providers 表表达（M:N）
 
 from __future__ import annotations
 
@@ -62,16 +62,16 @@ def _pick_n_provider_ids(engine, n: int) -> Optional[list[int]]:
         return [int(r["id"]) for r in rows]
 
 
-def _try_seed_shipping_providers(engine, *, need_total: int, warehouse_id: int) -> None:
+def _try_seed_shipping_providers(engine, *, need_total: int) -> None:
     """
     补种 shipping_providers，确保至少 need_total 条。
-    Phase 6：必须写 warehouse_id（NOT NULL）。
+    最新合同：shipping_providers 不再需要 warehouse_id。
     """
     suffix = int(time.time() * 1000) % 1_000_000
     insert_sql = text(
         """
-        INSERT INTO shipping_providers (name, code, active, priority, warehouse_id)
-        VALUES (:name, :code, :active, :priority, :warehouse_id)
+        INSERT INTO shipping_providers (name, code, active, priority, address)
+        VALUES (:name, :code, :active, :priority, :address)
         RETURNING id
         """
     )
@@ -88,7 +88,7 @@ def _try_seed_shipping_providers(engine, *, need_total: int, warehouse_id: int) 
                     "code": f"TST{suffix}{i+1}",
                     "active": True,
                     "priority": 0,
-                    "warehouse_id": int(warehouse_id),
+                    "address": None,
                 },
             )
 
@@ -104,10 +104,10 @@ def test_bulk_upsert_contract_smoke():
     if not wid:
         pytest.skip("No warehouses in test DB. Seed at least 1 warehouse before running this test.")
 
-    # 确保至少 3 个 shipping_providers（Phase 6：补种必须带 warehouse_id）
+    # 确保至少 3 个 shipping_providers（自动补种，不依赖旧 warehouse_id 合同）
     if _count_shipping_providers(engine) < 3:
         try:
-            _try_seed_shipping_providers(engine, need_total=3, warehouse_id=wid)
+            _try_seed_shipping_providers(engine, need_total=3)
         except Exception as e:
             pytest.skip(f"Need at least 3 shipping_providers, and auto-seed failed: {e!r}")
 

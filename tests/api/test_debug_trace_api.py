@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.utils.ensure_minimal import ensure_item
 
+from app.services.stock.lots import ensure_lot_full
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -20,6 +22,10 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     - order_fulfillment: actual_warehouse_id=1（执行仓事实）
     - outbound_commits_v2: trace_id='ORD-UT-1'
     - stock_ledger: trace_id='ORD-UT-1', reason='SHIPMENT', ref='ORD-UT-1', delta=-2
+
+    Lot-World 终态注意：
+    - stock_ledger 不再存在 batch_code 列；展示码来自 lots.lot_code（通过 lot_id JOIN）
+    - 因此这里先 ensure SUPPLIER lot（lot_code='B-TRACE-1'）拿到 lot_id，再写 stock_ledger.lot_id
     """
     trace_id = "ORD-UT-1"
     platform = "PDD"
@@ -108,8 +114,18 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         {"p": platform, "s": shop_id, "ref": order_ref, "tid": trace_id},
     )
 
-    # stock_ledger：SHIPMENT
-    # 单宇宙回归后：stock_ledger 不再含 scope 列
+    # ensure SUPPLIER lot（展示码 lot_code='B-TRACE-1'）
+    lot_code = "B-TRACE-1"
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # stock_ledger：SHIPMENT（lot_id 维度；不写 batch_code）
     await session.execute(
         text(
             """
@@ -117,27 +133,33 @@ async def _seed_trace_case(session: AsyncSession) -> str:
                 trace_id,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 reason,
+                reason_canon,
                 ref,
                 ref_line,
                 delta,
                 occurred_at,
                 created_at,
-                after_qty
+                after_qty,
+                production_date,
+                expiry_date
             )
             VALUES (
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-TRACE-1',
+                :lot_id,
+                'SHIPMENT',
                 'SHIPMENT',
                 :ref,
                 1,
                 -2,
                 now(),
                 now(),
-                0
+                0,
+                NULL,
+                NULL
             )
             """
         ),
@@ -145,6 +167,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
             "trace_id": trace_id,
             "wh_id": wh_id,
             "item_id": item_id,
+            "lot_id": int(lot_id),
             "ref": order_ref,
         },
     )

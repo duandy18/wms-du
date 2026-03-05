@@ -134,24 +134,28 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     assert ln2 is not None
     ref_line = int(getattr(ln2, "id", 1) or 1)
 
-    # 查回仓那条正 delta 的 reason，避免猜 MovementType.RETURN 的落库字符串
+    # ✅ 终态：stock_ledger 无 batch_code 列；用 (wh,item,ref,ref_line,delta>0) 定位回仓入库行
     row = (
         await session.execute(
             text(
                 """
-                SELECT reason
+                SELECT id, reason, lot_id
                   FROM stock_ledger
-                 WHERE warehouse_id=:w AND item_id=:i AND batch_code=:c
-                   AND ref=:ref AND ref_line=:rl AND delta>0
+                 WHERE warehouse_id=:w
+                   AND item_id=:i
+                   AND ref=:ref
+                   AND ref_line=:rl
+                   AND delta>0
                  ORDER BY id DESC
                  LIMIT 1
                 """
             ),
-            {"w": wh_id, "i": item_id, "c": batch_code, "ref": order_ref, "rl": ref_line},
+            {"w": wh_id, "i": item_id, "ref": order_ref, "rl": ref_line},
         )
     ).first()
     assert row, "missing return-in ledger row"
-    reason_val = str(row[0])
+    reason_val = str(row[1])
+    lot_id_val = int(row[2])
 
     await run_snapshot(session)
     await verify_commit_three_books(
@@ -162,7 +166,8 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
             {
                 "warehouse_id": wh_id,
                 "item_id": item_id,
-                "batch_code": batch_code,
+                "lot_id": lot_id_val,
+                "batch_code": batch_code,  # 仅展示/兼容字段（不参与结构锚点）
                 "qty": 2,
                 "ref": order_ref,
                 "ref_line": ref_line,

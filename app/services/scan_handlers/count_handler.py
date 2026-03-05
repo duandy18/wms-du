@@ -22,105 +22,26 @@ async def _ensure_supplier_lot_id(
     expiry_date: date | None,
 ) -> int:
     """
-    Phase 4E：Count 写入以 lot-world 为准。
-    - 把 batch_code 视为展示码（lots.lot_code）
-    - COUNT 的维度需要落在一个确定的 lot 槽位上，因此这里确保 SUPPLIER lot 存在并返回 id
-
-    注意：lots 表对策略快照（item_*_snapshot）有 NOT NULL 护栏，
-    因此插入 lots 必须从 items 真相源读取并冻结快照字段。
+    Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
+    - Count 仍要求 batch_code（盘点维度必须落到确定 SUPPLIER lot 槽位）
     """
+    from app.services.stock.lots import ensure_lot_full
+
+    _ = production_date
+    _ = expiry_date
+
     code = str(lot_code).strip()
     if not code:
         raise ValueError("盘点操作必须提供 batch_code。")
 
-    prod = production_date or date.today()
-    expiry_source = "EXPLICIT" if expiry_date is not None else None
-
-    row = await session.execute(
-        sa.text(
-            """
-            INSERT INTO lots(
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                source_receipt_id,
-                source_line_no,
-                production_date,
-                expiry_date,
-                expiry_source,
-                -- required snapshots (NOT NULL)
-                item_lot_source_policy_snapshot,
-                item_expiry_policy_snapshot,
-                item_derivation_allowed_snapshot,
-                item_uom_governance_enabled_snapshot,
-                -- optional snapshots (nullable)
-                item_has_shelf_life_snapshot,
-                item_shelf_life_value_snapshot,
-                item_shelf_life_unit_snapshot,
-                item_uom_snapshot,
-                item_case_ratio_snapshot,
-                item_case_uom_snapshot
-            )
-            SELECT
-                :w,
-                :i,
-                'SUPPLIER',
-                :code,
-                NULL,
-                NULL,
-                :prod,
-                :exp,
-                :exp_src,
-                it.lot_source_policy,
-                it.expiry_policy,
-                it.derivation_allowed,
-                it.uom_governance_enabled,
-                it.has_shelf_life,
-                it.shelf_life_value,
-                it.shelf_life_unit,
-                it.uom,
-                it.case_ratio,
-                it.case_uom
-              FROM items it
-             WHERE it.id = :i
-            ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-            WHERE lot_code_source = 'SUPPLIER'
-            DO UPDATE SET expiry_date = EXCLUDED.expiry_date
-            RETURNING id
-            """
-        ),
-        {
-            "w": int(warehouse_id),
-            "i": int(item_id),
-            "code": code,
-            "prod": prod,
-            "exp": expiry_date,
-            "exp_src": expiry_source,
-        },
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(code),
+        production_date=None,
+        expiry_date=None,
     )
-    got = row.scalar_one_or_none()
-    if got is not None:
-        return int(got)
-
-    row2 = await session.execute(
-        sa.text(
-            """
-            SELECT id
-              FROM lots
-             WHERE warehouse_id = :w
-               AND item_id      = :i
-               AND lot_code_source = 'SUPPLIER'
-               AND lot_code     = :code
-             LIMIT 1
-            """
-        ),
-        {"w": int(warehouse_id), "i": int(item_id), "code": code},
-    )
-    got2 = row2.scalar_one_or_none()
-    if got2 is None:
-        raise ValueError("lot_not_found")
-    return int(got2)
 
 
 async def _ensure_stocks_lot_slot_exists(
@@ -149,9 +70,6 @@ async def _lock_current_qty_by_lot(
     item_id: int,
     lot_id: int,
 ) -> int:
-    """
-    Phase 4E：按确定 lot 槽位加锁读取 current qty（避免聚合 FOR UPDATE 的尴尬）。
-    """
     await _ensure_stocks_lot_slot_exists(session, warehouse_id=warehouse_id, item_id=item_id, lot_id=lot_id)
 
     row = await session.execute(
@@ -161,11 +79,11 @@ async def _lock_current_qty_by_lot(
               FROM stocks_lot
              WHERE warehouse_id = :w
                AND item_id      = :i
-               AND lot_id_key   = :lk
+               AND lot_id       = :lot
              FOR UPDATE
             """
         ),
-        {"w": int(warehouse_id), "i": int(item_id), "lk": int(lot_id)},
+        {"w": int(warehouse_id), "i": int(item_id), "lot": int(lot_id)},
     )
     return int(row.scalar_one_or_none() or 0)
 
@@ -177,13 +95,6 @@ async def _refresh_snapshot_for_item(
     warehouse_id: int,
     item_id: int,
 ) -> None:
-    """
-    Phase 3 合同要求：delta != 0 时 snapshot 必须与余额可观测一致（至少 touched keys）。
-
-    Phase 4E：
-    - snapshot 从 lot-world 余额（stocks_lot）重建；
-    - batch_code 字段作为展示码：lots.lot_code（允许 NULL）。
-    """
     await session.execute(
         sa.text(
             """
@@ -196,7 +107,8 @@ async def _refresh_snapshot_for_item(
         {"d": snapshot_date, "w": int(warehouse_id), "i": int(item_id)},
     )
 
-    # 注意：batch_code_key 是生成列，INSERT 不写；唯一性在 (snapshot_date, warehouse_id, item_id, batch_code_key)
+    # Lot-world: snapshot grain is (snapshot_date, warehouse_id, item_id, lot_id).
+    # Do NOT write batch_code into stock_snapshots (column no longer exists).
     await session.execute(
         sa.text(
             """
@@ -204,7 +116,7 @@ async def _refresh_snapshot_for_item(
                 snapshot_date,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 qty,
                 qty_available,
                 qty_allocated
@@ -213,14 +125,18 @@ async def _refresh_snapshot_for_item(
                 :d AS snapshot_date,
                 s.warehouse_id,
                 s.item_id,
-                lo.lot_code AS batch_code,
+                s.lot_id,
                 s.qty,
                 s.qty AS qty_available,
                 0    AS qty_allocated
               FROM stocks_lot s
-              LEFT JOIN lots lo ON lo.id = s.lot_id
              WHERE s.warehouse_id = :w
                AND s.item_id      = :i
+            ON CONFLICT (snapshot_date, warehouse_id, item_id, lot_id)
+            DO UPDATE SET
+                qty = EXCLUDED.qty,
+                qty_available = EXCLUDED.qty_available,
+                qty_allocated = EXCLUDED.qty_allocated
             """
         ),
         {"d": snapshot_date, "w": int(warehouse_id), "i": int(item_id)},
@@ -239,18 +155,6 @@ async def handle_count(
     expiry_date: date | None = None,
     trace_id: str | None = None,
 ) -> dict:
-    """
-    盘点（Count）—— v2：按 仓库 + 商品 + 批次展示码(lot_code) 粒度。
-
-    Phase 3 合同：
-    - delta != 0：写 ledger + 改余额 + snapshot 可观测一致
-    - delta == 0：也写一条“确认类事件台账”（ledger），余额不变
-      * 通过 StockService.adjust 的 allow_zero_delta_ledger + sub_reason 实现
-
-    Phase 4E：
-    - current/余额以 stocks_lot 为准；
-    - 禁止读取 legacy stocks。
-    """
     if actual < 0:
         raise ValueError("Actual quantity must be non-negative.")
     if not batch_code or not str(batch_code).strip():
@@ -260,16 +164,6 @@ async def handle_count(
 
     bcode = str(batch_code).strip()
 
-    # 只有盘盈需要按“入库”逻辑补齐日期
-    if actual > 0:
-        # 对批次展示码（SUPPLIER lot）而言，建议至少有一个日期可推导/显式提供
-        if production_date is None and expiry_date is None:
-            # 只在需要增加库存（delta>0）时强制；这里先不强制，后面按 delta 再判断
-            pass
-
-    # Phase 4E：确保 lot 存在并锁定该 lot 槽位读取 current
-    # ⚠️ 这里将 batch_code 视为 SUPPLIER lot_code
-    # 日期：仅当盘盈时强制补齐；盘亏/确认不要求
     lot_id = await _ensure_supplier_lot_id(
         session,
         warehouse_id=int(warehouse_id),
@@ -290,7 +184,6 @@ async def handle_count(
     before = int(current)
     after = int(current) + int(delta)
 
-    # 只有盘盈需要按“入库”逻辑补齐日期
     if delta > 0:
         if production_date is None and expiry_date is None:
             raise ValueError("盘盈为入库行为，必须提供 production_date 或 expiry_date。")
@@ -302,9 +195,7 @@ async def handle_count(
             expiry_date=expiry_date,
         )
 
-    meta = {
-        "sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM",
-    }
+    meta = {"sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM"}
     if delta == 0:
         meta["allow_zero_delta_ledger"] = True
 
@@ -327,7 +218,6 @@ async def handle_count(
 
     ts = datetime.now(timezone.utc)
 
-    # ✅ Phase 3 合同：delta!=0 时刷新当日 snapshot，使其与余额可观测一致
     if delta != 0:
         await _refresh_snapshot_for_item(
             session,

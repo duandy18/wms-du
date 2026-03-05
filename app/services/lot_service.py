@@ -1,89 +1,105 @@
 # app/services/lot_service.py
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import text
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
+from app.models.item import Item
+from app.models.lot import Lot
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 
 
-async def ensure_lot_dict(
+def _snapshot_equal(existing: Lot, incoming: dict) -> bool:
+    """
+    Phase M-5：lots 退出单位快照承载（unit_governance 二阶段）
+    - 复用/冲突判定只比较“策略/货架期”快照
+    - 已移除 lots 的单位快照列（migration 已 drop），此处不再涉及单位字段
+    """
+    return (
+        existing.item_shelf_life_value_snapshot == incoming["item_shelf_life_value_snapshot"]
+        and existing.item_shelf_life_unit_snapshot == incoming["item_shelf_life_unit_snapshot"]
+        and existing.item_lot_source_policy_snapshot == incoming["item_lot_source_policy_snapshot"]
+        and existing.item_expiry_policy_snapshot == incoming["item_expiry_policy_snapshot"]
+        and existing.item_derivation_allowed_snapshot == incoming["item_derivation_allowed_snapshot"]
+        and existing.item_uom_governance_enabled_snapshot == incoming["item_uom_governance_enabled_snapshot"]
+    )
+
+
+async def resolve_or_create_lot(
+    db: AsyncSession,
     *,
-    session: AsyncSession,
     warehouse_id: int,
-    item_id: int,
+    item: Item,
+    lot_code_source: str,
     lot_code: Optional[str],
-    production_date: Optional[date],
-    expiry_date: Optional[date],
-    created_at: datetime,
-) -> None:
+    source_receipt_id: Optional[int],
+    source_line_no: Optional[int],
+) -> int:
     """
-    Phase 4E（真收口）：
-    - 禁止写入 legacy 表
-    - 若需要批次/lot 主档，统一写入 lots（SUPPLIER lot_code）
-    - 非批次商品 lot_code 归一为 None：直接跳过（与 “无 lot 槽位” 对齐）
+    兼容层 lot 创建/解析（Phase M-5）：
 
-    说明：
-    - 这里不强制更新日期（避免覆盖历史业务档案）
-    - canonical 一致性强校验请走 receive/batch_semantics.ensure_batch_consistent（lots 口径）
+    终态收口：
+    - SUPPLIER lot 统一走 ensure_lot_full（写 lot_code_key 防漂移）
+    - INTERNAL lot 统一走 ensure_internal_lot_singleton（按 wh+item 单例）
+    - 本模块不再直接 new Lot()/flush，避免第二入口造成漂移与约束冲突
     """
-    code = normalize_optional_batch_code(lot_code)
-    if code is None:
-        return
+    lot_code_source_u = str(lot_code_source or "").upper().strip()
+    if lot_code_source_u not in ("SUPPLIER", "INTERNAL"):
+        raise HTTPException(status_code=422, detail="invalid_lot_code_source")
 
-    _ = created_at  # lots 未必有 created_at；保留参数避免上游签名改动
+    expiry_policy = getattr(item, "expiry_policy", None)
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO lots (
-                warehouse_id,
-                item_id,
-                lot_code_source,
-                lot_code,
-                production_date,
-                expiry_date,
-                expiry_source
-            )
-            VALUES (
-                :w, :i, 'SUPPLIER', :code, :prod, :exp, :exp_src
-            )
-            ON CONFLICT (warehouse_id, item_id, lot_code_source, lot_code)
-            WHERE lot_code_source = 'SUPPLIER'
-            DO NOTHING
-            """
-        ),
-        {
-            "i": int(item_id),
-            "w": int(warehouse_id),
-            "code": code,
-            "prod": production_date,
-            "exp": expiry_date,
-            "exp_src": ("EXPLICIT" if expiry_date is not None else None),
-        },
-    )
+    snapshot = {
+        "item_shelf_life_value_snapshot": getattr(item, "shelf_life_value", None),
+        "item_shelf_life_unit_snapshot": getattr(item, "shelf_life_unit", None),
+        "item_lot_source_policy_snapshot": getattr(item, "lot_source_policy"),
+        "item_expiry_policy_snapshot": expiry_policy,
+        "item_derivation_allowed_snapshot": bool(getattr(item, "derivation_allowed")),
+        "item_uom_governance_enabled_snapshot": bool(getattr(item, "uom_governance_enabled")),
+    }
 
+    if snapshot["item_lot_source_policy_snapshot"] is None:
+        raise HTTPException(status_code=500, detail="item_policy_missing:lot_source_policy")
+    if snapshot["item_expiry_policy_snapshot"] is None:
+        raise HTTPException(status_code=500, detail="item_policy_missing:expiry_policy")
 
-# 兼容旧调用名：仍保留函数入口，但内部语义是 lot-world
-async def ensure_batch_dict(
-    *,
-    session: AsyncSession,
-    warehouse_id: int,
-    item_id: int,
-    batch_code: Optional[str],
-    production_date: Optional[date],
-    expiry_date: Optional[date],
-    created_at: datetime,
-) -> None:
-    await ensure_lot_dict(
-        session=session,
-        warehouse_id=warehouse_id,
-        item_id=item_id,
-        lot_code=batch_code,
-        production_date=production_date,
-        expiry_date=expiry_date,
-        created_at=created_at,
-    )
+    if lot_code_source_u == "SUPPLIER":
+        if not lot_code or not str(lot_code).strip():
+            raise HTTPException(status_code=422, detail="supplier_lot_code_required")
+
+        # ensure supplier lot by key (drift-proof)
+        lot_id = await ensure_lot_full(
+            db,
+            item_id=int(item.id),
+            warehouse_id=int(warehouse_id),
+            lot_code=str(lot_code),
+            production_date=None,
+            expiry_date=None,
+        )
+
+        # read back to verify snapshot compatibility (historical freeze)
+        stmt = select(Lot).where(Lot.id == int(lot_id))
+        existing = (await db.execute(stmt)).scalars().first()
+        if existing is None:
+            raise HTTPException(status_code=500, detail="lot_create_or_resolve_failed")
+
+        if not _snapshot_equal(existing, snapshot):
+            raise HTTPException(status_code=409, detail="lot_snapshot_conflict")
+        return int(existing.id)
+
+    # INTERNAL: singleton per (warehouse,item); provenance optional but paired
+    try:
+        lot_id2 = await ensure_internal_lot_singleton(
+            db,
+            item_id=int(item.id),
+            warehouse_id=int(warehouse_id),
+            source_receipt_id=int(source_receipt_id) if source_receipt_id is not None else None,
+            source_line_no=int(source_line_no) if source_line_no is not None else None,
+        )
+        return int(lot_id2)
+    except ValueError as e:
+        # internal provenance pair violated
+        raise HTTPException(status_code=422, detail=str(e)) from e

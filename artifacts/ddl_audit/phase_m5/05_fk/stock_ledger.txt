@@ -1,0 +1,3 @@
+fk_stock_ledger_item_id|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_stock_ledger_lot_dims|FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+fk_stock_ledger_warehouse|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT

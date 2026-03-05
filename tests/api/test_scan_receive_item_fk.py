@@ -34,30 +34,26 @@ def _ensure_item(db: Session, item_id: int, sku: str | None = None, name: str | 
     在 items 表中确保存在一条指定 id 的记录：
 
     - 若已存在（id 已存在），不做任何事；
-    - 若不存在，插入 Phase M “最小合法”字段集合，避免 items policy NOT NULL / CHECK 护栏爆炸。
+    - 若不存在，插入 Phase M-5 “最小合法”字段集合，避免 items policy NOT NULL / CHECK 护栏爆炸；
+    - 同时补齐 item_uoms（base+defaults），满足单位主权。
 
     注意：不依赖 ORM Item 模型字段定义，直接用 SQL，避免模型/表不一致问题。
     """
     sku_val = (sku or str(item_id)).strip()
     name_val = (name or f"ITEM-{item_id}").strip()
 
-    # Phase M：items policy NOT NULL + has_shelf_life CHECK
-    # 最小合法：
-    # - uom 给 PCS
-    # - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 必填
-    # - has_shelf_life 必须与 expiry_policy='REQUIRED' 一致（这里用 NONE + FALSE）
     db.execute(
         text(
             """
             INSERT INTO items (
-              id, sku, name, uom,
+              id, sku, name,
               lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
-              has_shelf_life
+              shelf_life_value, shelf_life_unit
             )
             VALUES (
-              :id, :sku, :name, 'PCS',
-              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, FALSE,
-              CAST(:has_shelf_life AS boolean)
+              :id, :sku, :name,
+              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, TRUE,
+              NULL, NULL
             )
             ON CONFLICT (id) DO NOTHING
             """
@@ -67,9 +63,33 @@ def _ensure_item(db: Session, item_id: int, sku: str | None = None, name: str | 
             "sku": sku_val,
             "name": name_val,
             "expiry_policy": "NONE",
-            "has_shelf_life": False,
         },
     )
+
+    db.execute(
+        text(
+            """
+            INSERT INTO item_uoms(
+              item_id, uom, ratio_to_base, display_name,
+              is_base, is_purchase_default, is_inbound_default, is_outbound_default
+            )
+            VALUES(
+              :i, 'PCS', 1, 'PCS',
+              TRUE, TRUE, TRUE, TRUE
+            )
+            ON CONFLICT ON CONSTRAINT uq_item_uoms_item_uom
+            DO UPDATE SET
+              ratio_to_base = EXCLUDED.ratio_to_base,
+              display_name = EXCLUDED.display_name,
+              is_base = EXCLUDED.is_base,
+              is_purchase_default = EXCLUDED.is_purchase_default,
+              is_inbound_default = EXCLUDED.is_inbound_default,
+              is_outbound_default = EXCLUDED.is_outbound_default
+            """
+        ),
+        {"i": int(item_id)},
+    )
+
     db.commit()
 
 
@@ -80,8 +100,15 @@ def _looks_like_missing_item_or_lot_guard(msg: str) -> bool:
     兼容不同错误包装/不同驱动/不同实现路径的文本差异：
     - 可能是 items FK 失败（旧路径）
     - 也可能是 lot_not_found（lot-world 护栏更早触发）
+    - 或者是服务层先拦截的 item_not_found（更明确的语义）
     """
     s = (msg or "").lower()
+
+    # 0) 明确的 unknown item 语义
+    if "item_not_found" in s:
+        return True
+    if "unknown item" in s:
+        return True
 
     # 1) items FK 语义（常见：psycopg/asyncpg 文本）
     if 'not present in table "items"' in s:
@@ -139,7 +166,7 @@ def test_scan_receive_existing_item_should_succeed() -> None:
     """
     target_item_id = 52405
 
-    # 1) 先插入 item 主数据，满足 FK（Phase M 最小合法）
+    # 1) 先插入 item 主数据，满足 FK（Phase M-5 最小合法 + item_uoms）
     db = next(_get_db())
     _ensure_item(
         db,
@@ -171,6 +198,3 @@ def test_scan_receive_existing_item_should_succeed() -> None:
 
     # 这里不强行要求 ok/committed=True（避免把业务逻辑绑死在一条测试上），
     # 只要确认不再被“缺失 item / 缺失 lot”阻断，后续可以在别的测试里更细分地检查台账 /库存等行为。
-    # 如果你已经确认 receive 流程完全通了，可以再加：
-    # assert data.get("ok") is True
-    # assert data.get("committed") is True

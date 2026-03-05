@@ -7,9 +7,7 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
-
-_NULL_BATCH_KEY = "__NULL_BATCH__"
+from app.api.lot_code_contract import normalize_optional_lot_code
 
 
 class LedgerTimelineService:
@@ -24,7 +22,9 @@ class LedgerTimelineService:
     - 并发顺序审计
     - 订单/盘点/出库链路还原
 
-    ✅ 主线 B：查询维度统一切 batch_code_key，消灭 NULL= NULL 吞数据问题。
+    ✅ Phase 3 终态（lot-only）：
+    - 过滤维度以 lot_id 为准
+    - batch_code 仅为展示/输入标签（lots.lot_code），不再使用 batch_code_key
     """
 
     @staticmethod
@@ -45,71 +45,82 @@ class LedgerTimelineService:
         - occurred_at
         - movement_type
         - reason / ref / ref_line / trace_id
-        - warehouse_id / item_id / batch_code / batch_code_key
+        - warehouse_id / item_id / batch_code(展示码 lots.lot_code)
         - lot_id
         - delta / after_qty
         """
-        cond = ["occurred_at >= :t1", "occurred_at <= :t2"]
+        cond = ["l.occurred_at >= :t1", "l.occurred_at <= :t2"]
         params: Dict[str, Any] = {"t1": time_from, "t2": time_to}
 
         if warehouse_id is not None:
-            cond.append("warehouse_id = :w")
-            params["w"] = warehouse_id
+            cond.append("l.warehouse_id = :w")
+            params["w"] = int(warehouse_id)
 
         if item_id is not None:
-            cond.append("item_id = :i")
-            params["i"] = item_id
+            cond.append("l.item_id = :i")
+            params["i"] = int(item_id)
 
         if lot_id is not None:
-            cond.append("lot_id = :lot")
+            cond.append("l.lot_id = :lot")
             params["lot"] = int(lot_id)
 
-        # ✅ 主线 B：batch_code 过滤统一映射到 batch_code_key
+        # ✅ batch_code 过滤：视为展示码 lots.lot_code（支持 NULL 语义）
         # - 不传：不加过滤
-        # - 传 "" / "None"：归一为 None -> batch_code_key='__NULL_BATCH__'
-        # - 传 "Bxxx"：batch_code_key='Bxxx'
-        norm_bc = normalize_optional_batch_code(batch_code)
+        # - 传 "" / "None"：归一为 None -> lo.lot_code IS NULL
+        # - 传 "Bxxx"：lo.lot_code = 'Bxxx'
         if batch_code is not None:
-            key = _NULL_BATCH_KEY if norm_bc is None else norm_bc
-            cond.append("batch_code_key = :bkey")
-            params["bkey"] = key
+            norm_bc = normalize_optional_lot_code(batch_code)
+            cond.append("lo.lot_code IS NOT DISTINCT FROM :bc")
+            params["bc"] = norm_bc
 
         if trace_id:
-            cond.append("trace_id = :trace")
+            cond.append("l.trace_id = :trace")
             params["trace"] = trace_id
 
         if ref:
-            cond.append("ref = :ref")
+            cond.append("l.ref = :ref")
             params["ref"] = ref
 
         sql = f"""
             SELECT
-                id,
-                occurred_at,
-                created_at,
-                reason,
-                ref,
-                ref_line,
-                trace_id,
-                warehouse_id,
-                item_id,
-                batch_code,
-                batch_code_key,
-                lot_id,
-                delta,
-                after_qty,
+                l.id,
+                l.occurred_at,
+                l.created_at,
+                l.reason,
+                l.ref,
+                l.ref_line,
+                l.trace_id,
+                l.warehouse_id,
+                l.item_id,
+                lo.lot_code AS batch_code,
+                l.lot_id,
+                l.delta,
+                l.after_qty,
                 CASE
-                    WHEN reason IN ('RECEIPT','INBOUND','INBOUND_RECEIPT') THEN 'INBOUND'
-                    WHEN reason IN ('SHIP','SHIPMENT','OUTBOUND_SHIP','OUTBOUND_COMMIT') THEN 'OUTBOUND'
-                    WHEN reason IN ('COUNT','STOCK_COUNT','INVENTORY_COUNT') THEN 'COUNT'
-                    WHEN reason IN ('ADJUST','ADJUSTMENT','MANUAL_ADJUST') THEN 'ADJUST'
-                    WHEN reason IN ('RETURN','RMA','INBOUND_RETURN') THEN 'RETURN'
+                    WHEN l.reason IN ('RECEIPT','INBOUND','INBOUND_RECEIPT') THEN 'INBOUND'
+                    WHEN l.reason IN ('SHIP','SHIPMENT','OUTBOUND_SHIP','OUTBOUND_COMMIT') THEN 'OUTBOUND'
+                    WHEN l.reason IN ('COUNT','STOCK_COUNT','INVENTORY_COUNT') THEN 'COUNT'
+                    WHEN l.reason IN ('ADJUST','ADJUSTMENT','MANUAL_ADJUST') THEN 'ADJUST'
+                    WHEN l.reason IN ('RETURN','RMA','INBOUND_RETURN') THEN 'RETURN'
                     ELSE 'UNKNOWN'
                 END AS movement_type
-            FROM stock_ledger
+            FROM stock_ledger l
+            JOIN lots lo ON lo.id = l.lot_id
             WHERE {" AND ".join(cond)}
-            ORDER BY occurred_at ASC, id ASC;
+            ORDER BY l.occurred_at ASC, l.id ASC;
         """
 
         rs = (await session.execute(text(sql), params)).mappings().all()
-        return [dict(r) for r in rs]
+
+
+        out = [dict(r) for r in rs]
+
+        # Phase M-4 governance：lot_code 正名；batch_code 兼容字段
+
+        for x in out:
+
+            bc = x.get("batch_code")
+
+            x["lot_code"] = bc
+
+        return out

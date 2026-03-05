@@ -33,16 +33,19 @@ class InboundReceiptLineOut(BaseModel):
 
     barcode: Optional[str] = None
 
-    # ✅ 批次语义封板（真相源：items.expiry_policy；has_shelf_life 仅为镜像字段/legacy 名称）：
-    # - expiry_policy=REQUIRED => batch_code 必填（由写入口/confirm 校验保障）
-    # - expiry_policy=NONE     => batch_code 必须为 null（禁止伪批次）
+    # ✅ 合同双轨：lot_code 正名；batch_code 兼容字段
+    lot_code: Optional[str] = None
     batch_code: Optional[str] = None
+
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
 
-    qty_received: int
-    units_per_case: int
-    qty_units: int
+    # Phase M-5+：收货行终态为 uom_id + qty_input + ratio_to_base_snapshot + qty_base。
+    # 旧字段 qty_received / units_per_case / qty_units 已退役，不再作为必填输出字段。
+    # 为兼容旧前端/旧测试，保留字段名但改为 Optional。
+    qty_received: Optional[int] = None
+    units_per_case: Optional[int] = None
+    qty_units: Optional[int] = None
 
     unit_cost: Optional[Decimal] = None
     line_amount: Optional[Decimal] = None

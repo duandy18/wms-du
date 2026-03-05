@@ -12,70 +12,39 @@ from app.api.problem import raise_problem
 UTC = timezone.utc
 
 
-async def _load_touched_lot_keys_for_ref(
+async def _load_last_after_qty_for_ref_lot(
     session: AsyncSession,
     *,
     ref: str,
     warehouse_id: int,
     item_id: int,
-    batch_code_key: str,
-) -> List[int]:
+    lot_id: int,
+) -> Optional[int]:
     """
-    从 ledger 里反推出本次 ref 实际触达的 lot_id_key 集合。
-    这是 “局部可证明一致” 的关键：我们只验证本次写入触达的那批槽位。
+    终态不变量（lot-world）：
+    - 不对比 Σ(delta)（会被 opening/seed/历史累计影响，且不是“局部事务校验”）
+    - 对比“本 ref 最后一条 ledger.after_qty” 与 stocks_lot.qty
     """
-    rows = (
-        await session.execute(
-            text(
-                """
-                SELECT DISTINCT COALESCE(lot_id_key, 0) AS lot_id_key
-                  FROM stock_ledger
-                 WHERE ref = :ref
-                   AND warehouse_id = :w
-                   AND item_id = :i
-                   AND batch_code_key = :ck
-                """
-            ),
-            {"ref": str(ref), "w": int(warehouse_id), "i": int(item_id), "ck": str(batch_code_key)},
-        )
-    ).all()
-
-    out: List[int] = []
-    for r in rows:
-        try:
-            k = int(r[0] or 0)
-        except Exception:
-            k = 0
-        if k > 0:
-            out.append(k)
-    return out
-
-
-async def _sum_ledger_by_lot_key(
-    session: AsyncSession,
-    *,
-    warehouse_id: int,
-    item_id: int,
-    lot_id_key: int,
-) -> int:
     row = (
         await session.execute(
             text(
                 """
-                SELECT COALESCE(SUM(delta), 0)
+                SELECT after_qty
                   FROM stock_ledger
-                 WHERE warehouse_id = :w
+                 WHERE ref = :ref
+                   AND warehouse_id = :w
                    AND item_id = :i
-                   AND lot_id_key = :k
+                   AND lot_id = :lot
+                 ORDER BY occurred_at DESC, id DESC
+                 LIMIT 1
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": int(lot_id_key)},
+            {"ref": str(ref), "w": int(warehouse_id), "i": int(item_id), "lot": int(lot_id)},
         )
     ).first()
-    try:
-        return int((row[0] if row else 0) or 0)
-    except Exception:
-        return 0
+    if not row:
+        return None
+    return int(row[0])
 
 
 async def _load_stocks_lot_qty(
@@ -83,7 +52,7 @@ async def _load_stocks_lot_qty(
     *,
     warehouse_id: int,
     item_id: int,
-    lot_id_key: int,
+    lot_id: int,
 ) -> int:
     row = (
         await session.execute(
@@ -93,50 +62,35 @@ async def _load_stocks_lot_qty(
                   FROM stocks_lot
                  WHERE warehouse_id = :w
                    AND item_id = :i
-                   AND lot_id_key = :k
+                   AND lot_id = :lot
                  LIMIT 1
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": int(lot_id_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "lot": int(lot_id)},
         )
     ).first()
-    try:
-        return int((row[0] if row else 0) or 0)
-    except Exception:
-        return 0
+    return int((row[0] if row else 0) or 0)
 
 
-async def _load_touched_keys_by_ref(session: AsyncSession, *, ref: str) -> Set[Tuple[int, int, int]]:
-    """
-    当调用方未提供 effects 时，直接从 ledger(ref) 扫描本次触达的 (warehouse_id, item_id, lot_id_key)。
-    这是 Phase 5 第二刀最实用的兼容形态：不再要求所有调用点都传 effects。
-    """
+async def _load_touched_lots_by_ref(
+    session: AsyncSession,
+    *,
+    ref: str,
+) -> Set[Tuple[int, int, int]]:
     rows = (
         await session.execute(
             text(
                 """
-                SELECT DISTINCT warehouse_id, item_id, lot_id_key
+                SELECT DISTINCT warehouse_id, item_id, lot_id
                   FROM stock_ledger
                  WHERE ref = :ref
-                   AND lot_id_key IS NOT NULL
-                   AND lot_id_key > 0
                 """
             ),
             {"ref": str(ref)},
         )
     ).all()
 
-    out: Set[Tuple[int, int, int]] = set()
-    for r in rows:
-        try:
-            w = int(r[0] or 0)
-            i = int(r[1] or 0)
-            k = int(r[2] or 0)
-        except Exception:
-            continue
-        if w > 0 and i > 0 and k > 0:
-            out.add((w, i, k))
-    return out
+    return {(int(r[0]), int(r[1]), int(r[2])) for r in rows}
 
 
 async def enforce_outbound_invariant_guard(
@@ -146,55 +100,62 @@ async def enforce_outbound_invariant_guard(
     effects: Optional[Iterable[Dict[str, Any]]] = None,
     at: Optional[datetime] = None,
 ) -> None:
-    """
-    Phase 5 第一刀：执行链路不再 run_snapshot，而是做 “局部可证明一致” 校验：
-
-    对触达的 lot_id_key 集合，验证：
-        SUM(stock_ledger.delta where lot_id_key=K) == stocks_lot.qty(where lot_id_key=K)
-
-    支持两种调用形态：
-    - effects!=None：从 effects 精确反推触达集合
-    - effects==None：直接从 ledger(ref) 扫描触达集合（兼容旧调用点）
-    """
     debug_ref = str(ref)
     ts = at or datetime.now(UTC)
 
-    touched: Set[Tuple[int, int, int]] = set()  # (warehouse_id, item_id, lot_id_key)
+    touched: Set[Tuple[int, int, int]] = set()
 
     if effects is None:
-        touched = await _load_touched_keys_by_ref(session, ref=debug_ref)
+        touched = await _load_touched_lots_by_ref(session, ref=debug_ref)
     else:
         for eff in effects:
-            wh_id = int(eff.get("warehouse_id") or 0)
-            item_id = int(eff.get("item_id") or 0)
-            ck = str(eff.get("batch_code_key") or "").strip()
-            if wh_id <= 0 or item_id <= 0 or not ck:
-                continue
-
-            lot_keys = await _load_touched_lot_keys_for_ref(
-                session, ref=debug_ref, warehouse_id=wh_id, item_id=item_id, batch_code_key=ck
+            touched.add(
+                (
+                    int(eff["warehouse_id"]),
+                    int(eff["item_id"]),
+                    int(eff["lot_id"]),
+                )
             )
-            for k in lot_keys:
-                touched.add((wh_id, item_id, int(k)))
 
     if not touched:
         return
 
     mismatches: List[Dict[str, Any]] = []
-    for wh_id, item_id, lot_id_key in sorted(touched):
-        ledger_sum = await _sum_ledger_by_lot_key(
-            session, warehouse_id=int(wh_id), item_id=int(item_id), lot_id_key=int(lot_id_key)
+
+    for wh_id, item_id, lot_id in sorted(touched):
+        last_after_qty = await _load_last_after_qty_for_ref_lot(
+            session,
+            ref=debug_ref,
+            warehouse_id=wh_id,
+            item_id=item_id,
+            lot_id=lot_id,
         )
-        stocks_qty = await _load_stocks_lot_qty(
-            session, warehouse_id=int(wh_id), item_id=int(item_id), lot_id_key=int(lot_id_key)
-        )
-        if int(ledger_sum) != int(stocks_qty):
+        # 如果本 ref 没有对应维度的 ledger 行，说明 touched 计算不一致；直接报错更合理
+        if last_after_qty is None:
             mismatches.append(
                 {
-                    "warehouse_id": int(wh_id),
-                    "item_id": int(item_id),
-                    "lot_id_key": int(lot_id_key),
-                    "ledger_sum_delta": int(ledger_sum),
+                    "warehouse_id": wh_id,
+                    "item_id": item_id,
+                    "lot_id": lot_id,
+                    "reason": "no_ledger_row_for_ref",
+                }
+            )
+            continue
+
+        stocks_qty = await _load_stocks_lot_qty(
+            session,
+            warehouse_id=wh_id,
+            item_id=item_id,
+            lot_id=lot_id,
+        )
+
+        if int(last_after_qty) != int(stocks_qty):
+            mismatches.append(
+                {
+                    "warehouse_id": wh_id,
+                    "item_id": item_id,
+                    "lot_id": lot_id,
+                    "ledger_ref_last_after_qty": int(last_after_qty),
                     "stocks_lot_qty": int(stocks_qty),
                 }
             )
@@ -203,8 +164,7 @@ async def enforce_outbound_invariant_guard(
         raise_problem(
             status_code=409,
             error_code="invariant_guard_failed",
-            message="执行域不变量校验失败：ledger 与 stocks_lot 不一致，禁止提交。",
+            message="执行域不变量校验失败：ref 内最后一条 ledger.after_qty 与 stocks_lot.qty 不一致。",
             context={"ref": debug_ref, "at": ts.isoformat()},
             details=mismatches,
-            next_actions=[{"action": "reconcile", "label": "运行对账/修复"}],
         )

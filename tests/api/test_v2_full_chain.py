@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_lot_full
 from app.services.stock_service import StockService
 
 
@@ -63,6 +64,23 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
     )
 
 
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：
+    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
+    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
@@ -110,7 +128,6 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert r["ref"] == order_ref
 
     # 2) manual-assign（需要登录；测试环境一般用 admin/admin123）
-    # 这里直接走 HTTP，验证路由存在且能写入执行仓。
     login = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
@@ -128,31 +145,35 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert body["ref"] == order_ref
     assert int(body["to_warehouse_id"]) == 1
 
-    # 3) 入库（为后续 pick/ship 准备库存）
+    # 3) 入库（Lot-World：必须锚定 lot_id）
     stock_svc = StockService()
-    await stock_svc.adjust(
+    lot_code = "BATCH-001"
+    lot_id = await _ensure_supplier_lot(db_session_like_pg, wh_id=1, item_id=3001, lot_code=lot_code)
+
+    await stock_svc.adjust_lot(
         session=db_session_like_pg,
         item_id=3001,
+        warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason="RECEIPT",
         ref=f"UNIT-TEST-IN-3001-{uniq}",
         ref_line=1,
         occurred_at=now,
-        batch_code="BATCH-001",
+        batch_code=lot_code,
         production_date=now.date(),
-        warehouse_id=1,
+        expiry_date=None,
         trace_id=None,
     )
     await db_session_like_pg.commit()
-    print("[TEST] 已通过 StockService.adjust 入库 10 件到 BATCH-001")
+    print("[TEST] 已通过 StockService.adjust_lot 入库 10 件到 BATCH-001")
 
-    # 4) pick
+    # 4) pick（终态合同：batch_code 必须按行提供）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/pick",
         json={
             "warehouse_id": 1,
-            "batch_code": "BATCH-001",
-            "lines": [{"item_id": 3001, "qty": 1}],
+            "lines": [{"item_id": 3001, "qty": 1, "batch_code": "BATCH-001"}],
         },
     )
     print("[HTTP] pick status:", resp.status_code, "body:", resp.text)

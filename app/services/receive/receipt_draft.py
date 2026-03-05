@@ -106,7 +106,7 @@ async def sum_confirmed_received_base(
 ) -> int:
     sql = text(
         """
-        SELECT COALESCE(SUM(rl.qty_received), 0)::int AS qty
+        SELECT COALESCE(SUM(rl.qty_base), 0)::int AS qty
           FROM inbound_receipt_lines rl
           JOIN inbound_receipts r
             ON r.id = rl.receipt_id
@@ -127,7 +127,7 @@ async def sum_draft_received_base(
 ) -> int:
     sql = text(
         """
-        SELECT COALESCE(SUM(qty_received), 0)::int AS qty
+        SELECT COALESCE(SUM(qty_base), 0)::int AS qty
           FROM inbound_receipt_lines
          WHERE receipt_id=:rid
            AND po_line_id=:po_line_id

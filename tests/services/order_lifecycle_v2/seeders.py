@@ -4,6 +4,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.stock.lots import ensure_lot_full
 from tests.utils.ensure_minimal import ensure_item
 
 
@@ -106,6 +107,13 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     - stock_ledger:
         * SHIPMENT delta=-2
         * RETURN_IN delta=+1
+
+    Lot-World 终态注意：
+    - stock_ledger 展示码应来自 lots.lot_code（通过 lot_id JOIN）
+    - 这里先 ensure SUPPLIER lot（lot_code='B-LIFE-1'）拿到 lot_id，再写 stock_ledger.lot_id
+
+    ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
+    -> 统一走 app/services/stock/lots.py: ensure_lot_full
     """
     trace_id = "LIFE-UT-1"
     platform = "PDD"
@@ -114,6 +122,12 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     item_id = 4001
     ext_order_no = "UT-ORDER-1"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
+
+    # 确保 warehouse 存在（避免依赖 baseline 漂移）
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
+    )
 
     # items（Phase M：items policy NOT NULL，必须最小合法插入）
     await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
@@ -165,8 +179,18 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：SHIPMENT / RETURN_IN
-    # 单宇宙回归后：stock_ledger 不再含 scope 列
+    # ensure SUPPLIER lot (lot_code 展示码)
+    lot_code = "B-LIFE-1"
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # stock_ledger：SHIPMENT / RETURN_IN（lot_id 维度；不写 batch_code）
     await session.execute(
         text(
             """
@@ -174,8 +198,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 trace_id,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 reason,
+                reason_canon,
                 ref,
                 ref_line,
                 delta,
@@ -188,7 +213,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
+                'SHIPMENT',
                 'SHIPMENT',
                 :ref,
                 1,
@@ -201,8 +227,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
                 'RETURN_IN',
+                'RECEIPT',
                 :ref,
                 1,
                 1,
@@ -212,7 +239,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             )
             """
         ),
-        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "ref": order_ref},
+        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "lot_id": int(lot_id), "ref": order_ref},
     )
 
     await session.commit()
@@ -230,6 +257,11 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
     item_id = 4002
     ext_order_no = "UT-ORDER-2"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
+
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
+    )
 
     await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
@@ -274,6 +306,11 @@ async def seed_created_only_case(session: AsyncSession) -> str:
     wh_id = 1
     item_id = 4003
     ext_order_no = "UT-ORDER-3"
+
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
+    )
 
     await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 

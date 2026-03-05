@@ -33,6 +33,8 @@ MODEL_SPECS = [
     ("app.models.warehouse", "Warehouse"),
     # ✅ 旧“库位维度”已从主线移除（库存主链路仅使用 warehouse_id）
     ("app.models.item", "Item"),
+    # ✅ Phase M-2：多包装/多单位结构化
+    ("app.models.item_uom", "ItemUOM"),
     ("app.models.item_test_set", "ItemTestSet"),
     ("app.models.item_test_set_item", "ItemTestSetItem"),
     ("app.models.lot", "Lot"),
@@ -114,6 +116,7 @@ __all__ = [
     # ---- Inventory ----
     "Warehouse",
     "Item",
+    "ItemUOM",
     "ItemTestSet",
     "ItemTestSetItem",
     "Lot",

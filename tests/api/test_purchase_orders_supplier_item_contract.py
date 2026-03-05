@@ -5,6 +5,8 @@ from typing import Any, Dict, List
 
 import pytest
 import httpx
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests._problem import as_problem
 
@@ -29,31 +31,68 @@ async def _get_items(client: httpx.AsyncClient, headers: Dict[str, str], qs: str
     return data
 
 
-def _assert_po_line_contract_phase2(line: Dict[str, Any]) -> None:
+async def _pick_any_uom_id(session: AsyncSession, *, item_id: int) -> int:
     """
-    Phase2 输出契约（第一公民）：
+    unit_governance 二阶段：以 item_uoms 为真相源。
+    终态：PO 创建必须显式给 uom_id + qty_input（不做兼容）。
+    """
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i AND is_base = true
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got = r1.scalar_one_or_none()
+    if got is not None:
+        return int(got)
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got2 = r2.scalar_one_or_none()
+    assert got2 is not None, {"msg": "item has no item_uoms", "item_id": int(item_id)}
+    return int(got2)
+
+
+def _assert_po_line_contract_m5(line: Dict[str, Any]) -> None:
+    """
+    Phase M-5：PO 行单位合同（结构化）
     - qty_ordered_base（唯一事实口径）
-    - uom_snapshot / case_ratio_snapshot / case_uom_snapshot / qty_ordered_case_input（快照解释器）
+    - qty_ordered_input + purchase_ratio_to_base_snapshot（解释器）
     """
     for k in (
         "qty_ordered_base",
-        "uom_snapshot",
-        "case_ratio_snapshot",
-        "case_uom_snapshot",
-        "qty_ordered_case_input",
+        "qty_ordered_input",
+        "purchase_ratio_to_base_snapshot",
+        "qty_received_base",
+        "qty_remaining_base",
     ):
         assert k in line, line
+        assert isinstance(line[k], int), line
 
-    assert isinstance(line["qty_ordered_base"], int), line
-    assert int(line["qty_ordered_base"]) >= 0, line
+    ordered_base = int(line["qty_ordered_base"])
+    qty_input = int(line["qty_ordered_input"])
+    ratio = int(line["purchase_ratio_to_base_snapshot"])
 
-    case_input = line.get("qty_ordered_case_input")
-    ratio = line.get("case_ratio_snapshot")
-    if case_input is not None and ratio is not None:
-        assert isinstance(case_input, int), line
-        assert isinstance(ratio, int), line
-        assert int(ratio) > 0, line
-        assert int(line["qty_ordered_base"]) == int(case_input) * int(ratio), line
+    assert ordered_base >= 0, line
+    assert qty_input > 0, line
+    assert ratio >= 1, line
+    assert ordered_base == qty_input * ratio, line
 
 
 @pytest.mark.asyncio
@@ -81,6 +120,7 @@ async def test_items_filter_by_supplier_id_returns_only_supplier_items(client: h
 async def test_create_po_rejects_nonexistent_item(client: httpx.AsyncClient) -> None:
     """
     合同：创建 PO 时，item_id 不存在 -> 400 且 message 可解释。
+    终态：行必须带 uom_id + qty_input（不做兼容）。
     """
     headers = await _login_admin_headers(client)
 
@@ -91,19 +131,20 @@ async def test_create_po_rejects_nonexistent_item(client: httpx.AsyncClient) -> 
         "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
-        "lines": [{"line_no": 1, "item_id": 9999, "qty_ordered": 1}],
+        "lines": [{"line_no": 1, "item_id": 9999, "uom_id": 1, "qty_input": 1}],
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
     assert r.status_code == 400, r.text
     p = as_problem(r.json())
-    assert "商品不存在" in (p.get("message") or "")
+    assert "不存在" in (p.get("message") or "")
 
 
 @pytest.mark.asyncio
 async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClient) -> None:
     """
     合同：创建 PO 时，item.supplier_id 与 po.supplier_id 不一致 -> 400。
-    使用你当前的真实样本：item_id=1 的 supplier_id=3。
+    使用真实样本：item_id=1 的 supplier_id=3。
+    终态：行必须带 uom_id + qty_input（不做兼容）。
     """
     headers = await _login_admin_headers(client)
 
@@ -114,7 +155,7 @@ async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClien
         "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
-        "lines": [{"line_no": 1, "item_id": 1, "qty_ordered": 1}],
+        "lines": [{"line_no": 1, "item_id": 1, "uom_id": 1, "qty_input": 1}],
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
     assert r.status_code == 400, r.text
@@ -123,16 +164,19 @@ async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient) -> None:
+async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient, session: AsyncSession) -> None:
     """
     合同：供应商=1 且 item.supplier_id=1 的商品可以创建 PO 成功。
     我们从 /items?supplier_id=1&enabled=true 动态取一个 item_id，避免写死。
+    终态：行必须带 uom_id + qty_input（不做兼容）。
     """
     headers = await _login_admin_headers(client)
 
     s1_items = await _get_items(client, headers, "?supplier_id=1&enabled=true")
     assert len(s1_items) >= 1
     item_id = int(s1_items[0]["id"])
+
+    uom_id = await _pick_any_uom_id(session, item_id=item_id)
 
     payload = {
         "supplier": "S1",
@@ -141,7 +185,7 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient) 
         "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
-        "lines": [{"line_no": 1, "item_id": item_id, "qty_ordered": 2}],
+        "lines": [{"line_no": 1, "item_id": item_id, "uom_id": int(uom_id), "qty_input": 2}],
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
     assert r.status_code == 200, r.text
@@ -154,6 +198,5 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient) 
     line = data["lines"][0]
     assert int(line["item_id"]) == item_id
 
-    # ✅ Phase2：第一公民字段断言（快照解释器 + base 事实）
-    _assert_po_line_contract_phase2(line)
-    assert int(line["qty_ordered_base"]) == 2
+    _assert_po_line_contract_m5(line)
+    assert int(line["qty_ordered_base"]) == 2 * int(line["purchase_ratio_to_base_snapshot"])

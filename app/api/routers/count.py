@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_expiry_policy_map, validate_batch_code_contract
+from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.api.deps import get_async_session
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
@@ -25,6 +25,9 @@ class CountRequest(BaseModel):
       - 必填：item_id, warehouse_id, qty(绝对量), ref
       - batch_code：按 expiry_policy 语义收紧（Phase M 真相源）
       - production_date / expiry_date：仅对批次商品要求至少其一
+
+    Phase M-4 governance：
+      - lot_code 正名；batch_code 兼容别名
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -34,7 +37,8 @@ class CountRequest(BaseModel):
     qty: int = Field(..., ge=0, description="盘点后的实际数量（绝对量）")
     ref: str = Field(..., description="业务参考号（用于台账幂等）")
 
-    batch_code: Optional[str] = Field(None, description="批次码（批次语义由 API 合同层判定）")
+    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
+    batch_code: Optional[str] = Field(None, description="批次码（兼容字段；等价于 lot_code）")
 
     occurred_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -56,7 +60,10 @@ class CountResponse(BaseModel):
     ref: str
     item_id: int
     warehouse_id: int
-    batch_code: Optional[str]
+
+    lot_code: Optional[str] = None
+    batch_code: Optional[str] = None
+
     occurred_at: datetime
 
 
@@ -72,7 +79,8 @@ async def count_inventory(
         raise HTTPException(status_code=422, detail=f"unknown item_id: {req.item_id}")
 
     requires_batch = str(expiry_policy_map[req.item_id]).upper() == "REQUIRED"
-    batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=req.batch_code)
+    lot_code = req.lot_code or req.batch_code
+    batch_code = validate_lot_code_contract(requires_batch=requires_batch, lot_code=lot_code)
 
     if requires_batch and req.production_date is None and req.expiry_date is None:
         raise HTTPException(
@@ -122,6 +130,7 @@ async def count_inventory(
         ref=req.ref,
         item_id=req.item_id,
         warehouse_id=req.warehouse_id,
+        lot_code=batch_code,
         batch_code=batch_code,
         occurred_at=req.occurred_at,
     )

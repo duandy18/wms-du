@@ -47,7 +47,7 @@ def register_order_refs(router: APIRouter) -> None:
           SELECT ref,
                  warehouse_id,
                  item_id,
-                 batch_code,
+                 lot_id,
                  (-delta) AS shipped_qty,
                  occurred_at
             FROM stock_ledger
@@ -63,7 +63,7 @@ def register_order_refs(router: APIRouter) -> None:
           SELECT l.ref,
                  l.warehouse_id,
                  l.item_id,
-                 l.batch_code,
+                 l.lot_id,
                  (l.delta) AS returned_qty,
                  l.occurred_at
             FROM stock_ledger l
@@ -118,12 +118,13 @@ def register_order_refs(router: APIRouter) -> None:
             wh_cond = "AND l.warehouse_id = :wid"
             params["wid"] = int(warehouse_id)
 
-        # ✅ 作业人员视角：把 item_name 一并 join 出来，前端不再只能展示 item_id
+        # 维度封板：GROUP BY lot_id；batch_code 仅展示（用 MAX 聚合）
         sql = f"""
         SELECT l.warehouse_id,
                l.item_id,
                i.name AS item_name,
-               l.batch_code,
+               l.lot_id,
+               MAX(l.batch_code) AS batch_code,
                COALESCE(SUM(-l.delta), 0)::int AS shipped_qty
           FROM stock_ledger l
           LEFT JOIN items i ON i.id = l.item_id
@@ -131,8 +132,8 @@ def register_order_refs(router: APIRouter) -> None:
            AND l.delta < 0
            AND l.reason = ANY(:reasons)
            {wh_cond}
-         GROUP BY l.warehouse_id, l.item_id, i.name, l.batch_code
-         ORDER BY l.warehouse_id, l.item_id, l.batch_code
+         GROUP BY l.warehouse_id, l.item_id, i.name, l.lot_id
+         ORDER BY l.warehouse_id, l.item_id, l.lot_id
         """
 
         lines_raw = (await session.execute(sa.text(sql), params)).mappings().all()

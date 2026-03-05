@@ -17,10 +17,55 @@ async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _pick_any_uom_id(session: AsyncSession, *, item_id: int) -> int:
+    """
+    Phase M-5+：unit_governance 二阶段终态
+    - PO 创建行必须显式提供 uom_id + qty_input
+    - uom_id 从 item_uoms 真值表选取（优先 base，其次最小 id），保证测试稳定
+    """
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i AND is_base = true
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got = r1.scalar_one_or_none()
+    if got is not None:
+        return int(got)
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id
+              FROM item_uoms
+             WHERE item_id = :i
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    got2 = r2.scalar_one_or_none()
+    assert got2 is not None, {"msg": "item has no item_uoms", "item_id": int(item_id)}
+    return int(got2)
+
+
 async def _create_po_two_lines(
-    client: httpx.AsyncClient, headers: Dict[str, str], item_ids: Tuple[int, int]
+    session: AsyncSession,
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    item_ids: Tuple[int, int],
 ) -> Dict[str, Any]:
     item1, item2 = item_ids
+    uom1 = await _pick_any_uom_id(session, item_id=int(item1))
+    uom2 = await _pick_any_uom_id(session, item_id=int(item2))
+
     payload = {
         "supplier": "S1",
         "warehouse_id": 1,
@@ -29,8 +74,8 @@ async def _create_po_two_lines(
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
         "lines": [
-            {"line_no": 1, "item_id": item1, "qty_ordered": 2},
-            {"line_no": 2, "item_id": item2, "qty_ordered": 3},
+            {"line_no": 1, "item_id": int(item1), "uom_id": int(uom1), "qty_input": 2},
+            {"line_no": 2, "item_id": int(item2), "uom_id": int(uom2), "qty_input": 3},
         ],
     }
     r = await client.post("/purchase-orders/", json=payload, headers=headers)
@@ -67,6 +112,7 @@ async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) 
     - enabled = true
     - lot_source_policy = INTERNAL_ONLY（标签层不要求 batch_code）
     - expiry_policy = NONE（时间层不要求日期）
+    - Phase M-5：items.uom / has_shelf_life 已删除；单位真相源唯一为 item_uoms
     """
     sku = f"{sku_prefix}-{uuid4().hex[:10]}"
     name = f"UT-{sku}"
@@ -74,15 +120,13 @@ async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) 
         text(
             """
             INSERT INTO items(
-              name, sku, uom, enabled, supplier_id,
+              name, sku, enabled, supplier_id,
               lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
-              has_shelf_life,
               shelf_life_value, shelf_life_unit
             )
             VALUES(
-              :name, :sku, 'PCS', TRUE, 1,
-              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, FALSE,
-              FALSE,
+              :name, :sku, TRUE, 1,
+              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, TRUE,
               NULL, NULL
             )
             RETURNING id
@@ -90,7 +134,33 @@ async def _insert_item_internal_none(session: AsyncSession, *, sku_prefix: str) 
         ),
         {"name": name, "sku": sku},
     )
-    return int(row.scalar_one())
+    item_id = int(row.scalar_one())
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO item_uoms(
+              item_id, uom, ratio_to_base, display_name,
+              is_base, is_purchase_default, is_inbound_default, is_outbound_default
+            )
+            VALUES(
+              :i, 'PCS', 1, 'PCS',
+              TRUE, TRUE, TRUE, TRUE
+            )
+            ON CONFLICT ON CONSTRAINT uq_item_uoms_item_uom
+            DO UPDATE SET
+              ratio_to_base = EXCLUDED.ratio_to_base,
+              display_name = EXCLUDED.display_name,
+              is_base = EXCLUDED.is_base,
+              is_purchase_default = EXCLUDED.is_purchase_default,
+              is_inbound_default = EXCLUDED.is_inbound_default,
+              is_outbound_default = EXCLUDED.is_outbound_default
+            """
+        ),
+        {"i": int(item_id)},
+    )
+
+    return item_id
 
 
 @pytest.mark.asyncio
@@ -111,7 +181,7 @@ async def test_purchase_order_receipts_api_returns_fact_events(
     item_b = await _insert_item_internal_none(session, sku_prefix="UT-API-NONE-B")
     await session.commit()
 
-    po = await _create_po_two_lines(client, headers, (item_a, item_b))
+    po = await _create_po_two_lines(session, client, headers, (item_a, item_b))
     po_id = int(po["id"])
     assert po_id > 0, po
 

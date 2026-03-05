@@ -32,9 +32,9 @@ async def ledger_count(session: AsyncSession) -> int:
 
 async def stocks_count(session: AsyncSession) -> int:
     """
-    Phase 4D：
+    Phase 4D+：
     - 测试口径以 stocks_lot 为准（lot-world）
-    - Phase 4E：以 stocks_lot 为唯一余额源；legacy 表不再作为判断依据
+    - Phase 4E+：以 stocks_lot 为唯一余额源；legacy 表不再作为判断依据
     """
     row = await session.execute(text("SELECT COUNT(*) FROM stocks_lot"))
     return int(row.scalar_one())
@@ -48,12 +48,13 @@ async def force_no_stock(
     batch_code: Optional[str] = None,
 ) -> None:
     """
-    Phase 4D：
+    Phase M-5 / DB 事实：
     - 强制清空库存应操作 stocks_lot（lot-world 真相）
-    - batch_code 语义：lot_code（SUPPLIER）展示码
+    - batch_code 语义：lot_code（SUPPLIER）展示码；可能为 NULL（INTERNAL lot 的 lot_code 为空）
+    - stocks_lot.lot_id NOT NULL：不存在 NULL 槽位，不使用 lot_id_key=0
     """
     if batch_code is None:
-        # 清空该 item/warehouse 下所有 lot 槽位（含 lot_id=NULL 的 lot_id_key=0 槽位）
+        # 清空该 item/warehouse 下所有 lot 槽位（包含 INTERNAL lot / SUPPLIER lot）
         await session.execute(
             text("DELETE FROM stocks_lot WHERE warehouse_id = :w AND item_id = :i"),
             {"w": int(warehouse_id), "i": int(item_id)},

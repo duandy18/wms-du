@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import fetch_item_expiry_policy_map, validate_batch_code_contract
 from app.api.deps import get_session
+from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
 from app.models.enums import MovementType
 from app.services.stock_service import StockService
 
@@ -36,15 +36,15 @@ async def dev_stock_adjust(
     payload: DevStockAdjustIn,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    # 合同：batch_code 对 expiry-policy REQUIRED 的商品必须合法；对 NONE 必须为 null
+    # 合同：batch_code(展示码/旧名) 对 expiry-policy REQUIRED 的商品必须合法；对 NONE 必须为 null
     pol_map = await fetch_item_expiry_policy_map(session, {int(payload.item_id)})
     if int(payload.item_id) not in pol_map:
         raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
 
     requires_batch = str(pol_map[int(payload.item_id)]).upper() == "REQUIRED"
-    norm_batch = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+    norm_batch = validate_lot_code_contract(requires_batch=requires_batch, lot_code=payload.batch_code)
 
-    # 对 REQUIRED 商品：正向入库/加库存时，必须提供日期（让库存引擎能建 lot）
+    # 对 REQUIRED 商品：正向入库/加库存时，必须提供日期（让库存引擎能记 receipt 日期事实）
     if requires_batch and int(payload.delta) > 0:
         if payload.production_date is None or payload.expiry_date is None:
             raise HTTPException(
@@ -56,6 +56,7 @@ async def dev_stock_adjust(
 
     svc = StockService()
     try:
+        # 终态：dev 也不允许绕过 lot 入口；全部走 StockService.adjust（内部确保 supplier/internal lot）
         res = await svc.adjust(
             session=session,
             item_id=int(payload.item_id),
@@ -69,6 +70,7 @@ async def dev_stock_adjust(
             production_date=payload.production_date,
             expiry_date=payload.expiry_date,
             trace_id="dev-stock-adjust",
+            meta={"source": "dev_stock_adjust"},
         )
         await session.commit()
         return {"ok": True, "result": res}

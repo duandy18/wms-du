@@ -6,8 +6,6 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_adjust.batch_keys import batch_key, lot_key
-
 
 async def idem_hit_by_lot_and_batch_key(
     session: AsyncSession,
@@ -15,31 +13,41 @@ async def idem_hit_by_lot_and_batch_key(
     warehouse_id: int,
     item_id: int,
     batch_code_norm: Optional[str],
-    lot_id: Optional[int],
+    lot_id: int,
     reason: str,
     ref: str,
     ref_line: int,
 ) -> bool:
+    """
+    Phase M-2 终态（lot-only）：
+
+    - stock_ledger 不再存在 lot_id_key / batch_code_key
+    - 幂等锚点与 DB 唯一约束保持 1:1：
+      (warehouse_id, item_id, lot_id, reason, ref, ref_line)
+
+    说明：
+    - batch_code_norm 仅作为历史兼容入参（展示码），不参与幂等键
+    """
+    _ = batch_code_norm  # 仅兼容签名，终态不参与幂等
+
     idem = await session.execute(
         text(
             """
             SELECT 1
               FROM stock_ledger
-             WHERE warehouse_id   = :w
-               AND item_id        = :i
-               AND lot_id_key     = :lk
-               AND batch_code_key = :ck
-               AND reason         = :r
-               AND ref            = :ref
-               AND ref_line       = :rl
+             WHERE warehouse_id = :w
+               AND item_id      = :i
+               AND lot_id       = :lot
+               AND reason       = :r
+               AND ref          = :ref
+               AND ref_line     = :rl
              LIMIT 1
             """
         ),
         {
             "w": int(warehouse_id),
             "i": int(item_id),
-            "lk": lot_key(lot_id),
-            "ck": batch_key(batch_code_norm),
+            "lot": int(lot_id),
             "r": str(reason),
             "ref": str(ref),
             "rl": int(ref_line),

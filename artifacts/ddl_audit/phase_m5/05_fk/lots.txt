@@ -1,0 +1,3 @@
+fk_lots_item|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+fk_lots_source_receipt|FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+fk_lots_warehouse|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT

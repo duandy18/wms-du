@@ -1,19 +1,19 @@
 # app/models/lot.py
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,22 +23,17 @@ from app.db.base import Base
 
 class Lot(Base):
     """
-    Phase 2: Canonical Lot entity.
+    Canonical Lot entity.
 
-    SUPPLIER:
-      - lot_code 必填
-      - source_receipt_id/source_line_no 必须为 NULL
+    结构关键点：
+      - lot_id（Lot.id）是库存身份锚点，独立于 lot_code
+      - lot_code == batch_code（展示/来源码），业务需防“输入漂移”
+      - lots 冻结 item 侧关键主数据（policy），防主数据漂移污染历史解释链
 
-    INTERNAL:
-      - source_receipt_id/source_line_no 必填（绑定来源 receipt_id + line_no）
-      - lot_code 允许 NULL
-
-    Snapshot 规则：
-      - lot 是库存维度事实锚点，必须冻结 item 侧关键主数据，避免主数据漂移污染历史解释链。
-      - 本模型不使用 mapped_column(index=True) 生成隐式索引，索引以 migration 为准。
-
-    Phase M：
-      - 冻结 items.policy 到 lots（防漂移封板）
+    Phase M-5（结构治理：unit_governance 二阶段）：
+      - 单位真相源 = item_uoms（结构层）
+      - 冻结点 = PO/Receipt lines 的 *_ratio_to_base_snapshot + qty_base
+      - lots 的单位快照列已物理移除（通过 Alembic migration）
     """
 
     __tablename__ = "lots"
@@ -57,10 +52,14 @@ class Lot(Base):
         nullable=False,
     )
 
-    # 'SUPPLIER' | 'INTERNAL'
     lot_code_source: Mapped[str] = mapped_column(String(16), nullable=False)
 
+    # 展示/输入批次码（SUPPLIER lot 可填；INTERNAL lot 必须为 NULL）
     lot_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # 防批次漂移：lot_code 的归一化 key（至少 upper + trim）
+    # DB migration: lot_code_key = upper(btrim(lot_code))
+    lot_code_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     source_receipt_id: Mapped[Optional[int]] = mapped_column(
         Integer,
@@ -69,29 +68,12 @@ class Lot(Base):
     )
     source_line_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    production_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    expiry_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-
-    # 'EXPLICIT' | 'DERIVED' | NULL
-    expiry_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
-
-    shelf_life_days_applied: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
     # ------------------------------------------------------------------
     # Item snapshots (frozen at lot creation time)
     # ------------------------------------------------------------------
-
-    # 旧字段（已被 Phase M 迁移锁死为 expiry_policy 的镜像字段）
-    item_has_shelf_life_snapshot: Mapped[Optional[bool]] = mapped_column(nullable=True)
-
     item_shelf_life_value_snapshot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     item_shelf_life_unit_snapshot: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
-    item_uom_snapshot: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    item_case_ratio_snapshot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    item_case_uom_snapshot: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
-
-    # Phase M：规则层 snapshot（DB 已 NOT NULL）
     item_lot_source_policy_snapshot: Mapped[str] = mapped_column(
         Enum("INTERNAL_ONLY", "SUPPLIER_ONLY", name="lot_source_policy"),
         nullable=False,
@@ -110,34 +92,10 @@ class Lot(Base):
     )
 
     __table_args__ = (
-        # ---------------------------
-        # Core checks (Phase 2)
-        # ---------------------------
         CheckConstraint(
             "lot_code_source IN ('SUPPLIER', 'INTERNAL')",
             name="ck_lots_lot_code_source",
         ),
-        CheckConstraint(
-            "("
-            "lot_code_source <> 'SUPPLIER' OR "
-            "(lot_code IS NOT NULL AND source_receipt_id IS NULL AND source_line_no IS NULL)"
-            ")",
-            name="ck_lots_supplier_requires_lot_code_and_no_source",
-        ),
-        CheckConstraint(
-            "("
-            "lot_code_source <> 'INTERNAL' OR "
-            "(source_receipt_id IS NOT NULL AND source_line_no IS NOT NULL)"
-            ")",
-            name="ck_lots_internal_requires_source",
-        ),
-        CheckConstraint(
-            "(" "expiry_source IS NULL OR expiry_source IN ('EXPLICIT', 'DERIVED')" ")",
-            name="ck_lots_expiry_source_enum",
-        ),
-        # ---------------------------
-        # Snapshot checks (align with items constraints)
-        # ---------------------------
         CheckConstraint(
             "("
             "item_shelf_life_unit_snapshot IS NULL OR "
@@ -151,36 +109,26 @@ class Lot(Base):
         ),
         CheckConstraint(
             "("
-            "item_has_shelf_life_snapshot IS NULL OR "
-            "item_has_shelf_life_snapshot = true OR "
+            "item_expiry_policy_snapshot = 'REQUIRED' OR "
             "(item_shelf_life_value_snapshot IS NULL AND item_shelf_life_unit_snapshot IS NULL)"
             ")",
-            name="ck_lots_item_shelf_life_params_only_when_enabled_snapshot",
+            name="ck_lots_sl_params_by_policy_snap",
         ),
-        CheckConstraint(
-            "(item_case_ratio_snapshot IS NULL OR item_case_ratio_snapshot >= 1)",
-            name="ck_lots_item_case_ratio_ge_1_snapshot",
-        ),
-        # ---------------------------
-        # Partial unique indexes (canonical identity)
-        # ---------------------------
+        # SUPPLIER lot：按归一化 key 唯一，防 lot_code 输入漂移（trim/upper）
         Index(
-            "uq_lots_supplier_wh_item_lot_code",
+            "uq_lots_wh_item_lot_code_key",
             "warehouse_id",
             "item_id",
-            "lot_code_source",
-            "lot_code",
+            "lot_code_key",
             unique=True,
-            postgresql_where=text("lot_code_source = 'SUPPLIER'"),
+            postgresql_where=text("lot_code IS NOT NULL"),
         ),
+        # INTERNAL lot：每 (warehouse,item) 单例（lot_code 必须为 NULL）
         Index(
-            "uq_lots_internal_wh_item_source",
+            "uq_lots_internal_single_wh_item",
             "warehouse_id",
             "item_id",
-            "lot_code_source",
-            "source_receipt_id",
-            "source_line_no",
             unique=True,
-            postgresql_where=text("lot_code_source = 'INTERNAL'"),
+            postgresql_where=text("lot_code_source = 'INTERNAL' AND lot_code IS NULL"),
         ),
     )

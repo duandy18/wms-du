@@ -16,19 +16,24 @@ async def from_ledger(session: AsyncSession, trace_id: str) -> List[TraceEvent]:
                 text(
                     """
                 SELECT
-                    id,
-                    COALESCE(occurred_at, created_at) AS ts,
-                    reason,
-                    ref,
-                    ref_line,
-                    item_id,
-                    warehouse_id,
-                    batch_code,
-                    delta,
-                    after_qty
-                FROM stock_ledger
-                WHERE trace_id = :trace_id
-                ORDER BY ts, id
+                    sl.id,
+                    COALESCE(sl.occurred_at, sl.created_at) AS ts,
+                    sl.reason,
+                    sl.ref,
+                    sl.ref_line,
+                    sl.item_id,
+                    sl.warehouse_id,
+                    lo.lot_code AS batch_code,
+                    sl.delta,
+                    sl.after_qty,
+                    sl.lot_id
+                FROM stock_ledger sl
+                JOIN lots lo
+                  ON lo.id = sl.lot_id
+                 AND lo.warehouse_id = sl.warehouse_id
+                 AND lo.item_id = sl.item_id
+                WHERE sl.trace_id = :trace_id
+                ORDER BY ts, sl.id
                 """
                 ),
                 {"trace_id": trace_id},
@@ -61,6 +66,7 @@ async def from_ledger(session: AsyncSession, trace_id: str) -> List[TraceEvent]:
                     "batch_code": r["batch_code"],
                     "delta": r["delta"],
                     "after_qty": r["after_qty"],
+                    "lot_id": r["lot_id"],
                     "id": r["id"],
                 },
             )

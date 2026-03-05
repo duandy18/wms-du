@@ -35,13 +35,17 @@ def _calc_line_status(*, req_qty: int, picked_qty: int) -> str:
         return "OPEN"
     if req > 0 and picked < req:
         return "PARTIAL"
-    # req==0（不应出现）或 picked>=req：都按 DONE（最保守）
     return "DONE"
 
 
 def _can_accept_scan(task_status: str) -> bool:
     # ✅ 兼容历史/脏数据：NEW 视为可扫描（等价 READY）
     return str(task_status) in ("NEW", "READY", "ASSIGNED", "PICKING")
+
+
+def _is_order_line(line: PickTaskLine) -> bool:
+    # 订单行：有 order_id 或 order_line_id
+    return bool(getattr(line, "order_id", None) is not None or getattr(line, "order_line_id", None) is not None)
 
 
 async def record_scan(
@@ -60,14 +64,12 @@ async def record_scan(
     - task.status: NEW/READY/ASSIGNED -> PICKING（发生任何 picked_qty>0）
     - line.status: OPEN / PARTIAL / DONE
     """
-    # 兜底：路由层一般已用 schema 限制 qty>0，但这里仍保留防御式护栏
     if int(qty) == 0:
         return await load_task(session, task_id)
 
     task = await load_task(session, task_id, for_update=True)
 
     if not _can_accept_scan(task.status):
-        # ✅ 结构化拒绝：前端无需猜状态含义
         raise PickTaskScanError(
             error_code="pick_task_scan_reject",
             message="当前任务状态不允许扫码拣货。",
@@ -85,10 +87,21 @@ async def record_scan(
 
     norm_batch = (batch_code or "").strip() or None
     target: Optional[PickTaskLine] = None
+
+    # 1) 优先 exact match：item_id + batch_code 相同（支持多批次拆行）
     for line in task.lines or []:
-        if line.item_id == item_id and ((line.batch_code or None) == norm_batch):
+        if int(line.item_id) == int(item_id) and ((line.batch_code or None) == norm_batch):
             target = line
             break
+
+    # 2) 若传入了 batch_code，但找不到 exact match：
+    #    命中“同 item_id 且 batch_code 为空”的订单行（避免创建 TEMP_FACT 让 commit 看不到）
+    if target is None and norm_batch is not None:
+        candidates = [ln for ln in (task.lines or []) if int(ln.item_id) == int(item_id) and (ln.batch_code or None) is None]
+        if candidates:
+            # 订单行优先
+            order_lines = [ln for ln in candidates if _is_order_line(ln)]
+            target = order_lines[0] if order_lines else candidates[0]
 
     now = datetime.now(UTC)
 
@@ -117,17 +130,15 @@ async def record_scan(
         await session.flush()
         task.lines.append(target)
     else:
-        # 更新既有行：累加 picked_qty
-        if not target.batch_code and norm_batch:
+        # 更新既有行：写回 batch_code（若此前为空），并累加 picked_qty
+        if (target.batch_code or None) is None and norm_batch is not None:
             target.batch_code = norm_batch
 
         target.picked_qty = int(target.picked_qty or 0) + int(qty)
         target.updated_at = now
-
-        # ✅ 事实驱动：更新行状态
         target.status = _calc_line_status(req_qty=int(target.req_qty or 0), picked_qty=int(target.picked_qty or 0))
 
-    # ✅ 事实驱动：任务状态推进到 PICKING（但不在 scan 阶段写 DONE）
+    # 任务状态推进到 PICKING（scan 阶段不写 DONE）
     if task.status in ("NEW", "READY", "ASSIGNED"):
         task.status = "PICKING"
     task.updated_at = now

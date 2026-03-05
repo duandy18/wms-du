@@ -13,17 +13,13 @@ from app.services.lot_guard import assert_lot_belongs_to
 
 
 # ========================
-# Phase 4A-1: centralized anchors
-# - idempotency key includes lot_id_key (COALESCE(lot_id,0))
-# - stocks remain batch-world (unchanged)
+# Phase M-2:
+# idempotency key is pure lot_id
 # ========================
 
 
 def _idem_constraint_name() -> str:
-    """
-    当前幂等唯一约束名（Phase 4A-1 切换到 lot_id_key + batch_code_key）。
-    """
-    return "uq_ledger_wh_lot_batch_item_reason_ref_line"
+    return "uq_ledger_wh_lot_item_reason_ref_line"
 
 
 def _canon_reason(reason: str) -> Optional[str]:
@@ -59,15 +55,6 @@ def _norm_batch_code(batch_code: Optional[str]) -> Optional[str]:
     return s or None
 
 
-def _batch_key(batch_code: Optional[str]) -> str:
-    bc = _norm_batch_code(batch_code)
-    return bc if bc is not None else "__NULL_BATCH__"
-
-
-def _lot_key(lot_id: Optional[int]) -> int:
-    return int(lot_id) if lot_id is not None else 0
-
-
 def _need_patch(
     *,
     reason_canon: Optional[str],
@@ -78,9 +65,9 @@ def _need_patch(
 ) -> bool:
     return any(
         [
-            bool((reason_canon or "").strip()) if isinstance(reason_canon, str) else reason_canon is not None,
-            bool((sub_reason or "").strip()) if isinstance(sub_reason, str) else sub_reason is not None,
-            bool((trace_id or "").strip()) if isinstance(trace_id, str) else trace_id is not None,
+            reason_canon is not None,
+            sub_reason is not None,
+            trace_id is not None,
             production_date is not None,
             expiry_date is not None,
         ]
@@ -91,22 +78,15 @@ def _build_patch_where(
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code_norm: Optional[str],
-    lot_id: Optional[int],
+    lot_id: int,
     reason: str,
     ref: str,
     ref_line: int,
 ):
-    """
-    Phase 4A-1:
-    where 锚点切换为 (warehouse_id, item_id, lot_id_key, batch_code_key, reason, ref, ref_line)
-    与 DB 幂等唯一约束保持 1:1 对齐。
-    """
     return (
         (StockLedger.warehouse_id == int(warehouse_id)),
         (StockLedger.item_id == int(item_id)),
-        (StockLedger.lot_id_key == _lot_key(lot_id)),
-        (StockLedger.batch_code_key == _batch_key(batch_code_norm)),
+        (StockLedger.lot_id == int(lot_id)),
         (StockLedger.reason == str(reason)),
         (StockLedger.ref == str(ref)),
         (StockLedger.ref_line == int(ref_line)),
@@ -129,20 +109,20 @@ async def write_ledger(
     trace_id: Optional[str] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
-    lot_id: Optional[int] = None,  # Phase 3+: lot shadow dimension (Phase 4A-1 participates in idempotency key)
+    lot_id: int,
 ) -> int:
     """
     幂等台账写入（只增不改）
+    终态：lot_id 为唯一结构锚点
 
-    Phase 4A-1:
-    - DB 幂等唯一键升级为 lot_id_key + batch_code_key 复合键
-    - ON CONFLICT 绑定新约束名
-    - patch where 锚点同步升级（但 patch 仍不补写 lot_id 本身）
+    Phase 3 结构收口：
+    - 只有 reason_canon='RECEIPT' 的台账行允许携带 production/expiry（canonical 快照）
+    - 其他 reason 一律禁止携带日期（由 DB check + 这里的写入规范共同保证）
 
-    Phase 4A-2a:
-    - 强化 lot 合法性：lot_id 非空时必须属于 (warehouse_id, item_id)
+    注意：
+    - batch_code 为历史兼容入参（展示码 lots.lot_code），stock_ledger 表终态不落 batch_code 列。
     """
-    # ✅ Step A: final guardrail (do not trust upstream)
+
     await assert_lot_belongs_to(
         session,
         warehouse_id=int(warehouse_id),
@@ -151,13 +131,17 @@ async def write_ledger(
     )
 
     reason_canon = _canon_reason(reason)
-    bc_norm = _norm_batch_code(batch_code)
+    _ = _norm_batch_code(batch_code)  # 兼容归一：仅用于上游语义/日志；不落 stock_ledger 表
+
+    # ---- Phase 3: enforce "dates only on RECEIPT" at write boundary ----
+    if reason_canon != "RECEIPT":
+        production_date = None
+        expiry_date = None
 
     base_values = dict(
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,
-        lot_id=lot_id,
+        lot_id=int(lot_id),
         reason=str(reason),
         reason_canon=reason_canon,
         sub_reason=sub_reason,
@@ -185,11 +169,6 @@ async def write_ledger(
     if new_id is not None:
         return int(new_id)
 
-    # 幂等命中：仅补齐非核心字段（不补 lot_id）
-    old_reason_canon = sa.func.nullif(StockLedger.reason_canon, "")
-    old_sub_reason = sa.func.nullif(StockLedger.sub_reason, "")
-    old_trace_id = sa.func.nullif(StockLedger.trace_id, "")
-
     if not _need_patch(
         reason_canon=reason_canon,
         sub_reason=sub_reason,
@@ -200,9 +179,10 @@ async def write_ledger(
         return 0
 
     upd_values = {
-        "reason_canon": sa.func.coalesce(old_reason_canon, reason_canon),
-        "sub_reason": sa.func.coalesce(old_sub_reason, sub_reason),
-        "trace_id": sa.func.coalesce(old_trace_id, trace_id),
+        "reason_canon": sa.func.coalesce(StockLedger.reason_canon, reason_canon),
+        "sub_reason": sa.func.coalesce(StockLedger.sub_reason, sub_reason),
+        "trace_id": sa.func.coalesce(StockLedger.trace_id, trace_id),
+        # 日期快照不可变：只允许 NULL -> 值（coalesce 保证）
         "production_date": sa.func.coalesce(StockLedger.production_date, production_date),
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),
     }
@@ -213,7 +193,6 @@ async def write_ledger(
             *_build_patch_where(
                 warehouse_id=warehouse_id,
                 item_id=item_id,
-                batch_code_norm=bc_norm,
                 lot_id=lot_id,
                 reason=reason,
                 ref=ref,

@@ -29,6 +29,9 @@ class ItemWriteService:
     - 负责 Item 的 create/update + 事务边界
     - create 时允许可选写入主条码（调用 ItemBarcodeService）
     - 不负责 decorate / test-set / 输出投影
+
+    Phase M-5：
+    - items.uom 已物理移除；单位治理完全由 item_uoms 结构层承载
     """
 
     def __init__(self, db: Session) -> None:
@@ -43,15 +46,12 @@ class ItemWriteService:
         *,
         name: str,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
         barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
-        # legacy mirror + params
+        # legacy input (deprecated)
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
@@ -67,18 +67,9 @@ class ItemWriteService:
             raise ValueError("name is required")
 
         spec_val = spec.strip() if isinstance(spec, str) else None
-        uom_val = (uom or "PCS").strip().upper() or "PCS"
 
         brand_val = brand.strip() if isinstance(brand, str) and brand.strip() else None
         category_val = category.strip() if isinstance(category, str) and category.strip() else None
-
-        case_ratio_val: Optional[int] = None
-        if case_ratio is not None:
-            if int(case_ratio) < 1:
-                raise ValueError("case_ratio must be >= 1")
-            case_ratio_val = int(case_ratio)
-
-        case_uom_val = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
 
         sku_val = self.next_sku()
 
@@ -89,43 +80,38 @@ class ItemWriteService:
 
         # expiry_policy is truth; if absent, fall back to legacy has_shelf_life mapping
         exp_policy = _norm_policy_str(expiry_policy)
-        if exp_policy is None:
+        if exp_policy is None and has_shelf_life is not None:
             exp_policy = "REQUIRED" if bool(has_shelf_life) else "NONE"
+        if exp_policy is None:
+            exp_policy = "NONE"
 
         deriv_allowed = True if derivation_allowed is None else bool(derivation_allowed)
         uom_gov = False if uom_governance_enabled is None else bool(uom_governance_enabled)
 
-        # mirror field (DB check locked)
-        has_sl = _is_required_expiry_policy(exp_policy)
-
         # if NONE, shelf_life params must be null (DB check ck_items_expiry_policy_vs_shelf_life)
         sl_value = shelf_life_value
         sl_unit = shelf_life_unit
-        if not has_sl:
+        if not _is_required_expiry_policy(exp_policy):
             sl_value = None
             sl_unit = None
 
         obj = Item(
             sku=sku_val,
             name=name_val,
-            uom=uom_val,
             spec=spec_val,
             enabled=bool(enabled),
             supplier_id=supplier_id,
             brand=brand_val,
             category=category_val,
-            # Phase M rule layer
+            # Phase M rule layer (truth)
             lot_source_policy=lot_policy,
             expiry_policy=exp_policy,
             derivation_allowed=deriv_allowed,
             uom_governance_enabled=uom_gov,
-            # legacy mirror + params
-            has_shelf_life=has_sl,
+            # shelf_life params (only meaningful when REQUIRED)
             shelf_life_value=sl_value,
             shelf_life_unit=sl_unit,
             weight_kg=weight_kg,
-            case_ratio=case_ratio_val,
-            case_uom=case_uom_val,
         )
 
         self.db.add(obj)
@@ -156,14 +142,9 @@ class ItemWriteService:
         id: int,
         name: Optional[str] = None,
         spec: Optional[str] = None,
-        uom: Optional[str] = None,
-        case_ratio: Optional[int] = None,
-        case_uom: Optional[str] = None,
-        case_ratio_set: bool = False,
-        case_uom_set: bool = False,
         enabled: Optional[bool] = None,
         supplier_id: Optional[int] = None,
-        # legacy mirror + params
+        # legacy input (deprecated)
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
@@ -195,24 +176,6 @@ class ItemWriteService:
             obj.spec = spec.strip() if isinstance(spec, str) else None
             changed = True
 
-        if uom is not None:
-            uom_val = (uom or "PCS").strip().upper() or "PCS"
-            obj.uom = uom_val
-            changed = True
-
-        if case_ratio_set:
-            if case_ratio is None:
-                obj.case_ratio = None
-            else:
-                if int(case_ratio) < 1:
-                    raise ValueError("case_ratio must be >= 1")
-                obj.case_ratio = int(case_ratio)
-            changed = True
-
-        if case_uom_set:
-            obj.case_uom = case_uom.strip() if isinstance(case_uom, str) and case_uom.strip() else None
-            changed = True
-
         if enabled is not None:
             obj.enabled = bool(enabled)
             changed = True
@@ -228,31 +191,18 @@ class ItemWriteService:
             obj.lot_source_policy = _norm_policy_str(lot_source_policy) or obj.lot_source_policy
             changed = True
 
-        # expiry_policy takes precedence; if absent but has_shelf_life provided, derive it
+        # expiry_policy takes precedence; if absent but legacy has_shelf_life provided, derive it
         exp_policy = _norm_policy_str(expiry_policy)
         if exp_policy is None and has_shelf_life is not None:
             exp_policy = "REQUIRED" if bool(has_shelf_life) else "NONE"
 
         if exp_policy is not None:
             obj.expiry_policy = exp_policy
-            # mirror
-            obj.has_shelf_life = _is_required_expiry_policy(exp_policy)
             # enforce param clearing when NONE
-            if not obj.has_shelf_life:
+            if not _is_required_expiry_policy(exp_policy):
                 obj.shelf_life_value = None
                 obj.shelf_life_unit = None
             changed = True
-        else:
-            # no expiry_policy change; still allow updating mirror (but keep it consistent)
-            if has_shelf_life is not None:
-                # derive policy from mirror to satisfy DB CHECK
-                derived = "REQUIRED" if bool(has_shelf_life) else "NONE"
-                obj.expiry_policy = derived
-                obj.has_shelf_life = _is_required_expiry_policy(derived)
-                if not obj.has_shelf_life:
-                    obj.shelf_life_value = None
-                    obj.shelf_life_unit = None
-                changed = True
 
         if derivation_allowed is not None:
             obj.derivation_allowed = bool(derivation_allowed)
