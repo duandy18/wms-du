@@ -1,19 +1,25 @@
 # app/api/routers/stores_schemas.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, constr
 
 # ---------- Pydantic I/O ----------
 
 PlatformStr = constr(min_length=2, max_length=32)
+ShopTypeStr = Literal["TEST", "PROD"]
 
 
 class StoreCreateIn(BaseModel):
     platform: PlatformStr
     shop_id: constr(min_length=1, max_length=128)
     name: Optional[constr(min_length=1, max_length=256)] = None
+
+    # ✅ 合同：店铺类型（唯一真相：platform_test_shops）
+    # - TEST：命中 platform_test_shops（code='DEFAULT'）
+    # - PROD：默认（不命中）
+    shop_type: ShopTypeStr = "PROD"
 
 
 class StoreCreateOut(BaseModel):
@@ -54,6 +60,11 @@ class StoreListItem(BaseModel):
     name: str
     active: bool
     route_mode: str
+
+    # ✅ 新增：店铺类型（用于区分测试/正式）
+    # - TEST：命中 platform_test_shops
+    # - PROD：默认
+    shop_type: str = "PROD"
 
     email: Optional[str] = None
     contact_name: Optional[str] = None
@@ -99,7 +110,6 @@ class BindingDeleteOut(BaseModel):
 class StorePlatformAuthOut(BaseModel):
     ok: bool = True
     data: Dict[str, Any]
-
 
 
 # ================================

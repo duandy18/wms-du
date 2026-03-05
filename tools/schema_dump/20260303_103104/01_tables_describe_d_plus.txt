@@ -1,0 +1,356 @@
+Expanded display is on.
+==================== d+ inbound_receipt_lines ====================
+                                                                        Table "public.inbound_receipt_lines"
+         Column          |           Type           | Collation | Nullable |                      Default                      | Storage  | Compression | Stats target | Description
+-------------------------+--------------------------+-----------+----------+---------------------------------------------------+----------+-------------+--------------+-------------
+ id                      | integer                  |           | not null | nextval('inbound_receipt_lines_id_seq'::regclass) | plain    |             |              |
+ receipt_id              | integer                  |           | not null |                                                   | plain    |             |              |
+ line_no                 | integer                  |           | not null |                                                   | plain    |             |              |
+ po_line_id              | integer                  |           |          |                                                   | plain    |             |              |
+ item_id                 | integer                  |           | not null |                                                   | plain    |             |              |
+ production_date         | date                     |           |          |                                                   | plain    |             |              |
+ expiry_date             | date                     |           |          |                                                   | plain    |             |              |
+ unit_cost               | numeric(12,2)            |           |          |                                                   | main     |             |              |
+ line_amount             | numeric(14,2)            |           |          |                                                   | main     |             |              |
+ remark                  | character varying(255)   |           |          |                                                   | extended |             |              |
+ created_at              | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ updated_at              | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ lot_id                  | integer                  |           |          |                                                   | plain    |             |              |
+ warehouse_id            | integer                  |           | not null |                                                   | plain    |             |              |
+ uom_id                  | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_input               | integer                  |           | not null |                                                   | plain    |             |              |
+ ratio_to_base_snapshot  | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_base                | integer                  |           | not null |                                                   | plain    |             |              |
+ receipt_status_snapshot | character varying(32)    |           | not null |                                                   | extended |             |              |
+ lot_code_input          | character varying(64)    |           |          |                                                   | extended |             |              |
+Indexes:
+    "inbound_receipt_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_inbound_receipt_lines_item" btree (item_id)
+    "ix_inbound_receipt_lines_po_line_id" btree (po_line_id)
+    "ix_inbound_receipt_lines_receipt" btree (receipt_id)
+    "uq_inbound_receipt_lines_receipt_line" UNIQUE CONSTRAINT, btree (receipt_id, line_no)
+Check constraints:
+    "ck_inbound_receipt_lines_prod_le_exp" CHECK (production_date IS NULL OR expiry_date IS NULL OR production_date <= expiry_date)
+    "ck_receipt_lines_lot_required_on_confirmed" CHECK (receipt_status_snapshot::text <> 'CONFIRMED'::text OR lot_id IS NOT NULL)
+    "ck_receipt_lines_status_snapshot_enum" CHECK (receipt_status_snapshot::text = ANY (ARRAY['DRAFT'::character varying, 'CONFIRMED'::character varying]::text[]))
+    "ck_receipt_qty_base_consistent" CHECK (qty_base = (qty_input * ratio_to_base_snapshot))
+Foreign-key constraints:
+    "fk_inbound_receipt_lines_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_inbound_receipt_lines_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    "fk_inbound_receipt_lines_po_line" FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
+    "fk_inbound_receipt_lines_receipt" FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+    "fk_inbound_receipt_lines_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+    "fk_receipt_line_uom" FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
+Access method: heap
+
+==================== d+ inbound_receipts ====================
+                                                                   Table "public.inbound_receipts"
+    Column     |           Type           | Collation | Nullable |                   Default                    | Storage  | Compression | Stats target | Description
+---------------+--------------------------+-----------+----------+----------------------------------------------+----------+-------------+--------------+-------------
+ id            | integer                  |           | not null | nextval('inbound_receipts_id_seq'::regclass) | plain    |             |              |
+ warehouse_id  | integer                  |           | not null |                                              | plain    |             |              |
+ supplier_id   | integer                  |           |          |                                              | plain    |             |              |
+ supplier_name | character varying(255)   |           |          |                                              | extended |             |              |
+ source_type   | character varying(16)    |           | not null |                                              | extended |             |              |
+ source_id     | integer                  |           |          |                                              | plain    |             |              |
+ ref           | character varying(128)   |           | not null |                                              | extended |             |              |
+ trace_id      | character varying(64)    |           |          |                                              | extended |             |              |
+ status        | character varying(32)    |           | not null | 'DRAFT'::character varying                   | extended |             |              |
+ remark        | character varying(255)   |           |          |                                              | extended |             |              |
+ occurred_at   | timestamp with time zone |           | not null |                                              | plain    |             |              |
+ created_at    | timestamp with time zone |           | not null | now()                                        | plain    |             |              |
+ updated_at    | timestamp with time zone |           | not null | now()                                        | plain    |             |              |
+Indexes:
+    "inbound_receipts_pkey" PRIMARY KEY, btree (id)
+    "ix_inbound_receipts_occurred_at" btree (occurred_at)
+    "ix_inbound_receipts_supplier" btree (supplier_id)
+    "ix_inbound_receipts_trace" btree (trace_id)
+    "ix_inbound_receipts_wh" btree (warehouse_id)
+    "uq_inbound_receipts_po_draft" UNIQUE, btree (source_type, source_id) WHERE source_type::text = 'PO'::text AND source_id IS NOT NULL AND status::text = 'DRAFT'::text
+    "uq_inbound_receipts_ref" UNIQUE, btree (ref)
+Foreign-key constraints:
+    "fk_inbound_receipts_supplier" FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+    "fk_inbound_receipts_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_receipt" FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+    TABLE "lots" CONSTRAINT "fk_lots_source_receipt" FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+Access method: heap
+
+==================== d+ internal_outbound_lines ====================
+                                                           Table "public.internal_outbound_lines"
+    Column     |  Type   | Collation | Nullable |                       Default                       | Storage  | Compression | Stats target | Description
+---------------+---------+-----------+----------+-----------------------------------------------------+----------+-------------+--------------+-------------
+ id            | bigint  |           | not null | nextval('internal_outbound_lines_id_seq'::regclass) | plain    |             |              |
+ doc_id        | bigint  |           | not null |                                                     | plain    |             |              |
+ line_no       | integer |           | not null |                                                     | plain    |             |              |
+ item_id       | bigint  |           | not null |                                                     | plain    |             |              |
+ batch_code    | text    |           |          |                                                     | extended |             |              |
+ requested_qty | integer |           | not null |                                                     | plain    |             |              |
+ confirmed_qty | integer |           |          |                                                     | plain    |             |              |
+ note          | text    |           |          |                                                     | extended |             |              |
+ extra_meta    | json    |           |          |                                                     | extended |             |              |
+Indexes:
+    "internal_outbound_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_internal_outbound_lines_doc_id" btree (doc_id)
+    "ix_internal_outbound_lines_item_id" btree (item_id)
+    "uq_internal_outbound_lines_doc_line_no" UNIQUE, btree (doc_id, line_no)
+Foreign-key constraints:
+    "fk_internal_outbound_lines_doc_id" FOREIGN KEY (doc_id) REFERENCES internal_outbound_docs(id) ON DELETE CASCADE
+    "fk_internal_outbound_lines_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+Access method: heap
+
+==================== d+ item_barcodes ====================
+                                                                                 Table "public.item_barcodes"
+   Column   |           Type           | Collation | Nullable |                  Default                  | Storage  | Compression | Stats target |                Description
+------------+--------------------------+-----------+----------+-------------------------------------------+----------+-------------+--------------+--------------------------------------------
+ id         | bigint                   |           | not null | nextval('item_barcodes_id_seq'::regclass) | plain    |             |              |
+ item_id    | bigint                   |           | not null |                                           | plain    |             |              |
+ barcode    | text                     |           | not null |                                           | extended |             |              |
+ kind       | text                     |           | not null | 'EAN13'::text                             | extended |             |              | 条码类型：EAN13 / UPC / INNER / CUSTOM ...
+ active     | boolean                  |           | not null | true                                      | plain    |             |              |
+ created_at | timestamp with time zone |           | not null | now()                                     | plain    |             |              |
+ is_primary | boolean                  |           | not null | false                                     | plain    |             |              |
+ updated_at | timestamp with time zone |           | not null | now()                                     | plain    |             |              |
+Indexes:
+    "item_barcodes_pkey" PRIMARY KEY, btree (id)
+    "ix_item_barcodes_item_id" btree (item_id)
+    "uq_item_barcodes_barcode" UNIQUE CONSTRAINT, btree (barcode)
+    "uq_item_barcodes_primary" UNIQUE, btree (item_id) WHERE is_primary = true
+Check constraints:
+    "ck_item_barcodes_primary_must_be_active" CHECK (NOT is_primary OR active)
+Foreign-key constraints:
+    "item_barcodes_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+Access method: heap
+
+==================== d+ item_uoms ====================
+                                                                      Table "public.item_uoms"
+       Column        |           Type           | Collation | Nullable |                Default                | Storage  | Compression | Stats target | Description
+---------------------+--------------------------+-----------+----------+---------------------------------------+----------+-------------+--------------+-------------
+ id                  | integer                  |           | not null | nextval('item_uoms_id_seq'::regclass) | plain    |             |              |
+ item_id             | integer                  |           | not null |                                       | plain    |             |              |
+ uom                 | character varying(16)    |           | not null |                                       | extended |             |              |
+ ratio_to_base       | integer                  |           | not null |                                       | plain    |             |              |
+ display_name        | character varying(32)    |           |          |                                       | extended |             |              |
+ is_base             | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_purchase_default | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_inbound_default  | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_outbound_default | boolean                  |           | not null | false                                 | plain    |             |              |
+ created_at          | timestamp with time zone |           | not null | now()                                 | plain    |             |              |
+ updated_at          | timestamp with time zone |           | not null | now()                                 | plain    |             |              |
+Indexes:
+    "item_uoms_pkey" PRIMARY KEY, btree (id)
+    "uq_item_uoms_item_uom" UNIQUE CONSTRAINT, btree (item_id, uom)
+    "uq_item_uoms_one_base_per_item" UNIQUE, btree (item_id) WHERE is_base = true
+    "uq_item_uoms_one_inbound_default_per_item" UNIQUE, btree (item_id) WHERE is_inbound_default = true
+    "uq_item_uoms_one_outbound_default_per_item" UNIQUE, btree (item_id) WHERE is_outbound_default = true
+    "uq_item_uoms_one_purchase_default_per_item" UNIQUE, btree (item_id) WHERE is_purchase_default = true
+Check constraints:
+    "ck_item_uoms_ratio_ge_1" CHECK (ratio_to_base >= 1)
+Foreign-key constraints:
+    "item_uoms_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "purchase_order_lines" CONSTRAINT "fk_po_line_purchase_uom" FOREIGN KEY (purchase_uom_id_snapshot) REFERENCES item_uoms(id)
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_receipt_line_uom" FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
+Access method: heap
+
+==================== d+ items ====================
+                                                                                     Table "public.items"
+         Column         |           Type           | Collation | Nullable |              Default              | Storage  | Compression | Stats target |              Description
+------------------------+--------------------------+-----------+----------+-----------------------------------+----------+-------------+--------------+----------------------------------------
+ id                     | integer                  |           | not null | nextval('items_id_seq'::regclass) | plain    |             |              |
+ sku                    | character varying(64)    |           | not null |                                   | extended |             |              |
+ name                   | character varying(128)   |           | not null |                                   | extended |             |              |
+ created_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ updated_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ spec                   | character varying(128)   |           |          |                                   | extended |             |              |
+ enabled                | boolean                  |           | not null | true                              | plain    |             |              |
+ supplier_id            | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_value       | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_unit        | character varying(16)    |           |          |                                   | extended |             |              |
+ weight_kg              | numeric(10,3)            |           |          |                                   | main     |             |              | 单件净重（kg），用于运费预估，不含包材
+ brand                  | character varying(64)    |           |          |                                   | extended |             |              |
+ category               | character varying(64)    |           |          |                                   | extended |             |              |
+ lot_source_policy      | lot_source_policy        |           | not null |                                   | plain    |             |              |
+ expiry_policy          | expiry_policy            |           | not null |                                   | plain    |             |              |
+ derivation_allowed     | boolean                  |           | not null |                                   | plain    |             |              |
+ uom_governance_enabled | boolean                  |           | not null |                                   | plain    |             |              |
+Indexes:
+    "items_pkey" PRIMARY KEY, btree (id)
+    "items_sku_key" UNIQUE CONSTRAINT, btree (sku)
+    "ix_items_brand" btree (brand)
+    "ix_items_category" btree (category)
+    "ix_items_supplier_id" btree (supplier_id)
+Check constraints:
+    "ck_items_expiry_policy_vs_shelf_life" CHECK (expiry_policy = 'REQUIRED'::expiry_policy OR shelf_life_value IS NULL AND shelf_life_unit IS NULL)
+    "ck_items_shelf_life_pair" CHECK ((shelf_life_value IS NULL) = (shelf_life_unit IS NULL))
+    "ck_items_shelf_life_unit_enum" CHECK (shelf_life_unit IS NULL OR (shelf_life_unit::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
+    "ck_items_shelf_life_value_pos" CHECK (shelf_life_value IS NULL OR shelf_life_value > 0)
+Foreign-key constraints:
+    "fk_items_supplier" FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "internal_outbound_lines" CONSTRAINT "fk_internal_outbound_lines_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "item_test_set_items" CONSTRAINT "fk_item_test_set_items_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "lots" CONSTRAINT "fk_lots_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "order_items" CONSTRAINT "fk_order_items_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "purchase_order_lines" CONSTRAINT "fk_po_line_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stock_ledger" CONSTRAINT "fk_stock_ledger_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stocks_lot" CONSTRAINT "fk_stocks_lot_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "fsku_components" CONSTRAINT "fsku_components_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    TABLE "inventory_movements" CONSTRAINT "inventory_movements_item_sku_fkey" FOREIGN KEY (item_sku) REFERENCES items(sku)
+    TABLE "item_barcodes" CONSTRAINT "item_barcodes_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    TABLE "item_uoms" CONSTRAINT "item_uoms_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stock_snapshots" CONSTRAINT "stock_snapshots_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    TABLE "store_items" CONSTRAINT "store_items_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+Access method: heap
+
+==================== d+ lots ====================
+                                                                               Table "public.lots"
+                Column                |           Type           | Collation | Nullable |             Default              | Storage  | Compression | Stats target | Description
+--------------------------------------+--------------------------+-----------+----------+----------------------------------+----------+-------------+--------------+-------------
+ id                                   | integer                  |           | not null | nextval('lots_id_seq'::regclass) | plain    |             |              |
+ warehouse_id                         | integer                  |           | not null |                                  | plain    |             |              |
+ item_id                              | integer                  |           | not null |                                  | plain    |             |              |
+ lot_code_source                      | character varying(16)    |           | not null |                                  | extended |             |              |
+ lot_code                             | character varying(64)    |           |          |                                  | extended |             |              |
+ source_receipt_id                    | integer                  |           |          |                                  | plain    |             |              |
+ source_line_no                       | integer                  |           |          |                                  | plain    |             |              |
+ created_at                           | timestamp with time zone |           | not null | now()                            | plain    |             |              |
+ item_shelf_life_value_snapshot       | integer                  |           |          |                                  | plain    |             |              |
+ item_shelf_life_unit_snapshot        | character varying(16)    |           |          |                                  | extended |             |              |
+ item_lot_source_policy_snapshot      | lot_source_policy        |           | not null |                                  | plain    |             |              |
+ item_expiry_policy_snapshot          | expiry_policy            |           | not null |                                  | plain    |             |              |
+ item_derivation_allowed_snapshot     | boolean                  |           | not null |                                  | plain    |             |              |
+ item_uom_governance_enabled_snapshot | boolean                  |           | not null |                                  | plain    |             |              |
+Indexes:
+    "lots_pkey" PRIMARY KEY, btree (id)
+    "ix_lots_item" btree (item_id)
+    "ix_lots_wh" btree (warehouse_id)
+    "ix_lots_wh_item" btree (warehouse_id, item_id)
+    "uq_lots_id_wh_item" UNIQUE CONSTRAINT, btree (id, warehouse_id, item_id)
+    "uq_lots_internal_wh_item_src_receipt_line" UNIQUE, btree (warehouse_id, item_id, source_receipt_id, source_line_no) WHERE lot_code_source::text = 'INTERNAL'::text
+    "uq_lots_wh_item_lot_code" UNIQUE, btree (warehouse_id, item_id, lot_code) WHERE lot_code IS NOT NULL
+Check constraints:
+    "ck_lots_internal_requires_source_receipt_line" CHECK (lot_code_source::text <> 'INTERNAL'::text OR source_receipt_id IS NOT NULL AND source_line_no IS NOT NULL)
+    "ck_lots_item_shelf_life_pair_snapshot" CHECK ((item_shelf_life_value_snapshot IS NULL) = (item_shelf_life_unit_snapshot IS NULL))
+    "ck_lots_item_shelf_life_unit_enum_snapshot" CHECK (item_shelf_life_unit_snapshot IS NULL OR (item_shelf_life_unit_snapshot::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
+    "ck_lots_lot_code_source" CHECK (lot_code_source::text = ANY (ARRAY['SUPPLIER'::character varying, 'INTERNAL'::character varying]::text[]))
+    "ck_lots_sl_params_by_policy_snap" CHECK (item_expiry_policy_snapshot = 'REQUIRED'::expiry_policy OR item_shelf_life_value_snapshot IS NULL AND item_shelf_life_unit_snapshot IS NULL)
+Foreign-key constraints:
+    "fk_lots_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_lots_source_receipt" FOREIGN KEY (source_receipt_id) REFERENCES inbound_receipts(id) ON DELETE RESTRICT
+    "fk_lots_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    TABLE "stock_ledger" CONSTRAINT "fk_stock_ledger_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    TABLE "stock_snapshots" CONSTRAINT "fk_stock_snapshots_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    TABLE "stocks_lot" CONSTRAINT "fk_stocks_lot_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+Access method: heap
+
+==================== d+ purchase_order_lines ====================
+                                                                                        Table "public.purchase_order_lines"
+             Column              |           Type           | Collation | Nullable |                     Default                      | Storage  | Compression | Stats target |             Description
+---------------------------------+--------------------------+-----------+----------+--------------------------------------------------+----------+-------------+--------------+-------------------------------------
+ id                              | integer                  |           | not null | nextval('purchase_order_lines_id_seq'::regclass) | plain    |             |              |
+ po_id                           | integer                  |           | not null |                                                  | plain    |             |              |
+ line_no                         | integer                  |           | not null |                                                  | plain    |             |              |
+ item_id                         | integer                  |           | not null |                                                  | plain    |             |              |
+ item_name                       | character varying(255)   |           |          |                                                  | extended |             |              |
+ item_sku                        | character varying(64)    |           |          |                                                  | extended |             |              |
+ supply_price                    | numeric(12,2)            |           |          |                                                  | main     |             |              |
+ remark                          | character varying(255)   |           |          |                                                  | extended |             |              |
+ created_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              |
+ updated_at                      | timestamp with time zone |           | not null | now()                                            | plain    |             |              |
+ spec_text                       | character varying(255)   |           |          |                                                  | extended |             |              |
+ qty_ordered_base                | integer                  |           | not null |                                                  | plain    |             |              | 订购数量（最小单位 base，事实字段）
+ discount_amount                 | numeric(14,2)            |           | not null | 0                                                | main     |             |              | 整行减免金额（>=0）
+ discount_note                   | text                     |           |          |                                                  | extended |             |              | 折扣说明（可选）
+ purchase_uom_id_snapshot        | integer                  |           | not null |                                                  | plain    |             |              |
+ purchase_ratio_to_base_snapshot | integer                  |           | not null |                                                  | plain    |             |              |
+ qty_ordered_input               | integer                  |           | not null |                                                  | plain    |             |              |
+Indexes:
+    "purchase_order_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_purchase_order_lines_item_id" btree (item_id)
+    "ix_purchase_order_lines_item_sku" btree (item_sku)
+    "ix_purchase_order_lines_po_id" btree (po_id)
+    "ix_purchase_order_lines_po_id_qty_ordered_base" btree (po_id, qty_ordered_base)
+    "uq_purchase_order_lines_po_id_line_no" UNIQUE CONSTRAINT, btree (po_id, line_no)
+Check constraints:
+    "ck_po_lines_discount_amount_nonneg" CHECK (discount_amount >= 0::numeric)
+    "ck_po_lines_qty_base_consistent" CHECK (qty_ordered_base = (qty_ordered_input * purchase_ratio_to_base_snapshot))
+    "ck_po_lines_qty_ordered_base_positive" CHECK (qty_ordered_base > 0)
+Foreign-key constraints:
+    "fk_po_line_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_po_line_purchase_uom" FOREIGN KEY (purchase_uom_id_snapshot) REFERENCES item_uoms(id)
+    "purchase_order_lines_po_id_fkey" FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE
+Referenced by:
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_po_line" FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
+Access method: heap
+
+==================== d+ purchase_orders ====================
+                                                                                           Table "public.purchase_orders"
+      Column      |           Type           | Collation | Nullable |                   Default                   | Storage  | Compression | Stats target |                       Description
+------------------+--------------------------+-----------+----------+---------------------------------------------+----------+-------------+--------------+---------------------------------------------------------
+ id               | integer                  |           | not null | nextval('purchase_orders_id_seq'::regclass) | plain    |             |              |
+ warehouse_id     | integer                  |           | not null |                                             | plain    |             |              |
+ status           | character varying(32)    |           | not null | 'CREATED'::character varying                | extended |             |              |
+ created_at       | timestamp with time zone |           | not null | now()                                       | plain    |             |              |
+ updated_at       | timestamp with time zone |           | not null | now()                                       | plain    |             |              |
+ last_received_at | timestamp with time zone |           |          |                                             | plain    |             |              |
+ closed_at        | timestamp with time zone |           |          |                                             | plain    |             |              |
+ supplier_id      | integer                  |           | not null |                                             | plain    |             |              | FK → suppliers.id（必填）
+ supplier_name    | character varying(255)   |           | not null |                                             | extended |             |              | 下单时的供应商名称快照（必填，通常来自 suppliers.name）
+ total_amount     | numeric(14,2)            |           |          |                                             | main     |             |              | PO 汇总金额，由行表 line_amount 聚合
+ remark           | character varying(255)   |           |          |                                             | extended |             |              | 采购单头部备注（可选）
+ purchaser        | character varying(64)    |           | not null |                                             | extended |             |              | 采购人姓名或编码
+ purchase_time    | timestamp with time zone |           | not null |                                             | plain    |             |              | 采购单创建/确认时间
+ close_reason     | character varying(32)    |           |          |                                             | extended |             |              |
+ close_note       | text                     |           |          |                                             | extended |             |              |
+ closed_by        | bigint                   |           |          |                                             | plain    |             |              |
+ canceled_at      | timestamp with time zone |           |          |                                             | plain    |             |              |
+ canceled_reason  | character varying(64)    |           |          |                                             | extended |             |              |
+ canceled_by      | bigint                   |           |          |                                             | plain    |             |              |
+Indexes:
+    "purchase_orders_pkey" PRIMARY KEY, btree (id)
+    "ix_purchase_orders_supplier_id" btree (supplier_id)
+    "ix_purchase_orders_warehouse_id" btree (warehouse_id)
+    "ix_purchase_orders_wh_status" btree (warehouse_id, status)
+Check constraints:
+    "ck_purchase_orders_status_plan" CHECK (status::text = ANY (ARRAY['CREATED'::character varying, 'CANCELED'::character varying, 'CLOSED'::character varying]::text[]))
+Foreign-key constraints:
+    "fk_po_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+    "fk_purchase_orders_supplier_id" FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "purchase_order_lines" CONSTRAINT "purchase_order_lines_po_id_fkey" FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE
+Access method: heap
+
+==================== d+ stock_snapshots ====================
+                                                             Table "public.stock_snapshots"
+    Column     |     Type      | Collation | Nullable |                   Default                   | Storage | Compression | Stats target | Description
+---------------+---------------+-----------+----------+---------------------------------------------+---------+-------------+--------------+-------------
+ id            | integer       |           | not null | nextval('stock_snapshots_id_seq'::regclass) | plain   |             |              |
+ snapshot_date | date          |           | not null |                                             | plain   |             |              |
+ warehouse_id  | integer       |           | not null |                                             | plain   |             |              |
+ item_id       | integer       |           | not null |                                             | plain   |             |              |
+ qty_allocated | numeric(18,4) |           | not null | 0                                           | main    |             |              |
+ qty_available | numeric(18,4) |           | not null | 0                                           | main    |             |              |
+ qty           | numeric(18,4) |           | not null |                                             | main    |             |              |
+ lot_id        | integer       |           | not null |                                             | plain   |             |              |
+Indexes:
+    "stock_snapshots_pkey" PRIMARY KEY, btree (id)
+    "ix_stock_snapshots_item_id" btree (item_id)
+    "ix_stock_snapshots_lot_id" btree (lot_id)
+    "ix_stock_snapshots_snapshot_date" btree (snapshot_date)
+    "ix_stock_snapshots_warehouse_id" btree (warehouse_id)
+    "ix_stock_snapshots_wh_item_lot" btree (warehouse_id, item_id, lot_id)
+    "uq_stock_snapshots_grain_lot" UNIQUE CONSTRAINT, btree (snapshot_date, warehouse_id, item_id, lot_id)
+Check constraints:
+    "ck_stock_snapshots_qty_allocated_nonneg" CHECK (qty_allocated >= 0::numeric)
+    "ck_stock_snapshots_qty_available_nonneg" CHECK (qty_available >= 0::numeric)
+    "ck_stock_snapshots_qty_balance" CHECK ((qty_available + qty_allocated) = qty)
+    "ck_stock_snapshots_qty_nonneg" CHECK (qty >= 0::numeric)
+Foreign-key constraints:
+    "fk_stock_snapshots_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    "stock_snapshots_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    "stock_snapshots_warehouse_id_fkey" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+Access method: heap

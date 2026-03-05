@@ -26,6 +26,7 @@ async def cancel_flow(
 
     - 不触碰库存/台账
     - 取消仅表达“订单不再进入后续执行链路”，属于订单状态与审计层动作
+    - Phase 5：执行仓归属只来自 order_fulfillment（actual 优先，否则 planned）
     """
     platform_db = platform.upper()
 

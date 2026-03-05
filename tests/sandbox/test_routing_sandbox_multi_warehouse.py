@@ -118,16 +118,23 @@ async def seed_world_phase5(session: AsyncSession) -> Tuple[int, int, int]:
     wh_ids = await _ensure_n_warehouses(session, 3)
     wh1, wh2, wh3 = int(wh_ids[0]), int(wh_ids[1]), int(wh_ids[2])
 
-    # 确保 stores 存在（name NOT NULL）
+    # stores 终态约束：
+    # - UNIQUE(platform, shop_id)
+    # - UNIQUE(platform, store_code)
+    # 且 store_code 有默认触发器，但不能依赖触发器避免冲突；必须显式写入并用正确 conflict target。
     await session.execute(
         sa.text(
             """
-            INSERT INTO stores (platform, shop_id, name, active)
+            INSERT INTO stores (platform, shop_id, store_code, name, active)
             VALUES
-              ('PDD','S1','S1',TRUE),
-              ('PDD','S2','S2',TRUE),
-              ('PDD','S3','S3',TRUE)
-            ON CONFLICT (platform, shop_id) DO NOTHING;
+              ('PDD','S1','S1','S1',TRUE),
+              ('PDD','S2','S2','S2',TRUE),
+              ('PDD','S3','S3','S3',TRUE)
+            ON CONFLICT (platform, store_code) DO UPDATE
+              SET shop_id = EXCLUDED.shop_id,
+                  name    = EXCLUDED.name,
+                  active  = EXCLUDED.active,
+                  updated_at = now();
             """
         )
     )

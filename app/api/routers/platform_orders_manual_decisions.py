@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.api.problem import make_problem
-from app.services.platform_order_resolve_service import norm_platform
 from app.api.routers.platform_orders_manual_decisions_schemas import ManualDecisionOrdersOut
+from app.services.platform_order_resolve_service import norm_platform
+from app.services.test_shop_testset_guard_service import TestShopTestSetGuardService
 
 router = APIRouter(tags=["platform-orders"])
 
@@ -296,6 +297,19 @@ async def manual_bind_merchant_code(
                 },
             ),
         )
+
+    # ✅ 宇宙边界（以 platform_test_shops 为唯一真相）：
+    #    - 有 components 才校验；无 components 直接放行（合同兼容）
+    guard = TestShopTestSetGuardService(session)
+    await guard.guard_fsku_components_by_shop(
+        platform=plat,
+        shop_id=shop_id,
+        store_id=store_id,
+        fsku_id=int(payload.fsku_id),
+        set_code="DEFAULT",
+        path="/platform-orders/manual-decisions/bind-merchant-code",
+        method="POST",
+    )
 
     now = _utc_now()
     reason = (payload.reason or "").strip() or "manual bind"

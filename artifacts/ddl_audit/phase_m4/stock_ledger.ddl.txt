@@ -1,0 +1,41 @@
+                                                                    Table "public.stock_ledger"
+     Column      |           Type           | Collation | Nullable |                 Default                  | Storage  | Compression | Stats target | Description
+-----------------+--------------------------+-----------+----------+------------------------------------------+----------+-------------+--------------+-------------
+ id              | integer                  |           | not null | nextval('stock_ledger_id_seq'::regclass) | plain    |             |              |
+ reason          | character varying(32)    |           | not null |                                          | extended |             |              |
+ after_qty       | integer                  |           | not null |                                          | plain    |             |              |
+ delta           | integer                  |           | not null |                                          | plain    |             |              |
+ occurred_at     | timestamp with time zone |           | not null | now()                                    | plain    |             |              |
+ ref             | character varying(128)   |           | not null |                                          | extended |             |              |
+ ref_line        | integer                  |           | not null | 1                                        | plain    |             |              |
+ item_id         | integer                  |           | not null |                                          | plain    |             |              |
+ created_at      | timestamp with time zone |           | not null | now()                                    | plain    |             |              |
+ warehouse_id    | integer                  |           | not null |                                          | plain    |             |              |
+ trace_id        | character varying(64)    |           |          |                                          | extended |             |              |
+ production_date | date                     |           |          |                                          | plain    |             |              |
+ expiry_date     | date                     |           |          |                                          | plain    |             |              |
+ sub_reason      | character varying(32)    |           |          |                                          | extended |             |              |
+ reason_canon    | character varying(32)    |           |          |                                          | extended |             |              |
+ lot_id          | integer                  |           | not null |                                          | plain    |             |              |
+Indexes:
+    "stock_ledger_pkey" PRIMARY KEY, btree (id)
+    "idx_stock_ledger_occurred_at" btree (occurred_at)
+    "ix_ledger_dims" btree (item_id, warehouse_id, lot_id)
+    "ix_ledger_occurred_at" btree (occurred_at)
+    "ix_stock_ledger_item_id" btree (item_id)
+    "ix_stock_ledger_occurred_at" btree (occurred_at)
+    "ix_stock_ledger_reason_canon" btree (reason_canon)
+    "ix_stock_ledger_reason_canon_time" btree (reason_canon, occurred_at)
+    "ix_stock_ledger_ref" btree (ref)
+    "ix_stock_ledger_sub_reason" btree (sub_reason)
+    "ix_stock_ledger_sub_reason_time" btree (sub_reason, occurred_at)
+    "ix_stock_ledger_trace_id" btree (trace_id)
+    "ix_stock_ledger_warehouse_id" btree (warehouse_id)
+    "uq_ledger_receipt_wh_lot" UNIQUE, btree (warehouse_id, lot_id) WHERE reason_canon::text = 'RECEIPT'::text
+    "uq_ledger_wh_lot_item_reason_ref_line" UNIQUE CONSTRAINT, btree (reason, ref, ref_line, item_id, warehouse_id, lot_id)
+Check constraints:
+    "ck_ledger_dates_only_on_receipt" CHECK (reason_canon::text = 'RECEIPT'::text OR production_date IS NULL AND expiry_date IS NULL)
+Foreign-key constraints:
+    "fk_stock_ledger_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_stock_ledger_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+Access method: heap

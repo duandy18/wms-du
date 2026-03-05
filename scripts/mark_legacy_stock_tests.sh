@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Phase 4E：本脚本用于把旧 location_id / legacy stocks/batches 时代的测试替换为 skip stub。
+# 说明：
+# - 这些测试属于历史行为记录，不应阻塞 lot-world 主线。
+# - v2/v3 行为由 lots + stocks_lot + stock_ledger 的合同测试覆盖。
+
 # 1) tests/services/test_stock_service_contract.py
 cat > tests/services/test_stock_service_contract.py << 'EOF'
 """
@@ -9,12 +14,13 @@ Legacy: StockService + InboundService v1 合同测试（基于 location_id）。
 原合同依赖：
   - InboundService.receive(session, item_id, location_id, qty, ref, ...);
   - StockService.adjust(session, item_id, location_id, delta, ...);
-  - stocks 表存在 location_id/batch_id 等列。
+  - legacy stocks/batches 表存在 location_id/batch_id 等列。
 
-当前实现：
-  - StockService 已升级为 (item_id, warehouse_id, batch_code) 粒度；
-  - InboundService.receive 使用 v2 批次/仓库模型；
-  - stocks 不再有 location_id/batch_id 列。
+当前实现（Phase 4E）：
+  - 余额事实源：stocks_lot
+  - 批次主档：lots
+  - 台账事实：stock_ledger
+  - 旧 location_id 口径不再适用
 
 v2 行为由 test_stock_service_v2.py、quick inbound 测试 等覆盖。
 本文件标记为 legacy，不参与当前基线。
@@ -25,8 +31,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy stock/inbound contract tests based on location_id; "
-        "StockService & InboundService now use (warehouse_id, item_id, batch_code) "
-        "and are covered by v2/unit & quick tests."
+        "Phase 4E uses (warehouse_id, item_id, lot_code) on top of lots+stocks_lot."
     )
 )
 EOF
@@ -36,13 +41,9 @@ cat > tests/services/test_stock_service_count_absolute.py << 'EOF'
 """
 Legacy: 绝对盘点（COUNT absolute）基于旧 StockService 接口的测试。
 
-依赖：
-  - InboundService.receive(..., location_id=...);
-  - StockService.adjust(..., location_id=...).
-
-当前版本：
-  - 盘点 & 入库逻辑已迁移到 v2 库存模型；
-  - 旧合同由新的 count/reconcile 测试取代。
+当前版本（Phase 4E）：
+  - 盘点 & 入库逻辑已迁移到 lot-world（lots + stocks_lot）
+  - 旧合同由新的 count/reconcile 测试取代
 
 本文件作为历史行为记录，暂时跳过。
 """
@@ -52,7 +53,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy COUNT-absolute tests using StockService.adjust(location_id) "
-        "and InboundService.receive(location_id); superseded by v2 stock/reconcile tests."
+        "and InboundService.receive(location_id); superseded by Phase 4E lot-world tests."
     )
 )
 EOF
@@ -62,11 +63,7 @@ cat > tests/services/test_stock_service_idempotency_edges.py << 'EOF'
 """
 Legacy: StockService 出库幂等边界测试（基于 location_id）。
 
-场景：
-  - InboundService.receive + StockService.adjust(location_id, ...);
-  - 通过 ref/ref_line 组合模拟出库幂等。
-
-当前：
+当前（Phase 4E）：
   - 幂等出库行为由 v2 OutboundService/StockService + 对应 v2 测试覆盖；
   - 旧 location_id 口径不再适用。
 
@@ -78,7 +75,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy stock idempotency edge tests on (item_id, location_id); "
-        "superseded by v2 OutboundService/StockService tests using warehouse/batch."
+        "superseded by Phase 4E OutboundService/StockService tests using warehouse/lot."
     )
 )
 EOF
@@ -88,15 +85,8 @@ cat > tests/services/test_stock_on_hand_aggregation.py << 'EOF'
 """
 Legacy: StockService.get_on_hand(location_id, batch_code) 聚合测试。
 
-依赖：
-  - StockService.get_on_hand(session, item_id, location_id, batch_code)
-  - 旧的 stocks(item_id, location_id, batch_id, qty) 模式。
-
-当前：
-  - StockService 不再暴露 get_on_hand(location_id) 接口；
-  - 在库聚合通过 v2 模型/视图 & 快照测试覆盖。
-
-本文件作为旧 API 文档，现标记为 legacy。
+当前（Phase 4E）：
+  - 在库聚合通过 lot-world（stocks_lot）与快照/三账测试覆盖。
 """
 
 import pytest
@@ -104,7 +94,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy get_on_hand aggregation tests based on location_id; "
-        "StockService v2 no longer exposes get_on_hand(location_id)."
+        "Phase 4E uses stocks_lot for on_hand aggregation."
     )
 )
 EOF
@@ -114,30 +104,20 @@ cat > tests/services/test_stock_fallbacks.py << 'EOF'
 """
 Legacy: 旧 StockFallbacks + StockService(location_id) 组合测试。
 
-内容包括：
-  - COUNT 并发下的单条 ledger 保障；
-  - PUTAWAY 参考线连续性；
-  - PICK vs COUNT / PICK vs PICK 并发场景。
-
-这些测试依赖：
+依赖：
   - StockService.adjust(session, item_id, location_id, ...);
-  - 底层 stocks.location_id 列。
+  - 底层 legacy stocks.location_id 列。
 
-当前：
-  - FEFO/fallback 逻辑已重写为 v2 FefoAllocator/StockFallbacks，
-    使用 (item_id, warehouse_id, batch_code) + stocks.qty；
-  - 旧 location 口径的 fallback 测试不再适用。
-
-本文件标记为 legacy，待未来按新 FefoAllocator + v2 库存模型重写测试集。
+当前（Phase 4E）：
+  - FEFO/fallback 逻辑已重写为 lot-world 分配（stocks_lot + lots）。
 """
 
 import pytest
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "legacy StockFallbacks tests using StockService.adjust(location_id); "
-        "fallback/FEFO behavior has been redesigned on top of v2 stocks "
-        "and will need new tests."
+        "legacy StockFallbacks tests using location_id; "
+        "Phase 4E FEFO/fallback runs on lots+stocks_lot."
     )
 )
 EOF
@@ -148,23 +128,18 @@ cat > tests/services/test_stock_transfer.py << 'EOF'
 Legacy: test_stock_transfer_fefo 基于旧 FEFO + location_id 的测试。
 
 依赖：
-  - FefoAllocator.plan(session, item_id, location_id, ...);
-  - 直接访问 stocks.location_id / batches.location_id 等列。
+  - 直接访问 legacy stocks.location_id / batches.location_id 等列。
 
-当前：
-  - FEFO 分配器已重构为 v2 FefoAllocator(warehouse_id,item_id,batch_code)；
-  - stocks 表不再有 location_id。
-
-本文件作为旧 FEFO 设计的文档，现标记为 legacy。
+当前（Phase 4E）：
+  - FEFO 分配器已重构为 lot-world（warehouse_id,item_id,lot_code）。
 """
 
 import pytest
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "legacy stock transfer FEFO test depending on stocks.location_id; "
-        "v2 FefoAllocator uses (warehouse_id, item_id, batch_code) and "
-        "is covered by dedicated v2 tests."
+        "legacy stock transfer FEFO test depending on location_id; "
+        "Phase 4E FEFO allocator uses warehouse+lot on lots+stocks_lot."
     )
 )
 EOF
@@ -174,24 +149,17 @@ cat > tests/services/test_inventory_adjust_fefo.py << 'EOF'
 """
 Legacy: FEFO 出库 + allow_expired 组合测试（基于 OutboundService v1）。
 
-依赖：
-  - OutboundService.commit(session, platform, shop_id, ref,
-      lines=[OutboundLine(item_id, location_id, qty)], mode='FEFO', ...)
-
-当前：
-  - OutboundService 已改为显式 ShipLine(warehouse_id, item_id, batch_code, qty) 风格，
-    不再接受 platform/shop_id/mode 等旧参数；
-  - FEFO 出库路径由 v2 OutboundService + FefoAllocator/StockFallbacks 组合实现。
-
-本文件标记为 legacy。
+当前（Phase 4E）：
+  - OutboundService 已统一为 lot-world；
+  - 旧签名不再适用。
 """
 
 import pytest
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "legacy FEFO outbound tests using OutboundService.commit(platform, shop_id, location_id,...); "
-        "OutboundService v2 no longer supports this signature."
+        "legacy FEFO outbound tests using OutboundService.commit(..., location_id,...); "
+        "Phase 4E OutboundService uses warehouse+lot."
     )
 )
 EOF
@@ -201,23 +169,16 @@ cat > tests/services/test_inventory_adjust_service.py << 'EOF'
 """
 Legacy: InventoryAdjustService 基于 StockService.adjust(location_id) 的测试。
 
-场景：
-  - 先 +5 再 -3 的调整逻辑；
-  - 负数防守等。
-
-当前：
-  - StockService.adjust 已统一为 (item_id, warehouse_id, batch_code)；
-  - 绝大多数调整 / reconcile 流程由 v2 服务与测试覆盖。
-
-本文件作为旧接口行为记录，现标记为 legacy。
+当前（Phase 4E）：
+  - 调整/reconcile 流程由 lot-world 覆盖。
 """
 
 import pytest
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "legacy inventory adjust tests: rely on StockService.adjust(location_id); "
-        "adjustment logic is now covered by v2 stock/reconcile pipeline."
+        "legacy inventory adjust tests rely on location_id; "
+        "Phase 4E adjustment is covered by lot-world stock/reconcile tests."
     )
 )
 EOF
@@ -227,15 +188,9 @@ cat > tests/services/test_inventory_adjust_inbound.py << 'EOF'
 """
 Legacy: 入库场景测试（InventoryAdjust + InboundService v1）。
 
-依赖：
-  - InboundService.receive(session, item_id, location_id, qty, ref, ...);
-  - 基于 location_id 的库存槽位。
-
-当前：
-  - 入库已统一走 v2 批次/仓库模型；
-  - InboundService.receive 签名已变化，不再接受 location_id 参数。
-
-本文件标记为 legacy。
+当前（Phase 4E）：
+  - 入库已统一走 lot-world 模型；
+  - 旧签名不再适用。
 """
 
 import pytest
@@ -243,7 +198,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy inventory inbound tests using InboundService.receive(location_id); "
-        "inbound flow has been refactored to v2 warehouse/batch model."
+        "Phase 4E inbound uses warehouse+lot."
     )
 )
 EOF
@@ -253,15 +208,8 @@ cat > tests/services/test_inventory_reconcile.py << 'EOF'
 """
 Legacy: ReconcileService 基于 StockService.get_on_hand(location_id) 的测试。
 
-依赖：
-  - ReconcileService.reconcile(session, item_id, location_id, actual_qty, ref);
-  - StockService.get_on_hand(session, item_id, location_id).
-
-当前：
-  - ReconcileService 已对接 v2 库存模型；
-  - StockService 不再提供 get_on_hand(location_id) 接口。
-
-本文件作为旧 reconcile 设计的文档，现标记为 legacy。
+当前（Phase 4E）：
+  - reconcile 逻辑已对接 lot-world（stocks_lot + ledger）。
 """
 
 import pytest
@@ -269,8 +217,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason=(
         "legacy inventory reconcile tests using location-based get_on_hand; "
-        "v2 reconcile logic is implemented on top of the v2 stock model "
-        "and will require new tests."
+        "Phase 4E reconcile uses stocks_lot + ledger."
     )
 )
 EOF

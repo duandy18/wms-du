@@ -12,12 +12,16 @@ UTC = timezone.utc
 
 
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
     row = await session.execute(
-        text("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
+        text("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
         {"i": int(item_id)},
     )
     v = row.scalar_one_or_none()
-    return bool(v is True)
+    return str(v or "").strip().upper() == "REQUIRED"
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
@@ -25,17 +29,35 @@ async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        r = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
+                 LIMIT 1
+                """
+            ),
+            {"i": int(item_id), "w": int(wh)},
+        )
+        return int(r.scalar_one_or_none() or 0)
+
     r = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id=:i
-               AND warehouse_id=:w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
-        {"i": int(item_id), "w": int(wh), "c": code},
+        {"i": int(item_id), "w": int(wh), "c": str(code)},
     )
     return int(r.scalar_one_or_none() or 0)
 

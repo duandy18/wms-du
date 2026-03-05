@@ -6,19 +6,19 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.batch_code_contract import normalize_optional_batch_code
-
-_NULL_BATCH_KEY = "__NULL_BATCH__"
+from app.api.lot_code_contract import normalize_optional_lot_code
 
 
 class BatchLifelineService:
     """
-    批次生命周期：
+    批次生命周期（展示码维度）：
+
     inbound → adjust → pick → ship → count → ledger → stocks/snapshot
 
-    ✅ 主线 B：统一维度使用 batch_code_key（COALESCE(batch_code,'__NULL_BATCH__')）
-    - 允许 batch_code 为 NULL（无批次槽位）
-    - 禁止 'None' 字符串回潮（入口归一）
+    Phase M-5（终态要点）：
+    - 主读：stocks_lot（lot-world）
+    - batch_code 仅为展示/输入标签：实际值为 lots.lot_code（可能为 NULL）
+    - 禁止 batch_code_key / __NULL_BATCH__ sentinel（避免语义回潮）
     """
 
     @staticmethod
@@ -29,43 +29,59 @@ class BatchLifelineService:
         item_id: int,
         batch_code: Optional[str],
     ) -> Dict[str, Any]:
-        norm_bc = normalize_optional_batch_code(batch_code)
-        batch_code_key = _NULL_BATCH_KEY if norm_bc is None else norm_bc
+        norm_bc = normalize_optional_lot_code(batch_code)
 
-        base = {
-            "warehouse_id": warehouse_id,
-            "item_id": item_id,
+        base: Dict[str, Any] = {
+            "warehouse_id": int(warehouse_id),
+            "item_id": int(item_id),
             "batch_code": norm_bc,
-            "batch_code_key": batch_code_key,
         }
 
-        # ledger timeline（按 batch_code_key 维度对齐 NULL 语义）
+        # ledger timeline（按展示码 lots.lot_code 对齐 NULL 语义；不使用 batch_code_key）
         rs = await session.execute(
             text(
                 """
-                SELECT id, occurred_at, reason, delta, after_qty,
-                       trace_id, ref, batch_code, batch_code_key
-                FROM stock_ledger
-                WHERE warehouse_id=:w AND item_id=:i AND batch_code_key=:ck
-                ORDER BY occurred_at ASC, id ASC
-            """
+                SELECT
+                  l.id,
+                  l.occurred_at,
+                  l.reason,
+                  l.delta,
+                  l.after_qty,
+                  l.trace_id,
+                  l.ref,
+                  l.ref_line,
+                  l.lot_id,
+                  lo.lot_code AS batch_code
+                FROM stock_ledger l
+                LEFT JOIN lots lo ON lo.id = l.lot_id
+                WHERE l.warehouse_id = :w
+                  AND l.item_id = :i
+                  AND lo.lot_code IS NOT DISTINCT FROM :c
+                ORDER BY l.occurred_at ASC, l.id ASC
+                """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "ck": str(batch_code_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "c": norm_bc},
         )
         base["ledger"] = [dict(r) for r in rs.mappings().all()]
 
-        # current stock（按 batch_code_key 维度对齐 NULL 语义）
-        rs = await session.execute(
+        # current stock：主读 stocks_lot（lot_code==batch_code）
+        rs2 = await session.execute(
             text(
                 """
-                SELECT qty
-                FROM stocks
-                WHERE warehouse_id=:w AND item_id=:i AND batch_code_key=:ck
-            """
+                SELECT COALESCE(SUM(s.qty), 0) AS qty, COUNT(*) AS n
+                FROM stocks_lot s
+                LEFT JOIN lots lo ON lo.id = s.lot_id
+                WHERE s.warehouse_id = :w
+                  AND s.item_id = :i
+                  AND lo.lot_code IS NOT DISTINCT FROM :c
+                """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "ck": str(batch_code_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "c": norm_bc},
         )
-        row = rs.mappings().first()
-        base["current_stock"] = int(row["qty"]) if row else 0
+        r = rs2.mappings().first()
+        if r and int(r["n"] or 0) > 0:
+            base["current_stock"] = int(r["qty"] or 0)
+        else:
+            base["current_stock"] = 0
 
         return base

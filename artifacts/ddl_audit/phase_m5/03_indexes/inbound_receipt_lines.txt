@@ -1,0 +1,5 @@
+inbound_receipt_lines_pkey|CREATE UNIQUE INDEX inbound_receipt_lines_pkey ON public.inbound_receipt_lines USING btree (id)
+ix_inbound_receipt_lines_item|CREATE INDEX ix_inbound_receipt_lines_item ON public.inbound_receipt_lines USING btree (item_id)
+ix_inbound_receipt_lines_po_line_id|CREATE INDEX ix_inbound_receipt_lines_po_line_id ON public.inbound_receipt_lines USING btree (po_line_id)
+ix_inbound_receipt_lines_receipt|CREATE INDEX ix_inbound_receipt_lines_receipt ON public.inbound_receipt_lines USING btree (receipt_id)
+uq_inbound_receipt_lines_receipt_line|CREATE UNIQUE INDEX uq_inbound_receipt_lines_receipt_line ON public.inbound_receipt_lines USING btree (receipt_id, line_no)

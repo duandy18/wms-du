@@ -12,9 +12,10 @@ async def scan_pick(
     qty: int,
     batch_code: Optional[str] = None,
 ) -> dict:
-    payload: Dict[str, Any] = {"item_id": int(item_id), "qty": int(qty)}
-    if batch_code is not None:
-        payload["batch_code"] = str(batch_code)
+    # 终态合同：REQUIRED 必须提供 batch_code。
+    bc = (str(batch_code).strip() if batch_code is not None else "") or "UT-BLUEPRINT-BATCH"
+    payload: Dict[str, Any] = {"item_id": int(item_id), "qty": int(qty), "batch_code": bc}
+
     resp = await client_like.post(f"/pick-tasks/{int(task_id)}/scan", json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()

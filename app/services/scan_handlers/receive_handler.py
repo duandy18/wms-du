@@ -6,6 +6,7 @@ from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
+from app.services.stock_adjust.db_items import item_requires_batch
 from app.services.stock_service import StockService
 from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
 
@@ -17,31 +18,43 @@ async def handle_receive(
     warehouse_id: int,
     qty: int,
     ref: str,
-    batch_code: str,
+    batch_code: str | None,
     production_date: date | None = None,
     expiry_date: date | None = None,
     trace_id: str | None = None,
 ) -> dict:
     """
-    入库（Receive）—— v2：以 仓库 + 商品 + 批次 为粒度。
+    入库（Receive）—— v2（Batch-as-Lot 终态合同）：
 
-    日期策略：
-    - 若显式提供 expiry_date → 直接使用；
-    - 否则在有 production_date 且 Item 配置了保质期时自动推算 expiry_date；
-    - 若两者都缺失 → 直接报错（扫描端必须显式录入）。
+    - REQUIRED（expiry_policy=REQUIRED）：
+        - batch_code 必填
+        - 必须提供 production_date 或 expiry_date（至少其一）
+    - NONE（expiry_policy=NONE）：
+        - batch_code 必须为空（null）
+        - 日期不强制（允许两者都为空）
+        - 落账进入 INTERNAL lot 槽位（由 StockService.adjust 负责）
     """
     if qty <= 0:
         raise ValueError("Receive quantity must be positive.")
-    if not batch_code or not str(batch_code).strip():
-        raise ValueError("入库操作必须提供 batch_code。")
     if warehouse_id is None or int(warehouse_id) <= 0:
         raise ValueError("入库操作必须明确 warehouse_id。")
 
-    # 要么给了到期日，要么至少给生产日；否则直接视为输入不完整
-    if production_date is None and expiry_date is None:
+    requires_batch = await item_requires_batch(session, item_id=int(item_id))
+
+    bc_norm = (str(batch_code).strip() if batch_code is not None else None) or None
+
+    if requires_batch and bc_norm is None:
+        raise ValueError("batch_code REQUIRED")
+
+    if (not requires_batch) and bc_norm is not None:
+        raise ValueError("batch_code must be null for expiry-policy NONE items. Do not send batch_code.")
+
+    # 日期要求：仅 REQUIRED 强制
+    if requires_batch and (production_date is None and expiry_date is None):
         raise ValueError("入库操作必须提供 production_date 或 expiry_date（至少其一）。")
 
     # 结合 Item 保质期配置推算最终日期（若可能）
+    # - NONE：两者都可能为 None；resolver 应保持 None（不强行推导）
     production_date, expiry_date = await resolve_batch_dates_for_item(
         session,
         item_id=item_id,
@@ -49,20 +62,43 @@ async def handle_receive(
         expiry_date=expiry_date,
     )
 
-    await StockService().adjust(
+    res = await StockService().adjust(
         session=session,
         item_id=item_id,
         warehouse_id=warehouse_id,
         delta=int(qty),
         reason=MovementType.INBOUND,
         ref=ref,
-        batch_code=str(batch_code).strip(),
+        batch_code=bc_norm,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
     )
-    return {
+
+    applied = bool(res.get("applied", True))
+    idempotent = bool(res.get("idempotent", False)) or (not applied)
+
+    out = {
         "qty": int(qty),
-        "batch_code": str(batch_code),
+        "batch_code": bc_norm,
         "warehouse_id": int(warehouse_id),
+        "idempotent": idempotent,
+        "applied": applied,
     }
+
+    for k in (
+        "lot_id",
+        "before",
+        "after",
+        "delta",
+        "reason",
+        "ref",
+        "ref_line",
+        "occurred_at",
+        "production_date",
+        "expiry_date",
+    ):
+        if k in res:
+            out[k] = res.get(k)
+
+    return out

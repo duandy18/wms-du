@@ -4,14 +4,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pick_task import PickTask
 from app.models.pick_task_line import PickTaskLine
 from app.services.pick_task_loaders import load_order_head, load_order_items, load_task
-from app.services.store_service import StoreService
 
 UTC = timezone.utc
 
@@ -26,26 +25,32 @@ def _norm_int(v: object) -> Optional[int]:
         return None
 
 
-async def _resolve_execution_warehouse_for_order(session: AsyncSession, *, order: dict) -> Optional[int]:
+async def _load_fulfillment_brief(session: AsyncSession, *, order_id: int) -> Tuple[Optional[int], Optional[str]]:
     """
-    Phase 2（收敛版）：执行仓只通过「订单→店铺」解析，不消费订单上的仓字段。
-
-    ✅ 核心原则：
-    - 订单只提供 platform / shop_id（店铺事实）
-    - 执行仓只能通过店铺绑定（store default）解析，避免订单维度仓字段造成事实漂移
-    - ❌ 不使用订单上的任何“实际仓/计划仓”字段来解析执行仓（以店铺规则为准）
+    Phase 5+：执行判断只能读 order_fulfillment（authority）。
 
     返回：
-    - 解析成功：warehouse_id
-    - 解析失败：None（由上层抛出可读错误）
+    - actual_warehouse_id（执行仓事实）
+    - fulfillment_status（用于 BLOCKED gate 等）
     """
-    plat = str(order.get("platform") or "").upper().strip()
-    shop = str(order.get("shop_id") or "").strip()
-    if not plat or not shop:
-        return None
-
-    wid2 = await StoreService.resolve_default_warehouse_for_platform_shop(session, platform=plat, shop_id=shop)
-    return _norm_int(wid2)
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT actual_warehouse_id, fulfillment_status
+                  FROM order_fulfillment
+                 WHERE order_id = :oid
+                 LIMIT 1
+                """
+            ),
+            {"oid": int(order_id)},
+        )
+    ).first()
+    if not row:
+        return None, None
+    actual_wh = int(row[0]) if row[0] is not None else None
+    fstat = str(row[1]) if row[1] is not None else None
+    return actual_wh, fstat
 
 
 async def _find_existing_task_id(
@@ -124,13 +129,17 @@ async def create_for_order(
     priority: int = 100,
 ) -> PickTask:
     """
-    从订单创建拣货任务（订单视角作业入口）：
+    从订单创建拣货任务（订单视角作业入口）。
 
-    ✅ Phase 2 合同（收敛版）：
-    - 自动入口：不传 warehouse_id → 仅通过「platform/shop_id → 店铺默认仓」解析执行仓
-    - 手工入口（兼容）：若调用方显式传 warehouse_id → 直接使用该仓（用于 manual-from-order）
-    - ❌ 不消费订单上的任何“计划/实际仓”字段来解析执行仓
-    - ❌ 不隐性回填 orders.warehouse_id（本函数不写 orders 表）
+    ✅ Phase 5+（执行域收口版）：
+    - 执行仓必须来自 order_fulfillment.actual_warehouse_id（authority）
+    - ❌ 不再允许通过「platform/shop_id → 店铺默认仓」推断执行仓（影子语义）
+    - 若调用方显式传 warehouse_id：仅用于校验/对齐（不得绕过 authority）
+      - 若 fulfillment.actual_warehouse_id 存在且与传入不一致 → 拒绝
+      - 若 fulfillment.actual_warehouse_id 为空 → 拒绝（应先走 reserve/manual-assign 明确执行仓锚点）
+
+    ✅ 状态护栏：
+    - 只拦真正的 FULFILLMENT_BLOCKED（避免误伤空值/未设置）
 
     ✅ 幂等：
     - 若同一 (ref, warehouse_id) 已存在 pick_task，直接返回已存在的任务（不重复插入）
@@ -147,33 +156,39 @@ async def create_for_order(
     shop_id = str(order.get("shop_id") or "")
     ext_no = str(order.get("ext_order_no") or "")
 
-    # 1) 若调用方显式传 warehouse_id（手工入口），优先使用
+    # 1) authority：执行仓与履约状态只读 order_fulfillment
+    actual_wh, fstat = await _load_fulfillment_brief(session, order_id=int(order_id))
+
+    # 2) 状态护栏：只拦 BLOCKED
+    if (fstat or "").strip().upper() == "FULFILLMENT_BLOCKED":
+        raise ValueError(
+            f"创建拣货任务失败：订单履约被阻断：fulfillment_status={fstat}。"
+            "请先完成履约策略处理/改派，使订单进入可执行状态。"
+        )
+
+    # 3) warehouse_id 收口：必须以 actual 为准
     requested_wh = _norm_int(warehouse_id)
-
-    # 2) 否则：自动解析执行仓（仅通过店铺默认仓）
-    wh_id = requested_wh
-    if wh_id is None:
-        try:
-            wh_id = await _resolve_execution_warehouse_for_order(session, order=order)
-        except Exception as e:
+    if requested_wh is not None:
+        if actual_wh is None:
             raise ValueError(
-                "创建拣货任务失败：无法通过店铺绑定解析默认执行仓。"
-                f" platform={platform}, shop_id={shop_id}, err={str(e)}"
+                "创建拣货任务失败：订单尚未绑定执行仓（order_fulfillment.actual_warehouse_id 为空），"
+                "禁止通过入参 warehouse_id 绕过执行域 authority。"
+                f" platform={platform}, shop_id={shop_id}, order_id={order_id}"
             )
-
-    if wh_id is None:
-        raise ValueError(
-            "创建拣货任务失败：无法解析执行仓（warehouse_id）。"
-            f"请先在店铺管理中完成仓库绑定并设置默认仓。platform={platform}, shop_id={shop_id}"
-        )
-
-    # 3) 状态护栏：只拦真正的 BLOCKED（不要误伤空值/未设置）
-    fstat = str(order.get("fulfillment_status") or "")
-    if fstat == "FULFILLMENT_BLOCKED":
-        raise ValueError(
-            f"创建拣货任务失败：订单状态不允许拣货：fulfillment_status={fstat}。"
-            "请先完成履约策略处理，使订单进入可拣货状态。"
-        )
+        if int(actual_wh) != int(requested_wh):
+            raise ValueError(
+                "创建拣货任务失败：执行仓冲突（以 order_fulfillment.actual_warehouse_id 为准）。"
+                f" existing_actual_warehouse_id={actual_wh}, incoming_warehouse_id={requested_wh}, order_id={order_id}"
+            )
+        wh_id = int(actual_wh)
+    else:
+        if actual_wh is None:
+            raise ValueError(
+                "创建拣货任务失败：订单尚未绑定执行仓（order_fulfillment.actual_warehouse_id 为空）。"
+                "请先走 reserve/assign 明确执行仓锚点后再创建拣货任务。"
+                f" platform={platform}, shop_id={shop_id}, order_id={order_id}"
+            )
+        wh_id = int(actual_wh)
 
     # 4) ref：订单维度幂等锚点
     order_ref = f"ORD:{platform}:{shop_id}:{ext_no}"

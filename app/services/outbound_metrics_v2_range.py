@@ -33,7 +33,7 @@ async def load_range(
                 total_orders=m.total_orders,
                 success_rate=m.success_rate,
                 fallback_rate=m.fallback_rate,
-                fefo_hit_rate=m.fefo_hit_rate,
+                expiry_pick_hit_rate=m.expiry_pick_hit_rate,
             )
         )
 

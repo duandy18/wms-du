@@ -2,15 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
-
-
-class OutboundMode(str, Enum):
-    FEFO = "FEFO"
-    NORMAL = "NORMAL"
 
 
 class OutboundLine(BaseModel):
@@ -32,8 +26,10 @@ class OutboundCommitRequest(BaseModel):
     ref: str
     occurred_at: datetime
     warehouse_id: Optional[int] = None
-    mode: OutboundMode = OutboundMode.FEFO
-    allow_expired: bool = False
+
+    # ✅ Phase M-5+（执行域收口）：
+    # - 不再允许 FEFO / allow_expired 作为执行策略入口；
+    # - 执行域必须显式 lot（batch_code）或 INTERNAL lot（expiry_policy=NONE）。
     lines: List[OutboundLine]
 
     @field_validator("occurred_at")
@@ -64,7 +60,6 @@ class OutboundCommitMeta(BaseModel):
 
 class OutboundCommitResponse(BaseModel):
     ok: bool
-    mode: OutboundMode
     summary: OutboundCommitSummary
     meta: OutboundCommitMeta
     results: List[OutboundResultLine]
@@ -75,7 +70,6 @@ class OutboundCommitResponse(BaseModel):
         summary = payload.get("summary", {}) or {}
         return cls(
             ok=bool(payload.get("ok", True)),
-            mode=OutboundMode(payload.get("mode", "FEFO")),
             summary=OutboundCommitSummary(
                 total_lines=int(summary.get("total_lines", 0)),
                 total_qty=int(summary.get("total_qty", 0)),

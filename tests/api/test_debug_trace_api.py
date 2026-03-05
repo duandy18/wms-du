@@ -5,6 +5,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.utils.ensure_minimal import ensure_item
+
+from app.services.stock.lots import ensure_lot_full
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -18,6 +22,10 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     - order_fulfillment: actual_warehouse_id=1（执行仓事实）
     - outbound_commits_v2: trace_id='ORD-UT-1'
     - stock_ledger: trace_id='ORD-UT-1', reason='SHIPMENT', ref='ORD-UT-1', delta=-2
+
+    Lot-World 终态注意：
+    - stock_ledger 不再存在 batch_code 列；展示码来自 lots.lot_code（通过 lot_id JOIN）
+    - 因此这里先 ensure SUPPLIER lot（lot_code='B-TRACE-1'）拿到 lot_id，再写 stock_ledger.lot_id
     """
     trace_id = "ORD-UT-1"
     platform = "PDD"
@@ -26,20 +34,12 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     item_id = 3003
     order_ref = trace_id
 
-    # items：满足 ledger FK
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {
-            "item_id": item_id,
-            "sku": f"UT-SKU-{item_id}",
-            "name": f"UT-Item-{item_id}",
-        },
+    # items：满足 ledger FK（Phase M：items policy NOT NULL，必须最小合法插入）
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"UT-SKU-{item_id}",
+        name=f"UT-Item-{item_id}",
     )
 
     # orders：最小订单头（只保证 trace 聚合能看到）
@@ -74,7 +74,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
               :oid,
               :wid,
               :wid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )
@@ -101,18 +101,31 @@ async def _seed_trace_case(session: AsyncSession) -> str:
     )
 
     # outbound_commits_v2
+    # 单宇宙回归后：不再写 scope；唯一键为 (platform, shop_id, ref)
+    # 测试环境可能不 TRUNCATE outbound_commits_v2，所以这里必须幂等。
     await session.execute(
         text(
             """
             INSERT INTO outbound_commits_v2 (platform, shop_id, ref, state, created_at, trace_id)
             VALUES (:p, :s, :ref, 'COMMITTED', now(), :tid)
-            ON CONFLICT (platform, shop_id, ref) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
             """
         ),
         {"p": platform, "s": shop_id, "ref": order_ref, "tid": trace_id},
     )
 
-    # stock_ledger：SHIPMENT
+    # ensure SUPPLIER lot（展示码 lot_code='B-TRACE-1'）
+    lot_code = "B-TRACE-1"
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # stock_ledger：SHIPMENT（lot_id 维度；不写 batch_code）
     await session.execute(
         text(
             """
@@ -120,27 +133,33 @@ async def _seed_trace_case(session: AsyncSession) -> str:
                 trace_id,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 reason,
+                reason_canon,
                 ref,
                 ref_line,
                 delta,
                 occurred_at,
                 created_at,
-                after_qty
+                after_qty,
+                production_date,
+                expiry_date
             )
             VALUES (
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-TRACE-1',
+                :lot_id,
+                'SHIPMENT',
                 'SHIPMENT',
                 :ref,
                 1,
                 -2,
                 now(),
                 now(),
-                0
+                0,
+                NULL,
+                NULL
             )
             """
         ),
@@ -148,6 +167,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
             "trace_id": trace_id,
             "wh_id": wh_id,
             "item_id": item_id,
+            "lot_id": int(lot_id),
             "ref": order_ref,
         },
     )
@@ -182,14 +202,8 @@ async def test_debug_trace_basic(client, session: AsyncSession):
     # 校验 ORDER.CREATED（如果 event_store 存在）
     if "event_store" in sources:
         assert any(
-            e["source"] == "event_store"
-            and e["kind"] == "ORDER.CREATED"
-            and e.get("ref") == "ORD-UT-1"
-            for e in events
+            e["source"] == "event_store" and e["kind"] == "ORDER.CREATED" and e.get("ref") == "ORD-UT-1" for e in events
         )
 
     # 校验 SHIPMENT ledger
-    assert any(
-        e["source"] == "ledger" and e["kind"] == "SHIPMENT" and e["raw"].get("delta") == -2
-        for e in events
-    )
+    assert any(e["source"] == "ledger" and e["kind"] == "SHIPMENT" and e["raw"].get("delta") == -2 for e in events)

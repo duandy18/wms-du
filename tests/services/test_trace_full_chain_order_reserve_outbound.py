@@ -120,7 +120,7 @@ async def test_full_trace_order_outbound(session: AsyncSession):
               :oid,
               :wid,
               :wid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )

@@ -54,6 +54,10 @@ def register(router: APIRouter) -> None:
 
         ❌ 禁止回潮：
         - 不允许写 orders.warehouse_id（该列迁移后将被删除/不再承载事实）
+
+        注意：
+        - manual-assign 是“决策入口”，库存不足应作为 soft-check 记录（审计/提示），不应 409 阻断；
+          真正的库存裁判在 pick/ship 执行点。
         """
         plat = platform.upper()
         order_ref, trace_id = await get_order_ref_and_trace_id(

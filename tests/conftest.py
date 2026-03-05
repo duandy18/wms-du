@@ -130,8 +130,22 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
         truncate_sql = _load_truncate_sql()
         await conn.execute(text(truncate_sql))
 
-        # 2) 统一种子（items/barcodes/batches/stocks + shipping + admin + RBAC）
+        # 2) 统一种子（items/barcodes/lots/stocks_lot + shipping + admin + RBAC）
         await seed_in_conn(conn)
+
+        # 2.1) Batch-as-Lot 终态测试基线（关键收口）：
+        # 很多合同/三账/出库链路测试依赖“可携带批次码”的物料；
+        # 在终态合同中这对应 expiry_policy=REQUIRED。
+        # 因此在 baseline seed 后，强制把常用测试 item 设为 REQUIRED，避免大量测试因 NONE 禁止 batch_code 而失败。
+        await conn.execute(
+            text(
+                """
+                UPDATE items
+                   SET expiry_policy = 'REQUIRED'::expiry_policy
+                 WHERE expiry_policy IS DISTINCT FROM 'REQUIRED'::expiry_policy
+                """
+            )
+        )
 
         # 3) Route C 测试基线：服务省份规则 + 店铺绑定（显式）
         row = await conn.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
@@ -150,17 +164,27 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 {"wid": wh_id, "prov": prov},
             )
 
-        row = await conn.execute(text("SELECT id FROM stores ORDER BY id ASC LIMIT 1"))
-        any_store_id = row.scalar_one_or_none()
-        if any_store_id is None:
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO stores(platform, shop_id, name, active)
-                    VALUES('PDD', '1', 'UT-测试店铺', TRUE)
-                    """
-                )
+        # ✅ Baseline 需要覆盖多条合同测试使用的 (platform, shop_id)
+        # - PDD/1：历史 UT 默认
+        # - DEMO/1：merchant-code-bindings / order ingest 等合同测试依赖
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('PDD', '1', 'UT-测试店铺', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
             )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO stores(platform, shop_id, name, active)
+                VALUES ('DEMO', '1', 'DEMO-1', TRUE)
+                ON CONFLICT (platform, shop_id) DO NOTHING
+                """
+            )
+        )
 
         await conn.execute(
             text(

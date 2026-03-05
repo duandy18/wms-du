@@ -219,6 +219,11 @@ class PickTaskPrintPickListIn(BaseModel):
 class PickTaskScanIn(BaseModel):
     item_id: int = Field(..., description="商品 ID")
     qty: int = Field(..., gt=0, description="本次拣货数量（>0）")
+    lot_code: Optional[str] = Field(
+        None,
+        description="Lot 展示码（优先使用；等价于 batch_code）",
+    )
+
     batch_code: Optional[str] = Field(
         None,
         description="批次编码（可选；若为空，后续 commit_ship 会按批次规则决定是否拒绝）",

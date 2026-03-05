@@ -11,26 +11,68 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def _get_item_has_shelf_life(session: AsyncSession, item_id: int) -> bool:
+async def _get_item_expiry_policy(session: AsyncSession, item_id: int) -> str:
     row = (
         await session.execute(
-            text("SELECT has_shelf_life FROM items WHERE id = :id LIMIT 1"),
+            text("SELECT expiry_policy FROM items WHERE id = :id LIMIT 1"),
             {"id": int(item_id)},
         )
     ).scalar_one_or_none()
-    return bool(row is True)
+    return str(row or "")
+
+
+async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
+    pol = await _get_item_expiry_policy(session, item_id)
+    return pol.strip().upper() == "REQUIRED"
+
+
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：
+    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
+    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
+async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
+    """
+    Lot-World 终态：非批次商品用 INTERNAL lot（单例）承载“展示码为空”的槽位。
+    provenance 可选（成对填充或全空）；本用例不依赖 provenance，因此置空即可。
+    """
+    _ = ref
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
 
 
 async def _seed_order_and_stock(session: AsyncSession) -> int:
     """
     合同测试的最小数据准备：
     - 造一单
-    - 造库存
+    - 造库存（Lot-World：必须锚定 lot_id）
     - 订单状态设为可拣货（避免 fulfillment_status 阻塞）
     """
     platform = "PDD"
@@ -75,7 +117,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
               :oid,
               NULL,
               1,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )
@@ -89,25 +131,32 @@ async def _seed_order_and_stock(session: AsyncSession) -> int:
         {"oid": int(order_id)},
     )
 
-    requires_batch = await _get_item_has_shelf_life(session, 1)
+    requires_batch = await _item_requires_batch(session, 1)
     batch_code = "BATCH-TEST-FROM-ORDER" if requires_batch else None
 
     stock = StockService()
     prod = date.today()
     exp = prod + timedelta(days=365)
 
-    await stock.adjust(
+    # Lot-World：seed 库存必须锚定真实 lot_id
+    if requires_batch:
+        lot_id = await _ensure_supplier_lot(session, wh_id=1, item_id=1, lot_code=str(batch_code))
+    else:
+        lot_id = await _ensure_internal_lot(session, wh_id=1, item_id=1, ref=f"UT-INTERNAL-LOT-FROM-ORDER-{uniq}")
+
+    await stock.adjust_lot(
         session=session,
         item_id=1,
         warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason=MovementType.RECEIPT,
         ref=f"SEED-STOCK-FROM-ORDER-{uniq}",
         ref_line=1,
         occurred_at=now,
         batch_code=batch_code,
-        production_date=prod,
-        expiry_date=exp,
+        production_date=(prod if requires_batch else None),
+        expiry_date=(exp if requires_batch else None),
         trace_id=trace_id,
     )
 

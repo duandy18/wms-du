@@ -3,190 +3,244 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.item import Item
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
+from app.models.supplier import Supplier
 
 
 async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
     if not item_ids:
         return {}
-    rows = (
-        (await session.execute(select(Item).where(Item.id.in_(item_ids))))
-        .scalars()
-        .all()
-    )
+    rows = (await session.execute(select(Item).where(Item.id.in_(item_ids)))).scalars().all()
     return {int(it.id): it for it in rows}
 
 
-def _require_supplier_for_po(supplier_id: Optional[int]) -> int:
+async def _require_supplier_for_po(session: AsyncSession, supplier_id: Optional[int]) -> Supplier:
     if supplier_id is None:
         raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
     sid = int(supplier_id)
     if sid <= 0:
         raise ValueError("supplier_id 非法：采购单必须绑定供应商")
-    return sid
+
+    supplier = ((await session.execute(select(Supplier).where(Supplier.id == sid))).scalars().first())
+    if supplier is None:
+        raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid})")
+
+    return supplier
 
 
-def _safe_upc(v: Optional[int]) -> int:
+def _trim_or_none(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _parse_discount_amount(v: Any) -> Decimal:
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return Decimal("0")
     try:
-        n = int(v or 1)
-    except Exception:
-        n = 1
-    return n if n > 0 else 1
+        d = Decimal(str(v))
+    except Exception as e:
+        raise ValueError("discount_amount 必须为数字") from e
+    if d < 0:
+        raise ValueError("discount_amount 必须 >= 0")
+    return d
+
+
+async def _require_item_uom_ratio_to_base(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    uom_id: int,
+) -> int:
+    row = await session.execute(
+        text(
+            """
+            SELECT ratio_to_base
+            FROM item_uoms
+            WHERE id = :uom_id AND item_id = :item_id
+            """
+        ),
+        {"uom_id": int(uom_id), "item_id": int(item_id)},
+    )
+    r = row.mappings().first()
+    if r is None:
+        raise ValueError(f"uom_id 不存在或不属于该商品：item_id={int(item_id)} uom_id={int(uom_id)}")
+
+    ratio = int(r.get("ratio_to_base") or 0)
+    if ratio <= 0:
+        raise ValueError("item_uoms.ratio_to_base 必须 >= 1")
+
+    return ratio
+
+
+def _require_qty_input_from_raw(raw: Dict[str, Any]) -> int:
+    """
+    PO line contract (Phase M-5+):
+    - preferred: qty_input
+    - legacy fallback: qty / qty_ordered
+    """
+    v = raw.get("qty_input", raw.get("qty", raw.get("qty_ordered")))
+    if v is None:
+        raise KeyError("qty_input")
+    return int(v)
+
+
+def _maybe_uom_id_from_raw(raw: Dict[str, Any]) -> Optional[int]:
+    """
+    PO line contract (Phase M-5+):
+    - preferred: uom_id
+    - tolerate common legacy keys (input layer only)
+    """
+    v = raw.get("uom_id", raw.get("purchase_uom_id", raw.get("purchase_uom_id_snapshot")))
+    if v is None:
+        return None
+    return int(v)
+
+
+async def _pick_default_purchase_uom(session: AsyncSession, *, item_id: int) -> Tuple[int, int]:
+    """
+    Choose a deterministic purchase uom for an item (unit governance phase 2):
+    1) is_purchase_default = true
+    2) is_base = true
+    3) smallest id (any)
+    Returns: (uom_id, ratio_to_base)
+    """
+    r1 = await session.execute(
+        text(
+            """
+            SELECT id, ratio_to_base
+              FROM item_uoms
+             WHERE item_id = :i AND is_purchase_default = true
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    m1 = r1.mappings().first()
+    if m1 is not None:
+        return int(m1["id"]), int(m1["ratio_to_base"])
+
+    r2 = await session.execute(
+        text(
+            """
+            SELECT id, ratio_to_base
+              FROM item_uoms
+             WHERE item_id = :i AND is_base = true
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    m2 = r2.mappings().first()
+    if m2 is not None:
+        return int(m2["id"]), int(m2["ratio_to_base"])
+
+    r3 = await session.execute(
+        text(
+            """
+            SELECT id, ratio_to_base
+              FROM item_uoms
+             WHERE item_id = :i
+             ORDER BY id
+             LIMIT 1
+            """
+        ),
+        {"i": int(item_id)},
+    )
+    m3 = r3.mappings().first()
+    if m3 is not None:
+        return int(m3["id"]), int(m3["ratio_to_base"])
+
+    raise ValueError(f"商品缺少 item_uoms：item_id={int(item_id)}")
 
 
 async def create_po_v2(
     session: AsyncSession,
     *,
-    supplier: str,
+    supplier_id: int,
     warehouse_id: int,
-    supplier_id: Optional[int] = None,
-    supplier_name: Optional[str] = None,
     purchaser: str,
     purchase_time: datetime,
     remark: Optional[str] = None,
     lines: List[Dict[str, Any]],
 ) -> PurchaseOrder:
-    """
-    创建“头 + 多行”的采购单。
 
-    ✅ Phase 2（最终形态）数量合同：
-    - qty_ordered: 采购单位订购量（件/箱）——保留为输入快照/兼容
-    - units_per_case: 换算因子（每采购单位包含多少最小单位）
-    - qty_ordered_base: 最小单位订购量（事实字段）
-    - qty_received: 最小单位已收量（事实字段）
-    """
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
 
-    if not purchaser or not purchaser.strip():
-        raise ValueError("采购人 purchaser 不能为空")
+    supplier_obj = await _require_supplier_for_po(session, supplier_id)
+    po_supplier_id = int(getattr(supplier_obj, "id"))
+    po_supplier_name = str(getattr(supplier_obj, "name") or "").strip()
 
-    if not isinstance(purchase_time, datetime):
-        raise ValueError("purchase_time 必须为 datetime 类型")
-
-    # ✅ 采购事实硬闸：采购单必须绑定供应商（否则无法做到“供应商->商品”的事实约束）
-    po_supplier_id = _require_supplier_for_po(supplier_id)
-
-    # 先收集 item_ids，用于批量查 Item（避免 N+1）
-    raw_item_ids: List[int] = []
-    for idx, raw in enumerate(lines, start=1):
-        item_id = raw.get("item_id")
-        qty_ordered = raw.get("qty_ordered")
-        if item_id is None or qty_ordered is None:
-            raise ValueError("每一行必须包含 item_id 与 qty_ordered")
-        try:
-            raw_item_ids.append(int(item_id))
-        except Exception as e:
-            raise ValueError(f"第 {idx} 行：item_id 非法") from e
-
-    item_ids = sorted({x for x in raw_item_ids if x > 0})
-    items_map = await _load_items_map(session, item_ids)
-
-    # ✅ 行级校验：商品存在、启用、且属于同一供应商
-    for idx, raw in enumerate(lines, start=1):
-        item_id = int(raw.get("item_id"))
-        it = items_map.get(item_id)
-        if it is None:
-            raise ValueError(f"第 {idx} 行：商品不存在（item_id={item_id}）")
-
-        if getattr(it, "enabled", True) is not True:
-            raise ValueError(f"第 {idx} 行：商品已停用（item_id={item_id}）")
-
-        it_supplier_id = getattr(it, "supplier_id", None)
-        if it_supplier_id is None:
-            raise ValueError(f"第 {idx} 行：商品未绑定供应商，禁止用于采购（item_id={item_id}）")
-
-        if int(it_supplier_id) != int(po_supplier_id):
-            raise ValueError(
-                f"第 {idx} 行：商品不属于当前供应商（item_id={item_id}）"
-            )
+    raw_item_ids = [int(raw["item_id"]) for raw in lines]
+    items_map = await _load_items_map(session, raw_item_ids)
 
     norm_lines: List[Dict[str, Any]] = []
     total_amount = Decimal("0")
 
     for idx, raw in enumerate(lines, start=1):
-        item_id = raw.get("item_id")
-        qty_ordered = raw.get("qty_ordered")
-        if item_id is None or qty_ordered is None:
-            raise ValueError("每一行必须包含 item_id 与 qty_ordered")
+        item_id = int(raw["item_id"])
+        qty_input = _require_qty_input_from_raw(raw)
 
-        item_id = int(item_id)
-        qty_ordered = int(qty_ordered)
-        if qty_ordered <= 0:
-            raise ValueError("行 qty_ordered 必须 > 0")
+        it = items_map.get(item_id)
+        if it is None:
+            raise ValueError(f"商品不存在：item_id={int(item_id)}")
+
+        it_supplier_id = int(getattr(it, "supplier_id", 0) or 0)
+        if it_supplier_id != 0 and it_supplier_id != po_supplier_id:
+            raise ValueError("商品不属于当前供应商")
+
+        uom_id = _maybe_uom_id_from_raw(raw)
+        if uom_id is None:
+            uom_id, ratio_to_base = await _pick_default_purchase_uom(session, item_id=item_id)
+        else:
+            ratio_to_base = await _require_item_uom_ratio_to_base(session, item_id=item_id, uom_id=uom_id)
+
+        qty_ordered_base = qty_input * ratio_to_base
+        if qty_ordered_base <= 0:
+            raise ValueError("行 qty_ordered_base 必须 > 0")
 
         supply_price = raw.get("supply_price")
         if supply_price is not None:
             supply_price = Decimal(str(supply_price))
 
-        units_per_case = raw.get("units_per_case")
-        units_per_case_int: Optional[int]
-        if units_per_case is not None:
-            units_per_case_int = int(units_per_case)
-            if units_per_case_int <= 0:
-                raise ValueError("units_per_case 必须为正整数")
-        else:
-            units_per_case_int = None
-
-        upc = _safe_upc(units_per_case_int)
-
-        # ✅ 最小单位订购量（事实字段）
-        qty_ordered_base = qty_ordered * upc
-
-        line_no = raw.get("line_no") or idx
-
-        line_amount_raw = raw.get("line_amount")
-        if line_amount_raw is not None:
-            line_amount = Decimal(str(line_amount_raw))
-        elif supply_price is not None:
-            # 价格按最小单位计价（qty_ordered_base）
-            line_amount = supply_price * Decimal(int(qty_ordered_base))
-        else:
-            line_amount = None
-
-        if line_amount is not None:
-            total_amount += line_amount
+        discount_amount = _parse_discount_amount(raw.get("discount_amount"))
+        line_total = (Decimal("0") if supply_price is None else (supply_price * Decimal(qty_ordered_base))) - discount_amount
+        total_amount += line_total
 
         norm_lines.append(
             {
-                "line_no": line_no,
+                "line_no": raw.get("line_no") or idx,
                 "item_id": item_id,
-                "item_name": raw.get("item_name"),
-                "item_sku": raw.get("item_sku"),
-                "category": raw.get("category"),
+                "item_name": getattr(it, "name", None),
+                "item_sku": getattr(it, "sku", None),
                 "spec_text": raw.get("spec_text"),
-                "base_uom": raw.get("base_uom"),
-                "purchase_uom": raw.get("purchase_uom"),
+                "purchase_uom_id_snapshot": uom_id,
+                "purchase_ratio_to_base_snapshot": ratio_to_base,
+                "qty_ordered_input": qty_input,
+                "qty_ordered_base": qty_ordered_base,
                 "supply_price": supply_price,
-                "retail_price": raw.get("retail_price"),
-                "promo_price": raw.get("promo_price"),
-                "min_price": raw.get("min_price"),
-                "qty_cases": raw.get("qty_cases") or qty_ordered,
-                "units_per_case": units_per_case_int,
-                "qty_ordered": qty_ordered,                 # 采购单位快照
-                "qty_ordered_base": qty_ordered_base,       # ✅ 最小单位事实
-                "qty_received": 0,                          # ✅ 最小单位事实
-                "line_amount": line_amount,
-                "status": "CREATED",
+                "discount_amount": discount_amount,
+                "discount_note": raw.get("discount_note"),
                 "remark": raw.get("remark"),
             }
         )
 
     po = PurchaseOrder(
-        supplier=supplier.strip(),
         supplier_id=po_supplier_id,
-        supplier_name=(supplier_name or supplier).strip(),
-        warehouse_id=int(warehouse_id),
+        supplier_name=po_supplier_name,
+        warehouse_id=warehouse_id,
         purchaser=purchaser.strip(),
         purchase_time=purchase_time,
-        total_amount=total_amount if total_amount != Decimal("0") else None,
+        total_amount=total_amount,
         status="CREATED",
         remark=remark,
     )
@@ -194,30 +248,7 @@ async def create_po_v2(
     await session.flush()
 
     for nl in norm_lines:
-        line = PurchaseOrderLine(
-            po_id=po.id,
-            line_no=nl["line_no"],
-            item_id=nl["item_id"],
-            item_name=nl["item_name"],
-            item_sku=nl["item_sku"],
-            category=nl["category"],
-            spec_text=nl["spec_text"],
-            base_uom=nl["base_uom"],
-            purchase_uom=nl["purchase_uom"],
-            supply_price=nl["supply_price"],
-            retail_price=nl["retail_price"],
-            promo_price=nl["promo_price"],
-            min_price=nl["min_price"],
-            qty_cases=nl["qty_cases"],
-            units_per_case=nl["units_per_case"],
-            qty_ordered=nl["qty_ordered"],
-            qty_ordered_base=nl["qty_ordered_base"],  # ✅ 新字段
-            qty_received=nl["qty_received"],
-            line_amount=nl["line_amount"],
-            status=nl["status"],
-            remark=nl["remark"],
-        )
-        session.add(line)
+        session.add(PurchaseOrderLine(po_id=po.id, **nl))
 
     await session.flush()
     return po

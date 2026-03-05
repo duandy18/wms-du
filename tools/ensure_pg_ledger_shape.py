@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
 """
-ensure_pg_ledger_shape.py — Read-only shape/consistency checks for PostgreSQL.
+ensure_pg_ledger_shape.py — Read-only shape/consistency checks for PostgreSQL (Phase 4E lot-world).
 
 Guarantees (fail-fast):
 1) stock_ledger has required columns with sensible types:
-   - stock_id:int, reason:text/varchar, after_qty:numeric, delta:numeric,
-     occurred_at:timestamptz, ref:text/varchar, ref_line:int
-   - Critical NOT NULL cols have no NULLs: stock_id, reason, after_qty, delta, occurred_at
-2) FK consistency: every stock_ledger.stock_id exists in stocks.id
+   - item_id:int, warehouse_id:int, reason:text/varchar,
+     delta:numeric/int, occurred_at:timestamptz, ref:text/varchar, ref_line:int
+   - after_qty is optional but recommended
+2) If stock_ledger.lot_id exists: every non-null lot_id exists in lots.id
 3) No duplicate (reason,ref,ref_line) triplets (when all three NOT NULL)
-4) stocks enforces UNIQUE(item_id, location_id) via unique index or constraint
+4) stocks_lot has unique constraint uq_stocks_lot_item_wh_lot
 5) Zero side effects. Exit 0 on green; non-zero on failure.
 
 Usage:
-  python tools/ensure_pg_ledger_shape.py postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
+  python3 tools/ensure_pg_ledger_shape.py postgresql+psycopg://wms:wms@127.0.0.1:5433/wms
 Options:
   --schema default "public"
-  --table  default "stock_ledger"
-  --stocks default "stocks"
+  --ledger default "stock_ledger"
+  --lots   default "lots"
+  --stocks_lot default "stocks_lot"
 """
-
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
 
@@ -56,104 +55,68 @@ def fetch_cols(conn, schema: str, table: str) -> dict[str, str]:
     return {r.column_name: (r.data_type or "").lower() for r in rows}
 
 
-def has_unique(conn, schema: str, table: str, cols: Iterable[str]) -> bool:
-    """
-    Return True if there is an EXACT unique index OR constraint on given cols (in order).
-    Checks both pg_index (unique indexes) and pg_constraint (unique constraints).
-    """
-    want = tuple(cols)
-
-    # 1) unique indexes (column order preserved via WITH ORDINALITY)
-    idx_rows = conn.execute(
+def has_unique_constraint(conn, schema: str, table: str, constraint_name: str) -> bool:
+    got = conn.execute(
         text(
             """
-        SELECT i.relname AS index_name,
-               ix.indisunique AS is_unique,
-               array_agg(a.attname ORDER BY k.ord) AS cols
-        FROM pg_index ix
-        JOIN pg_class t  ON t.oid = ix.indrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace
-        JOIN pg_class i  ON i.oid = ix.indexrelid
-        JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-        WHERE n.nspname = :s AND t.relname = :t
-        GROUP BY i.relname, ix.indisunique
-        """
-        ),
-        {"s": schema, "t": table},
-    ).fetchall()
-    for r in idx_rows:
-        if r.is_unique and tuple(r.cols) == want:
-            return True
-
-    # 2) unique constraints (contype='u')
-    c_rows = conn.execute(
-        text(
+            SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE n.nspname = :s
+               AND t.relname = :t
+               AND c.contype = 'u'
+               AND c.conname = :c
+             LIMIT 1
             """
-        SELECT conname,
-               array_agg(a.attname ORDER BY k.ord) AS cols
-        FROM pg_constraint c
-        JOIN pg_class t  ON t.oid = c.conrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace
-        JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-        WHERE n.nspname = :s AND t.relname = :t AND c.contype = 'u'
-        GROUP BY conname
-        """
         ),
-        {"s": schema, "t": table},
-    ).fetchall()
-    for r in c_rows:
-        if tuple(r.cols) == want:
-            return True
-
-    return False
+        {"s": schema, "t": table, "c": constraint_name},
+    ).scalar()
+    return got == 1
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("database_url", help='e.g. "postgresql+psycopg://wms:wms@127.0.0.1:5433/wms"')
     ap.add_argument("--schema", default="public")
-    ap.add_argument("--table", default="stock_ledger")
-    ap.add_argument("--stocks", default="stocks")
+    ap.add_argument("--ledger", default="stock_ledger")
+    ap.add_argument("--lots", default="lots")
+    ap.add_argument("--stocks_lot", default="stocks_lot")
     args = ap.parse_args()
 
     eng = create_engine(args.database_url)
 
     with closing(eng.connect()) as conn:
-        # 0) table existence
-        exists = conn.execute(
-            text("SELECT to_regclass(:q) IS NOT NULL"),
-            {"q": f"{args.schema}.{args.table}"},
-        ).scalar()
-        if not exists:
-            fail(f"table {args.schema}.{args.table} does not exist")
+        def _exists(tbl: str) -> bool:
+            return bool(
+                conn.execute(
+                    text("SELECT to_regclass(:q) IS NOT NULL"),
+                    {"q": f"{args.schema}.{tbl}"},
+                ).scalar()
+            )
 
-        stocks_exist = conn.execute(
-            text("SELECT to_regclass(:q) IS NOT NULL"),
-            {"q": f"{args.schema}.{args.stocks}"},
-        ).scalar()
-        if not stocks_exist:
-            fail(f"referenced table {args.schema}.{args.stocks} does not exist")
+        if not _exists(args.ledger):
+            fail(f"table {args.schema}.{args.ledger} does not exist")
+        if not _exists(args.lots):
+            fail(f"table {args.schema}.{args.lots} does not exist")
+        if not _exists(args.stocks_lot):
+            fail(f"table {args.schema}.{args.stocks_lot} does not exist")
 
-        # 1) required columns + types
+        cols = fetch_cols(conn, args.schema, args.ledger)
+
         required = {
-            "stock_id": ColSpec("stock_id", ("integer", "bigint")),
+            "item_id": ColSpec("item_id", ("integer", "bigint")),
+            "warehouse_id": ColSpec("warehouse_id", ("integer", "bigint")),
             "reason": ColSpec("reason", ("character varying", "text")),
-            "after_qty": ColSpec(
-                "after_qty",
-                ("numeric", "integer", "bigint", "double precision", "real"),
-            ),
             "delta": ColSpec("delta", ("numeric", "integer", "bigint", "double precision", "real")),
             "occurred_at": ColSpec("occurred_at", ("timestamp with time zone",)),
             "ref": ColSpec("ref", ("character varying", "text")),
             "ref_line": ColSpec("ref_line", ("integer", "bigint")),
         }
 
-        cols = fetch_cols(conn, args.schema, args.table)
         missing = [k for k in required if k not in cols]
         if missing:
-            fail(f"[{args.table}] missing columns: {missing}")
+            fail(f"[{args.ledger}] missing columns: {missing}")
 
         mismatch = []
         for k, spec in required.items():
@@ -162,83 +125,45 @@ def main():
                 mismatch.append((k, got, spec.accept_types))
         if mismatch:
             lines = [f"{k}: got '{got}', want contains {want}" for k, got, want in mismatch]
-            fail(f"[{args.table}] type mismatch:\n  " + "\n  ".join(lines))
+            fail(f"[{args.ledger}] type mismatch:\n  " + "\n  ".join(lines))
 
-        # 2) critical NOT NULLs no NULLs
-        criticals = ("stock_id", "reason", "after_qty", "delta", "occurred_at")
-        for col in criticals:
-            cnt = conn.execute(
-                text(f"SELECT COUNT(*) FROM {args.schema}.{args.table} WHERE {col} IS NULL")
+        # If lot_id exists: validate FK
+        if "lot_id" in cols:
+            bad = conn.execute(
+                text(
+                    f"""
+                    SELECT COUNT(*)
+                      FROM {args.schema}.{args.ledger} l
+                      LEFT JOIN {args.schema}.{args.lots} lo ON lo.id = l.lot_id
+                     WHERE l.lot_id IS NOT NULL AND lo.id IS NULL
+                    """
+                )
             ).scalar()
-            if (cnt or 0) > 0:
-                fail(f"[{args.table}] column {col} has {cnt} NULL rows")
+            if (bad or 0) > 0:
+                fail(f"[{args.ledger}] {bad} rows have invalid lot_id (not in lots.id)")
 
-        # 3) FK consistency
-        missing_fk = conn.execute(
+        # No dup (reason,ref,ref_line)
+        dup = conn.execute(
             text(
                 f"""
-            SELECT COUNT(*)
-            FROM {args.schema}.{args.table} l
-            LEFT JOIN {args.schema}.{args.stocks} s ON s.id = l.stock_id
-            WHERE s.id IS NULL
-            """
+                SELECT COUNT(*) FROM (
+                  SELECT reason, ref, ref_line, COUNT(*) AS c
+                  FROM {args.schema}.{args.ledger}
+                  WHERE reason IS NOT NULL AND ref IS NOT NULL AND ref_line IS NOT NULL
+                  GROUP BY reason, ref, ref_line
+                  HAVING COUNT(*) > 1
+                ) t
+                """
             )
         ).scalar()
-        if (missing_fk or 0) > 0:
-            print("[DIAG] bad FK rows (stock_id not in stocks.id), up to 20:")
-            bad_rows = conn.execute(
-                text(
-                    f"""
-                SELECT l.stock_id, l.reason, l.ref, l.ref_line
-                FROM {args.schema}.{args.table} l
-                LEFT JOIN {args.schema}.{args.stocks} s ON s.id = l.stock_id
-                WHERE s.id IS NULL
-                LIMIT 20
-                """
-                )
-            ).fetchall()
-            for r in bad_rows:
-                print("  -", dict(r._mapping))
-            fail(f"[{args.table}] {missing_fk} rows have invalid stock_id")
+        if (dup or 0) > 0:
+            fail(f"[{args.ledger}] found duplicate (reason,ref,ref_line) triplets: {dup}")
 
-        # 4) no duplicated (reason,ref,ref_line)
-        dup_cnt = conn.execute(
-            text(
-                f"""
-            SELECT COUNT(*) FROM (
-              SELECT reason, ref, ref_line, COUNT(*) AS c
-              FROM {args.schema}.{args.table}
-              WHERE reason IS NOT NULL AND ref IS NOT NULL AND ref_line IS NOT NULL
-              GROUP BY reason, ref, ref_line
-              HAVING COUNT(*) > 1
-            ) t
-            """
-            )
-        ).scalar()
-        if (dup_cnt or 0) > 0:
-            print("[DIAG] duplicated (reason,ref,ref_line) samples (up to 20):")
-            rows = conn.execute(
-                text(
-                    f"""
-                SELECT reason, ref, ref_line, COUNT(*) AS c
-                FROM {args.schema}.{args.table}
-                WHERE reason IS NOT NULL AND ref IS NOT NULL AND ref_line IS NOT NULL
-                GROUP BY reason, ref, ref_line
-                HAVING COUNT(*) > 1
-                ORDER BY c DESC
-                LIMIT 20
-                """
-                )
-            ).fetchall()
-            for r in rows:
-                print("  -", dict(r._mapping))
-            fail(f"[{args.table}] found {dup_cnt} duplicate triplets of (reason,ref,ref_line)")
+        # stocks_lot unique constraint
+        if not has_unique_constraint(conn, args.schema, args.stocks_lot, "uq_stocks_lot_item_wh_lot"):
+            fail(f"[{args.stocks_lot}] missing unique constraint uq_stocks_lot_item_wh_lot")
 
-        # 5) UNIQUE(item_id, location_id) on stocks
-        if not has_unique(conn, args.schema, args.stocks, ("item_id", "location_id")):
-            fail(f"[{args.stocks}] UNIQUE(item_id, location_id) is missing")
-
-        print("[OK] ledger/stocks shape valid — columns, types, FK, and uniqueness all good.")
+        print("[OK] Phase 4E lot-world shape valid.")
         sys.exit(0)
 
 

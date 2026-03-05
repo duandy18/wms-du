@@ -15,16 +15,15 @@ from pydantic import BaseModel, Field, conint, constr
 class PickLineIn(BaseModel):
     item_id: conint(gt=0)
     qty: conint(gt=0)
+    # 终态：按行 batch_code（REQUIRED 必填；NONE 必须为 null；校验在 API 层完成）
+    batch_code: Optional[str] = Field(
+        default=None,
+        description="批次编码：expiry-policy REQUIRED 的商品必填且非空；expiry-policy NONE 的商品必须为 null（合同校验在 API 层完成）",
+    )
 
 
 class PickRequest(BaseModel):
     warehouse_id: conint(gt=0) = Field(..., description="拣货仓库 ID（>0，允许 1）")
-    # ✅ 主线 A：API 合同收紧需要支持“非批次商品 batch_code 必须为 null”
-    # 业务判断（has_shelf_life）在 router 中完成，schema 只负责类型承载。
-    batch_code: Optional[str] = Field(
-        default=None,
-        description="批次编码：批次商品必填且非空；非批次商品必须为 null（合同校验在 API 层完成）",
-    )
     lines: List[PickLineIn] = Field(default_factory=list)
     occurred_at: Optional[datetime] = Field(default=None, description="拣货时间（缺省为当前 UTC 时间）")
 
@@ -32,7 +31,6 @@ class PickRequest(BaseModel):
 class PickResponse(BaseModel):
     item_id: int
     warehouse_id: int
-    # ✅ 返回也允许 null：非批次商品的真实槽位语义就是 NULL
     batch_code: Optional[str]
     picked: int
     stock_after: Optional[int] = None
@@ -80,7 +78,6 @@ class ShipWithWaybillRequest(BaseModel):
     district: Optional[str] = None
     address_detail: Optional[str] = None
 
-    # ✅ 新标准：必须包含 quote_snapshot（input + selected_quote），并且 selected_quote.reasons 非空
     meta: Optional[Dict[str, Any]] = Field(default=None, description="必须包含 quote_snapshot（input + selected_quote）")
 
 

@@ -28,20 +28,26 @@ class OrderSummaryOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    # ✅ store_id（stores.id）：用于内部治理/解析卡 replay 入参（前端不得推导）
+    # store 主键（stores.id）
     store_id: Optional[int] = None
 
-    # 执行仓（实际出库）
+    # 执行仓
     warehouse_id: Optional[int] = None
-    # 服务仓（系统裁决、服务归属）
+    # 服务仓
     service_warehouse_id: Optional[int] = None
-    # 履约状态（系统事实）
+
+    # ✅ 显式执行阶段真相（PICK / SHIP；NULL = 未进入执行链路）
+    execution_stage: Optional[str] = None
+
+    # ✅ 出库事实字段（路 A：替代 fulfillment_status 的 SHIP 子状态机）
+    ship_committed_at: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+
+    # ✅ 履约状态（降级字段）：仅路由/阻断/人工干预语义（禁止承载 SHIP_COMMITTED/SHIPPED）
     fulfillment_status: Optional[str] = None
 
-    # 派生字段（审计/统计；前端可不展示）
     warehouse_assign_mode: Optional[str] = None
 
-    # ✅ 后端对齐的可操作事实（前端不得推导）
     can_manual_assign_execution_warehouse: bool = False
     manual_assign_hint: Optional[str] = None
 
@@ -52,33 +58,37 @@ class OrderSummaryOut(BaseModel):
 class OrdersSummaryResponse(BaseModel):
     ok: bool = True
     data: List[OrderSummaryOut]
-    # ✅ 候选执行仓（后端给出，前端不得自行拉 /warehouses）
     warehouses: List[WarehouseOptionOut]
 
 
 def _derive_assign_mode(
     *,
     fulfillment_status: Optional[str],
+    execution_stage: Optional[str],
     warehouse_id: Optional[int],
     service_warehouse_id: Optional[int],
 ) -> str:
     """
-    说明：这里的 warehouse_id/service_warehouse_id 都是“兼容字段名”，实际来源是：
-      - service_warehouse_id := order_fulfillment.planned_warehouse_id
-      - warehouse_id := order_fulfillment.actual_warehouse_id
+    Phase 5（去混合化）：assign_mode 只看事实字段，不再依赖 READY_TO_FULFILL 等“阶段味儿”状态。
     """
+    stg = (execution_stage or "").strip().upper()
+
+    # 彻底消除“预占/RESERVE”概念：历史若出现 RESERVE，一律视为 PICK（仅用于展示/推导）
+    if stg == "RESERVE":
+        stg = "PICK"
+
+    if stg == "SHIP":
+        return "SHIP"
+    if stg == "PICK":
+        return "PICK"
+
     fs = (fulfillment_status or "").strip().upper()
     if fs == "MANUALLY_ASSIGNED":
         return "MANUAL"
-    if fs == "READY_TO_FULFILL" and warehouse_id is not None and service_warehouse_id is not None:
-        if int(warehouse_id) == int(service_warehouse_id):
-            return "AUTO_FROM_SERVICE"
-        return "OTHER"
 
-    # ✅ 有 planned（服务仓）但没有 actual（执行仓）：已分配服务仓，待指定执行仓
+    # ✅ 未进入执行阶段时：只按仓事实推导
     if warehouse_id is None and service_warehouse_id is not None:
         return "SERVICE_ASSIGNED"
-
     if warehouse_id is None:
         return "UNASSIGNED"
     return "OTHER"
@@ -98,20 +108,12 @@ async def _list_orders_summary_rows(
     shop_id: Optional[str],
     status: Optional[str],
     fulfillment_status: Optional[str],
+    execution_stage: Optional[str],
     time_from: Optional[datetime],
     time_to: Optional[datetime],
     limit: int,
 ) -> List[Mapping[str, Any]]:
-    """
-    一步到位迁移后：
-    - orders 只保留订单头
-    - 履约/仓库快照在 order_fulfillment
-    因此这里从 orders LEFT JOIN order_fulfillment 取 planned/actual/status。
 
-    参数语义（不兼容硬改）：
-    - status：过滤 orders.status（CREATED / PICKABLE / ...）
-    - fulfillment_status：过滤 order_fulfillment.fulfillment_status（SERVICE_ASSIGNED / READY_TO_FULFILL / ...）
-    """
     clauses: List[str] = []
     params: Dict[str, Any] = {"limit": limit}
 
@@ -119,6 +121,7 @@ async def _list_orders_summary_rows(
     s = _norm_optional_str(shop_id)
     st = _norm_optional_str(status)
     fst = _norm_optional_str(fulfillment_status)
+    estg = _norm_optional_str(execution_stage)
 
     if p:
         clauses.append("o.platform = :p")
@@ -133,12 +136,22 @@ async def _list_orders_summary_rows(
         params["st"] = st.strip().upper()
 
     if fst:
+        # ✅ 注意：fulfillment_status 现在是“路由/阻断字段”，不再包含 SHIP_COMMITTED/SHIPPED
         clauses.append("f.fulfillment_status = :fst")
         params["fst"] = fst.strip().upper()
+
+    if estg:
+        # 对外只接受 PICK / SHIP；若传 RESERVE，当作 PICK（兼容输入，但不宣称）
+        estg2 = estg.strip().upper()
+        if estg2 == "RESERVE":
+            estg2 = "PICK"
+        clauses.append("f.execution_stage = :estg")
+        params["estg"] = estg2
 
     if time_from:
         clauses.append("o.created_at >= :from_ts")
         params["from_ts"] = time_from
+
     if time_to:
         clauses.append("o.created_at <= :to_ts")
         params["to_ts"] = time_to
@@ -163,6 +176,9 @@ async def _list_orders_summary_rows(
                         s.id AS store_id,
                         f.actual_warehouse_id AS warehouse_id,
                         f.planned_warehouse_id AS service_warehouse_id,
+                        f.execution_stage,
+                        f.ship_committed_at,
+                        f.shipped_at,
                         f.fulfillment_status,
                         o.order_amount,
                         o.pay_amount
@@ -182,11 +198,11 @@ async def _list_orders_summary_rows(
         .mappings()
         .all()
     )
+
     return rows
 
 
 async def _list_candidate_warehouses(session: AsyncSession) -> List[WarehouseOptionOut]:
-    # 这里故意做得保守：给出 active != false 的仓作为候选集合
     rows = (
         (
             await session.execute(
@@ -223,20 +239,21 @@ def register(router) -> None:
         session: AsyncSession = Depends(get_session),
         platform: Optional[str] = Query(None),
         shop_id: Optional[str] = Query(None),
-        status: Optional[str] = Query(None, description="订单头状态（orders.status）：CREATED / PICKABLE / ..."),
-        fulfillment_status: Optional[str] = Query(
-            None, description="履约状态（order_fulfillment.fulfillment_status）：SERVICE_ASSIGNED / READY_TO_FULFILL / ..."
-        ),
+        status: Optional[str] = Query(None),
+        fulfillment_status: Optional[str] = Query(None, description="路由/阻断字段（非阶段）；如 SERVICE_ASSIGNED / FULFILLMENT_BLOCKED"),
+        execution_stage: Optional[str] = Query(None, description="PICK / SHIP（NULL=未进入执行链路）"),
         time_from: Optional[datetime] = Query(None),
         time_to: Optional[datetime] = Query(None),
         limit: int = Query(100),
     ) -> OrdersSummaryResponse:
+
         rows = await _list_orders_summary_rows(
             session,
             platform=platform,
             shop_id=shop_id,
             status=status,
             fulfillment_status=fulfillment_status,
+            execution_stage=execution_stage,
             time_from=time_from,
             time_to=time_to,
             limit=limit,
@@ -247,12 +264,16 @@ def register(router) -> None:
         data: List[OrderSummaryOut] = []
         for r in rows:
             fs = str(r.get("fulfillment_status") or "").strip().upper()
+            stg = str(r.get("execution_stage") or "").strip().upper()
+            if stg == "RESERVE":
+                stg = "PICK"
+
             whid = r.get("warehouse_id")
             swid = r.get("service_warehouse_id")
             sid = r.get("store_id")
 
-            # ✅ 可操作事实：SERVICE_ASSIGNED 且已有 planned 且 actual 为空
-            can_manual = (fs == "SERVICE_ASSIGNED") and (swid is not None) and (whid is None)
+            # 只有在“执行阶段未开始”且处于 SERVICE_ASSIGNED 时才允许手工指定执行仓
+            can_manual = (stg == "") and (fs == "SERVICE_ASSIGNED") and (swid is not None) and (whid is None)
 
             data.append(
                 OrderSummaryOut(
@@ -266,9 +287,13 @@ def register(router) -> None:
                     store_id=int(sid) if sid is not None else None,
                     warehouse_id=int(whid) if whid is not None else None,
                     service_warehouse_id=int(swid) if swid is not None else None,
+                    execution_stage=r.get("execution_stage"),
+                    ship_committed_at=r.get("ship_committed_at"),
+                    shipped_at=r.get("shipped_at"),
                     fulfillment_status=r.get("fulfillment_status"),
                     warehouse_assign_mode=_derive_assign_mode(
                         fulfillment_status=r.get("fulfillment_status"),
+                        execution_stage=r.get("execution_stage"),
                         warehouse_id=int(whid) if whid is not None else None,
                         service_warehouse_id=int(swid) if swid is not None else None,
                     ),

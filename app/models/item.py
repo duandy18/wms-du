@@ -1,31 +1,46 @@
 # app/models/item.py
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from .item_uom import ItemUOM
     from .order import Order
     from .order_item import OrderItem
-    from .stock import Stock
     from .supplier import Supplier
+
+
+class LotSourcePolicy(str, enum.Enum):
+    INTERNAL_ONLY = "INTERNAL_ONLY"
+    SUPPLIER_ONLY = "SUPPLIER_ONLY"
+
+
+class ExpiryPolicy(str, enum.Enum):
+    NONE = "NONE"
+    REQUIRED = "REQUIRED"
 
 
 class Item(Base):
     """
     Item 主数据模型 —— 对齐 public.items
 
-    关键区分：
-    - has_shelf_life（开关）：是否需要有效期管理（= 入库是否强制日期）
-      * True  -> 入库必须填写生产日期；到期日期可直接填，或由保质期参数推算
-      * False -> 入库不需要日期，批次缺省 NOEXP
-    - shelf_life_value/unit（参数）：可选保质期参数，用于 production_date + 参数 => 推算 expiry_date
-      * 注意：参数不是必须；若缺参数，则入库必须直接填 expiry_date
+    Phase M 关键变化（规则上移，禁止隐式推断）：
+    - expiry_policy 是有效期规则真相源（NONE / REQUIRED）
+    - lot_source_policy / derivation_allowed / uom_governance_enabled 为执行层只读策略开关
+
+    Phase M-3（结构减法）：
+    - items.case_ratio / items.case_uom 已物理删除；包装倍率真相源 = item_uoms
+
+    Phase M-5（unit_governance 二阶段）：
+    - items.uom 已物理移除
+    - base_uom 的事实口径 = item_uoms.is_base=true（结构层）
     """
 
     __tablename__ = "items"
@@ -34,12 +49,6 @@ class Item(Base):
 
     sku: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-
-    qty_available: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("0"),
-    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -52,12 +61,6 @@ class Item(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    unit: Mapped[str] = mapped_column(
-        String(8),
-        nullable=False,
-        server_default=text("'PCS'::character varying"),
-    )
-
     spec: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     enabled: Mapped[bool] = mapped_column(
@@ -66,17 +69,19 @@ class Item(Base):
         server_default=text("true"),
     )
 
-    # ✅ 新增：品牌/品类（主数据字段，允许为空，逐步治理）
     brand: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # ✅ 新增：有效期管理开关（事实字段）
-    has_shelf_life: Mapped[bool] = mapped_column(
-        Boolean,
+    lot_source_policy: Mapped[LotSourcePolicy] = mapped_column(
+        Enum(LotSourcePolicy, name="lot_source_policy", native_enum=True),
         nullable=False,
-        server_default=text("false"),
-        comment="是否需要有效期管理（入库是否强制日期）",
     )
+    expiry_policy: Mapped[ExpiryPolicy] = mapped_column(
+        Enum(ExpiryPolicy, name="expiry_policy", native_enum=True),
+        nullable=False,
+    )
+    derivation_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    uom_governance_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     weight_kg: Mapped[Optional[float]] = mapped_column(
         Numeric(10, 3),
@@ -84,8 +89,6 @@ class Item(Base):
         comment="单件净重（kg），用于运费预估，不含包材",
     )
 
-    # 可选保质期参数（用于推算到期日）
-    shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shelf_life_value: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shelf_life_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
@@ -97,17 +100,55 @@ class Item(Base):
     )
     supplier: Mapped[Optional["Supplier"]] = relationship("Supplier", lazy="joined")
 
+    uoms: Mapped[List["ItemUOM"]] = relationship(
+        "ItemUOM",
+        back_populates="item",
+        lazy="selectin",
+        order_by="ItemUOM.id.asc()",
+    )
+
     @property
-    def uom(self) -> str:
-        return self.unit
+    def unit(self) -> str:
+        """
+        Phase M-5：对外兼容字段
+        - items.uom 已移除；只能从结构层 base item_uom 读取
+        """
+        base = self.get_base_uom()
+        if base is None or not getattr(base, "uom", None):
+            raise RuntimeError(f"item missing base item_uom (is_base=true): item_id={int(self.id)}")
+        return str(getattr(base, "uom"))
 
     @property
     def barcode(self) -> Optional[str]:
-        return None
+        return getattr(self, "primary_barcode", None)
 
     @property
     def supplier_name(self) -> Optional[str]:
         return self.supplier.name if self.supplier is not None else None
+
+    def get_base_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_base", False):
+                return u
+        return None
+
+    def get_default_purchase_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_purchase_default", False):
+                return u
+        return self.get_base_uom()
+
+    def get_default_inbound_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_inbound_default", False):
+                return u
+        return self.get_base_uom()
+
+    def get_default_outbound_uom(self) -> Optional["ItemUOM"]:
+        for u in self.uoms or []:
+            if getattr(u, "is_outbound_default", False):
+                return u
+        return self.get_base_uom()
 
     order_items: Mapped[List["OrderItem"]] = relationship(
         "OrderItem",
@@ -123,15 +164,9 @@ class Item(Base):
         back_populates="items",
     )
 
-    stocks: Mapped[List["Stock"]] = relationship(
-        "Stock",
-        back_populates="item",
-        lazy="selectin",
-    )
-
     def __repr__(self) -> str:
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
             f"brand={self.brand!r} category={self.category!r} "
-            f"has_shelf_life={self.has_shelf_life}>"
+            f"expiry_policy={self.expiry_policy}>"
         )

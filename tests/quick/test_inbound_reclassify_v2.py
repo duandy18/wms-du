@@ -1,4 +1,3 @@
-# tests/quick/test_inbound_reclassify_v2.py
 from datetime import date, datetime, timezone
 
 import pytest
@@ -28,17 +27,34 @@ async def _ensure_wh(session: AsyncSession, name: str) -> int:
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        row = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                 LIMIT 1
+                """
+            ),
+            {"i": item_id, "w": wh},
+        )
+        return int(row.scalar_one_or_none() or 0)
+
     row = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id=:i
-               AND warehouse_id=:w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
-        {"i": item_id, "w": wh, "c": code},
+        {"i": item_id, "w": wh, "c": str(code)},
     )
     return int(row.scalar_one_or_none() or 0)
 
@@ -51,10 +67,15 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     wh_returns = await _ensure_wh(session, "RETURNS")
     wh_main = await _ensure_wh(session, "MAIN")
 
-    # 强护栏口径：非批次商品用 NULL 槽位
+    # 本用例要测 NONE/internal-lot 语义：局部把该 item 改回 NONE
+    await session.execute(
+        text("UPDATE items SET expiry_policy='NONE'::expiry_policy WHERE id=:i"),
+        {"i": int(item_id)},
+    )
+    await session.commit()
+
     batch_code: str | None = None
 
-    # 1) RETURNS：入库 +2
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -70,7 +91,6 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
     r0 = await _qty(session, item_id, wh_returns, batch_code)
     assert r0 >= 2
 
-    # 2) 净零迁移：RETURNS -1 → MAIN +1
     await svc.adjust(
         session=session,
         item_id=item_id,
@@ -95,7 +115,6 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
         production_date=date.today(),
     )
 
-    # 3) 断言：RETURNS 减 1，MAIN 加 1，总量不变
     r1 = await _qty(session, item_id, wh_returns, batch_code)
     m1 = await _qty(session, item_id, wh_main, batch_code)
     assert r1 == r0 - 1

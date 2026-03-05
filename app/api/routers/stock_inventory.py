@@ -14,42 +14,23 @@ from app.api.deps import get_session
 router = APIRouter()
 
 
-# ================================================================
-# 本地化的 scan_ref 生成器
-# （用于库存运维接口，避免依赖 app/api/routers/scan_utils）
-# ================================================================
-def _make_scan_ref(
-    device_id: Optional[str],
-    occurred_at: datetime,
-    location_id: Optional[int],
-) -> str:
-    """
-    统一生成 scan_ref（小写），仅用于 stock_recount 调试/审计。
-    格式与旧 scan_utils 保持一致，避免破坏既有行为：
-        scan:{device}:{ISO8601}:{loc:X}
-    """
+def _make_scan_ref(device_id: Optional[str], occurred_at: datetime, warehouse_id: Optional[int]) -> str:
     dev = (device_id or "device").lower()
-    loc = f"loc:{location_id}" if location_id is not None else "loc:unknown"
+    wh = f"wh:{warehouse_id}" if warehouse_id is not None else "wh:unknown"
     iso = occurred_at.astimezone(timezone.utc).isoformat()
-    return f"scan:{dev}:{iso}:{loc}".lower()
+    return f"scan:{dev}:{iso}:{wh}".lower()
 
 
-# ================================================================
-# 请求模型
-# ================================================================
 class StockRecountRequest(BaseModel):
     item_id: int = Field(..., description="物料ID")
-    location_id: int = Field(..., description="库位ID")
-    actual: int = Field(..., description="实际数量")
+    warehouse_id: int = Field(..., ge=1, description="仓库ID")
+    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
+    batch_code: Optional[str] = Field(None, description="批次（无批次槽位传 null）")
+    actual: int = Field(..., ge=0, description="实际数量")
     ctx: Dict[str, Any] | None = None
 
 
-# ================================================================
-# 事件写入（审计）
-# ================================================================
-async def _insert_event(
-    session: AsyncSession, *, source: str, message: str, occurred_at: datetime
-) -> int:
+async def _insert_event(session: AsyncSession, *, source: str, message: str, occurred_at: datetime) -> int:
     row = await session.execute(
         text(
             """
@@ -63,24 +44,25 @@ async def _insert_event(
     return int(row.scalar_one())
 
 
-# ================================================================
-# /stock/inventory/recount
-# ================================================================
 @router.post("/stock/inventory/recount")
 async def stock_recount(
     req: StockRecountRequest,
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
     """
-    盘点某 item@location，使 qty = actual。
-    注意：本接口属于“运维库存工具”，仍基于 (item_id,location_id) 维度，
-    并不参与 scan 流程，不受 scan 架构变动影响。
+    运维盘点：把 item@warehouse@batch_code 的 qty 校正为 actual。
+
+    Phase 4E 真收口：
+    - 禁止读取 legacy stocks
+    - current 余额统一来自 stocks_lot
+    - batch_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM
     """
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
     occurred_at = datetime.now(timezone.utc)
+    scan_ref = _make_scan_ref(device_id, occurred_at, req.warehouse_id)
 
-    # ★ 本地生成 scan_ref（替代 scan_utils.make_scan_ref）
-    scan_ref = _make_scan_ref(device_id, occurred_at, req.location_id)
+    # Phase M-4 governance：lot_code 正名；batch_code 兼容字段
+    code = getattr(req, "lot_code", None) or req.batch_code
 
     try:
         from app.services.stock_service import StockService  # type: ignore
@@ -90,34 +72,35 @@ async def stock_recount(
     svc = StockService()
 
     async with session.begin():
-        # 读取当前账面库存
         row = await session.execute(
             text(
                 """
-                SELECT COALESCE(SUM(qty), 0) AS on_hand
-                  FROM stocks
-                 WHERE item_id=:i AND location_id=:l
+                SELECT COALESCE(SUM(s.qty), 0) AS on_hand
+                  FROM stocks_lot s
+                  LEFT JOIN lots lo
+                    ON lo.id = s.lot_id
+                 WHERE s.item_id=:i
+                   AND s.warehouse_id=:w
+                   AND lo.lot_code IS NOT DISTINCT FROM :c
                 """
             ),
-            {"i": int(req.item_id), "l": int(req.location_id)},
+            {"i": int(req.item_id), "w": int(req.warehouse_id), "c": code},
         )
         on_hand = int(row.scalar_one() or 0)
         delta = int(req.actual) - on_hand
 
-        # 写 COUNT 差额账
         if delta != 0:
             await svc.adjust(
                 session=session,
                 item_id=int(req.item_id),
-                location_id=int(req.location_id),
+                warehouse_id=int(req.warehouse_id),
                 delta=delta,
                 reason="COUNT",
                 ref=scan_ref,
+                batch_code=code,
             )
 
-        ev_id = await _insert_event(
-            session, source="stock_recount", message=scan_ref, occurred_at=occurred_at
-        )
+        ev_id = await _insert_event(session, source="stock_recount", message=scan_ref, occurred_at=occurred_at)
 
     return {
         "scan_ref": scan_ref,

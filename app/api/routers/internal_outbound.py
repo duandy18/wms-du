@@ -1,19 +1,16 @@
-# app/api/routers/internal_outbound.py
 from __future__ import annotations
 
-from typing import List, Optional, Set
+from typing import Set
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.api.batch_code_contract import fetch_item_has_shelf_life_map, validate_batch_code_contract
+from app.api.lot_code_contract import (
+    fetch_item_expiry_policy_map,
+    validate_lot_code_contract,
+)
 from app.db.session import get_session
-from app.models.internal_outbound import InternalOutboundDoc
 from app.schemas.internal_outbound import (
-    InternalOutboundConfirmIn,
-    InternalOutboundCreateDocIn,
     InternalOutboundDocOut,
     InternalOutboundUpsertLineIn,
 )
@@ -24,86 +21,8 @@ router = APIRouter(prefix="/internal-outbound", tags=["internal-outbound"])
 svc = InternalOutboundService()
 
 
-@router.post("/docs", response_model=InternalOutboundDocOut)
-async def create_internal_outbound_doc(
-    payload: InternalOutboundCreateDocIn,
-    session: AsyncSession = Depends(get_session),
-) -> InternalOutboundDocOut:
-    """
-    创建内部出库单（只建头，不带行）：
-
-    - 必须指定 warehouse_id / doc_type / recipient_name；
-    - 初始状态为 DRAFT。
-    """
-    try:
-        doc = await svc.create_doc(
-            session,
-            warehouse_id=payload.warehouse_id,
-            doc_type=payload.doc_type,
-            recipient_name=payload.recipient_name,
-            recipient_type=payload.recipient_type,
-            recipient_note=payload.recipient_note,
-            note=payload.note,
-            created_by=None,  # TODO: 接入 get_current_user 后填 user.id
-            trace_id=payload.trace_id,
-        )
-        await session.commit()
-        return InternalOutboundDocOut.model_validate(doc)
-    except ValueError as e:
-        await session.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/docs", response_model=List[InternalOutboundDocOut])
-async def list_internal_outbound_docs(
-    session: AsyncSession = Depends(get_session),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
-    status: Optional[str] = Query(None),
-    warehouse_id: Optional[int] = Query(None),
-) -> List[InternalOutboundDocOut]:
-    """
-    列出内部出库单（简单列表）：
-
-    - 可按 status / warehouse_id 过滤；
-    - 默认按 id 倒序。
-    """
-    stmt = (
-        select(InternalOutboundDoc)
-        .options(selectinload(InternalOutboundDoc.lines))
-        .order_by(InternalOutboundDoc.id.desc())
-        .offset(max(skip, 0))
-        .limit(max(limit, 1))
-    )
-
-    if status:
-        stmt = stmt.where(InternalOutboundDoc.status == status.strip().upper())
-    if warehouse_id is not None:
-        stmt = stmt.where(InternalOutboundDoc.warehouse_id == warehouse_id)
-
-    res = await session.execute(stmt)
-    docs = list(res.scalars())
-
-    for doc in docs:
-        if doc.lines:
-            doc.lines.sort(key=lambda ln: (ln.line_no, ln.id))
-
-    return [InternalOutboundDocOut.model_validate(doc) for doc in docs]
-
-
-@router.get("/docs/{doc_id}", response_model=InternalOutboundDocOut)
-async def get_internal_outbound_doc(
-    doc_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> InternalOutboundDocOut:
-    """
-    获取内部出库单详情（头 + 行）。
-    """
-    try:
-        doc = await svc.get_with_lines(session, doc_id)
-        return InternalOutboundDocOut.model_validate(doc)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
 
 
 @router.post("/docs/{doc_id}/lines", response_model=InternalOutboundDocOut)
@@ -112,89 +31,37 @@ async def upsert_internal_outbound_line(
     payload: InternalOutboundUpsertLineIn,
     session: AsyncSession = Depends(get_session),
 ) -> InternalOutboundDocOut:
-    """
-    在内部出库单上新增/累加一行：
-
-    - 若存在相同 (item_id, batch_code) 行则累加 requested_qty；
-    - 否则新建一行（line_no = 当前最大 + 1）。
-    """
     try:
-        # ✅ 主线 A：API 合同收紧（422 拦假码）
+        # ✅ Phase M：改用 expiry_policy
         item_ids: Set[int] = {int(payload.item_id)}
-        has_shelf_life_map = await fetch_item_has_shelf_life_map(session, item_ids)
-        if payload.item_id not in has_shelf_life_map:
+        expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
+
+        if payload.item_id not in expiry_policy_map:
             raise HTTPException(status_code=422, detail=f"unknown item_id: {payload.item_id}")
 
-        requires_batch = has_shelf_life_map.get(payload.item_id, False) is True
-        batch_code = validate_batch_code_contract(requires_batch=requires_batch, batch_code=payload.batch_code)
+        requires_batch = _requires_batch_from_expiry_policy(
+            expiry_policy_map.get(payload.item_id)
+        )
 
-        # 先执行行修改
+        batch_code = validate_lot_code_contract(
+            requires_batch=requires_batch,
+            lot_code=payload.batch_code,
+        )
+
         await svc.upsert_line(
             session,
             doc_id=doc_id,
             item_id=payload.item_id,
             qty=payload.qty,
             batch_code=batch_code,
-            uom=payload.uom,
+            # Phase M-5: internal_outbound 行不再承载 uom（单位真相源 = item_uoms）
             note=payload.note,
         )
         await session.commit()
 
-        # 再重新加载一次 doc（确保 lines 完整）
         doc = await svc.get_with_lines(session, doc_id)
         return InternalOutboundDocOut.model_validate(doc)
-    except ValueError as e:
-        await session.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
 
-
-@router.post("/docs/{doc_id}/confirm", response_model=InternalOutboundDocOut)
-async def confirm_internal_outbound_doc(
-    doc_id: int,
-    payload: InternalOutboundConfirmIn,
-    session: AsyncSession = Depends(get_session),
-) -> InternalOutboundDocOut:
-    """
-    确认内部出库：
-
-    - 仅 DRAFT 状态可确认；
-    - 必须已经填写 recipient_name；
-    - 按行扣库存（指定批次或 FEFO），写入 ledger + audit。
-    """
-    try:
-        # TODO：接入 get_current_user 后，将 user.id 传入 user_id
-        doc = await svc.confirm(
-            session,
-            doc_id=doc_id,
-            user_id=None,
-        )
-        await session.commit()
-        return InternalOutboundDocOut.model_validate(doc)
-    except ValueError as e:
-        await session.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/docs/{doc_id}/cancel", response_model=InternalOutboundDocOut)
-async def cancel_internal_outbound_doc(
-    doc_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> InternalOutboundDocOut:
-    """
-    取消内部出库单：
-
-    - 仅 DRAFT 状态可取消；
-    - 不回滚库存（因为还没扣库存），只改状态 + 写审计事件。
-    """
-    try:
-        # TODO：接入 get_current_user 后，将 user.id 传入 user_id
-        doc = await svc.cancel(
-            session,
-            doc_id=doc_id,
-            user_id=None,
-        )
-        await session.commit()
-        return InternalOutboundDocOut.model_validate(doc)
     except ValueError as e:
         await session.rollback()
         raise HTTPException(status_code=400, detail=str(e))

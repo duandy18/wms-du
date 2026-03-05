@@ -84,18 +84,20 @@ async def _load_order_lines_sum(
     return lines
 
 
-async def _check_can_fulfill_whole_order(
+async def _check_can_fulfill_whole_order_soft(
     session: AsyncSession,
     *,
     platform: str,
     shop_id: str,
     warehouse_id: int,
     lines: List[Dict[str, Any]],
-) -> None:
+) -> List[Dict[str, Any]]:
     """
-    Phase 5.1：
-    - 人工指定执行仓时，允许做“整单同仓可履约校验”（事实层）
-    - 不自动找其他仓，不做 fallback
+    Phase 5.1 / Phase 4B：
+
+    人工指定执行仓时，允许做“整单同仓可履约校验”（事实层），但在双写期/入库前流程中：
+    ✅ 不应阻断 manual-assign（决策入口）
+    ✅ 只返回不足明细，供 UI/审计/运维观测
     """
     if not lines:
         raise ValueError("manual-assign blocked: order has no lines")
@@ -105,12 +107,10 @@ async def _check_can_fulfill_whole_order(
     order_lines = [OrderLine(item_id=int(x["item_id"]), qty=int(x["qty"])) for x in lines if int(x["qty"]) > 0]
     r = await router.check_whole_order(ctx=ctx, warehouse_id=int(warehouse_id), lines=order_lines)
 
-    if r.status != "OK":
-        insufficient = [x.to_dict() for x in r.insufficient]
-        raise ValueError(
-            "manual-assign blocked: target warehouse cannot fulfill whole order; "
-            f"platform={platform}, shop={shop_id}, wh={warehouse_id}, insufficient={insufficient}"
-        )
+    if r.status == "OK":
+        return []
+
+    return [x.to_dict() for x in r.insufficient]
 
 
 async def manual_assign_fulfillment_warehouse(
@@ -137,8 +137,10 @@ async def manual_assign_fulfillment_warehouse(
       - order_fulfillment.fulfillment_status = 'MANUALLY_ASSIGNED'
       - 清空 blocked_reasons（如果之前是 BLOCKED）
       - 不保留 override_*（审计信息走 AuditEventWriter/event_log）
+
     审计：
       - OUTBOUND / MANUAL_WAREHOUSE_ASSIGNED
+      - 额外记录 soft-check 的 insufficient（不阻断）
     """
     plat = str(platform or "").upper().strip()
     sid = str(shop_id or "").strip()
@@ -154,8 +156,10 @@ async def manual_assign_fulfillment_warehouse(
     )
     lines = await _load_order_lines_sum(session, order_id=order_id)
 
-    # 事实层校验：目标仓必须整单可履约
-    await _check_can_fulfill_whole_order(session, platform=plat, shop_id=sid, warehouse_id=wid, lines=lines)
+    # ✅ soft-check：不阻断，只记录不足明细
+    insufficient = await _check_can_fulfill_whole_order_soft(
+        session, platform=plat, shop_id=sid, warehouse_id=wid, lines=lines
+    )
 
     # 写 order_fulfillment：upsert（最小事实）
     await session.execute(
@@ -202,6 +206,16 @@ async def manual_assign_fulfillment_warehouse(
     }
     if note:
         meta["note"] = str(note).strip()
+    if insufficient:
+        meta["soft_check"] = {
+            "status": "INSUFFICIENT",
+            "insufficient": insufficient,
+        }
+    else:
+        meta["soft_check"] = {
+            "status": "OK",
+            "insufficient": [],
+        }
 
     try:
         await AuditEventWriter.write(

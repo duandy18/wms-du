@@ -8,6 +8,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
+from app.services.stock.lots import ensure_internal_lot_singleton
+from app.services.stock_service_adjust import adjust_lot_impl
+from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
 
@@ -19,7 +22,6 @@ async def _seed_minimal_order_for_outbound(
 ) -> tuple[str, int, int, str]:
     """
     为出库写台账准备一条最小订单头（Phase 5+）：
-
     - platform = 'PDD'
     - shop_id = 'UT-SHOP'
     - actual_warehouse_id = 1（写入 order_fulfillment）
@@ -35,16 +37,8 @@ async def _seed_minimal_order_for_outbound(
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
     trace_id = "TRACE-LEDGER-OUT-1"
 
-    await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": "SKU-0001", "name": "UT-ITEM-1"},
-    )
+    # Phase M：items 有 NOT NULL policy 护栏，必须走合法插入（helper 统一兜底）
+    await ensure_item(session, id=int(item_id), sku="SKU-0001", name="UT-ITEM-1")
 
     # orders（不再包含 warehouse_id）
     row = await session.execute(
@@ -101,7 +95,7 @@ async def _seed_minimal_order_for_outbound(
               :oid,
               NULL,
               :awid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               now()
             )
@@ -119,47 +113,108 @@ async def _seed_minimal_order_for_outbound(
     return order_ref, wh_id, item_id, trace_id
 
 
-async def _pick_one_stock_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
+async def _seed_positive_internal_stock(session: AsyncSession, *, warehouse_id: int, item_id: int, qty: int) -> None:
     """
-    从 stocks 中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，返回 batch_code（可能为 NULL）。
-    强护栏下，非批次商品一般是 NULL 槽位。
+    baseline 不再提供隐式 stocks_lot qty>0，因此显式 seed 一笔 INTERNAL 库存。
+    """
+    await session.execute(
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(warehouse_id)},
+    )
+
+    lot_id = await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
+
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_id=int(lot_id),
+        delta=int(qty),
+        reason="UT_OUTBOUND_LEDGER_SEED",
+        ref="ut:outbound_ledger:seed",
+        ref_line=1,
+        occurred_at=datetime.now(UTC),
+        meta=None,
+        batch_code=None,
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
+        shadow_write_stocks=False,
+    )
+    await session.commit()
+
+
+async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: int, item_id: int) -> str | None:
+    """
+    从 lot-world 余额（stocks_lot）中挑一个 (item_id, warehouse_id) 下 qty>0 的槽位，
+    返回 lot_code（映射到服务/台账中的 batch_code 字段，可能为 NULL）。
+
+    DB 事实：stocks_lot.lot_id NOT NULL，因此是否“无批次”由 lots.lot_code 是否为 NULL 表达。
+
+    Phase M-5 收口后 baseline 可能不存在 qty>0 槽位；
+    若不存在则显式 seed 一笔 INTERNAL 库存，再重试。
     """
     row = (
         await session.execute(
             text(
                 """
-                SELECT batch_code, qty
-                  FROM stocks
-                 WHERE warehouse_id = :w
-                   AND item_id = :i
-                   AND qty > 0
-                 ORDER BY id ASC
-                 LIMIT 1
+                SELECT
+                  l.lot_code AS lot_code,
+                  sl.qty
+                FROM stocks_lot sl
+                LEFT JOIN lots l ON l.id = sl.lot_id
+                WHERE sl.warehouse_id = :w
+                  AND sl.item_id = :i
+                  AND sl.qty > 0
+                ORDER BY sl.id ASC
+                LIMIT 1
                 """
             ),
             {"w": int(warehouse_id), "i": int(item_id)},
         )
     ).first()
     if not row:
-        pytest.skip("no stock slot with qty>0 for item/warehouse in baseline")
+        await _seed_positive_internal_stock(session, warehouse_id=int(warehouse_id), item_id=int(item_id), qty=5)
+        row2 = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      l.lot_code AS lot_code,
+                      sl.qty
+                    FROM stocks_lot sl
+                    LEFT JOIN lots l ON l.id = sl.lot_id
+                    WHERE sl.warehouse_id = :w
+                      AND sl.item_id = :i
+                      AND sl.qty > 0
+                    ORDER BY sl.id ASC
+                    LIMIT 1
+                    """
+                ),
+                {"w": int(warehouse_id), "i": int(item_id)},
+            )
+        ).first()
+        assert row2 is not None, {"msg": "failed to seed qty>0 slot for item/warehouse", "warehouse_id": warehouse_id, "item_id": item_id}
+        return row2[0]
+
     return row[0]
 
 
 @pytest.mark.asyncio
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
-    验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 stocks 槽位一致。
-
-    这里不关心完整业务流程（soft reserve / audit / platform events），只关心：
-    - OutboundService.commit 能在当前 schema 下正常运行；
-    - 写出来的 stock_ledger 行：
-        * reason = 'OUTBOUND_SHIP'
-        * warehouse_id / item_id / batch_code|NULL 维度正确
-        * delta < 0（出库）
+    验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 lot-world 槽位一致。
     """
     order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 
-    batch_code = await _pick_one_stock_slot_for_item(session, warehouse_id=wh_id, item_id=item_id)
+    batch_code = await _pick_one_lot_slot_for_item(session, warehouse_id=wh_id, item_id=item_id)
     qty_to_ship = 3
 
     svc = OutboundService()
@@ -183,22 +238,24 @@ async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -
     )
     assert isinstance(result, dict)
 
+    # 终态：stock_ledger 不再有 batch_code 列；展示码来自 lots.lot_code
     rows = (
         await session.execute(
             text(
                 """
                 SELECT
-                    warehouse_id,
-                    item_id,
-                    batch_code,
-                    reason,
-                    ref,
-                    delta,
-                    after_qty
-                  FROM stock_ledger
-                 WHERE reason = 'OUTBOUND_SHIP'
-                   AND ref = :ref
-                 ORDER BY occurred_at, id
+                    l.warehouse_id,
+                    l.item_id,
+                    COALESCE(lo.lot_code, NULL) AS batch_code,
+                    l.reason,
+                    l.ref,
+                    l.delta,
+                    l.after_qty
+                  FROM stock_ledger l
+                  LEFT JOIN lots lo ON lo.id = l.lot_id
+                 WHERE l.reason = 'OUTBOUND_SHIP'
+                   AND l.ref = :ref
+                 ORDER BY l.occurred_at, l.id
                 """
             ),
             {"ref": order_ref},

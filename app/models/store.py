@@ -81,14 +81,6 @@ class Store(Base):
         overlaps="warehouses,stores,warehouse",
     )
 
-    inventories: Mapped[List["ChannelInventory"]] = relationship(
-        "ChannelInventory",
-        back_populates="store",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        lazy="selectin",
-    )
-
     def __repr__(self) -> str:
         return (
             f"<Store id={self.id} platform={self.platform} "
@@ -150,36 +142,4 @@ class StoreWarehouse(Base):
             f"<StoreWarehouse id={self.id} store_id={self.store_id} "
             f"warehouse_id={self.warehouse_id} "
             f"default={self.is_default} top={self.is_top} prio={self.priority}>"
-        )
-
-
-class ChannelInventory(Base):
-    __tablename__ = "channel_inventory"
-    __table_args__ = (
-        UniqueConstraint("store_id", "item_id", name="uq_channel_inventory_store_item"),
-        Index("ix_channel_inventory_store_item", "store_id", "item_id"),
-        {"info": {"skip_autogen": True}},
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    store_id: Mapped[int] = mapped_column(
-        ForeignKey("stores.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-    item_id: Mapped[int] = mapped_column(
-        ForeignKey("items.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-
-    cap_qty: Mapped[Optional[int]] = mapped_column(Integer)
-    visible_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    store: Mapped["Store"] = relationship("Store", back_populates="inventories")
-
-    def __repr__(self) -> str:
-        return (
-            f"<ChannelInventory id={self.id} store_id={self.store_id} "
-            f"item_id={self.item_id} visible={self.visible_qty}>"
         )

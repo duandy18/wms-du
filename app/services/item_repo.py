@@ -7,6 +7,7 @@ from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
+from app.models.item_barcode import ItemBarcode
 
 
 def get_items(
@@ -29,21 +30,22 @@ def get_items(
     if q_raw:
         q_like = f"%{q_raw.lower()}%"
 
+        # ✅ 主条码（primary）表达式：只命中 is_primary=true 且 active=true 的条码
+        primary_barcode_expr = (
+            select(ItemBarcode.barcode)
+            .where(ItemBarcode.item_id == Item.id)
+            .where(ItemBarcode.is_primary.is_(True))
+            .where(ItemBarcode.active.is_(True))
+            .limit(1)
+            .scalar_subquery()
+        )
+
         conds = [
             func.lower(Item.sku).like(q_like),
             func.lower(Item.name).like(q_like),
             cast(Item.id, String).like(q_like),
+            func.lower(func.coalesce(primary_barcode_expr, "")).like(q_like),
         ]
-
-        # barcode：只从真实表列读取，避免拿到 Python @property
-        barcode_col = None
-        try:
-            barcode_col = Item.__table__.c.get("barcode")  # type: ignore[attr-defined]
-        except Exception:
-            barcode_col = None
-
-        if barcode_col is not None:
-            conds.append(func.lower(barcode_col).like(q_like))
 
         if q_raw.isdigit():
             try:

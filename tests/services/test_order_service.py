@@ -13,6 +13,7 @@ from tests.helpers.inventory import ensure_wh_loc_item
 from app.services.order_service import OrderService
 from app.services.pick_task_commit_ship import commit_ship
 from app.services.pick_task_commit_ship_handoff import expected_handoff_code_from_task_ref
+from app.services.stock.lots import ensure_internal_lot_singleton
 
 UTC = timezone.utc
 pytestmark = pytest.mark.contract
@@ -88,7 +89,7 @@ async def _ensure_order_row(
               :oid,
               NULL,
               :awid,
-              'READY_TO_FULFILL',
+              'SERVICE_ASSIGNED',
               NULL,
               :at
             )
@@ -105,6 +106,33 @@ async def _ensure_order_row(
     return f"ORD:{plat}:{shop_id}:{ext_order_no}"
 
 
+async def _ensure_internal_lot_for_none_item(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    source_receipt_id: int,
+    source_line_no: int,
+) -> int:
+    """
+    Phase M-5 / DB 事实（终态合同）：
+    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
+    - “非批次商品”依然必须落在某个真实 lot_id 上，使用 INTERNAL lot 表达：
+        lot_code_source='INTERNAL' 且 lot_code IS NULL
+    - INTERNAL lot 是 (warehouse_id,item_id) 单例（partial unique index），
+      source_receipt_id/source_line_no 仅作为可选 provenance（要求成对填充），不参与唯一性锚点。
+
+    返回 INTERNAL lot_id。
+    """
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        source_receipt_id=int(source_receipt_id),
+        source_line_no=int(source_line_no),
+    )
+
+
 @pytest.mark.asyncio
 async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     """
@@ -113,22 +141,34 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     该用例覆盖：
     - enter_pickable（OrderService.reserve）生成 pick_task + pick_task_lines
     - commit_ship 唯一裁决点：扣库存 + 写 ledger + 写 outbound_commits_v2
+
+    Phase M-5 / DB 事实：
+    - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
+    - 非批次商品用 INTERNAL lot（lots.lot_code 可能为 NULL）承载
     """
     wh, item = 1, 3003
 
     await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 
-    # 非批次库存槽位：qty=10
+    # 为“非批次商品”准备一个 INTERNAL lot 槽位，并 seed qty=10
+    # INTERNAL lot 为 (warehouse,item) 单例；source_* 仅作为可选 provenance（成对填充）
+    lot_id = await _ensure_internal_lot_for_none_item(
+        session,
+        warehouse_id=wh,
+        item_id=item,
+        source_receipt_id=9000001,
+        source_line_no=1,
+    )
     await session.execute(
         text(
             """
-            INSERT INTO stocks(item_id, warehouse_id, batch_id, batch_code, qty)
-            VALUES (:item_id, :wid, NULL, NULL, 10)
-            ON CONFLICT (item_id, warehouse_id, batch_code_key)
+            INSERT INTO stocks_lot(item_id, warehouse_id, lot_id, qty)
+            VALUES (:item_id, :wid, :lot_id, 10)
+            ON CONFLICT ON CONSTRAINT uq_stocks_lot_item_wh_lot
             DO UPDATE SET qty = EXCLUDED.qty
             """
         ),
-        {"item_id": int(item), "wid": int(wh)},
+        {"item_id": int(item), "wid": int(wh), "lot_id": int(lot_id)},
     )
     await session.flush()
 

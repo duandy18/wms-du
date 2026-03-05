@@ -1,7 +1,7 @@
 # app/jobs/snapshot.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 # 仅支持 day 粒度；后续如果要扩展 hour/week，可以在这里扩展。
 VALID_GRAINS = {"day"}
 
-
 SNAP_DELETE_SQL = text(
     """
     DELETE FROM public.stock_snapshots
@@ -18,13 +17,15 @@ SNAP_DELETE_SQL = text(
 """
 )
 
+# Phase 3 (lot-only): snapshot grain = (snapshot_date, warehouse_id, item_id, lot_id)
+# 语义：cut_date 当天结束时刻（UTC）的库存余额（ledger 累加到 cut_to）
 SNAP_INSERT_SQL = text(
     """
     INSERT INTO public.stock_snapshots (
         snapshot_date,
         warehouse_id,
         item_id,
-        batch_code,
+        lot_id,
         qty,
         qty_allocated,
         qty_available
@@ -33,16 +34,17 @@ SNAP_INSERT_SQL = text(
         :cut_date AS snapshot_date,
         l.warehouse_id,
         l.item_id,
-        l.batch_code,
+        l.lot_id,
         SUM(l.delta)      AS qty,
         0::numeric(18,4)  AS qty_allocated,
-        0::numeric(18,4)  AS qty_available
+        SUM(l.delta)      AS qty_available
     FROM stock_ledger AS l
-    WHERE DATE(l.occurred_at) = :cut_date
+    WHERE l.occurred_at < :cut_to
     GROUP BY
         l.warehouse_id,
         l.item_id,
-        l.batch_code
+        l.lot_id
+    HAVING SUM(l.delta) != 0
 """
 )
 
@@ -56,13 +58,13 @@ async def run_once(
     """
     执行一次 snapshot job（当前仅支持 day 粒度）。
 
-    语义：
+    Phase 3 终态（lot-only）语义：
       - grain="day" 时：
         * cut_date = at.date()
-        * 窗口为“发生日期等于 cut_date 的所有 stock_ledger.delta”
+        * cut_to   = cut_date + 1 day (UTC 00:00)
         * 删除该日已有的 stock_snapshots 行
-        * 按 (warehouse_id,item_id,batch_code) 汇总当日 stock_ledger.delta，
-          将结果写入 public.stock_snapshots.qty（Stage C.2 新事实列）
+        * 按 (warehouse_id,item_id,lot_id) 汇总 occurred_at < cut_to 的 stock_ledger.delta
+          将结果写入 public.stock_snapshots.qty（on-hand 快照）
 
       - 幂等性：同日覆盖，不累加
     """
@@ -71,10 +73,10 @@ async def run_once(
         raise ValueError(f"Unsupported grain={grain!r}; only 'day' is implemented")
 
     cut_date = at.date()
+    cut_to = datetime(cut_date.year, cut_date.month, cut_date.day, tzinfo=timezone.utc) + timedelta(days=1)
 
     async with engine.begin() as conn:
         await conn.execute(SNAP_DELETE_SQL, {"cut_date": cut_date})
-        # ✅ batch_code_key 是 generated column，INSERT 不写它
-        await conn.execute(SNAP_INSERT_SQL, {"cut_date": cut_date})
+        await conn.execute(SNAP_INSERT_SQL, {"cut_date": cut_date, "cut_to": cut_to})
 
     return {"grain": grain, "cut_date": str(cut_date)}

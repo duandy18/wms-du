@@ -9,42 +9,81 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_service import StockService
-from app.services.three_books_enforcer import enforce_three_books
-
+from app.api.problem import raise_problem
+from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
+from app.services.order_fulfillment_service import OrderFulfillmentService
+from app.services.order_ref_resolver import resolve_order_id
 from app.services.outbound_commit_models import (
     ShipLine,
-    batch_key,
     coerce_line,
     norm_batch_code,
     problem_error_code_from_http_exc_detail,
 )
+from app.services.stock_service import StockService
 
 UTC = timezone.utc
 
 
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+) -> Optional[int]:
+    """
+    用展示码 lot_code（旧名 batch_code）解析 lot_id。
+
+    终态（Phase M-5+）：
+    - SUPPLIER 批次的唯一性以 lot_code_key 防漂移：
+      uq_lots_wh_item_lot_code_key (warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
+    """
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
+
+    row = (
+        await session.execute(
+            sa.text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
+                 LIMIT 1
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+        )
+    ).first()
+    return int(row[0]) if row else None
+
+
 class OutboundService:
     """
-    Phase 3 出库服务（硬口径 + 强幂等）：
+    Phase 5 第二刀：order_fulfillment 成为唯一执行仓事实（authority）。
 
-    - 粒度：(warehouse_id, item_id, batch_code|NULL)
-    - 幂等：以 (ref=order_id, item_id, warehouse_id, batch_code_key) 为键，
-      先查已扣数量，再扣“剩余需要扣”的量。
-    - 同一 payload 中重复的 (item,wh,batch) 会先合并为一行，再做一次扣减。
-
-    Phase 3.6：增加 trace_id 透传能力（当前不直接写 audit，仅向下传参）。
-    Phase 3.7-A：trace_id 透传到 StockService.adjust，用于后续填充 stock_ledger.trace_id。
-
-    Phase 3.10：
-    - 引入 sub_reason（业务细分）：
-      订单发货出库：sub_reason = ORDER_SHIP
-
-    Phase 3（三库一致性工程化）：
-    - commit 成功的必要条件：ledger + stocks + snapshot 可观测一致（对本次 touched keys）
+    - 外部仍可传字符串 order_ref（平台单号/ORD:...），但必须可硬解析到 orders.id
+    - fulfillment 以 orders.id 为主键写入执行事实（planned/actual）
+    - 出库事实用 ship_committed_at / shipped_at 表达（不再用 fulfillment_status 阶段机）
+    - 库存写入仍通过 StockService（stocks_lot + stock_ledger）
+    - 执行尾门：Invariant Guard（不触 snapshot）
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self.stock_svc = stock_svc or StockService()
+        self.fulfillment_svc = OrderFulfillmentService()
 
     async def commit(
         self,
@@ -62,40 +101,99 @@ class OutboundService:
         if ts.tzinfo is None:
             ts = datetime.now(UTC)
 
-        # ✅ 聚合维度：item + wh + batch_code（允许 NULL）
+        order_ref = str(order_id).strip()
+        if not order_ref:
+            raise ValueError("order_id/order_ref cannot be empty")
+
+        # ✅ Phase 5：硬解析外部 order_ref -> orders.id（解析失败直接拒绝，不执行扣库）
+        order_pk = await resolve_order_id(session, order_ref=order_ref)
+
+        # ✅ 聚合维度：item + wh + batch_code(展示码，允许 NULL)
         agg_qty: Dict[Tuple[int, int, Optional[str]], int] = defaultdict(int)
+        wh_set: set[int] = set()
+
         for raw in lines:
             ln = coerce_line(raw)
             if ln.warehouse_id is None:
                 raise ValueError("warehouse_id is required in each ship line")
-            key = (int(ln.item_id), int(ln.warehouse_id), norm_batch_code(ln.batch_code))
+            wh_id = int(ln.warehouse_id)
+            wh_set.add(wh_id)
+
+            key = (int(ln.item_id), wh_id, norm_batch_code(ln.batch_code))
             agg_qty[key] += int(ln.qty)
+
+        if not agg_qty:
+            return {
+                "status": "OK",
+                "order_id": str(order_ref),
+                "order_pk": int(order_pk),
+                "total_qty": 0,
+                "committed_lines": 0,
+                "results": [],
+                "ship_committed_at": None,
+                "shipped_at": None,
+            }
+
+        # ✅ Phase 5：同一订单一次 SHIP 只能一个执行仓（否则就是 split-ship，需要显式模型）
+        if len(wh_set) != 1:
+            raise ValueError(f"Phase 5: ship lines must have exactly 1 warehouse_id, got={sorted(wh_set)}")
+        actual_wh_id = int(next(iter(wh_set)))
+
+        # ✅ 出库锚点事实：先确保 ship_committed_at（或幂等确认已存在）
+        f0 = await self.fulfillment_svc.ensure_ship_committed(
+            session,
+            order_id=int(order_pk),
+            warehouse_id=int(actual_wh_id),
+            at=ts,
+        )
 
         committed = 0
         total_qty = 0
         results: List[Dict[str, Any]] = []
 
-        # Phase 3：收集本次出库的 effects（用于三库一致性验证）
-        effects: List[Dict[str, Any]] = []
-
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
-            ck = batch_key(batch_code)
+            # ✅ 幂等查询以 ledger 为准：
+            # - batch_code 非空：用 lot_code_key 唯一解析 lot_id -> 幂等按 lot_id 精确统计
+            # - batch_code 为空：NONE 商品走 INTERNAL 单例 lot；幂等仍可按 (ref,item,wh) 汇总（更宽松，避免历史脏数据影响）
+            lot_id: int | None = None
+            if batch_code is not None:
+                lot_id = await _resolve_lot_id_by_lot_code(
+                    session,
+                    warehouse_id=int(wh_id),
+                    item_id=int(item_id),
+                    lot_code=str(batch_code),
+                )
 
-            # ✅ 幂等查询：用 batch_code_key（NULL 语义稳定）
-            row = await session.execute(
-                sa.text(
-                    """
-                    SELECT COALESCE(SUM(delta), 0)
-                    FROM stock_ledger
-                    WHERE ref=:ref
-                      AND item_id=:item
-                      AND warehouse_id=:wid
-                      AND batch_code_key=:ck
-                      AND delta < 0
-                    """
-                ),
-                {"ref": str(order_id), "item": item_id, "wid": wh_id, "ck": ck},
-            )
+            if lot_id is not None:
+                row = await session.execute(
+                    sa.text(
+                        """
+                        SELECT COALESCE(SUM(delta), 0)
+                        FROM stock_ledger
+                        WHERE ref=:ref
+                          AND item_id=:item
+                          AND warehouse_id=:wid
+                          AND lot_id=:lot
+                          AND delta < 0
+                        """
+                    ),
+                    {"ref": str(order_ref), "item": item_id, "wid": wh_id, "lot": int(lot_id)},
+                )
+            else:
+                row = await session.execute(
+                    sa.text(
+                        """
+                        SELECT COALESCE(SUM(delta), 0)
+                        FROM stock_ledger
+                        WHERE ref=:ref
+                          AND item_id=:item
+                          AND warehouse_id=:wid
+                          AND delta < 0
+                        """
+                    ),
+                    {"ref": str(order_ref), "item": item_id, "wid": wh_id},
+                )
+
             already = int(row.scalar() or 0)
             need = int(want_qty) + already  # 目标是总 delta = -want_qty
 
@@ -118,29 +216,19 @@ class OutboundService:
                     item_id=item_id,
                     delta=-need,
                     reason="OUTBOUND_SHIP",
-                    ref=str(order_id),
+                    ref=str(order_ref),
                     ref_line=1,
                     occurred_at=ts,
                     warehouse_id=wh_id,
-                    batch_code=batch_code,  # ✅ may be NULL
+                    batch_code=batch_code,  # 展示码输入（可为空）
                     trace_id=trace_id,
                     meta={
                         "sub_reason": "ORDER_SHIP",
+                        "order_id": int(order_pk),
                     },
                 )
                 committed += 1
                 total_qty += need
-
-                effects.append(
-                    {
-                        "warehouse_id": int(wh_id),
-                        "item_id": int(item_id),
-                        "batch_code": batch_code,  # ✅ keep None, do NOT str()
-                        "qty": -int(need),
-                        "ref": str(order_id),
-                        "ref_line": 1,
-                    }
-                )
 
                 results.append(
                     {
@@ -150,6 +238,7 @@ class OutboundService:
                         "qty": need,
                         "status": "OK",
                         "after": res.get("after"),
+                        "lot_id": res.get("lot_id"),
                     }
                 )
 
@@ -193,15 +282,46 @@ class OutboundService:
                     }
                 )
 
-        if effects:
-            await enforce_three_books(session, ref=str(order_id), effects=effects, at=ts)
+        # ✅ 如果发生过任何扣库写入：必须跑 Invariant Guard（确保三账闭合）
+        if total_qty > 0:
+            await enforce_outbound_invariant_guard(session, ref=str(order_ref), at=ts)
+
+        # ✅ 若存在任何失败行：禁止推进 shipped_at（失败栈必须冒出来）
+        has_failures = any(r.get("status") != "OK" for r in results)
+        if has_failures:
+            raise_problem(
+                status_code=409,
+                error_code="outbound_commit_reject",
+                message="订单出库未完成：存在拒绝/缺货行，已禁止推进为已出库（shipped_at）。",
+                context={
+                    "order_id": str(order_ref),
+                    "order_pk": int(order_pk),
+                    "warehouse_id": int(actual_wh_id),
+                    "ship_committed_at": f0.get("ship_committed_at"),
+                    "ship_committed_idempotent": bool(f0.get("idempotent")),
+                    "total_qty_committed": int(total_qty),
+                    "committed_lines": int(committed),
+                },
+                details=[{"results": results}],
+                next_actions=[
+                    {"action": "fix_lines_and_retry", "label": "修复缺货/错误行后重试出库"},
+                    {"action": "inspect_fulfillment", "label": "检查订单履约记录（ship_committed_at）"},
+                ],
+            )
+            return {}
+
+        # ✅ 全部 OK：推进 shipped_at（事实）
+        f1 = await self.fulfillment_svc.mark_shipped(session, order_id=int(order_pk), at=ts)
 
         return {
             "status": "OK",
-            "order_id": str(order_id),
+            "order_id": str(order_ref),
+            "order_pk": int(order_pk),
             "total_qty": total_qty,
             "committed_lines": committed,
             "results": results,
+            "ship_committed_at": f0.get("ship_committed_at"),
+            "shipped_at": f1.get("shipped_at"),
         }
 
 

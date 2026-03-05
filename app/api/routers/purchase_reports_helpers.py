@@ -33,7 +33,7 @@ def apply_common_filters(
         * po_purchase_time：按 PurchaseOrder.purchase_time 过滤（仅作为维度，不作为统计来源）
     - warehouse_id / supplier_id：按 InboundReceipt 字段过滤（事实维度）
     - status：按 PurchaseOrder.status 过滤（仅作为维度；若不关心可不传）
-      注意：调用方应当已经 outer join 了 PurchaseOrder（通过 ReceiveTask），否则 SQL 会无 PurchaseOrder 表引用。
+      注意：调用方应当已经 outer join 了 PurchaseOrder（通过 source_type/source_id 的链路），否则 SQL 会无 PurchaseOrder 表引用。
     """
 
     # 时间范围：默认按收货发生时间（事实时间）

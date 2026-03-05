@@ -28,7 +28,7 @@ class Batch(Base):
 
     批次属性：
         - production_date   生产日期（可空）
-        - expiry_date       到期日期（FEFO 核心字段）
+        - expiry_date       到期日期（expiry analytics 核心字段：用于风险/监控，不作为执行策略入口）
         - supplier_lot      原厂批号（可选）
         - created_at        首次出现时间（保留追溯能力）
 

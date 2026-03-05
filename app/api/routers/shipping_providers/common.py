@@ -1,7 +1,7 @@
 # app/api/routers/shipping_providers/common.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, EmailStr, Field
@@ -34,26 +34,32 @@ class ShippingProviderContactOut(BaseModel):
 
 class ShippingProviderOut(BaseModel):
     """
-    刚性契约（Phase 6）：
-    - 本对象语义升级为「仓库可用快递网点」
-    - 必须绑定 warehouse_id（单仓归属）
+    刚性契约（最新）：
+    - 本对象语义为「运输网点实体」（保留表名 shipping_providers）
+    - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
+    - code 为内部业务键（不可变）
+    - external_outlet_code 为外部网点号（展示/对接用）
     """
+
     id: int
     name: str
-    code: Optional[str] = None
+
+    # 内部业务键（DB 级不可变 + 规范化 + NOT NULL）
+    code: str
+
+    # 外部网点号（展示/对接用，可空、可改）
+    external_outlet_code: Optional[str] = Field(None, max_length=64)
+
+    # 展示字段（不落库）
+    display_label: str
 
     # ✅ 网点地址（可选）
     address: Optional[str] = Field(None, max_length=255)
 
     active: bool = True
 
-    # ✅ 单仓归属（刚性）
-    warehouse_id: int
-
-    # 费率相关
+    # 排序
     priority: int = 100
-    pricing_model: Optional[Dict[str, Any]] = None
-    region_rules: Optional[Dict[str, Any]] = None
 
     # 联系人聚合（读）
     contacts: List[ShippingProviderContactOut] = Field(default_factory=list)
@@ -71,30 +77,23 @@ class ShippingProviderDetailOut(BaseModel):
 
 class ShippingProviderCreateIn(BaseModel):
     """
-    刚性契约（Phase 6）：
-    - warehouse_id 必填
-    - code 在 write 路由内仍保持必填（不允许空白/None）
+    刚性契约（最新）：
+    - code 必填（内部业务键，不可变）
+    - external_outlet_code 可选（外部网点号，仅展示/对接）
     """
+
     name: str = Field(..., min_length=1, max_length=255)
-    code: Optional[str] = Field(None, min_length=1, max_length=64)
+    code: str = Field(..., min_length=1, max_length=64)
+
+    external_outlet_code: Optional[str] = Field(None, min_length=1, max_length=64)
 
     # ✅ 网点地址（可选）
     address: Optional[str] = Field(None, max_length=255)
 
     active: bool = True
 
-    warehouse_id: int = Field(..., ge=1, description="所属仓库（单仓归属，必填）")
-
-    # 费率相关（可选）
+    # 排序
     priority: Optional[int] = Field(default=100, ge=0, description="排序优先级，数值越小优先级越高")
-    pricing_model: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="计费模型 JSON，例如 {type: 'by_weight', base_weight: 1, base_cost: 3.5, extra_unit: 1, extra_cost: 1.2}",
-    )
-    region_rules: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="区域覆盖规则 JSON，例如 {'广东省': {base_cost: 3.2}}",
-    )
 
 
 class ShippingProviderCreateOut(BaseModel):
@@ -104,20 +103,17 @@ class ShippingProviderCreateOut(BaseModel):
 
 class ShippingProviderUpdateIn(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    code: Optional[str] = Field(None, min_length=1, max_length=64)
+
+    # 外部网点号（展示/对接用，可更新/可置空）
+    external_outlet_code: Optional[str] = Field(None, min_length=1, max_length=64)
 
     # ✅ 网点地址（可更新/可置空）
     address: Optional[str] = Field(None, max_length=255)
 
     active: Optional[bool] = None
 
-    # ✅ 单仓归属（可更新：等价于“迁移网点归属”）
-    warehouse_id: Optional[int] = Field(default=None, ge=1)
-
-    # 费率相关
+    # 排序
     priority: Optional[int] = Field(default=None, ge=0)
-    pricing_model: Optional[Dict[str, Any]] = None
-    region_rules: Optional[Dict[str, Any]] = None
 
 
 class ShippingProviderUpdateOut(BaseModel):
@@ -148,15 +144,18 @@ def _row_to_contact(row: Any) -> ShippingProviderContactOut:
 
 
 def _row_to_provider(row: Any, contacts: List[ShippingProviderContactOut]) -> ShippingProviderOut:
+    ext = row.get("external_outlet_code")
+    name = row["name"]
+    display = f"{name}（{ext}）" if ext else name
+
     return ShippingProviderOut(
         id=row["id"],
-        name=row["name"],
-        code=row.get("code"),
+        name=name,
+        code=row["code"],
+        external_outlet_code=ext,
+        display_label=display,
         address=row.get("address"),
         active=row.get("active", True),
-        warehouse_id=int(row["warehouse_id"]),
         priority=row.get("priority", 100),
-        pricing_model=row.get("pricing_model"),
-        region_rules=row.get("region_rules"),
         contacts=contacts,
     )

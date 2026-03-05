@@ -1,0 +1,29 @@
+                                                                      Table "public.item_uoms"
+       Column        |           Type           | Collation | Nullable |                Default                | Storage  | Compression | Stats target | Description
+---------------------+--------------------------+-----------+----------+---------------------------------------+----------+-------------+--------------+-------------
+ id                  | integer                  |           | not null | nextval('item_uoms_id_seq'::regclass) | plain    |             |              |
+ item_id             | integer                  |           | not null |                                       | plain    |             |              |
+ uom                 | character varying(16)    |           | not null |                                       | extended |             |              |
+ ratio_to_base       | integer                  |           | not null |                                       | plain    |             |              |
+ display_name        | character varying(32)    |           |          |                                       | extended |             |              |
+ is_base             | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_purchase_default | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_inbound_default  | boolean                  |           | not null | false                                 | plain    |             |              |
+ is_outbound_default | boolean                  |           | not null | false                                 | plain    |             |              |
+ created_at          | timestamp with time zone |           | not null | now()                                 | plain    |             |              |
+ updated_at          | timestamp with time zone |           | not null | now()                                 | plain    |             |              |
+Indexes:
+    "item_uoms_pkey" PRIMARY KEY, btree (id)
+    "uq_item_uoms_item_uom" UNIQUE CONSTRAINT, btree (item_id, uom)
+    "uq_item_uoms_one_base_per_item" UNIQUE, btree (item_id) WHERE is_base = true
+    "uq_item_uoms_one_inbound_default_per_item" UNIQUE, btree (item_id) WHERE is_inbound_default = true
+    "uq_item_uoms_one_outbound_default_per_item" UNIQUE, btree (item_id) WHERE is_outbound_default = true
+    "uq_item_uoms_one_purchase_default_per_item" UNIQUE, btree (item_id) WHERE is_purchase_default = true
+Check constraints:
+    "ck_item_uoms_ratio_ge_1" CHECK (ratio_to_base >= 1)
+Foreign-key constraints:
+    "item_uoms_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "purchase_order_lines" CONSTRAINT "fk_po_line_purchase_uom" FOREIGN KEY (purchase_uom_id_snapshot) REFERENCES item_uoms(id)
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_receipt_line_uom" FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
+Access method: heap

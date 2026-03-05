@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,31 +9,53 @@ from app.services.stock_service import StockService
 
 
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控唯一真相源：items.expiry_policy == 'REQUIRED'
+    """
     row = await session.execute(
-        text("SELECT has_shelf_life FROM items WHERE id=:i LIMIT 1"),
+        text("SELECT expiry_policy FROM items WHERE id=:i LIMIT 1"),
         {"i": int(item_id)},
     )
     v = row.scalar_one_or_none()
-    return bool(v is True)
+    return str(v or "").strip().upper() == "REQUIRED"
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
-    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位
+    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位（lot_id IS NULL）
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        r = await session.execute(
+            text(
+                """
+                SELECT COALESCE(qty, 0)
+                  FROM stocks_lot
+                 WHERE item_id=:i
+                   AND warehouse_id=:w
+                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
+                 LIMIT 1
+                """
+            ),
+            {"i": int(item_id), "w": int(wh)},
+        )
+        return int(r.scalar_one_or_none() or 0)
+
     r = await session.execute(
         text(
             """
-            SELECT qty
-              FROM stocks
-             WHERE item_id=:i
-               AND warehouse_id=:w
-               AND batch_code IS NOT DISTINCT FROM :c
+            SELECT COALESCE(sl.qty, 0)
+              FROM stocks_lot sl
+              JOIN lots l ON l.id = sl.lot_id
+             WHERE sl.item_id=:i
+               AND sl.warehouse_id=:w
+               AND l.lot_code = :c
+             LIMIT 1
             """
         ),
-        {"i": int(item_id), "w": int(wh), "c": code},
+        {"i": int(item_id), "w": int(wh), "c": str(code)},
     )
     return int(r.scalar_one_or_none() or 0)
 
@@ -84,11 +107,11 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
     场景：
       - item 3003 在仓 1 的“目标槽位”有库存 >=1；
       - 同一个 order_id=Q-OUT-1 重复 ship_commit 两次，只扣一次；
-      - 另一单 Q-OUT-2 请求超量，返回至少一条 INSUFFICIENT。
+      - 另一单 Q-OUT-2 请求超量，抛 409(outbound_commit_reject)，details.results 至少一条 INSUFFICIENT。
 
     槽位口径（与后端 requires_batch 派生一致）：
-      - 批次受控：batch_code='NEAR'
-      - 非批次受控：batch_code=NULL
+      - 批次受控：batch_code='NEAR'（承载 lot_code 展示码）
+      - 非批次受控：batch_code=NULL（NULL 槽位：lot_id IS NULL）
     """
     item_id, wh = 3003, 1
     code = await _slot_code(session, item_id)
@@ -100,7 +123,7 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
     assert before >= 1
 
     # 幂等（两次同一单据，不应重复扣减）
-    order_id = "Q-OUT-1"
+    order_id = "UT:PH3:Q-OUT-1"
     lines = [{"item_id": item_id, "warehouse_id": wh, "batch_code": code, "qty": 1}]
     r1 = await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
     r2 = await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
@@ -109,11 +132,23 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
     mid = await _qty(session, item_id, wh, code)
     assert mid == before - 1
 
-    # 不足：同一槽位请求超量
-    r3 = await ship_commit(
-        session,
-        order_id="Q-OUT-2",
-        lines=[{"item_id": item_id, "warehouse_id": wh, "batch_code": code, "qty": 9999}],
-        warehouse_code="WH-1",
-    )
-    assert any(x.get("status") == "INSUFFICIENT" for x in r3.get("results", []))
+    # 不足：同一槽位请求超量 => 409(outbound_commit_reject)
+    with pytest.raises(HTTPException) as ei:
+        await ship_commit(
+            session,
+            order_id="UT:PH3:Q-OUT-2",
+            lines=[{"item_id": item_id, "warehouse_id": wh, "batch_code": code, "qty": 9999}],
+            warehouse_code="WH-1",
+        )
+
+    e = ei.value
+    assert e.status_code == 409
+    detail = e.detail
+    assert isinstance(detail, dict)
+    assert detail.get("error_code") == "outbound_commit_reject"
+
+    # details[0].results 至少有一条 INSUFFICIENT
+    details = detail.get("details") or []
+    assert details and isinstance(details[0], dict)
+    results = details[0].get("results") or []
+    assert any(x.get("status") == "INSUFFICIENT" for x in results)

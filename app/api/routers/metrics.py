@@ -93,7 +93,11 @@ async def get_outbound_metrics_range(
     session: AsyncSession = Depends(get_session),
 ) -> OutboundRangeMetricsResponse:
     """
-    最近 N 天出库趋势（按天汇总成功率 / FEFO 命中率 / fallback 比例）。
+    最近 N 天出库趋势（按天汇总成功率 / 临期优先贴合度 / fallback 比例）。
+
+    说明：
+    - “临期优先贴合度”是分析口径（非执行策略）：
+      对比拣货实际 batch_code 与“当前仍有库存的最早到期 lot_code”的一致比例。
     """
     svc = OutboundMetricsV2Service()
     return await svc.load_range(
@@ -173,11 +177,14 @@ async def get_shipping_quote_failures(
 
 @router.get("/fefo-risk", response_model=FefoRiskMetricsResponse)
 async def get_fefo_risk_metrics(
-    days: int = Query(7, ge=1, le=60, description="回看 FEFO 命中率的天数（默认 7 天）"),
+    days: int = Query(7, ge=1, le=60, description="回看 临期优先贴合度 的天数（默认 7 天）"),
     session: AsyncSession = Depends(get_session),
 ) -> FefoRiskMetricsResponse:
     """
-    FEFO 风险面板：近期临期批次 + FEFO 命中率 + 风险评分。
+    FEFO 风险面板（分析域）：
+    - 近期临期批次（near expiry）
+    - 临期优先贴合度（expiry_pick_hit_rate，分析口径，非执行策略）
+    - 风险评分（risk_score）
     """
     svc = OutboundMetricsV2Service()
     return await svc.load_fefo_risk(session=session, days=days)

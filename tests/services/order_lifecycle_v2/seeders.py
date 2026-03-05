@@ -4,6 +4,9 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.stock.lots import ensure_lot_full
+from tests.utils.ensure_minimal import ensure_item
+
 
 async def _upsert_order_and_fulfillment(
     session: AsyncSession,
@@ -14,7 +17,7 @@ async def _upsert_order_and_fulfillment(
     trace_id: str,
     wh_id: int,
     status: str = "CREATED",
-    fulfillment_status: str = "READY_TO_FULFILL",
+    fulfillment_status: str = "SERVICE_ASSIGNED",
 ) -> int:
     """
     Phase 5+ 事实边界：
@@ -104,6 +107,13 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     - stock_ledger:
         * SHIPMENT delta=-2
         * RETURN_IN delta=+1
+
+    Lot-World 终态注意：
+    - stock_ledger 展示码应来自 lots.lot_code（通过 lot_id JOIN）
+    - 这里先 ensure SUPPLIER lot（lot_code='B-LIFE-1'）拿到 lot_id，再写 stock_ledger.lot_id
+
+    ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
+    -> 统一走 app/services/stock/lots.py: ensure_lot_full
     """
     trace_id = "LIFE-UT-1"
     platform = "PDD"
@@ -113,17 +123,14 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-1"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
-    # items
+    # 确保 warehouse 存在（避免依赖 baseline 漂移）
     await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
     )
+
+    # items（Phase M：items policy NOT NULL，必须最小合法插入）
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -134,10 +141,12 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     # outbound_commits_v2
+    # 单宇宙回归后：唯一键为 (platform, shop_id, ref)
+    # 测试环境可能不 TRUNCATE outbound_commits_v2，所以这里必须幂等。
     await session.execute(
         text(
             """
@@ -147,7 +156,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             VALUES (
                 :platform, :shop_id, :ref, 'COMMITTED', now(), :trace_id
             )
-            ON CONFLICT (platform, shop_id, ref) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
             """
         ),
         {"platform": platform, "shop_id": shop_id, "ref": order_ref, "trace_id": trace_id},
@@ -170,7 +179,18 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"trace_id": trace_id, "ref": order_ref},
     )
 
-    # stock_ledger：SHIPMENT / RETURN_IN
+    # ensure SUPPLIER lot (lot_code 展示码)
+    lot_code = "B-LIFE-1"
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+    # stock_ledger：SHIPMENT / RETURN_IN（lot_id 维度；不写 batch_code）
     await session.execute(
         text(
             """
@@ -178,8 +198,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 trace_id,
                 warehouse_id,
                 item_id,
-                batch_code,
+                lot_id,
                 reason,
+                reason_canon,
                 ref,
                 ref_line,
                 delta,
@@ -192,7 +213,8 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
+                'SHIPMENT',
                 'SHIPMENT',
                 :ref,
                 1,
@@ -205,8 +227,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 :trace_id,
                 :wh_id,
                 :item_id,
-                'B-LIFE-1',
+                :lot_id,
                 'RETURN_IN',
+                'RECEIPT',
                 :ref,
                 1,
                 1,
@@ -216,7 +239,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
             )
             """
         ),
-        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "ref": order_ref},
+        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "lot_id": int(lot_id), "ref": order_ref},
     )
 
     await session.commit()
@@ -236,15 +259,11 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
 
     await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
     )
+
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -255,7 +274,7 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     await session.execute(
@@ -267,7 +286,7 @@ async def seed_missing_shipped_case(session: AsyncSession) -> str:
             VALUES (
                 :platform, :shop_id, :ref, 'COMMITTED', now(), :trace_id
             )
-            ON CONFLICT (platform, shop_id, ref) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_outbound_commits_v2_platform_shop_ref DO NOTHING
             """
         ),
         {"platform": platform, "shop_id": shop_id, "ref": order_ref, "trace_id": trace_id},
@@ -289,15 +308,11 @@ async def seed_created_only_case(session: AsyncSession) -> str:
     ext_order_no = "UT-ORDER-3"
 
     await session.execute(
-        text(
-            """
-            INSERT INTO items (id, sku, name)
-            VALUES (:item_id, :sku, :name)
-            ON CONFLICT (id) DO NOTHING
-            """
-        ),
-        {"item_id": item_id, "sku": f"UT-SKU-{item_id}", "name": f"UT-Item-{item_id}"},
+        text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
+        {"w": int(wh_id)},
     )
+
+    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -308,7 +323,7 @@ async def seed_created_only_case(session: AsyncSession) -> str:
         trace_id=trace_id,
         wh_id=wh_id,
         status="CREATED",
-        fulfillment_status="READY_TO_FULFILL",
+        fulfillment_status="SERVICE_ASSIGNED",
     )
 
     await session.commit()

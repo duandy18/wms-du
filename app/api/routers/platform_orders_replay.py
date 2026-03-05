@@ -7,13 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.api.problem import make_problem
 from app.core.audit import new_trace
-from app.services.order_service import OrderService
-from app.services.platform_order_resolve_service import load_items_brief, norm_platform, resolve_platform_lines_to_items
+from app.services.platform_order_ingest_flow import PlatformOrderIngestFlow
+from app.services.platform_order_resolve_service import norm_platform
 
 from app.api.routers.platform_orders_fact_repo import load_fact_lines_for_order, load_shop_id_by_store_id
-from app.api.routers.platform_orders_ingest_helpers import load_order_fulfillment_brief
 from app.api.routers.platform_orders_replay_schemas import PlatformOrderReplayIn, PlatformOrderReplayOut
-from app.api.routers.platform_orders_shared import build_items_payload_from_item_qty_map
 
 router = APIRouter(tags=["platform-orders"])
 
@@ -74,12 +72,15 @@ async def replay_platform_order(
         )
 
     # Phase N+2：不再补齐 filled_code；事实表中缺失将由 resolver 直接给出 MISSING_FILLED_CODE
-
-    resolved_lines, unresolved, item_qty_map = await resolve_platform_lines_to_items(
-        session,
-        platform=plat,
-        store_id=store_id,
-        lines=fact_lines,
+    resolved_lines, unresolved, item_qty_map, items_payload = (
+        await PlatformOrderIngestFlow.resolve_fact_lines_and_build_items_payload(
+            session,
+            platform=plat,
+            store_id=store_id,
+            lines=fact_lines,
+            source="platform-orders/replay",
+            extras={"store_id": store_id, "source": "platform-orders/replay"},
+        )
     )
 
     if not item_qty_map:
@@ -97,52 +98,37 @@ async def replay_platform_order(
             blocked_reasons=None,
         )
 
-    item_ids = sorted(item_qty_map.keys())
-    items_brief = await load_items_brief(session, item_ids=item_ids)
-
-    items_payload = build_items_payload_from_item_qty_map(
-        item_qty_map=item_qty_map,
-        items_brief=items_brief,
-        store_id=store_id,
-        source="platform-orders/replay",
-    )
-
-    r = await OrderService.ingest(
+    out_dict = await PlatformOrderIngestFlow.run_tail_from_items_payload(
         session,
         platform=plat,
         shop_id=shop_id,
+        store_id=store_id,
         ext_order_no=ext,
         occurred_at=None,
         buyer_name=None,
         buyer_phone=None,
-        order_amount=0.0,
-        pay_amount=0.0,
-        items=items_payload,
         address=None,
-        extras={"store_id": store_id, "source": "platform-orders/replay"},
+        items_payload=items_payload,
         trace_id=trace.trace_id,
+        source="platform-orders/replay",
+        extras={"store_id": store_id, "source": "platform-orders/replay"},
+        resolved=[r.__dict__ for r in resolved_lines],
+        unresolved=unresolved,
+        facts_written=0,
     )
 
     await session.commit()
 
-    oid = int(r.get("id") or 0) if r.get("id") is not None else None
-    ref = str(r.get("ref") or f"ORD:{plat}:{shop_id}:{ext}")
-
-    fulfillment_status = None
-    blocked_reasons = None
-    if oid is not None:
-        fulfillment_status, blocked_reasons = await load_order_fulfillment_brief(session, order_id=oid)
-
     return PlatformOrderReplayOut(
-        status=str(r.get("status") or "OK"),
-        id=oid,
-        ref=ref,
+        status=str(out_dict.get("status") or "OK"),
+        id=out_dict.get("id"),
+        ref=str(out_dict.get("ref") or f"ORD:{plat}:{shop_id}:{ext}"),
         platform=plat,
         store_id=store_id,
         ext_order_no=ext,
         facts_n=len(fact_lines),
         resolved=[r.__dict__ for r in resolved_lines],
         unresolved=unresolved,
-        fulfillment_status=fulfillment_status,
-        blocked_reasons=blocked_reasons,
+        fulfillment_status=out_dict.get("fulfillment_status"),
+        blocked_reasons=out_dict.get("blocked_reasons"),
     )

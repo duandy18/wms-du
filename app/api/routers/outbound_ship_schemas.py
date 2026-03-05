@@ -119,6 +119,11 @@ class ShipPrepareResponse(BaseModel):
     weight_kg: Optional[float] = None
     trace_id: Optional[str] = None
 
+    # ✅ 执行域展示字段（路 A：阶段真相 + 出库事实）
+    execution_stage: Optional[str] = None
+    ship_committed_at: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+
     # ✅ 不预设、不兜底：不直接给 warehouse_id
     warehouse_id: Optional[int] = None
     warehouse_reason: Optional[str] = None
@@ -129,8 +134,8 @@ class ShipPrepareResponse(BaseModel):
     # ✅ 扫描报告：每个候选仓的 OK/缺口
     fulfillment_scan: List[FulfillmentScanWarehouseOut] = Field(default_factory=list)
 
-    # ✅ 不可履约事实（用于“智能退货/取消”）
-    fulfillment_status: Optional[str] = None  # OK / FULFILLMENT_BLOCKED
+    # ✅ 路由/阻断字段（非阶段）：OK / FULFILLMENT_BLOCKED
+    fulfillment_status: Optional[str] = None
     blocked_reasons: List[str] = Field(default_factory=list)
 
 
@@ -145,8 +150,12 @@ class ShipConfirmRequest(BaseModel):
 
     warehouse_id: Optional[int] = Field(None, description="发货仓库 ID（建议必填）")
 
-    carrier: Optional[str] = Field(None, description="选用的物流公司编码，例如 ZTO / JT / SF")
-    carrier_name: Optional[str] = Field(None, description="物流公司名称（冗余字段）")
+    # ✅ 新合同：用 id 作为输入（稳定、不漂移）
+    shipping_provider_id: int = Field(..., ge=1, description="选用的运输网点 ID（必填）")
+
+    # 兼容展示字段（不作为选择依据）
+    carrier: Optional[str] = Field(None, description="deprecated：展示/历史兼容，不用于选择")
+    carrier_name: Optional[str] = Field(None, description="deprecated：展示/历史兼容，不用于选择")
 
     scheme_id: Optional[int] = Field(None, description="选用的运价方案 ID（建议必填）")
 

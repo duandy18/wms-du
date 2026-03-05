@@ -1,0 +1,14 @@
+items
+item_uoms
+item_barcodes
+lots
+purchase_orders
+purchase_order_lines
+inbound_receipts
+inbound_receipt_lines
+stock_ledgers
+stock_snapshots
+stock_inventories
+stock_lot_inventories
+internal_outbounds
+internal_outbound_lines

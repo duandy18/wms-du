@@ -1,0 +1,53 @@
+                                                                                     Table "public.items"
+         Column         |           Type           | Collation | Nullable |              Default              | Storage  | Compression | Stats target |              Description
+------------------------+--------------------------+-----------+----------+-----------------------------------+----------+-------------+--------------+----------------------------------------
+ id                     | integer                  |           | not null | nextval('items_id_seq'::regclass) | plain    |             |              |
+ sku                    | character varying(64)    |           | not null |                                   | extended |             |              |
+ name                   | character varying(128)   |           | not null |                                   | extended |             |              |
+ created_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ updated_at             | timestamp with time zone |           | not null | CURRENT_TIMESTAMP                 | plain    |             |              |
+ uom                    | character varying(8)     |           | not null | 'PCS'::character varying          | extended |             |              |
+ spec                   | character varying(128)   |           |          |                                   | extended |             |              |
+ enabled                | boolean                  |           | not null | true                              | plain    |             |              |
+ supplier_id            | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_value       | integer                  |           |          |                                   | plain    |             |              |
+ shelf_life_unit        | character varying(16)    |           |          |                                   | extended |             |              |
+ weight_kg              | numeric(10,3)            |           |          |                                   | main     |             |              | 单件净重（kg），用于运费预估，不含包材
+ brand                  | character varying(64)    |           |          |                                   | extended |             |              |
+ category               | character varying(64)    |           |          |                                   | extended |             |              |
+ lot_source_policy      | lot_source_policy        |           | not null |                                   | plain    |             |              |
+ expiry_policy          | expiry_policy            |           | not null |                                   | plain    |             |              |
+ derivation_allowed     | boolean                  |           | not null |                                   | plain    |             |              |
+ uom_governance_enabled | boolean                  |           | not null |                                   | plain    |             |              |
+Indexes:
+    "items_pkey" PRIMARY KEY, btree (id)
+    "items_sku_key" UNIQUE CONSTRAINT, btree (sku)
+    "ix_items_brand" btree (brand)
+    "ix_items_category" btree (category)
+    "ix_items_supplier_id" btree (supplier_id)
+Check constraints:
+    "ck_items_expiry_policy_vs_shelf_life" CHECK (expiry_policy = 'REQUIRED'::expiry_policy OR shelf_life_value IS NULL AND shelf_life_unit IS NULL)
+    "ck_items_shelf_life_pair" CHECK ((shelf_life_value IS NULL) = (shelf_life_unit IS NULL))
+    "ck_items_shelf_life_unit_enum" CHECK (shelf_life_unit IS NULL OR (shelf_life_unit::text = ANY (ARRAY['DAY'::character varying, 'WEEK'::character varying, 'MONTH'::character varying, 'YEAR'::character varying]::text[])))
+    "ck_items_shelf_life_value_pos" CHECK (shelf_life_value IS NULL OR shelf_life_value > 0)
+Foreign-key constraints:
+    "fk_items_supplier" FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT
+Referenced by:
+    TABLE "channel_inventory" CONSTRAINT "channel_inventory_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "inbound_receipt_lines" CONSTRAINT "fk_inbound_receipt_lines_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "internal_outbound_lines" CONSTRAINT "fk_internal_outbound_lines_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "item_test_set_items" CONSTRAINT "fk_item_test_set_items_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "locations" CONSTRAINT "fk_locations_current_item" FOREIGN KEY (current_item_id) REFERENCES items(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
+    TABLE "lots" CONSTRAINT "fk_lots_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "order_items" CONSTRAINT "fk_order_items_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "purchase_order_lines" CONSTRAINT "fk_po_line_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stock_ledger" CONSTRAINT "fk_stock_ledger_item_id" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stocks_lot" CONSTRAINT "fk_stocks_lot_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "fsku_components" CONSTRAINT "fsku_components_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    TABLE "internal_outbound_lines" CONSTRAINT "internal_outbound_lines_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    TABLE "inventory_movements" CONSTRAINT "inventory_movements_item_sku_fkey" FOREIGN KEY (item_sku) REFERENCES items(sku)
+    TABLE "item_barcodes" CONSTRAINT "item_barcodes_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    TABLE "item_uoms" CONSTRAINT "item_uoms_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    TABLE "stock_snapshots" CONSTRAINT "stock_snapshots_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id)
+    TABLE "store_items" CONSTRAINT "store_items_item_id_fkey" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+Access method: heap

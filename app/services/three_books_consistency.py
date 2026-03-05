@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,8 +23,59 @@ def _norm_bc(v: Any) -> str | None:
     return s2
 
 
-def _batch_key(bc: str | None) -> str:
-    return bc if bc is not None else "__NULL_BATCH__"
+def _norm_lot_code_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s.upper()
+
+
+async def _resolve_lot_id_by_lot_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str | None,
+) -> Optional[int]:
+    """
+    兼容入口：用展示码 lot_code（旧名 batch_code）解析 lot_id。
+
+    终态：
+    - SUPPLIER 批次以 lot_code_key 唯一（防漂移）
+    - lot_code 为 NULL 时表示 INTERNAL，不参与此解析（应由上游显式给 lot_id）
+    """
+    if lot_code is None:
+        return None
+
+    k = _norm_lot_code_key(lot_code)
+    if not k:
+        return None
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                  FROM lots
+                 WHERE warehouse_id = :w
+                   AND item_id      = :i
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code_key = :k
+                 LIMIT 2
+                """
+            ),
+            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+        )
+    ).fetchall()
+
+    if not row:
+        return None
+    if len(row) > 1:
+        # uq_lots_wh_item_lot_code_key 应保证唯一，但这里仍做防御
+        return None
+    return int(row[0][0])
 
 
 async def verify_commit_three_books(
@@ -36,42 +87,50 @@ async def verify_commit_three_books(
     at: datetime,
 ) -> None:
     """
-    Phase 3：对“本次 commit（入库/出库/回仓/盘点等）”做最小可判定的三账一致性验证。
+    Phase 4C+ / Phase 3 终态三账校验（lot-only）：
 
-    输入：
-    - warehouse_id：本次校验的仓（如跨仓调用方需分组多次调用）
-    - ref：本次 commit 的 ref（例如 RT-{task_id} / ORD:...）
-    - effects：每一行库存影响（warehouse_id, item_id, batch_code, qty(delta), ref_line）
-      约定：qty 为 delta（入库正数、出库负数、确认事件为 0）
-      ✅ 可选字段：reason
-        - 若 effect 中提供 reason，则 ledger 校验会以 (warehouse_id,item_id,batch_code_key,ref,ref_line,reason) 为硬锚点
-        - 若未提供 reason，则保持兼容旧行为（不按 reason 过滤）
-    - at：发生时间，用于确定 snapshot_date（按自然日）
+    ✅ ledger 是唯一事实：
+      - 校验每个 ref_line 的 ledger 行存在且 delta 匹配（必要条件）
 
-    验证：
-    1) ledger：每个 ref_line 必须存在，并且 delta 与 qty 一致
-    2) snapshot(today) == stocks（只校验本次 touched keys）
+    ✅ 主余额为 stocks_lot：
+      - 余额对齐：snapshot(today) 总量 == stocks_lot 总量（仅 touched items；同仓）
 
-    ✅ Stage C.2-1：snapshot 新事实列为 stock_snapshots.qty
-    - DB 迁移已添加 trigger 同步 qty 与 qty_on_hand
-    - 本服务开始以 qty 为准（不再读 qty_on_hand）
+    说明：
+    - 总量对齐仍按 (warehouse_id,item_id) 聚合，避免“展示码口径”影响判断
+    - effects 必须以 lot_id 为维度事实；batch_code 仅作为展示/兼容输入
     """
     if not effects:
         return
 
     snap_date: date = at.date()
 
-    # 1) ledger 存在性 + delta 校验
+    # 1) ledger 存在性 + delta 校验（lot-only）
     missing_ledger: List[Dict[str, Any]] = []
     delta_mismatch: List[Dict[str, Any]] = []
 
     for e in effects:
         rl = int(e["ref_line"])
         iid = int(e["item_id"])
-        bc = _norm_bc(e.get("batch_code"))
-        ck = _batch_key(bc)
         qty = int(e["qty"])
         reason = e.get("reason")
+
+        lot_id = e.get("lot_id")
+        if lot_id is None:
+            # 兼容：尝试用 batch_code(展示码) 唯一解析 lot_id（仅 SUPPLIER）
+            bc = _norm_bc(e.get("batch_code"))
+            lot_id = await _resolve_lot_id_by_lot_code(
+                session,
+                warehouse_id=int(warehouse_id),
+                item_id=iid,
+                lot_code=bc,
+            )
+            if lot_id is None:
+                raise ValueError(
+                    "three_books_consistency requires lot_id in effects under lot-only world; "
+                    f"failed to resolve lot_id from batch_code for item_id={iid}, ref_line={rl}"
+                )
+
+        lot_id_i = int(lot_id)
 
         if reason is not None and str(reason).strip():
             row = (
@@ -80,19 +139,19 @@ async def verify_commit_three_books(
                         """
                         SELECT delta
                           FROM stock_ledger
-                         WHERE warehouse_id   = :w
-                           AND item_id        = :i
-                           AND batch_code_key = :ck
-                           AND ref            = :ref
-                           AND ref_line       = :rl
-                           AND reason         = :reason
+                         WHERE warehouse_id = :w
+                           AND item_id      = :i
+                           AND lot_id       = :lot
+                           AND ref          = :ref
+                           AND ref_line     = :rl
+                           AND reason       = :reason
                          LIMIT 1
                         """
                     ),
                     {
                         "w": int(warehouse_id),
                         "i": iid,
-                        "ck": ck,
+                        "lot": lot_id_i,
                         "ref": str(ref),
                         "rl": rl,
                         "reason": str(reason),
@@ -106,20 +165,20 @@ async def verify_commit_three_books(
                         """
                         SELECT delta
                           FROM stock_ledger
-                         WHERE warehouse_id   = :w
-                           AND item_id        = :i
-                           AND batch_code_key = :ck
-                           AND ref            = :ref
-                           AND ref_line       = :rl
+                         WHERE warehouse_id = :w
+                           AND item_id      = :i
+                           AND lot_id       = :lot
+                           AND ref          = :ref
+                           AND ref_line     = :rl
                          LIMIT 1
                         """
                     ),
-                    {"w": int(warehouse_id), "i": iid, "ck": ck, "ref": str(ref), "rl": rl},
+                    {"w": int(warehouse_id), "i": iid, "lot": lot_id_i, "ref": str(ref), "rl": rl},
                 )
             ).first()
 
         if not row:
-            miss = {"item_id": iid, "batch_code": bc, "ref": ref, "ref_line": rl}
+            miss: Dict[str, Any] = {"item_id": iid, "lot_id": lot_id_i, "ref": ref, "ref_line": rl}
             if reason is not None and str(reason).strip():
                 miss["reason"] = str(reason)
             missing_ledger.append(miss)
@@ -127,9 +186,9 @@ async def verify_commit_three_books(
 
         delta_val = int(row[0] or 0)
         if delta_val != qty:
-            mm = {
+            mm: Dict[str, Any] = {
                 "item_id": iid,
-                "batch_code": bc,
+                "lot_id": lot_id_i,
                 "ref": ref,
                 "ref_line": rl,
                 "expected_delta": qty,
@@ -145,101 +204,76 @@ async def verify_commit_three_books(
             f" missing={missing_ledger} mismatch={delta_mismatch}"
         )
 
-    # 2) 按 key 聚合 expected qty（用于报错时解释）
-    expected_by_key: Dict[Tuple[int, int, str], int] = defaultdict(int)
-    touched_keys: List[Tuple[int, int, str]] = []
-    for e in effects:
-        bc = _norm_bc(e.get("batch_code"))
-        ck = _batch_key(bc)
-        key = (int(warehouse_id), int(e["item_id"]), ck)
-        expected_by_key[key] += int(e["qty"])
-    touched_keys = list(expected_by_key.keys())
+    # 2) touched items（只对 touched items 做余额一致性校验）
+    touched_items: List[int] = sorted({int(e["item_id"]) for e in effects})
+    if not touched_items:
+        return
 
-    # 3) 读取 stocks（当前余额）：按 batch_code_key 对齐 NULL 语义
-    values_sql = ", ".join([f"(:w{i}, :i{i}, :ck{i})" for i in range(len(touched_keys))])
-    params: Dict[str, Any] = {}
-    for idx, (w, iid, ck) in enumerate(touched_keys):
-        params[f"w{idx}"] = int(w)
-        params[f"i{idx}"] = int(iid)
-        params[f"ck{idx}"] = str(ck)
+    # 3) stocks_lot 总量（同仓 + touched items）
+    lot_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT item_id, COALESCE(SUM(qty), 0) AS qty
+                  FROM stocks_lot
+                 WHERE warehouse_id = :w
+                   AND item_id = ANY(:item_ids)
+                 GROUP BY item_id
+                 ORDER BY item_id
+                """
+            ),
+            {"w": int(warehouse_id), "item_ids": touched_items},
+        )
+    ).mappings().all()
+    lot_total: Dict[int, int] = {int(r["item_id"]): int(r["qty"] or 0) for r in lot_rows}
+    for iid in touched_items:
+        lot_total.setdefault(int(iid), 0)
 
-    stocks_map: Dict[Tuple[int, int, str], int] = {}
-    if touched_keys:
-        rows = (
-            await session.execute(
-                text(
-                    f"""
-                    WITH keys(warehouse_id, item_id, batch_code_key) AS (
-                        VALUES {values_sql}
-                    )
-                    SELECT k.warehouse_id, k.item_id, k.batch_code_key, COALESCE(s.qty, 0) AS qty
-                      FROM keys k
-                      LEFT JOIN stocks s
-                        ON s.warehouse_id   = k.warehouse_id
-                       AND s.item_id        = k.item_id
-                       AND s.batch_code_key = k.batch_code_key
-                    """
-                ),
-                params,
-            )
-        ).mappings().all()
+    # 4) snapshot 总量（同日 + 同仓 + touched items）
+    snap_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT item_id, COALESCE(SUM(qty), 0) AS qty
+                  FROM stock_snapshots
+                 WHERE snapshot_date = :d
+                   AND warehouse_id = :w
+                   AND item_id = ANY(:item_ids)
+                 GROUP BY item_id
+                 ORDER BY item_id
+                """
+            ),
+            {"d": snap_date, "w": int(warehouse_id), "item_ids": touched_items},
+        )
+    ).mappings().all()
+    snap_total: Dict[int, int] = {int(r["item_id"]): int(r["qty"] or 0) for r in snap_rows}
+    for iid in touched_items:
+        snap_total.setdefault(int(iid), 0)
 
-        for r in rows:
-            key = (int(r["warehouse_id"]), int(r["item_id"]), str(r["batch_code_key"]))
-            stocks_map[key] = int(r["qty"] or 0)
-
-    # 4) 读取 snapshot(today)：按 batch_code_key 对齐 NULL 语义
-    # ✅ Stage C.2-1：读 sn.qty（新事实列）
-    snap_map: Dict[Tuple[int, int, str], int] = {}
-    if touched_keys:
-        snap_rows = (
-            await session.execute(
-                text(
-                    f"""
-                    WITH keys(warehouse_id, item_id, batch_code_key) AS (
-                        VALUES {values_sql}
-                    )
-                    SELECT k.warehouse_id,
-                           k.item_id,
-                           k.batch_code_key,
-                           COALESCE(sn.qty, 0) AS qty
-                      FROM keys k
-                      LEFT JOIN stock_snapshots sn
-                        ON sn.snapshot_date   = :d
-                       AND sn.warehouse_id    = k.warehouse_id
-                       AND sn.item_id         = k.item_id
-                       AND sn.batch_code_key  = k.batch_code_key
-                    """
-                ),
-                {"d": snap_date, **params},
-            )
-        ).mappings().all()
-
-        for r in snap_rows:
-            key = (int(r["warehouse_id"]), int(r["item_id"]), str(r["batch_code_key"]))
-            snap_map[key] = int(r["qty"] or 0)
-
-    # 5) 校验 snapshot == stocks（只对 touched keys）
+    # 5) 对齐校验（总量）
     mismatches: List[Dict[str, Any]] = []
-    for key in touched_keys:
-        s_qty = int(stocks_map.get(key, 0))
-        sn_qty = int(snap_map.get(key, 0))
+    for iid in touched_items:
+        s_qty = int(lot_total.get(int(iid), 0))
+        sn_qty = int(snap_total.get(int(iid), 0))
         if s_qty != sn_qty:
-            w, iid, ck = key
             mismatches.append(
                 {
-                    "warehouse_id": w,
-                    "item_id": iid,
-                    "batch_code_key": ck,
-                    "stocks_qty": s_qty,
-                    "snapshot_qty": sn_qty,
-                    "expected_delta_sum": int(expected_by_key.get(key, 0)),
+                    "warehouse_id": int(warehouse_id),
+                    "item_id": int(iid),
+                    "stocks_lot_total": s_qty,
+                    "snapshot_total": sn_qty,
                     "snapshot_date": str(snap_date),
                 }
             )
 
     if mismatches:
-        raise ValueError(f"三账一致性失败：snapshot != stocks：mismatches={mismatches}")
+        expected_delta_by_item: Dict[int, int] = defaultdict(int)
+        for e in effects:
+            expected_delta_by_item[int(e["item_id"])] += int(e["qty"])
+        raise ValueError(
+            "三账一致性失败：snapshot_total != stocks_lot_total（Phase 4C：按 item 总量对齐）"
+            f" mismatches={mismatches} expected_delta_by_item={dict(expected_delta_by_item)}"
+        )
 
 
 # 兼容旧名称

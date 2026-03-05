@@ -11,27 +11,66 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.services.order_service import OrderService
+from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def _get_item_has_shelf_life(session: AsyncSession, item_id: int) -> bool:
+async def _get_item_expiry_policy(session: AsyncSession, item_id: int) -> str:
     row = (
         await session.execute(
-            text("SELECT has_shelf_life FROM items WHERE id = :id LIMIT 1"),
+            text("SELECT expiry_policy FROM items WHERE id = :id LIMIT 1"),
             {"id": int(item_id)},
         )
     ).scalar_one_or_none()
-    # has_shelf_life is True 才算“批次受控”
-    return bool(row is True)
+    return str(row or "")
+
+
+async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
+    """
+    Phase M 第一阶段：测试也不再读取 has_shelf_life（镜像字段）。
+    批次受控真相源：items.expiry_policy == 'REQUIRED'
+    """
+    pol = await _get_item_expiry_policy(session, item_id)
+    return pol.strip().upper() == "REQUIRED"
+
+
+async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
+    """
+    Lot-World 终态：SUPPLIER lot 必须走 ensure_lot_full（lot_code_key + partial unique index）。
+    """
+    return await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(lot_code),
+        production_date=None,
+        expiry_date=None,
+    )
+
+
+async def _ensure_internal_lot(session: AsyncSession, *, wh_id: int, item_id: int, ref: str) -> int:
+    """
+    Lot-World 终态：非批次商品用 INTERNAL lot（单例）承载“展示码为空”的槽位。
+    provenance 用 receipt_id/line_no 可以填，但不参与唯一锚点。
+    这里不再直插 lots，而统一走 ensure_internal_lot_singleton。
+    """
+    _ = ref
+    return await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
 
 
 async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str | None, str]:
     """
     用 OrderService.ingest 落一张简单订单，并为其准备足够的库存：
     - 订单：PDD / shop_id=1 / item_id=1 qty=2
-    - 库存：warehouse_id=1 / item_id=1 / qty=10
+    - 库存：warehouse_id=1 / item_id=1 / qty=10（Lot-World：必须锚定 lot_id）
     """
     platform = "PDD"
     shop_id = "1"
@@ -77,7 +116,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
                 :oid,
                 :wid,
                 :wid,
-                'READY_TO_FULFILL',
+                'SERVICE_ASSIGNED',
                 NULL,
                 now()
             )
@@ -92,25 +131,34 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, bool, str |
         {"wid": 1, "oid": order_id},
     )
 
-    requires_batch = await _get_item_has_shelf_life(session, 1)
+    requires_batch = await _item_requires_batch(session, 1)
     expected_batch_code: str | None = "BATCH-TEST-001" if requires_batch else None
 
     stock = StockService()
     prod = date.today()
     exp = prod + timedelta(days=365)
 
-    await stock.adjust(
+    # Lot-World：seed 库存必须锚定真实 lot_id
+    if requires_batch:
+        lot_id = await _ensure_supplier_lot(session, wh_id=1, item_id=1, lot_code=str(expected_batch_code))
+    else:
+        lot_id = await _ensure_internal_lot(
+            session, wh_id=1, item_id=1, ref=f"UT-INTERNAL-LOT-PICK-TASK-CASE-1-{uniq}"
+        )
+
+    await stock.adjust_lot(
         session=session,
         item_id=1,
         warehouse_id=1,
+        lot_id=int(lot_id),
         delta=10,
         reason=MovementType.RECEIPT,
         ref=f"SEED-STOCK-PICK-TASK-CASE-1-{uniq}",
         ref_line=1,
         occurred_at=now,
         batch_code=expected_batch_code,
-        production_date=prod,
-        expiry_date=exp,
+        production_date=(prod if requires_batch else None),
+        expiry_date=(exp if requires_batch else None),
         trace_id=trace_id,
     )
 
@@ -205,22 +253,27 @@ async def test_pick_tasks_full_flow(client: AsyncClient, session: AsyncSession, 
         assert diff_line["status"] == "OK"
 
     # 5) ledger 校验（可选）
+    # Lot-World：stock_ledger 不再含 batch_code；展示码来自 lots.lot_code
     res = await session.execute(
         text(
             """
             SELECT
-                reason,
-                batch_code,
-                delta,
-                warehouse_id,
-                item_id,
-                ref,
-                trace_id
-              FROM stock_ledger
-             WHERE warehouse_id = 1
-               AND item_id = 1
-               AND (trace_id = :trace_id OR ref = :ref)
-             ORDER BY id DESC
+                sl.reason,
+                lo.lot_code AS batch_code,
+                sl.delta,
+                sl.warehouse_id,
+                sl.item_id,
+                sl.ref,
+                sl.trace_id
+              FROM stock_ledger sl
+              JOIN lots lo
+                ON lo.id = sl.lot_id
+               AND lo.warehouse_id = sl.warehouse_id
+               AND lo.item_id = sl.item_id
+             WHERE sl.warehouse_id = 1
+               AND sl.item_id = 1
+               AND (sl.trace_id = :trace_id OR sl.ref = :ref)
+             ORDER BY sl.id DESC
              LIMIT 50
             """
         ),

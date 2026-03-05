@@ -1,0 +1,42 @@
+                                                                        Table "public.inbound_receipt_lines"
+         Column          |           Type           | Collation | Nullable |                      Default                      | Storage  | Compression | Stats target | Description
+-------------------------+--------------------------+-----------+----------+---------------------------------------------------+----------+-------------+--------------+-------------
+ id                      | integer                  |           | not null | nextval('inbound_receipt_lines_id_seq'::regclass) | plain    |             |              |
+ receipt_id              | integer                  |           | not null |                                                   | plain    |             |              |
+ line_no                 | integer                  |           | not null |                                                   | plain    |             |              |
+ po_line_id              | integer                  |           |          |                                                   | plain    |             |              |
+ item_id                 | integer                  |           | not null |                                                   | plain    |             |              |
+ production_date         | date                     |           |          |                                                   | plain    |             |              |
+ expiry_date             | date                     |           |          |                                                   | plain    |             |              |
+ unit_cost               | numeric(12,2)            |           |          |                                                   | main     |             |              |
+ line_amount             | numeric(14,2)            |           |          |                                                   | main     |             |              |
+ remark                  | character varying(255)   |           |          |                                                   | extended |             |              |
+ created_at              | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ updated_at              | timestamp with time zone |           | not null | now()                                             | plain    |             |              |
+ lot_id                  | integer                  |           |          |                                                   | plain    |             |              |
+ warehouse_id            | integer                  |           | not null |                                                   | plain    |             |              |
+ uom_id                  | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_input               | integer                  |           | not null |                                                   | plain    |             |              |
+ ratio_to_base_snapshot  | integer                  |           | not null |                                                   | plain    |             |              |
+ qty_base                | integer                  |           | not null |                                                   | plain    |             |              |
+ receipt_status_snapshot | character varying(32)    |           | not null |                                                   | extended |             |              |
+ lot_code_input          | character varying(64)    |           |          |                                                   | extended |             |              |
+Indexes:
+    "inbound_receipt_lines_pkey" PRIMARY KEY, btree (id)
+    "ix_inbound_receipt_lines_item" btree (item_id)
+    "ix_inbound_receipt_lines_po_line_id" btree (po_line_id)
+    "ix_inbound_receipt_lines_receipt" btree (receipt_id)
+    "uq_inbound_receipt_lines_receipt_line" UNIQUE CONSTRAINT, btree (receipt_id, line_no)
+Check constraints:
+    "ck_inbound_receipt_lines_prod_le_exp" CHECK (production_date IS NULL OR expiry_date IS NULL OR production_date <= expiry_date)
+    "ck_receipt_lines_lot_required_on_confirmed" CHECK (receipt_status_snapshot::text <> 'CONFIRMED'::text OR lot_id IS NOT NULL)
+    "ck_receipt_lines_status_snapshot_enum" CHECK (receipt_status_snapshot::text = ANY (ARRAY['DRAFT'::character varying, 'CONFIRMED'::character varying]::text[]))
+    "ck_receipt_qty_base_consistent" CHECK (qty_base = (qty_input * ratio_to_base_snapshot))
+Foreign-key constraints:
+    "fk_inbound_receipt_lines_item" FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+    "fk_inbound_receipt_lines_lot_dims" FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
+    "fk_inbound_receipt_lines_po_line" FOREIGN KEY (po_line_id) REFERENCES purchase_order_lines(id) ON DELETE SET NULL
+    "fk_inbound_receipt_lines_receipt" FOREIGN KEY (receipt_id) REFERENCES inbound_receipts(id) ON DELETE CASCADE
+    "fk_inbound_receipt_lines_warehouse" FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+    "fk_receipt_line_uom" FOREIGN KEY (uom_id) REFERENCES item_uoms(id)
+Access method: heap
