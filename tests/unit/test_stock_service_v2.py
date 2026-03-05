@@ -341,16 +341,23 @@ async def _insert_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
 
 @pytest.mark.asyncio
 async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
+    """
+    任务3 终态：
+    - adjust() 不再接受 lot_id（合同入口只接受 batch_code）
+    - lot_id 维度的写入/校验走 adjust_lot()（原语入口）
+    """
     svc = StockService()
     wh = 1
 
     bad_lot_id = await _insert_supplier_lot(session, warehouse_id=wh, item_id=3003, lot_code="UT-LOT-BAD-1")
     await session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        await svc.adjust(
+    with pytest.raises(ValueError) as exc:
+        await svc.adjust_lot(
             session=session,
             item_id=3001,
+            warehouse_id=wh,
+            lot_id=int(bad_lot_id),
             delta=1,
             reason=MovementType.INBOUND,
             ref="UT-LOT-MISMATCH-1",
@@ -358,24 +365,25 @@ async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
             occurred_at=datetime.now(UTC),
             batch_code="B-LOT",
             production_date=date.today(),
-            warehouse_id=wh,
-            lot_id=bad_lot_id,
         )
 
-    assert exc.value.status_code == 409
-    assert isinstance(exc.value.detail, dict)
-    assert exc.value.detail.get("error_code") == "lot_mismatch"
+    assert "mismatch" in str(exc.value).lower() or "lot_mismatch" in str(exc.value).lower()
 
 
 @pytest.mark.asyncio
 async def test_adjust_rejects_lot_not_found(session: AsyncSession):
+    """
+    任务3 终态：lot_id 原语入口用 adjust_lot()，不存在则 ValueError。
+    """
     svc = StockService()
     wh = 1
 
-    with pytest.raises(HTTPException) as exc:
-        await svc.adjust(
+    with pytest.raises(ValueError) as exc:
+        await svc.adjust_lot(
             session=session,
             item_id=3001,
+            warehouse_id=wh,
+            lot_id=99999999,
             delta=1,
             reason=MovementType.INBOUND,
             ref="UT-LOT-NOTFOUND-1",
@@ -383,10 +391,6 @@ async def test_adjust_rejects_lot_not_found(session: AsyncSession):
             occurred_at=datetime.now(UTC),
             batch_code="B-LOT2",
             production_date=date.today(),
-            warehouse_id=wh,
-            lot_id=99999999,
         )
 
-    assert exc.value.status_code == 404
-    assert isinstance(exc.value.detail, dict)
-    assert exc.value.detail.get("error_code") == "lot_not_found"
+    assert "not found" in str(exc.value).lower() or "lot_not_found" in str(exc.value).lower()

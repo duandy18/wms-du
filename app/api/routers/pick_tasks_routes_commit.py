@@ -1,7 +1,7 @@
 # app/api/routers/pick_tasks_routes_commit.py
 from __future__ import annotations
 
-from typing import Set
+from typing import Any, Set
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
@@ -29,6 +29,29 @@ def _requires_batch_from_expiry_policy(v: object) -> bool:
     return str(v or "").upper() == "REQUIRED"
 
 
+def _extract_contract_error_code(exc: HTTPException, *, requires_batch: bool) -> tuple[str, str]:
+    """
+    从 validate_lot_code_contract 抛出的 HTTPException.detail 中提取 (error_code, message)。
+
+    终态合同（Phase M）下 detail 应为 dict：
+      {"error_code": "...", "message": "...", ...}
+
+    兜底策略：
+    - 若 detail 不是 dict（极端情况），用 requires_batch 推导到 batch_required/batch_forbidden，并用 str(detail) 做 message。
+    """
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        code = detail.get("error_code")
+        msg = detail.get("message")
+        if isinstance(code, str) and code.strip():
+            return code.strip(), str(msg or "")
+        # dict 但缺字段，做保守兜底
+        fallback = "batch_required" if requires_batch else "batch_forbidden"
+        return fallback, str(msg or "")
+    fallback = "batch_required" if requires_batch else "batch_forbidden"
+    return fallback, str(detail)
+
+
 def register_commit(router: APIRouter) -> None:
     @router.post("/{task_id}/commit", response_model=PickTaskCommitResult)
     async def commit_pick_task(
@@ -42,9 +65,7 @@ def register_commit(router: APIRouter) -> None:
 
         expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
 
-        missing_items = [
-            int(i) for i in sorted(item_ids) if i not in expiry_policy_map
-        ]
+        missing_items = [int(i) for i in sorted(item_ids) if i not in expiry_policy_map]
         if missing_items:
             raise_422(
                 "unknown_item",
@@ -62,17 +83,17 @@ def register_commit(router: APIRouter) -> None:
             )
 
         for idx, ln in enumerate(task.lines or []):
-            requires_batch = _requires_batch_from_expiry_policy(
-                expiry_policy_map.get(int(ln.item_id))
-            )
+            requires_batch = _requires_batch_from_expiry_policy(expiry_policy_map.get(int(ln.item_id)))
 
             try:
-                validate_lot_code_contract(requires_batch=requires_batch,
+                validate_lot_code_contract(
+                    requires_batch=requires_batch,
                     lot_code=ln.batch_code,
                 )
             except HTTPException as e:
+                code, msg = _extract_contract_error_code(e, requires_batch=requires_batch)
                 raise_422(
-                    "batch_required" if requires_batch else "invalid_batch",
+                    code,
                     "批次信息不合法，禁止提交。",
                     details=[
                         {
@@ -80,7 +101,7 @@ def register_commit(router: APIRouter) -> None:
                             "path": f"lines[{idx}]",
                             "item_id": int(ln.item_id),
                             "batch_code": ln.batch_code,
-                            "reason": str(e.detail),
+                            "reason": msg or "contract_reject",
                         }
                     ],
                 )
@@ -88,14 +109,10 @@ def register_commit(router: APIRouter) -> None:
         svc = PickTaskService(session)
 
         try:
-            await session.execute(
-                text(f"SET LOCAL lock_timeout = {_COMMIT_LOCK_TIMEOUT_MS}")
-            )
-            await session.execute(
-                text(f"SET LOCAL statement_timeout = {_COMMIT_STATEMENT_TIMEOUT_MS}")
-            )
+            await session.execute(text(f"SET LOCAL lock_timeout = {_COMMIT_LOCK_TIMEOUT_MS}"))
+            await session.execute(text(f"SET LOCAL statement_timeout = {_COMMIT_STATEMENT_TIMEOUT_MS}"))
 
-            result = await svc.commit_ship(
+            result: Any = await svc.commit_ship(
                 task_id=task_id,
                 platform=payload.platform,
                 shop_id=payload.shop_id,

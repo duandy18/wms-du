@@ -19,7 +19,7 @@ async def transfer_expired(
     result = await svc.auto_transfer_expired(
         session=session,
         warehouse_id=body.warehouse_id,
-        to_location_id=body.to_location_id,
+        to_legacy_location=body.to_legacy_location,
         to_location_name=body.to_location_name,
         item_ids=body.item_ids,
         dry_run=body.dry_run,

@@ -32,8 +32,8 @@ class InventoryMovement(Base):
     # Phase 4: location worldview removed
     # - keep columns to match DB schema / history
     # - remove ForeignKey("locations.id") to avoid alembic metadata resolution failure
-    from_location_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    to_location_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    from_legacy_location: Mapped[Optional[int]] = mapped_column(nullable=True)
+    to_legacy_location: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
 

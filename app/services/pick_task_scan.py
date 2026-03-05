@@ -97,7 +97,10 @@ async def record_scan(
     # 2) 若传入了 batch_code，但找不到 exact match：
     #    命中“同 item_id 且 batch_code 为空”的订单行（避免创建 TEMP_FACT 让 commit 看不到）
     if target is None and norm_batch is not None:
-        candidates = [ln for ln in (task.lines or []) if int(ln.item_id) == int(item_id) and (ln.batch_code or None) is None]
+        candidates = [
+            ln for ln in (task.lines or [])
+            if int(ln.item_id) == int(item_id) and (ln.batch_code or None) is None
+        ]
         if candidates:
             # 订单行优先
             order_lines = [ln for ln in candidates if _is_order_line(ln)]
@@ -120,7 +123,6 @@ async def record_scan(
             picked_qty=picked0,
             batch_code=norm_batch,
             prefer_pickface=False,
-            target_location_id=None,
             status=status0,
             note="TEMP_FACT",
             created_at=now,

@@ -71,7 +71,6 @@ async def _resolve_lot_id_by_lot_code(
     if not row:
         return None
     if len(row) > 1:
-        # uq_lots_wh_item_lot_code_key 应保证唯一，但仍做防御
         return None
     return int(row[0][0])
 
@@ -91,7 +90,6 @@ class ReturnTaskServiceImpl:
         self.stock_svc = stock_svc or StockService()
 
     async def _load_shipped_summary(self, session: AsyncSession, order_ref: str) -> list[dict[str, Any]]:
-        # ✅ lot-only：以 lot_id 聚合 shipped 事实；展示码来自 lots.lot_code
         res = await session.execute(
             select(
                 StockLedger.item_id,
@@ -113,7 +111,6 @@ class ReturnTaskServiceImpl:
             key = (int(item_id), int(wh_id), int(lot_id))
             agg[key] = agg.get(key, 0) + int(-int(delta or 0))
 
-        # 批量补齐展示码
         lot_ids = sorted({k[2] for k in agg.keys()})
         lot_code_map: dict[int, str | None] = {}
         if lot_ids:
@@ -198,7 +195,7 @@ class ReturnTaskServiceImpl:
                 task_id=task.id,
                 order_line_id=None,
                 item_id=item_id,
-                batch_code=batch_code,  # ✅ 展示/兼容字段（lots.lot_code）
+                batch_code=batch_code,
                 expected_qty=expected_qty,
                 picked_qty=0,
                 committed_qty=0,
@@ -291,9 +288,6 @@ class ReturnTaskServiceImpl:
             ref_line = int(getattr(ln, "id", 1) or 1)
             bc = _norm_bc(ln.batch_code)
 
-            # Batch-as-Lot：
-            # - 若 bc 非空：return 入库应复用该 SUPPLIER lot（lot=批次身份）
-            # - 若 bc 为空：交给 StockService.adjust 走 INTERNAL 槽位（非批次商品）
             resolved_lot_id: Optional[int] = None
             if bc is not None:
                 resolved_lot_id = await _resolve_lot_id_by_lot_code(
@@ -305,18 +299,18 @@ class ReturnTaskServiceImpl:
                 if resolved_lot_id is None:
                     raise ValueError("lot_not_found_for_batch_code")
 
+            # ✅ 任务3 收口：不再把 lot_id 传给 adjust（合同入口禁止混用）
             res = await self.stock_svc.adjust(
                 session=session,
                 item_id=int(ln.item_id),
                 delta=+picked,
-                reason=MovementType.RETURN,  # canon='RECEIPT'
+                reason=MovementType.RETURN,
                 ref=str(task.order_id),
                 ref_line=ref_line,
                 occurred_at=ts,
-                batch_code=bc,  # 展示/输入标签
+                batch_code=bc,
                 warehouse_id=int(task.warehouse_id),
                 trace_id=trace_id,
-                lot_id=resolved_lot_id,
                 meta={"sub_reason": "RETURN_RECEIPT"},
             )
 

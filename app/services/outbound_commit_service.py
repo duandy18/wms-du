@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.lot_code_contract import fetch_item_expiry_policy_map
 from app.api.problem import raise_problem
 from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
 from app.services.order_fulfillment_service import OrderFulfillmentService
@@ -33,6 +34,10 @@ def _norm_lot_code_key(v: str | None) -> str | None:
     return s.upper()
 
 
+def _requires_batch_from_expiry_policy(v: object) -> bool:
+    return str(v or "").upper() == "REQUIRED"
+
+
 async def _resolve_lot_id_by_lot_code(
     session: AsyncSession,
     *,
@@ -40,13 +45,6 @@ async def _resolve_lot_id_by_lot_code(
     item_id: int,
     lot_code: str,
 ) -> Optional[int]:
-    """
-    用展示码 lot_code（旧名 batch_code）解析 lot_id。
-
-    终态（Phase M-5+）：
-    - SUPPLIER 批次的唯一性以 lot_code_key 防漂移：
-      uq_lots_wh_item_lot_code_key (warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
-    """
     k = _norm_lot_code_key(lot_code)
     if not k:
         return None
@@ -71,16 +69,6 @@ async def _resolve_lot_id_by_lot_code(
 
 
 class OutboundService:
-    """
-    Phase 5 第二刀：order_fulfillment 成为唯一执行仓事实（authority）。
-
-    - 外部仍可传字符串 order_ref（平台单号/ORD:...），但必须可硬解析到 orders.id
-    - fulfillment 以 orders.id 为主键写入执行事实（planned/actual）
-    - 出库事实用 ship_committed_at / shipped_at 表达（不再用 fulfillment_status 阶段机）
-    - 库存写入仍通过 StockService（stocks_lot + stock_ledger）
-    - 执行尾门：Invariant Guard（不触 snapshot）
-    """
-
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
         self.stock_svc = stock_svc or StockService()
         self.fulfillment_svc = OrderFulfillmentService()
@@ -92,8 +80,8 @@ class OutboundService:
         order_id: str | int,
         lines: Sequence[Dict[str, Any] | ShipLine],
         occurred_at: Optional[datetime] = None,
-        warehouse_code: Optional[str] = None,  # 保留旧签名，当前实现不使用
-        trace_id: Optional[str] = None,  # 上层可携带 trace_id
+        warehouse_code: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         _ = warehouse_code
 
@@ -105,10 +93,8 @@ class OutboundService:
         if not order_ref:
             raise ValueError("order_id/order_ref cannot be empty")
 
-        # ✅ Phase 5：硬解析外部 order_ref -> orders.id（解析失败直接拒绝，不执行扣库）
         order_pk = await resolve_order_id(session, order_ref=order_ref)
 
-        # ✅ 聚合维度：item + wh + batch_code(展示码，允许 NULL)
         agg_qty: Dict[Tuple[int, int, Optional[str]], int] = defaultdict(int)
         wh_set: set[int] = set()
 
@@ -134,12 +120,22 @@ class OutboundService:
                 "shipped_at": None,
             }
 
-        # ✅ Phase 5：同一订单一次 SHIP 只能一个执行仓（否则就是 split-ship，需要显式模型）
         if len(wh_set) != 1:
             raise ValueError(f"Phase 5: ship lines must have exactly 1 warehouse_id, got={sorted(wh_set)}")
         actual_wh_id = int(next(iter(wh_set)))
 
-        # ✅ 出库锚点事实：先确保 ship_committed_at（或幂等确认已存在）
+        item_ids = {int(item_id) for (item_id, _wh_id, _bc) in agg_qty.keys()}
+        expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
+        missing_items = [int(i) for i in sorted(item_ids) if i not in expiry_policy_map]
+        if missing_items:
+            raise_problem(
+                status_code=422,
+                error_code="unknown_item",
+                message="存在未知商品，禁止提交出库。",
+                context={"order_id": str(order_ref), "missing_item_ids": missing_items},
+                details=[{"type": "validation", "path": "lines[item_id]", "item_ids": missing_items, "reason": "unknown"}],
+            )
+
         f0 = await self.fulfillment_svc.ensure_ship_committed(
             session,
             order_id=int(order_pk),
@@ -152,9 +148,6 @@ class OutboundService:
         results: List[Dict[str, Any]] = []
 
         for (item_id, wh_id, batch_code), want_qty in agg_qty.items():
-            # ✅ 幂等查询以 ledger 为准：
-            # - batch_code 非空：用 lot_code_key 唯一解析 lot_id -> 幂等按 lot_id 精确统计
-            # - batch_code 为空：NONE 商品走 INTERNAL 单例 lot；幂等仍可按 (ref,item,wh) 汇总（更宽松，避免历史脏数据影响）
             lot_id: int | None = None
             if batch_code is not None:
                 lot_id = await _resolve_lot_id_by_lot_code(
@@ -195,7 +188,7 @@ class OutboundService:
                 )
 
             already = int(row.scalar() or 0)
-            need = int(want_qty) + already  # 目标是总 delta = -want_qty
+            need = int(want_qty) + already
 
             if need <= 0:
                 results.append(
@@ -210,23 +203,43 @@ class OutboundService:
                 )
                 continue
 
+            requires_batch = _requires_batch_from_expiry_policy(expiry_policy_map.get(int(item_id)))
+
             try:
-                res = await self.stock_svc.adjust(
-                    session=session,
-                    item_id=item_id,
-                    delta=-need,
-                    reason="OUTBOUND_SHIP",
-                    ref=str(order_ref),
-                    ref_line=1,
-                    occurred_at=ts,
-                    warehouse_id=wh_id,
-                    batch_code=batch_code,  # 展示码输入（可为空）
-                    trace_id=trace_id,
-                    meta={
-                        "sub_reason": "ORDER_SHIP",
-                        "order_id": int(order_pk),
-                    },
-                )
+                if requires_batch and (batch_code is not None) and (lot_id is not None):
+                    # lot-only：adjust_lot 可能抛 ValueError(insufficient stock...)
+                    res = await self.stock_svc.adjust_lot(
+                        session=session,
+                        item_id=item_id,
+                        warehouse_id=wh_id,
+                        lot_id=int(lot_id),
+                        delta=-need,
+                        reason="OUTBOUND_SHIP",
+                        ref=str(order_ref),
+                        ref_line=1,
+                        occurred_at=ts,
+                        trace_id=trace_id,
+                        batch_code=batch_code,
+                        meta={"sub_reason": "ORDER_SHIP", "order_id": int(order_pk)},
+                        production_date=None,
+                        expiry_date=None,
+                        shadow_write_stocks=False,
+                    )
+                else:
+                    res = await self.stock_svc.adjust(
+                        session=session,
+                        item_id=item_id,
+                        delta=-need,
+                        reason="OUTBOUND_SHIP",
+                        ref=str(order_ref),
+                        ref_line=1,
+                        occurred_at=ts,
+                        warehouse_id=wh_id,
+                        batch_code=batch_code,
+                        trace_id=trace_id,
+                        meta={"sub_reason": "ORDER_SHIP", "order_id": int(order_pk)},
+                    )
+
                 committed += 1
                 total_qty += need
 
@@ -238,7 +251,7 @@ class OutboundService:
                         "qty": need,
                         "status": "OK",
                         "after": res.get("after"),
-                        "lot_id": res.get("lot_id"),
+                        "lot_id": res.get("lot_id") or lot_id,
                     }
                 )
 
@@ -269,6 +282,33 @@ class OutboundService:
                         }
                     )
 
+            except ValueError as e:
+                msg = str(e)
+                if "insufficient stock" in msg.lower():
+                    results.append(
+                        {
+                            "item_id": item_id,
+                            "batch_code": batch_code,
+                            "warehouse_id": wh_id,
+                            "qty": need,
+                            "status": "INSUFFICIENT",
+                            "error_code": "insufficient_stock",
+                            "error": msg,
+                        }
+                    )
+                else:
+                    results.append(
+                        {
+                            "item_id": item_id,
+                            "batch_code": batch_code,
+                            "warehouse_id": wh_id,
+                            "qty": need,
+                            "status": "REJECTED",
+                            "error_code": "reject",
+                            "error": msg,
+                        }
+                    )
+
             except Exception as e:
                 results.append(
                     {
@@ -282,11 +322,9 @@ class OutboundService:
                     }
                 )
 
-        # ✅ 如果发生过任何扣库写入：必须跑 Invariant Guard（确保三账闭合）
         if total_qty > 0:
             await enforce_outbound_invariant_guard(session, ref=str(order_ref), at=ts)
 
-        # ✅ 若存在任何失败行：禁止推进 shipped_at（失败栈必须冒出来）
         has_failures = any(r.get("status") != "OK" for r in results)
         if has_failures:
             raise_problem(
@@ -310,7 +348,6 @@ class OutboundService:
             )
             return {}
 
-        # ✅ 全部 OK：推进 shipped_at（事实）
         f1 = await self.fulfillment_svc.mark_shipped(session, order_id=int(order_pk), at=ts)
 
         return {

@@ -30,7 +30,7 @@ class PickService:
         self,
         session,
         task_line_id: int,
-        from_location_id: int,
+        warehouse_id: int,
         item_id: int,
         qty: int,
         scan_ref: str,
@@ -59,11 +59,11 @@ class PickService:
         if qty <= 0 or qty > remain:
             raise ValueError(f"invalid qty: {qty}, remain={remain}")
 
-        # 2) 假出库（被 monkeypatch 的 no-op）
+        # 2) 假出库（no-op）
         await self.stock.adjust(
             session=session,
             item_id=item_id,
-            location_id=from_location_id,
+            warehouse_id=int(warehouse_id),
             delta=-qty,
             reason="PICK",
             ref=scan_ref,
@@ -120,7 +120,7 @@ async def test_pick_service_min_flow(session):
     r1 = await svc.record_pick(
         session,
         task_line_id=lid,
-        from_location_id=1,
+        warehouse_id=1,
         item_id=item_id,
         qty=3,
         scan_ref="scan:UT:pick",
@@ -135,7 +135,7 @@ async def test_pick_service_min_flow(session):
     await svc.record_pick(
         session,
         task_line_id=lid,
-        from_location_id=1,
+        warehouse_id=1,
         item_id=item_id,
         qty=2,
         scan_ref="scan:UT:pick",

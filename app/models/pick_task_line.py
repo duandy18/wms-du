@@ -46,7 +46,9 @@ class PickTaskLine(Base):
         nullable=False,
         server_default=text("false"),
     )
-    target_location_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
+    # ❌ target_legacy_location 已彻底移除（DB 不存在该列；不兼容、不保留）
+
     status: Mapped[str] = mapped_column(
         Text,
         nullable=False,
