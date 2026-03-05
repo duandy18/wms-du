@@ -24,15 +24,12 @@ async def handle_receive(
     trace_id: str | None = None,
 ) -> dict:
     """
-    入库（Receive）—— v2（Batch-as-Lot 终态合同）：
+    任务3 第四刀修正：
 
-    - REQUIRED（expiry_policy=REQUIRED）：
-        - batch_code 必填
-        - 必须提供 production_date 或 expiry_date（至少其一）
-    - NONE（expiry_policy=NONE）：
-        - batch_code 必须为空（null）
-        - 日期不强制（允许两者都为空）
-        - 落账进入 INTERNAL lot 槽位（由 StockService.adjust 负责）
+    - REQUIRED/NONE 的 batch_code 裁决仍由 StockService.adjust(合同闸门)负责；
+    - 但对 requires_batch=False（expiry_policy=NONE），入口层必须把 batch_code 投影为 None，
+      否则会触发合同 batch_forbidden。
+    - 日期规则：仅 REQUIRED 强制。
     """
     if qty <= 0:
         raise ValueError("Receive quantity must be positive.")
@@ -43,18 +40,13 @@ async def handle_receive(
 
     bc_norm = (str(batch_code).strip() if batch_code is not None else None) or None
 
-    if requires_batch and bc_norm is None:
-        raise ValueError("batch_code REQUIRED")
+    # ✅ NONE 商品必须把 batch_code 投影为 None
+    if not requires_batch:
+        bc_norm = None
 
-    if (not requires_batch) and bc_norm is not None:
-        raise ValueError("batch_code must be null for expiry-policy NONE items. Do not send batch_code.")
-
-    # 日期要求：仅 REQUIRED 强制
     if requires_batch and (production_date is None and expiry_date is None):
         raise ValueError("入库操作必须提供 production_date 或 expiry_date（至少其一）。")
 
-    # 结合 Item 保质期配置推算最终日期（若可能）
-    # - NONE：两者都可能为 None；resolver 应保持 None（不强行推导）
     production_date, expiry_date = await resolve_batch_dates_for_item(
         session,
         item_id=item_id,
@@ -70,8 +62,8 @@ async def handle_receive(
         reason=MovementType.INBOUND,
         ref=ref,
         batch_code=bc_norm,
-        production_date=production_date,
-        expiry_date=expiry_date,
+        production_date=production_date if requires_batch else None,
+        expiry_date=expiry_date if requires_batch else None,
         trace_id=trace_id,
     )
 

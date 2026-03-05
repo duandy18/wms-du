@@ -21,7 +21,7 @@ async def test_ledger_conservation(session: AsyncSession):
     - 使用 InboundService.receive(v2 签名：warehouse_id + batch_code) 落一笔入库；
     - 要求 stock_ledger 中至少有一条台账记录挂在本次 ref 名下。
 
-    不再依赖 location_id（v1 模型），仅以 (warehouse_id, item_id, batch_code) 为库存粒度。
+    不再依赖 legacy_location（v1 模型），仅以 (warehouse_id, item_id, batch_code) 为库存粒度。
     """
     wh, item, code = 1, 7631, "LGD-7631"
 

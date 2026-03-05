@@ -76,8 +76,88 @@ def _infer_lot_code_source_from_item(item: Item) -> str:
         return "SUPPLIER"
     if s == "INTERNAL":
         return "INTERNAL"
-    # 默认走 INTERNAL（系统内控），避免把未知值当 SUPPLIER 强制批次输入
     return "INTERNAL"
+
+
+def _raise_adjust_lot_value_error(
+    *,
+    msg: str,
+    item_id: int,
+    warehouse_id: int,
+    lot_id: int,
+    ref: str,
+    ref_line: int,
+) -> None:
+    """
+    confirm_receipt 是 API 链路：adjust_lot 抛 ValueError 不能裸奔成 500。
+    这里做最小翻译到 Problem 形态。
+    """
+    m = (msg or "").strip()
+    ml = m.lower()
+
+    if "insufficient stock" in ml:
+        raise_problem(
+            status_code=409,
+            error_code="insufficient_stock",
+            message="库存不足，入库确认失败。",
+            context={
+                "ref": str(ref),
+                "ref_line": str(ref_line),
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_id": int(lot_id),
+                "raw_error": m,
+            },
+            details=[{"type": "validation", "path": "stock_adjust", "reason": m}],
+        )
+
+    if "lot_mismatch" in ml:
+        raise_problem(
+            status_code=409,
+            error_code="lot_mismatch",
+            message="lot 与 warehouse/item 不匹配，入库确认失败。",
+            context={
+                "ref": str(ref),
+                "ref_line": str(ref_line),
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_id": int(lot_id),
+                "raw_error": m,
+            },
+            details=[{"type": "lot", "path": "stock_adjust", "reason": "lot_mismatch"}],
+        )
+
+    if "lot_not_found" in ml:
+        raise_problem(
+            status_code=404,
+            error_code="lot_not_found",
+            message="lot 不存在，入库确认失败。",
+            context={
+                "ref": str(ref),
+                "ref_line": str(ref_line),
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_id": int(lot_id),
+                "raw_error": m,
+            },
+            details=[{"type": "lot", "path": "stock_adjust", "reason": "lot_not_found"}],
+        )
+
+    # default
+    raise_problem(
+        status_code=422,
+        error_code="receipt_confirm_reject",
+        message="收货确认写库存失败。",
+        context={
+            "ref": str(ref),
+            "ref_line": str(ref_line),
+            "warehouse_id": int(warehouse_id),
+            "item_id": int(item_id),
+            "lot_id": int(lot_id),
+            "raw_error": m,
+        },
+        details=[{"type": "validation", "path": "stock_adjust", "reason": m}],
+    )
 
 
 async def confirm_receipt(
@@ -118,7 +198,6 @@ async def confirm_receipt(
     occurred_at = getattr(receipt, "occurred_at", None) or datetime.now(UTC)
     warehouse_id = int(getattr(receipt, "warehouse_id"))
 
-    # preload items (avoid N+1)
     item_ids = [int(getattr(rl, "item_id")) for rl in (receipt.lines or [])]
     item_map = await _load_items_by_ids(session, item_ids=item_ids)
 
@@ -151,8 +230,6 @@ async def confirm_receipt(
 
             if lot_code_source == "SUPPLIER":
                 lot_code = _normalize_lot_code(getattr(rl, "batch_code", None))
-                # keep current behavior: supplier lot_code required, otherwise 422 from lot_service
-                # (we do NOT treat pseudo tokens as valid supplier lot codes)
             else:
                 source_receipt_id = int(getattr(receipt, "id"))
                 source_line_no = int(getattr(rl, "line_no"))
@@ -173,18 +250,35 @@ async def confirm_receipt(
         if getattr(rl, "receipt_status_snapshot", None) != "CONFIRMED":
             rl.receipt_status_snapshot = "CONFIRMED"
 
-        res = await stock_svc.adjust(
-            session=session,
-            item_id=item_id,
-            warehouse_id=warehouse_id,
-            delta=qty_delta,
-            reason=MovementType.INBOUND,
-            ref=ref,
-            ref_line=idx,
-            occurred_at=occurred_at,
-            batch_code=getattr(rl, "batch_code", None),
-            lot_id=int(lot_id),
-        )
+        # ✅ 任务3 收口：confirm 已持有 authoritative lot_id，必须走 adjust_lot
+        try:
+            res = await stock_svc.adjust_lot(
+                session=session,
+                item_id=item_id,
+                warehouse_id=warehouse_id,
+                lot_id=int(lot_id),
+                delta=qty_delta,
+                reason=MovementType.INBOUND,
+                ref=ref,
+                ref_line=idx,
+                occurred_at=occurred_at,
+                batch_code=getattr(rl, "batch_code", None),
+                meta={"sub_reason": "RECEIPT_CONFIRM"},
+                production_date=None,
+                expiry_date=None,
+                trace_id=None,
+                shadow_write_stocks=False,
+            )
+        except ValueError as e:
+            _raise_adjust_lot_value_error(
+                msg=str(e),
+                item_id=item_id,
+                warehouse_id=warehouse_id,
+                lot_id=int(lot_id),
+                ref=str(ref),
+                ref_line=int(idx),
+            )
+            raise
 
         ledger_refs.append(
             InboundReceiptConfirmLedgerRef(

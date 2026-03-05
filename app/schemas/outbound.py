@@ -8,15 +8,17 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class OutboundLine(BaseModel):
-    item_id: int = Field(..., description="SKU/Item 标识")
-    location_id: int = Field(..., gt=0, description="库位 ID（>0）")
+    item_id: int = Field(..., description="SKU/Item 标识", gt=0)
+    warehouse_id: int = Field(..., description="仓库 ID（>0）", gt=0)
     qty: int = Field(..., gt=0, description="本行出库数量（>0）")
 
-    @field_validator("item_id")
+    batch_code: Optional[str] = Field(default=None, description="Lot 展示码（批次码；NONE 商品必须为 null）")
+
+    @field_validator("item_id", "warehouse_id")
     @classmethod
-    def _item_id_positive(cls, v: int) -> int:
+    def _positive(cls, v: int) -> int:
         if v <= 0:
-            raise ValueError("item_id must be > 0")
+            raise ValueError("must be > 0")
         return v
 
 
@@ -25,11 +27,8 @@ class OutboundCommitRequest(BaseModel):
     shop_id: Optional[str] = None
     ref: str
     occurred_at: datetime
-    warehouse_id: Optional[int] = None
 
-    # ✅ Phase M-5+（执行域收口）：
-    # - 不再允许 FEFO / allow_expired 作为执行策略入口；
-    # - 执行域必须显式 lot（batch_code）或 INTERNAL lot（expiry_policy=NONE）。
+    warehouse_id: Optional[int] = None
     lines: List[OutboundLine]
 
     @field_validator("occurred_at")
@@ -42,9 +41,10 @@ class OutboundCommitRequest(BaseModel):
 
 class OutboundResultLine(BaseModel):
     item_id: int
-    location_id: int
+    warehouse_id: int
+    batch_code: Optional[str] = None
     qty: int
-    status: str  # "OK" / "IDEMPOTENT" / "IGNORED"
+    status: str  # "OK" / "INSUFFICIENT" / "REJECTED" / "IDEMPOTENT"
 
 
 class OutboundCommitSummary(BaseModel):

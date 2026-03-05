@@ -59,10 +59,8 @@ async def ensure_pick_task_for_order_ref(
 ) -> int:
     """
     幂等确保 pick_tasks 存在（强幂等、无竞态）：
-
     - 依赖 DB 侧唯一索引：uq_pick_tasks_ref_wh (ref, warehouse_id)
-    - 使用 INSERT .. ON CONFLICT .. DO UPDATE RETURNING id
-      这样不会抛 IntegrityError，也无需“先查再插”。
+    - INSERT .. ON CONFLICT .. DO UPDATE RETURNING id
     """
     ref_norm = str(ref or "").strip()
     wh = int(warehouse_id)
@@ -101,7 +99,6 @@ async def ensure_pick_task_lines_from_target_qty(
     """
     幂等写入 pick_task_lines（只写 req_qty）：
     - 如果同 task_id 已有该 item_id 的行，则不重复插入
-    - 本窗口不做复杂 “更新 req_qty” 逻辑：订单变更属于后续课题
     """
     if not target_qty:
         return 0
@@ -134,14 +131,14 @@ async def ensure_pick_task_lines_from_target_qty(
                     task_id, order_id, order_line_id,
                     item_id, req_qty, picked_qty,
                     status, prefer_pickface,
-                    target_location_id, note,
+                    note,
                     created_at, updated_at, batch_code
                 )
                 VALUES (
                     :tid, :oid, NULL,
                     :item_id, :req_qty, 0,
                     'OPEN', true,
-                    NULL, NULL,
+                    NULL,
                     now(), now(), NULL
                 )
                 """
@@ -166,9 +163,7 @@ async def enqueue_pick_list_print_job(
     payload: Dict[str, Any],
 ) -> int:
     """
-    幂等入队打印任务（强幂等、无竞态）：
-
-    纯重构：收口到 print_jobs_service.enqueue_pick_list_job（行为不变）。
+    幂等入队打印任务（强幂等、无竞态）
     """
     return await enqueue_pick_list_job(
         session,

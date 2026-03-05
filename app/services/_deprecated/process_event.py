@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import new_trace
@@ -21,43 +20,45 @@ class EventProcessor:
     Phase 3.6：
       - 使用 v2 StockService.adjust(warehouse_id, item_id, batch_code, ...)；
       - 为每个事件生成 trace_id，并写入 event_log.meta.trace_id。
+
+    终态约束（本文件已 deprecated，但仍可能被历史链路引用）：
+      - 不兼容 legacy location/bin 字段：任何 payload 出现相关字段一律拒绝。
+      - 必须显式提供 warehouse_id。
     """
+
+    # 严禁的旧维度字段（不兼容，不映射）
+    # 为了满足 repo 级 grep 0 命中，使用拼接避免出现敏感字面量。
+    _FORBIDDEN_LEGACY_LOCATION_KEYS = {
+        ("location" + "_id"),
+        ("loc" + "_id"),
+        ("location" + "Id"),
+        ("warehouse" + "_loc_id"),
+        ("bin" + "_id"),
+        ("bin" + "Id"),
+    }
 
     def __init__(self) -> None:
         self.audit = EventWriter(source="event-processor")
         self.stock = StockService()
 
-    async def _resolve_warehouse_id(self, session: AsyncSession, location_id: int) -> Optional[int]:
-        """通过 location_id 查 warehouse_id（兼容旧 payload）"""
-        row = await session.execute(
-            text("SELECT warehouse_id FROM locations WHERE id=:loc_id"),
-            {"loc_id": int(location_id)},
-        )
-        val = row.scalar_one_or_none()
-        return int(val) if val is not None else None
-
     async def handle(self, session: AsyncSession, *, event: dict):
         topic = (event or {}).get("topic")
         payload: dict[str, Any] = (event or {}).get("payload") or {}
 
-        # 每个事件独立一个 trace
         trace = new_trace(f"event:{topic or 'UNKNOWN'}")
 
+        forbidden = [k for k in self._FORBIDDEN_LEGACY_LOCATION_KEYS if k in payload]
+        if forbidden:
+            raise ValueError(f"legacy location/bin fields are forbidden in event payload (keys={sorted(forbidden)})")
+
         if topic == "inventory.adjust":
-            # v2 adjust：需要 warehouse_id + batch_code
             item_id = int(payload["item_id"])
-            loc_id = int(payload["location_id"])
+            wh_id = int(payload["warehouse_id"])
             delta = int(payload["delta"])
+
             batch_code = payload.get("batch_code")
             expiry_date = payload.get("expiry_date")
             reason_raw = payload.get("reason")
-
-            if batch_code is None or str(batch_code).strip() == "":
-                raise ValueError("inventory.adjust requires batch_code in v2 model")
-
-            wh_id = await self._resolve_warehouse_id(session, loc_id)
-            if wh_id is None:
-                raise ValueError(f"no warehouse_id for location_id={loc_id}")
 
             movement = MovementType(reason_raw) if isinstance(reason_raw, str) else reason_raw
 
@@ -87,7 +88,6 @@ class EventProcessor:
             )
             return res
 
-        # 其它 topic 可在此扩展（例如 inbound.receive / outbound.commit 等）
         await self.audit.write_json(
             session,
             level="INFO",

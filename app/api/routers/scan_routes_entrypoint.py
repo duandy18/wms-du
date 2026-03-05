@@ -25,7 +25,7 @@ def register(router: APIRouter) -> None:
 
         - 前端提交 ScanRequest（mode + item_id + qty + warehouse_id + 批次/日期 + ctx）
         - 由 scan_orchestrator.ingest 解析并路由到对应 handler（receive/pick/count）
-        - 不再直接调用 InboundService.receive，也不再依赖 location_id/ref/occurred_at
+        - 不再直接调用 InboundService.receive，也不再依赖 legacy 库位维度/ref/occurred_at
 
         Phase M-4 governance：
         - lot_code 为正名；batch_code 为兼容别名
@@ -70,8 +70,6 @@ def register(router: APIRouter) -> None:
             event_id=result.get("event_id"),
             source=result.get("source") or "scan_orchestrator",
             item_id=item_id,
-            # 现阶段 scan 层无库位概念
-            location_id=None,
             qty=qty,
             lot_code=lot_code,
             batch_code=batch_code,

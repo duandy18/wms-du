@@ -59,33 +59,32 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     lot_id = await _ensure_internal_lot(session, item_id=item_id, wh=wh, ref="UT-IPC-INTERNAL-RECEIPT-1")
     batch_code: str | None = None
 
-    await svc.adjust(
+    await svc.adjust_lot(
         session=session,
         item_id=item_id,
+        warehouse_id=wh,
+        lot_id=int(lot_id),
         delta=2,
         reason=MovementType.INBOUND,
         ref="Q-IPC-1",
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=batch_code,
-        lot_id=lot_id,
-        production_date=date.today(),
-        warehouse_id=wh,
     )
     q1 = await _qty(session, item_id, wh, lot_id)
     assert q1 >= 2
 
-    await svc.adjust(
+    await svc.adjust_lot(
         session=session,
         item_id=item_id,
+        warehouse_id=wh,
+        lot_id=int(lot_id),
         delta=-1,
         reason=MovementType.OUTBOUND,
         ref="Q-IPC-2",
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=batch_code,
-        lot_id=lot_id,
-        warehouse_id=wh,
     )
     q2 = await _qty(session, item_id, wh, lot_id)
     assert q2 == q1 - 1
@@ -93,18 +92,17 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     remain = await _qty(session, item_id, wh, lot_id)
     delta = 1 - remain
     if delta != 0:
-        await svc.adjust(
+        await svc.adjust_lot(
             session=session,
             item_id=item_id,
+            warehouse_id=wh,
+            lot_id=int(lot_id),
             delta=delta,
             reason=MovementType.COUNT,
             ref="Q-IPC-3",
             ref_line=1,
             occurred_at=datetime.now(UTC),
             batch_code=batch_code,
-            lot_id=lot_id,
-            production_date=date.today(),
-            warehouse_id=wh,
         )
     q3 = await _qty(session, item_id, wh, lot_id)
     assert q3 == 1

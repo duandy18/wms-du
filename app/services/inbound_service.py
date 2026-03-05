@@ -41,7 +41,6 @@ class InboundService:
         if not row:
             return {"expiry_policy": "NONE", "shelf_life_value": None, "shelf_life_unit": None}
 
-        # expiry_policy 是 enum，可能返回 str/Enum-like；统一转 str
         return {
             "expiry_policy": str(row.get("expiry_policy")),
             "shelf_life_value": row.get("shelf_life_value"),
@@ -63,38 +62,40 @@ class InboundService:
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
         trace_id: Optional[str] = None,
-        # ✅ 合同化：业务细分（采购入库/退货入库/杂项入库等）
         sub_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        任务3 第四刀修正：
+
+        - REQUIRED/NONE 的批次裁决仍由 StockService.adjust(合同闸门)负责；
+        - 但对 expiry_policy=NONE 的商品，入口层必须把 batch_code 投影为 None，
+          否则会触发合同的 batch_forbidden（这符合终态合同：NONE 商品 batch_code 必须为 null）。
+        - 日期规则仅对 REQUIRED 强制。
+        """
         if qty <= 0:
             raise ValueError("Receive quantity must be positive.")
         if item_id is None and (sku is None or not str(sku).strip()):
             raise ValueError("必须提供 item_id 或 sku（至少其一）。")
 
-        iid = (
-            int(item_id)
-            if item_id is not None
-            else await self._ensure_item_id(session, str(sku).strip())
-        )
+        iid = int(item_id) if item_id is not None else await self._ensure_item_id(session, str(sku).strip())
         wid = int(warehouse_id) if warehouse_id is not None else 1
 
         policy = await self._load_item_policy(session, iid)
         expiry_policy = str(policy.get("expiry_policy") or "").upper()
         requires_batch = expiry_policy == "REQUIRED"
 
-        # Phase L：不再默认填充 NOEXP/AUTO 批次码。
-        # - REQUIRED（有效期管理商品）：必须显式提供 batch_code（供应商批次码）
-        # - NONE（无有效期/无批次商品）：必须 batch_code=None（展示码为空）
-        code = (str(batch_code).strip() if batch_code is not None else "") or None
+        # 轻量归一：空串/空格 -> None
+        code = (str(batch_code).strip() if batch_code is not None else None) or None
 
-        # 日期规则
+        # ✅ 关键：NONE 商品必须把 batch_code 投影为 None（不允许传入任何值）
+        if not requires_batch:
+            code = None
+
+        # 日期规则（仅 REQUIRED 强制）
         if requires_batch:
-            if code is None:
-                raise ValueError("该商品需要有效期管理：必须提供 batch_code（供应商批次码）")
-            if production_date is None:
-                raise ValueError("该商品需要有效期管理：必须提供生产日期")
+            if production_date is None and expiry_date is None:
+                raise ValueError("该商品需要有效期管理：必须提供生产日期或到期日期（至少其一）")
 
-            # expiry_date 可缺省：尝试用参数推算
             prod, exp = await resolve_batch_dates_for_item(
                 session,
                 item_id=iid,
@@ -104,13 +105,11 @@ class InboundService:
             production_date, expiry_date = prod, exp
 
             if expiry_date is None:
-                # 参数缺失导致推算失败
                 raise ValueError("未提供到期日期，且商品未配置保质期参数，无法推算到期日期")
         else:
+            # NONE：不写日期事实
             production_date = None
             expiry_date = None
-            # 无有效期商品：batch_code 必须为空（不再强制 NOEXP）
-            code = None
 
         meta = {"sub_reason": sub_reason} if (sub_reason and str(sub_reason).strip()) else None
 
@@ -147,7 +146,6 @@ class InboundService:
         if found is not None:
             return int(found)
 
-        # Phase M-5: items.uom 已移除；必须补齐 items 的 NOT NULL 策略字段
         ins = await session.execute(
             sa.text(
                 """

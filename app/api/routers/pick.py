@@ -1,3 +1,4 @@
+# app/api/routers/pick.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -24,16 +25,14 @@ class PickIn(BaseModel):
     qty: int = Field(..., ge=1)
     warehouse_id: int = Field(..., ge=1)
 
-    # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
     lot_code: Optional[str] = Field(default=None, description="Lot 展示码（优先使用；等价于 batch_code）")
     batch_code: Optional[str] = None
 
     ref: str = Field(..., min_length=1)
-
     occurred_at: Optional[datetime] = None
 
     task_line_id: Optional[int] = None
-    location_id: Optional[int] = None
+    # ❌ legacy_location 已彻底移除（不兼容、不保留）
     device_id: Optional[str] = None
     operator: Optional[str] = None
 
@@ -41,11 +40,8 @@ class PickIn(BaseModel):
 class PickOut(BaseModel):
     item_id: int
     warehouse_id: int
-
-    # ✅ 对外返回双轨
     lot_code: Optional[str] = None
     batch_code: Optional[str] = None
-
     picked: int
     stock_after: Optional[int] = None
     ref: str
@@ -60,7 +56,6 @@ async def pick_commit(
     svc = PickService()
     occurred_at = body.occurred_at or datetime.now(timezone.utc)
 
-    # ✅ Phase M：使用 expiry_policy 真相源
     item_ids: Set[int] = {int(body.item_id)}
     expiry_policy_map = await fetch_item_expiry_policy_map(session, item_ids)
 
@@ -86,9 +81,10 @@ async def pick_commit(
             qty=body.qty,
             ref=body.ref,
             occurred_at=occurred_at,
-            batch_code=batch_code,  # 兼容：内部仍使用 batch_code 字段名
+            batch_code=batch_code,
             warehouse_id=body.warehouse_id,
-            task_line_id=body.task_line_id,
+            trace_id=None,
+            start_ref_line=1,
         )
         await session.commit()
     except ValueError as e:

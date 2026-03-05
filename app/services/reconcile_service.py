@@ -19,7 +19,7 @@ class ReconcileService:
     - 幂等与原子性由 StockService 内部的“ref + 行锁/唯一键”保障。
 
     ✅ 新世界观：
-    - 入口维度：warehouse_id（不再使用 location_id）
+    - 入口维度：warehouse_id（不再使用 legacy_location）
     - delta==0 也落一笔确认类台账（COUNT_CONFIRM），用于审计可追溯
     """
 

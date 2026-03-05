@@ -13,9 +13,29 @@ _FORBIDDEN_FAKE_CODES: Set[str] = {"NOEXP", "NEAR", "FAR", "IDEM"}
 _FORBIDDEN_NONE_TOKEN = "none"
 
 
-def http_422(detail: str) -> HTTPException:
+def http_422(detail: str, *, error_code: str = "lot_code_contract_reject") -> HTTPException:
+    """
+    统一 422 错误形态（detail 为 dict），避免上层/测试出现 str vs dict 漂移。
+
+    说明：
+    - message 文案保持原样（沿用 batch_code 字段名以兼容旧客户端）
+    - error_code 用于上层/测试分类（如 batch_required）
+    """
     # ✅ pytest warning fix: HTTP_422_UNPROCESSABLE_ENTITY deprecated in recent FastAPI/Starlette
-    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "error_code": str(error_code),
+            "message": detail,
+            "details": [
+                {
+                    "type": "batch",
+                    "path": "batch_code",
+                    "reason": detail,
+                }
+            ],
+        },
+    )
 
 
 def normalize_optional_lot_code(raw: Optional[str]) -> Optional[str]:
@@ -52,9 +72,15 @@ def validate_lot_code_contract(*, requires_batch: bool, lot_code: Optional[str])
     if requires_batch:
         s = normalize_optional_lot_code(lot_code)
         if s is None:
-            raise http_422("batch_code is required for expiry-policy REQUIRED items.")
+            raise http_422(
+                "batch_code is required for expiry-policy REQUIRED items.",
+                error_code="batch_required",
+            )
         if s.lower() == _FORBIDDEN_NONE_TOKEN:
-            raise http_422("batch_code must not be 'none' (case-insensitive).")
+            raise http_422(
+                "batch_code must not be 'none' (case-insensitive).",
+                error_code="batch_invalid",
+            )
         return s
 
     # 非批次：必须为 null。这里不做“帮你归一”，只要你传了值就 422。
@@ -63,16 +89,23 @@ def validate_lot_code_contract(*, requires_batch: bool, lot_code: Optional[str])
 
     raw = lot_code.strip()
     if raw == "":
-        raise http_422("batch_code must be null for expiry-policy NONE items. Do not send empty string.")
+        raise http_422(
+            "batch_code must be null for expiry-policy NONE items. Do not send empty string.",
+            error_code="batch_forbidden",
+        )
 
     up = raw.upper()
     if up in _FORBIDDEN_FAKE_CODES or raw.lower() == _FORBIDDEN_NONE_TOKEN:
         raise http_422(
             "batch_code must be null for expiry-policy NONE items; fake codes are forbidden "
-            "(NOEXP/NEAR/FAR/IDEM/None)."
+            "(NOEXP/NEAR/FAR/IDEM/None).",
+            error_code="batch_forbidden",
         )
 
-    raise http_422("batch_code must be null for expiry-policy NONE items. Do not send batch_code.")
+    raise http_422(
+        "batch_code must be null for expiry-policy NONE items. Do not send batch_code.",
+        error_code="batch_forbidden",
+    )
 
 
 def _requires_batch_from_expiry_policy(expiry_policy: Optional[str]) -> bool:

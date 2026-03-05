@@ -223,8 +223,7 @@ async def create_for_order(
 
     session.add(task)
 
-    # 并发兜底：极端情况下两个请求同时通过“未存在”检查，
-    # flush 时会命中 uq_pick_tasks_ref_wh；此时回滚并返回已存在的那条。
+    # 并发兜底
     try:
         await session.flush()
     except IntegrityError:
@@ -241,13 +240,12 @@ async def create_for_order(
         line = PickTaskLine(
             task_id=task.id,
             order_id=order_id,
-            order_line_id=rep_order_line_id,  # 代表 order_line_id（仅用于追溯/兼容）
+            order_line_id=rep_order_line_id,
             item_id=int(item_id),
             req_qty=int(qty_sum),
             picked_qty=0,
             batch_code=None,
             prefer_pickface=True,
-            target_location_id=None,
             status="OPEN",
             note=None,
             created_at=now,

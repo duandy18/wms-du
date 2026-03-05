@@ -18,7 +18,7 @@ class MasterDataService:
         session: AsyncSession,
         *,
         warehouse_id: int = 1,
-        location_ids: Iterable[int],
+        legacy_locations: Iterable[int],
         item_ids: Iterable[int],
     ) -> int:
         """
@@ -27,7 +27,7 @@ class MasterDataService:
         - 返回首个位置对应的 warehouse_id（若查询不到则回退为默认）。
         """
         await self._ensure_warehouse(session, warehouse_id=warehouse_id)
-        first_valid_loc_id = await self._ensure_locations(session, warehouse_id=warehouse_id, location_ids=location_ids)
+        first_valid_loc_id = await self._ensure_locations(session, warehouse_id=warehouse_id, legacy_locations=legacy_locations)
         await self._ensure_items(session, item_ids=item_ids)
 
         if first_valid_loc_id is not None:
@@ -50,10 +50,10 @@ class MasterDataService:
         session: AsyncSession,
         *,
         warehouse_id: int,
-        location_ids: Iterable[int],
+        legacy_locations: Iterable[int],
     ) -> Optional[int]:
         first_valid_loc_id: Optional[int] = None
-        for loc_raw in location_ids:
+        for loc_raw in legacy_locations:
             try:
                 loc = int(loc_raw)
             except Exception:

@@ -199,21 +199,24 @@ async def handle_count(
     if delta == 0:
         meta["allow_zero_delta_ledger"] = True
 
+    # ✅ 任务3 终态：Count 已持有 authoritative lot_id，必须走 adjust_lot（lot-only 原语入口）
     stock_svc = StockService()
-    await stock_svc.adjust(
+    await stock_svc.adjust_lot(
         session=session,
         item_id=item_id,
         warehouse_id=int(warehouse_id),
+        lot_id=int(lot_id),
         delta=int(delta),
         reason=MovementType.COUNT,
         ref=str(ref),
         ref_line=1,
+        occurred_at=None,
+        meta=meta,
         batch_code=bcode,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
-        meta=meta,
-        lot_id=int(lot_id),
+        shadow_write_stocks=False,
     )
 
     ts = datetime.now(timezone.utc)
