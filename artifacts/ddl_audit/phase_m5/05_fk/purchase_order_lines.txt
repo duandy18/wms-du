@@ -1,3 +1,0 @@
-fk_po_line_item|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
-fk_po_line_purchase_uom|FOREIGN KEY (purchase_uom_id_snapshot) REFERENCES item_uoms(id)
-purchase_order_lines_po_id_fkey|FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE

@@ -1,5 +1,0 @@
-items_pkey|CREATE UNIQUE INDEX items_pkey ON public.items USING btree (id)
-items_sku_key|CREATE UNIQUE INDEX items_sku_key ON public.items USING btree (sku)
-ix_items_brand|CREATE INDEX ix_items_brand ON public.items USING btree (brand)
-ix_items_category|CREATE INDEX ix_items_category ON public.items USING btree (category)
-ix_items_supplier_id|CREATE INDEX ix_items_supplier_id ON public.items USING btree (supplier_id)

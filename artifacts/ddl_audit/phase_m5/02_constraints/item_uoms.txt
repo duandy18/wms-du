@@ -1,4 +1,0 @@
-ck_item_uoms_ratio_ge_1|c|CHECK (ratio_to_base >= 1)
-item_uoms_item_id_fkey|f|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
-item_uoms_pkey|p|PRIMARY KEY (id)
-uq_item_uoms_item_uom|u|UNIQUE (item_id, uom)

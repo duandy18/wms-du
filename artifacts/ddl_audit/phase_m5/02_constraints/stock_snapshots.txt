@@ -1,9 +1,0 @@
-ck_stock_snapshots_qty_allocated_nonneg|c|CHECK (qty_allocated >= 0::numeric)
-ck_stock_snapshots_qty_available_nonneg|c|CHECK (qty_available >= 0::numeric)
-ck_stock_snapshots_qty_balance|c|CHECK ((qty_available + qty_allocated) = qty)
-ck_stock_snapshots_qty_nonneg|c|CHECK (qty >= 0::numeric)
-fk_stock_snapshots_lot_dims|f|FOREIGN KEY (lot_id, warehouse_id, item_id) REFERENCES lots(id, warehouse_id, item_id) ON DELETE RESTRICT
-stock_snapshots_item_id_fkey|f|FOREIGN KEY (item_id) REFERENCES items(id)
-stock_snapshots_warehouse_id_fkey|f|FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
-stock_snapshots_pkey|p|PRIMARY KEY (id)
-uq_stock_snapshots_grain_lot|u|UNIQUE (snapshot_date, warehouse_id, item_id, lot_id)

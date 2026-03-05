@@ -1,3 +1,0 @@
-ck_po_lines_discount_amount_nonneg|CHECK (discount_amount >= 0::numeric)
-ck_po_lines_qty_base_consistent|CHECK (qty_ordered_base = (qty_ordered_input * purchase_ratio_to_base_snapshot))
-ck_po_lines_qty_ordered_base_positive|CHECK (qty_ordered_base > 0)

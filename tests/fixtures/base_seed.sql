@@ -39,10 +39,10 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== shipping_providers (minimal) =====
-INSERT INTO shipping_providers (id, name, code, external_outlet_code, active, priority, address)
+INSERT INTO shipping_providers (id, name, code, active, priority, address)
 VALUES
-  (1, 'UT-CARRIER-1', 'UT-CAR-1', 'EXT-OUTLET-001', true, 100, 'UT-ADDR-1'),
-  (2, 'Fake Express', 'FAKE', 'FAKE-OUTLET', true, 100, 'UT-ADDR-FAKE')
+  (1, 'UT-CARRIER-1', 'UT-CAR-1', true, 100, 'UT-ADDR-1'),
+  (2, 'Fake Express', 'FAKE', true, 100, 'UT-ADDR-FAKE')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO warehouse_shipping_providers (warehouse_id, shipping_provider_id, active, priority, pickup_cutoff_time, remark)

@@ -1,1 +1,0 @@
-item_uoms_item_id_fkey|FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT

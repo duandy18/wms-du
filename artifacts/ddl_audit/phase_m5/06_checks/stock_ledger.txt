@@ -1,1 +1,0 @@
-ck_ledger_dates_only_on_receipt|CHECK (reason_canon::text = 'RECEIPT'::text OR production_date IS NULL AND expiry_date IS NULL)

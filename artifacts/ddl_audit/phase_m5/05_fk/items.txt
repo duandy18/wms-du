@@ -1,1 +1,0 @@
-fk_items_supplier|FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT

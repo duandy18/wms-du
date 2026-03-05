@@ -52,7 +52,7 @@ def register(router: APIRouter) -> None:
         - warehouse_id 必填
         - shipping_provider_id 必填且必须是该仓可服务（warehouse_shipping_providers.active=true）
         - scheme_id 必填且必须绑定该仓、有效期命中、且属于该 provider
-        - tracking_no 若提供：(carrier_code, tracking_no) 唯一（carrier_code 来自 provider.code）
+        - tracking_no 若提供：在 provider_id 维度唯一（(shipping_provider_id, tracking_no)）
 
         错误返回：
         - 422：缺字段/入参不合法（detail: {code,message}）
@@ -91,7 +91,6 @@ def register(router: APIRouter) -> None:
             )
 
         try:
-            # Phase 3：硬校验（合同守门）
             if payload.warehouse_id is None:
                 _raise_422(ShipConfirmErrorCode.WAREHOUSE_REQUIRED, "warehouse_id is required")
             if int(payload.shipping_provider_id) <= 0:
@@ -173,7 +172,7 @@ def register(router: APIRouter) -> None:
                     "scheme does not belong to selected carrier",
                 )
 
-            # tracking_no 幂等校验（carrier 维度：以 provider_code 为准）
+            # tracking_no 幂等校验（provider_id 维度）
             tno: Optional[str] = None
             if payload.tracking_no and payload.tracking_no.strip():
                 tno = payload.tracking_no.strip()
@@ -183,21 +182,20 @@ def register(router: APIRouter) -> None:
                             """
                             SELECT 1
                               FROM shipping_records
-                             WHERE carrier_code = :carrier_code
+                             WHERE shipping_provider_id = :pid
                                AND tracking_no = :tracking_no
                              LIMIT 1
                             """
                         ),
-                        {"carrier_code": provider_code, "tracking_no": tno},
+                        {"pid": provider_id, "tracking_no": tno},
                     )
                 ).first()
                 if dup_tno:
                     _raise_409(
                         ShipConfirmErrorCode.TRACKING_DUP,
-                        "tracking_no already exists for this carrier",
+                        "tracking_no already exists for this provider",
                     )
 
-            # 审计 meta（结构化）
             meta: Dict[str, Any] = {}
             if payload.meta:
                 meta.update(payload.meta)
@@ -208,7 +206,7 @@ def register(router: APIRouter) -> None:
             meta.update(
                 {
                     "provider_id": provider_id,
-                    "carrier": provider_code,
+                    "carrier_code": provider_code,
                     "carrier_name": provider_name,
                     "scheme_id": sid,
                     "warehouse_id": wid,
@@ -234,7 +232,6 @@ def register(router: APIRouter) -> None:
             if payload.delivery_time:
                 meta["delivery_time"] = payload.delivery_time.isoformat()
 
-            # Step 1: 写审计事件（成功）
             data = await svc.commit(
                 ref=payload.ref,
                 platform=payload.platform,
@@ -245,8 +242,6 @@ def register(router: APIRouter) -> None:
 
             json_meta = json.dumps(meta, ensure_ascii=False) if meta else None
 
-            # Step 2: 幂等写 shipping_records（并发安全）
-            # 依赖 DB unique: (platform, shop_id, order_ref)
             insert_sql = text(
                 """
                 INSERT INTO shipping_records (
@@ -324,7 +319,6 @@ def register(router: APIRouter) -> None:
             ).scalar_one_or_none()
 
             if inserted is None:
-                # 并发/重试导致已存在：幂等返回 409（合同冲突）
                 await session.rollback()
                 _raise_409(ShipConfirmErrorCode.ORDER_DUP, "order already confirmed")
 

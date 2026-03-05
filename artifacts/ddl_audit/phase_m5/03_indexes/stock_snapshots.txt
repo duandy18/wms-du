@@ -1,7 +1,0 @@
-ix_stock_snapshots_item_id|CREATE INDEX ix_stock_snapshots_item_id ON public.stock_snapshots USING btree (item_id)
-ix_stock_snapshots_lot_id|CREATE INDEX ix_stock_snapshots_lot_id ON public.stock_snapshots USING btree (lot_id)
-ix_stock_snapshots_snapshot_date|CREATE INDEX ix_stock_snapshots_snapshot_date ON public.stock_snapshots USING btree (snapshot_date)
-ix_stock_snapshots_warehouse_id|CREATE INDEX ix_stock_snapshots_warehouse_id ON public.stock_snapshots USING btree (warehouse_id)
-ix_stock_snapshots_wh_item_lot|CREATE INDEX ix_stock_snapshots_wh_item_lot ON public.stock_snapshots USING btree (warehouse_id, item_id, lot_id)
-stock_snapshots_pkey|CREATE UNIQUE INDEX stock_snapshots_pkey ON public.stock_snapshots USING btree (id)
-uq_stock_snapshots_grain_lot|CREATE UNIQUE INDEX uq_stock_snapshots_grain_lot ON public.stock_snapshots USING btree (snapshot_date, warehouse_id, item_id, lot_id)

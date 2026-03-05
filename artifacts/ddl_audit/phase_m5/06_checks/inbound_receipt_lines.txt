@@ -1,4 +1,0 @@
-ck_inbound_receipt_lines_prod_le_exp|CHECK (production_date IS NULL OR expiry_date IS NULL OR production_date <= expiry_date)
-ck_receipt_lines_lot_required_on_confirmed|CHECK (receipt_status_snapshot::text <> 'CONFIRMED'::text OR lot_id IS NOT NULL)
-ck_receipt_lines_status_snapshot_enum|CHECK (receipt_status_snapshot::text = ANY (ARRAY['DRAFT'::character varying, 'CONFIRMED'::character varying]::text[]))
-ck_receipt_qty_base_consistent|CHECK (qty_base = (qty_input * ratio_to_base_snapshot))

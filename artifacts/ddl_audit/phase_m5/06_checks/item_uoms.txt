@@ -1,1 +1,0 @@
-ck_item_uoms_ratio_ge_1|CHECK (ratio_to_base >= 1)

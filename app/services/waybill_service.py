@@ -8,9 +8,10 @@ from typing import Any, Dict, Optional
 @dataclass
 class WaybillRequest:
     """
-    平台面单请求统一结构：
+    平台面单请求统一结构（终态：强身份以 shipping_provider_id 为准）：
 
-    - provider_code: 快递公司编码（ZTO/JT/SF...）
+    - shipping_provider_id: 承运商/网点 ID（强身份）
+    - provider_code: 快递公司编码（冗余展示/对接用，可选）
     - platform: 平台（PDD / JD / ...）
     - shop_id: 店铺 ID
     - ext_order_no: 平台订单号
@@ -19,7 +20,8 @@ class WaybillRequest:
     - extras: 任意扩展字段
     """
 
-    provider_code: str
+    shipping_provider_id: int
+    provider_code: Optional[str]
     platform: str
     shop_id: str
     ext_order_no: str
@@ -45,23 +47,22 @@ class WaybillResult:
 
 class WaybillService:
     """
-    平台面单服务抽象层（当前为 Fake 实现）：
+    平台面单服务抽象层（当前为 Fake 实现）
 
-    未来你可以有多种实现：
-      - PddWaybillClient
-      - JdWaybillClient
-      - KdnWaybillClient（快递鸟）
-    现在先返回一个 fake tracking_no，方便前后端联调。
+    终态合同：
+    - 强身份：shipping_provider_id
+    - provider_code 仅作为冗余展示/对接字段（如某些平台需要）
     """
 
     async def request_waybill(self, req: WaybillRequest) -> WaybillResult:
-        # TODO: 未来根据 platform/provider_code 路由到具体平台 SDK
-        tracking = f"{req.provider_code}-{req.ext_order_no}"
+        # TODO: 未来根据 platform + shipping_provider_id 路由到具体平台 SDK
+        tracking = f"P{int(req.shipping_provider_id)}-{req.ext_order_no}"
 
         raw: Dict[str, Any] = {
             "platform": req.platform,
             "shop_id": req.shop_id,
             "ext_order_no": req.ext_order_no,
+            "shipping_provider_id": int(req.shipping_provider_id),
             "provider_code": req.provider_code,
             "receiver": req.receiver,
             "cargo": req.cargo,
