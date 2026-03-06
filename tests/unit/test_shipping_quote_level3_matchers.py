@@ -79,8 +79,6 @@ def test_match_destination_group_city_hit() -> None:
     assert g is not None
     assert m is not None
     assert g.id == 1 or g.id == 2
-    # 当前 matcher 逻辑是按 group.id 排序后命中第一个符合条件的 group。
-    # 这里的目标不是“城市覆盖省级”，而是验证 city 规则自身能被识别。
     assert any(
         x.id == 21 and x.scope == "city"
         for x in [m]
@@ -196,7 +194,7 @@ def test_match_pricing_matrix_ignores_inactive_rows() -> None:
     assert row.id == 2
 
 
-def test_match_pricing_matrix_legacy_semantics_left_open_right_closed() -> None:
+def test_match_pricing_matrix_semantics_left_closed_right_open() -> None:
     rows = [
         DummyMatrix(
             id=1,
@@ -214,15 +212,38 @@ def test_match_pricing_matrix_legacy_semantics_left_open_right_closed() -> None:
         ),
     ]
 
-    # 当前 Phase C 为了和 legacy 对比，仍沿用 (min, max]
+    row_at_0 = _match_pricing_matrix(rows, 0.0)
     row_at_1 = _match_pricing_matrix(rows, 1.0)
     row_at_2 = _match_pricing_matrix(rows, 2.0)
-    row_at_0 = _match_pricing_matrix(rows, 0.0)
+
+    assert row_at_0 is not None
+    assert row_at_0.id == 1
 
     assert row_at_1 is not None
-    assert row_at_1.id == 1
+    assert row_at_1.id == 2
 
-    assert row_at_2 is not None
-    assert row_at_2.id == 2
+    assert row_at_2 is None
 
-    assert row_at_0 is None
+
+def test_match_pricing_matrix_open_ended_row_accepts_upper_tail() -> None:
+    rows = [
+        DummyMatrix(
+            id=1,
+            group_id=1,
+            min_kg=Decimal("0.000"),
+            max_kg=Decimal("1.000"),
+            active=True,
+        ),
+        DummyMatrix(
+            id=2,
+            group_id=1,
+            min_kg=Decimal("1.000"),
+            max_kg=None,
+            active=True,
+        ),
+    ]
+
+    row = _match_pricing_matrix(rows, 99.0)
+
+    assert row is not None
+    assert row.id == 2

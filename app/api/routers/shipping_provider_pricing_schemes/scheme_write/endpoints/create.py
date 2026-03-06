@@ -47,14 +47,12 @@ def register_create_routes(router: APIRouter) -> None:
         if not provider:
             raise HTTPException(status_code=404, detail="ShippingProvider not found")
 
-        # Route A：warehouse_id 必填（硬仓库边界）
         if getattr(payload, "warehouse_id", None) is None:
             raise HTTPException(status_code=422, detail="warehouse_id is required")
         warehouse_id = int(getattr(payload, "warehouse_id"))
         if warehouse_id <= 0:
             raise HTTPException(status_code=422, detail="warehouse_id must be >= 1")
 
-        # 校验 warehouse 存在（避免 FK 抛 500）
         wh_ok = db.execute(
             text("SELECT 1 FROM warehouses WHERE id = :wid LIMIT 1"),
             {"wid": warehouse_id},
@@ -62,7 +60,6 @@ def register_create_routes(router: APIRouter) -> None:
         if not wh_ok:
             raise HTTPException(status_code=404, detail="Warehouse not found")
 
-        # Route A：provider 必须在该仓启用（否则 scheme 创建即漂移）
         wsp_ok = db.execute(
             text(
                 """
@@ -81,7 +78,6 @@ def register_create_routes(router: APIRouter) -> None:
 
         validate_effective_window(payload.effective_from, payload.effective_to)
 
-        # ✅ 方案默认口径：强校验（不允许 manual_quote）
         try:
             dpm = validate_default_pricing_mode(payload.default_pricing_mode)
         except ValueError as e:
@@ -93,13 +89,9 @@ def register_create_routes(router: APIRouter) -> None:
             segs_norm = normalize_segments_json([seg_item_to_dict(x) for x in payload.segments_json])
             segs_updated_at = datetime.now(tz=timezone.utc)
 
-        # ✅ 系统裁决（Route A）：同一 (warehouse_id, provider_id) 未归档 schemes 任意时刻只能一个 active=true
-        # - DB 已有 partial unique index 兜底（warehouse_id, shipping_provider_id）
-        # - 这里做应用层原子互斥：若本次创建要生效，则先停用该 scope 下其它 active=true
         next_active = bool(payload.active)
 
         if next_active:
-            # scope lock：锁住该 (warehouse, provider) 的 schemes，避免并发下互踩
             (
                 db.query(ShippingProviderPricingScheme.id)
                 .filter(
@@ -110,7 +102,6 @@ def register_create_routes(router: APIRouter) -> None:
                 .all()
             )
 
-            # 先停用其它 active=true（只对未归档参与竞选）
             db.execute(
                 update(ShippingProviderPricingScheme)
                 .where(
@@ -134,16 +125,14 @@ def register_create_routes(router: APIRouter) -> None:
             billable_weight_rule=payload.billable_weight_rule,
             segments_json=segs_norm,
             segments_updated_at=segs_updated_at,
-            default_segment_template_id=None,
         )
         db.add(sch)
         db.commit()
         db.refresh(sch)
 
-        # ✅ 同步落段表（新能力）
         if segs_norm is not None:
             replace_segments_table(db, sch.id, segs_norm)
             db.commit()
             db.refresh(sch)
 
-        return SchemeDetailOut(ok=True, data=to_scheme_out(sch, zones=[], surcharges=[]))
+        return SchemeDetailOut(ok=True, data=to_scheme_out(sch, destination_groups=[], surcharges=[]))

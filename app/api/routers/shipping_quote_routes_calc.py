@@ -51,7 +51,6 @@ def register(router: APIRouter) -> None:
             msg = str(e)
             code = map_calc_value_error_to_code(msg)
 
-            # ✅ Phase 4：失败也要落库（否则异常返回会触发 rollback，审计会丢）
             SyncAuditEventWriter.write(
                 db,
                 flow="SHIPPING_QUOTE",
@@ -101,8 +100,8 @@ def register(router: APIRouter) -> None:
             currency=result.get("currency"),
             total_amount=result.get("total_amount"),
             weight=result.get("weight") or {},
-            zone=result.get("zone"),
-            bracket=result.get("bracket"),
+            destination_group=result.get("destination_group"),
+            pricing_matrix=result.get("pricing_matrix"),
             breakdown=result.get("breakdown") or {},
             reasons=result.get("reasons") or [],
         )

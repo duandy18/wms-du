@@ -15,14 +15,6 @@ from app.models.shipping_provider_pricing_scheme_segment import (  # noqa: F401
     ShippingProviderPricingSchemeSegment,
 )
 
-# ✅ 模板模型
-from app.models.shipping_provider_pricing_scheme_segment_template import (  # noqa: F401
-    ShippingProviderPricingSchemeSegmentTemplate,
-)
-from app.models.shipping_provider_pricing_scheme_segment_template_item import (  # noqa: F401
-    ShippingProviderPricingSchemeSegmentTemplateItem,
-)
-
 
 class ShippingProviderPricingScheme(Base):
     __tablename__ = "shipping_provider_pricing_schemes"
@@ -69,13 +61,6 @@ class ShippingProviderPricingScheme(Base):
 
     segments_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ✅ 显式默认回退模板
-    default_segment_template_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("shipping_provider_pricing_scheme_segment_templates.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -91,35 +76,16 @@ class ShippingProviderPricingScheme(Base):
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
     warehouse = relationship("Warehouse", lazy="selectin")
 
-    zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
-
     # surcharge-only（含目的地附加费）
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
 
-    # 现有：段表
+    # 现有：段表（scheme 级默认重量段）
     segments = relationship(
         "ShippingProviderPricingSchemeSegment",
         back_populates="scheme",
         lazy="selectin",
         order_by="ShippingProviderPricingSchemeSegment.ord.asc()",
         cascade="all, delete-orphan",
-    )
-
-    # 模板列表
-    segment_templates = relationship(
-        "ShippingProviderPricingSchemeSegmentTemplate",
-        back_populates="scheme",
-        lazy="selectin",
-        order_by="ShippingProviderPricingSchemeSegmentTemplate.id.asc()",
-        cascade="all, delete-orphan",
-        foreign_keys="ShippingProviderPricingSchemeSegmentTemplate.scheme_id",
-    )
-
-    default_segment_template = relationship(
-        "ShippingProviderPricingSchemeSegmentTemplate",
-        lazy="selectin",
-        foreign_keys=[default_segment_template_id],
-        post_update=True,
     )
 
     def __repr__(self) -> str:

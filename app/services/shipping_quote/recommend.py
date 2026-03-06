@@ -46,7 +46,6 @@ def recommend_quotes(
     providers: List[ShippingProvider] = []
 
     if warehouse_id is not None:
-        # ✅ Phase 3：仓库边界（候选集来自事实绑定，不回退全局）
         if provider_ids:
             sql = text(
                 """
@@ -96,12 +95,10 @@ def recommend_quotes(
             p.priority = int(r.get("priority") or 0)
             providers.append(p)
 
-        # 若该仓无候选承运商：事实优先，直接空（不回退全局）
         if not providers:
             return {"ok": True, "recommended_scheme_id": None, "quotes": []}
 
     else:
-        # 无 warehouse_id：兼容入口（仅用于非仓库场景）
         if provider_ids:
             q = db.query(ShippingProvider).filter(ShippingProvider.active.is_(True))
             q = q.filter(ShippingProvider.id.in_(provider_ids))
@@ -122,7 +119,6 @@ def recommend_quotes(
                 .all()
             )
         else:
-            # ✅ Phase 3：严格消费 scheme×warehouse（不允许 fallback）
             sql_schemes = text(
                 """
                 SELECT sch.*
@@ -147,7 +143,6 @@ def recommend_quotes(
         best: Optional[Dict[str, Any]] = None
         for sch in schemes:
             try:
-                # ✅ 关键修复：calc 必须携带 warehouse_id（合同强前置）
                 r = calc_quote(
                     db=db,
                     scheme_id=sch.id,
@@ -176,8 +171,8 @@ def recommend_quotes(
                 "quote_status": r.get("quote_status"),
                 "reasons": r.get("reasons") or [],
                 "weight": r.get("weight"),
-                "zone": r.get("zone"),
-                "bracket": r.get("bracket"),
+                "destination_group": r.get("destination_group"),
+                "pricing_matrix": r.get("pricing_matrix"),
                 "breakdown": r.get("breakdown"),
             }
 

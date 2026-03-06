@@ -27,15 +27,13 @@ TRUNCATE TABLE
   event_error_log,
 
   -- ===== shipping domain（避免每用例累积脏数据）=====
-  shipping_provider_zone_brackets,
-  shipping_provider_zone_members,
-  shipping_provider_zones,
+  shipping_provider_pricing_matrix,
+  shipping_provider_destination_group_members,
+  shipping_provider_destination_groups,
   shipping_provider_pricing_schemes,
   shipping_provider_surcharges,
   shipping_provider_contacts,
   shipping_provider_pricing_scheme_segments,
-  shipping_provider_pricing_scheme_segment_templates,
-  shipping_provider_pricing_scheme_segment_template_items,
   shipping_providers,
   shipping_records,
 

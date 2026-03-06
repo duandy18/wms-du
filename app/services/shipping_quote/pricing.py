@@ -1,34 +1,38 @@
 # app/services/shipping_quote/pricing.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Protocol, Tuple, runtime_checkable
 
-from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
+
+@runtime_checkable
+class PricingRowLike(Protocol):
+    pricing_mode: object
+    flat_amount: object
+    base_amount: object
+    rate_per_kg: object
 
 
 def _calc_base_amount(
-    bracket: ShippingProviderZoneBracket,
+    row: PricingRowLike,
     billable_weight_kg: float,
     scheme_rounding: Optional[Dict[str, Any]],
 ) -> Tuple[float, Dict[str, Any]]:
     """
-    Base 定价（不兼容收敛版）：
+    Base 定价（Level-3 终态）：
     - flat         : flat_amount（元/票）
     - linear_total : base_amount(面单费/基础费, 元/票) + rate_per_kg(元/kg) * billable_weight_kg
     - manual_quote : 人工报价
 
-    ✅ 重要合同（本轮落地）：
-    - billable_weight_kg 已由 _compute_billable_weight_kg 计算并完成 rounding（进位/取整）。
-    - 此处不得对 weight 再做第二次 rounding，避免 double-rounding 造成误差与不可解释。
-    - scheme_rounding 参数保留以兼容旧调用链/调试信息，但不再参与计费重计算。
+    重要合同：
+    - billable_weight_kg 已由 _compute_billable_weight_kg 计算并完成 rounding（进位/取整）
+    - 此处不得对 weight 再做第二次 rounding，避免 double-rounding
+    - scheme_rounding 参数保留用于兼容调用链/调试信息，但不再参与计费重计算
     """
-    # ✅ 最终计费重：不再二次取整
     w = float(billable_weight_kg)
 
-    # scheme_rounding 已不再用于计算，但保留参数避免牵连
     _ = scheme_rounding
 
-    mode = (getattr(bracket, "pricing_mode", None) or "").strip().lower()
+    mode = (getattr(row, "pricing_mode", None) or "").strip().lower()
 
     if mode == "manual_quote":
         return 0.0, {
@@ -39,27 +43,27 @@ def _calc_base_amount(
         }
 
     if mode == "flat":
-        fa = getattr(bracket, "flat_amount", None)
-        amt = float(fa or 0.0)
-        return amt, {
+        flat_amount = getattr(row, "flat_amount", None)
+        amount = float(flat_amount or 0.0)
+        return amount, {
             "kind": "flat",
-            "amount": amt,
+            "amount": amount,
             "billable_weight_kg": w,
             "source": "structured",
         }
 
     if mode == "linear_total":
-        base_amt = getattr(bracket, "base_amount", None)
-        rate = getattr(bracket, "rate_per_kg", None)
-        b = float(base_amt or 0.0)
-        r = float(rate or 0.0)
-        amt = b + (r * w)
-        return amt, {
+        base_amount = getattr(row, "base_amount", None)
+        rate_per_kg = getattr(row, "rate_per_kg", None)
+        base = float(base_amount or 0.0)
+        rate = float(rate_per_kg or 0.0)
+        amount = base + (rate * w)
+        return amount, {
             "kind": "linear_total",
-            "base_amount": b,
-            "rate_per_kg": r,
+            "base_amount": base,
+            "rate_per_kg": rate,
             "billable_weight_kg": w,
-            "amount": amt,
+            "amount": amount,
             "source": "structured",
         }
 

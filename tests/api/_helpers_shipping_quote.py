@@ -105,56 +105,6 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
-def _pick_template_id(data: dict) -> int:
-    for k in ("id", "template_id", "segment_template_id"):
-        if k in data and data[k] is not None:
-            return int(data[k])
-    if "data" in data and isinstance(data["data"], dict):
-        return _pick_template_id(data["data"])
-    raise AssertionError(f"cannot resolve template_id from response: {data}")
-
-
-def _publish_template(client: TestClient, token: str, template_id: int) -> None:
-    h = auth_headers(token)
-    r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
-    assert r.status_code in (200, 201), r.text
-
-
-def _put_min_items(client: TestClient, token: str, template_id: int) -> None:
-    h = auth_headers(token)
-    r = client.put(
-        f"/segment-templates/{int(template_id)}/items",
-        headers=h,
-        json={
-            "items": [
-                {"ord": 0, "min_kg": "0.000", "max_kg": "1.000", "active": True},
-                {"ord": 1, "min_kg": "1.000", "max_kg": None, "active": True},
-            ]
-        },
-    )
-    assert r.status_code in (200, 201), r.text
-
-
-def _create_min_template(client: TestClient, token: str, scheme_id: int, name: str) -> int:
-    """
-    Zone 新合同：必须绑定 segment_template_id（且模板必须 published）。
-    这里创建一个最小模板（create -> put items -> publish）。
-    """
-    h = auth_headers(token)
-
-    r = client.post(
-        f"/pricing-schemes/{scheme_id}/segment-templates",
-        headers=h,
-        json={"name": name},
-    )
-    assert r.status_code in (200, 201), r.text
-    tid = _pick_template_id(r.json())
-
-    _put_min_items(client, token, tid)
-    _publish_template(client, token, tid)
-    return tid
-
-
 def _insert_level3_destination_group(
     *,
     scheme_id: int,
@@ -231,16 +181,16 @@ def _insert_level3_pricing_matrix_row(
         db.close()
 
 
-def _mirror_legacy_bundle_to_level3(
+def _create_level3_bundle(
     *,
     scheme_id: int,
     group_name: str,
     provinces: list[str],
-    brackets: list[dict],
+    matrix_rows: list[dict],
 ) -> int:
     """
-    为当前 Phase C 测试构造 level3 镜像数据：
-    legacy zone/members/brackets -> destination_group/members/matrix
+    D-2 单轨 helper：
+    只构造 Level-3 数据，不再创建 legacy zone / zone_members / zone_brackets。
     """
     group_id = _insert_level3_destination_group(
         scheme_id=scheme_id,
@@ -250,26 +200,31 @@ def _mirror_legacy_bundle_to_level3(
         group_id=group_id,
         provinces=provinces,
     )
-    for b in brackets:
+    for row in matrix_rows:
         _insert_level3_pricing_matrix_row(
             group_id=group_id,
-            min_kg=float(b["min_kg"]),
-            max_kg=(None if b["max_kg"] is None else float(b["max_kg"])),
-            pricing_mode=str(b["pricing_mode"]),
-            flat_amount=(None if b.get("flat_amount") is None else float(b["flat_amount"])),
-            base_amount=(None if b.get("base_amount") is None else float(b["base_amount"])),
-            rate_per_kg=(None if b.get("rate_per_kg") is None else float(b["rate_per_kg"])),
-            base_kg=(None if b.get("base_kg") is None else float(b["base_kg"])),
-            active=bool(b.get("active", True)),
+            min_kg=float(row["min_kg"]),
+            max_kg=(None if row["max_kg"] is None else float(row["max_kg"])),
+            pricing_mode=str(row["pricing_mode"]),
+            flat_amount=(None if row.get("flat_amount") is None else float(row["flat_amount"])),
+            base_amount=(None if row.get("base_amount") is None else float(row["base_amount"])),
+            rate_per_kg=(None if row.get("rate_per_kg") is None else float(row["rate_per_kg"])),
+            base_kg=(None if row.get("base_kg") is None else float(row["base_kg"])),
+            active=bool(row.get("active", True)),
         )
     return group_id
 
 
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     """
-    创建一套最小可算的 scheme：
-    provider -> scheme(warehouse scoped) -> segment_template(published) -> zone_atomic -> brackets + surcharge
-    同时镜像一套 level3 数据，用于 shadow compare 测试。
+    创建一套最小可算的 Level-3 单轨 scheme：
+
+    provider
+      -> scheme(warehouse scoped)
+      -> destination_group
+      -> destination_group_members
+      -> pricing_matrix
+      -> surcharge
     """
     h = auth_headers(token)
 
@@ -298,41 +253,36 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    tpl_id = _create_min_template(client, token, scheme_id, name="TEST-TPL-BASE")
-
     provinces = ["北京市", "天津市", "河北省"]
-    zone_name = "北京市、天津市、河北省"
+    group_name = "北京市、天津市、河北省"
 
-    zr = client.post(
-        f"/pricing-schemes/{scheme_id}/zones-atomic",
-        headers=h,
-        json={
-            "name": zone_name,
-            "priority": 100,
-            "active": True,
-            "provinces": provinces,
-            "segment_template_id": int(tpl_id),
-        },
-    )
-    assert zr.status_code == 201, zr.text
-    zone_id = int(zr.json()["id"])
-
-    brackets = [
+    matrix_rows = [
         {"min_kg": 0.0, "max_kg": 1.0, "pricing_mode": "flat", "flat_amount": 2.5, "active": True},
-        {"min_kg": 1.01, "max_kg": 2.0, "pricing_mode": "flat", "flat_amount": 3.8, "active": True},
-        {"min_kg": 2.01, "max_kg": 3.0, "pricing_mode": "flat", "flat_amount": 4.8, "active": True},
-        {"min_kg": 3.01, "max_kg": 30.0, "pricing_mode": "linear_total", "base_amount": 3.0, "rate_per_kg": 1.2, "active": True},
-        {"min_kg": 30.01, "max_kg": None, "pricing_mode": "linear_total", "base_amount": 3.0, "rate_per_kg": 1.5, "active": True},
+        {"min_kg": 1.0, "max_kg": 2.0, "pricing_mode": "flat", "flat_amount": 3.8, "active": True},
+        {"min_kg": 2.0, "max_kg": 3.0, "pricing_mode": "flat", "flat_amount": 4.8, "active": True},
+        {
+            "min_kg": 3.0,
+            "max_kg": 30.0,
+            "pricing_mode": "linear_total",
+            "base_amount": 3.0,
+            "rate_per_kg": 1.2,
+            "active": True,
+        },
+        {
+            "min_kg": 30.0,
+            "max_kg": None,
+            "pricing_mode": "linear_total",
+            "base_amount": 3.0,
+            "rate_per_kg": 1.5,
+            "active": True,
+        },
     ]
-    for b in brackets:
-        br = client.post(f"/zones/{zone_id}/brackets", headers=h, json=b)
-        assert br.status_code == 201, br.text
 
-    group_id = _mirror_legacy_bundle_to_level3(
+    group_id = _create_level3_bundle(
         scheme_id=scheme_id,
-        group_name=zone_name,
+        group_name=group_name,
         provinces=provinces,
-        brackets=brackets,
+        matrix_rows=matrix_rows,
     )
 
     sur = client.post(
@@ -353,16 +303,13 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     return {
         "provider_id": provider_id,
         "scheme_id": scheme_id,
-        "zone_id": zone_id,
-        "template_id": tpl_id,
         "group_id": group_id,
     }
 
 
 def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_id: int, *, name_suffix: str) -> Dict[str, int]:
     """
-    为指定 provider 创建一套最小可算的 scheme（用于推荐/候选集测试）。
-    同时镜像一套 level3 数据，用于 shadow compare 测试。
+    为指定 provider 创建一套最小可算的 Level-3 单轨 scheme（用于推荐/候选集测试）。
     """
     h = auth_headers(token)
     wid = pick_warehouse_id(client, token)
@@ -384,26 +331,10 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    tpl_id = _create_min_template(client, token, scheme_id, name=f"TEST-TPL-{name_suffix}")
-
     provinces = ["河北省"]
-    zone_name = f"河北省-TEST-{name_suffix}"
+    group_name = f"河北省-TEST-{name_suffix}"
 
-    zr = client.post(
-        f"/pricing-schemes/{scheme_id}/zones-atomic",
-        headers=h,
-        json={
-            "name": zone_name,
-            "priority": 100,
-            "active": True,
-            "provinces": provinces,
-            "segment_template_id": int(tpl_id),
-        },
-    )
-    assert zr.status_code == 201, zr.text
-    zone_id = int(zr.json()["id"])
-
-    brackets = [
+    matrix_rows = [
         {
             "min_kg": 0.0,
             "max_kg": None,
@@ -413,24 +344,16 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
             "active": True,
         }
     ]
-    br = client.post(
-        f"/zones/{zone_id}/brackets",
-        headers=h,
-        json=brackets[0],
-    )
-    assert br.status_code == 201, br.text
 
-    group_id = _mirror_legacy_bundle_to_level3(
+    group_id = _create_level3_bundle(
         scheme_id=scheme_id,
-        group_name=zone_name,
+        group_name=group_name,
         provinces=provinces,
-        brackets=brackets,
+        matrix_rows=matrix_rows,
     )
 
     return {
         "provider_id": provider_id,
         "scheme_id": scheme_id,
-        "zone_id": zone_id,
-        "template_id": tpl_id,
         "group_id": group_id,
     }

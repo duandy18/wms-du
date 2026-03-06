@@ -48,12 +48,16 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
     assert body["quote_status"] == "OK"
     assert body["weight"]["billable_weight_kg"] == 1.0
     assert body["breakdown"]["base"]["kind"] == "flat"
-    assert abs(float(body["breakdown"]["base"]["amount"]) - 2.5) < 1e-9
-    assert abs(float(body["total_amount"]) - 4.0) < 1e-9
+    assert abs(float(body["breakdown"]["base"]["amount"]) - 3.8) < 1e-9
+    assert abs(float(body["total_amount"]) - 5.3) < 1e-9
 
     reasons = body.get("reasons") or []
-    assert any("quote_engine: legacy" in x for x in reasons)
-    assert any("level3_compare: match" in x for x in reasons)
+    assert any("group_match:" in x for x in reasons)
+    assert any("matrix_match:" in x for x in reasons)
+    assert any("surcharge_hit:" in x for x in reasons)
+    assert any("total=" in x for x in reasons)
+    assert all("quote_engine:" not in x for x in reasons)
+    assert all("level3_compare" not in x for x in reasons)
 
 
 def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
@@ -87,11 +91,91 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
     assert abs(float(body["total_amount"]) - 9.3) < 1e-9
 
     reasons = body.get("reasons") or []
-    assert any("quote_engine: legacy" in x for x in reasons)
-    assert any("level3_compare: match" in x for x in reasons)
+    assert any("group_match:" in x for x in reasons)
+    assert any("matrix_match:" in x for x in reasons)
+    assert any("surcharge_hit:" in x for x in reasons)
+    assert any("total=" in x for x in reasons)
+    assert all("quote_engine:" not in x for x in reasons)
+    assert all("level3_compare" not in x for x in reasons)
 
 
-def test_shipping_quote_calc_returns_legacy_contract_shape_with_shadow_compare(client: TestClient) -> None:
+def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: TestClient) -> None:
+    token = login(client)
+    ids = create_scheme_bundle(client, token)
+    wid = pick_warehouse_id(client, token)
+
+    r = client.post(
+        "/shipping-quote/calc",
+        headers=auth_headers(token),
+        json={
+            "warehouse_id": wid,
+            "scheme_id": ids["scheme_id"],
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": "海淀区",
+                "province_code": "110000",
+                "city_code": "110100",
+            },
+            "real_weight_kg": 1.0,
+            "flags": [],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["quote_status"] == "OK"
+    assert body["weight"]["billable_weight_kg"] == 1.0
+    assert float(body["pricing_matrix"]["min_kg"]) == 1.0
+    assert float(body["pricing_matrix"]["max_kg"]) == 2.0
+    assert abs(float(body["breakdown"]["base"]["amount"]) - 3.8) < 1e-9
+    assert abs(float(body["total_amount"]) - 5.3) < 1e-9
+
+    reasons = body.get("reasons") or []
+    assert any("group_match:" in x for x in reasons)
+    assert any("matrix_match:" in x for x in reasons)
+    assert all("level3_compare" not in x for x in reasons)
+
+
+def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(client: TestClient) -> None:
+    token = login(client)
+    ids = create_scheme_bundle(client, token)
+    wid = pick_warehouse_id(client, token)
+
+    r = client.post(
+        "/shipping-quote/calc",
+        headers=auth_headers(token),
+        json={
+            "warehouse_id": wid,
+            "scheme_id": ids["scheme_id"],
+            "dest": {
+                "province": "北京市",
+                "city": "北京市",
+                "district": "海淀区",
+                "province_code": "110000",
+                "city_code": "110100",
+            },
+            "real_weight_kg": 30.0,
+            "flags": [],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["quote_status"] == "OK"
+    assert body["weight"]["billable_weight_kg"] == 30.0
+    assert float(body["pricing_matrix"]["min_kg"]) == 30.0
+    assert body["pricing_matrix"]["max_kg"] is None
+    assert abs(float(body["breakdown"]["base"]["amount"]) - 48.0) < 1e-9
+    assert abs(float(body["total_amount"]) - 49.5) < 1e-9
+
+    reasons = body.get("reasons") or []
+    assert any("group_match:" in x for x in reasons)
+    assert any("matrix_match:" in x for x in reasons)
+    assert all("level3_compare" not in x for x in reasons)
+
+
+def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -> None:
     token = login(client)
     ids = create_scheme_bundle(client, token)
     wid = pick_warehouse_id(client, token)
@@ -119,17 +203,17 @@ def test_shipping_quote_calc_returns_legacy_contract_shape_with_shadow_compare(c
     assert body["ok"] is True
     assert body["quote_status"] == "OK"
 
-    zone = body.get("zone")
-    assert isinstance(zone, dict)
-    assert "id" in zone
-    assert "name" in zone
-    assert zone.get("source") == "legacy"
+    destination_group = body.get("destination_group")
+    assert isinstance(destination_group, dict)
+    assert "id" in destination_group
+    assert "name" in destination_group
+    assert destination_group.get("source") == "level3"
 
-    bracket = body.get("bracket")
-    assert isinstance(bracket, dict)
-    assert "id" in bracket
-    assert "pricing_mode" in bracket
-    assert bracket.get("source") == "legacy"
+    pricing_matrix = body.get("pricing_matrix")
+    assert isinstance(pricing_matrix, dict)
+    assert "id" in pricing_matrix
+    assert "pricing_mode" in pricing_matrix
+    assert pricing_matrix.get("source") == "level3"
 
     breakdown = body.get("breakdown") or {}
     assert isinstance(breakdown.get("base"), dict)
@@ -137,7 +221,10 @@ def test_shipping_quote_calc_returns_legacy_contract_shape_with_shadow_compare(c
     assert isinstance((breakdown.get("summary") or {}), dict)
 
     reasons = body.get("reasons") or []
-    assert any("level3_compare:" in x for x in reasons)
+    assert any("group_match:" in x for x in reasons)
+    assert any("matrix_match:" in x for x in reasons)
+    assert all("quote_engine:" not in x for x in reasons)
+    assert all("level3_compare" not in x for x in reasons)
 
 
 def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> None:

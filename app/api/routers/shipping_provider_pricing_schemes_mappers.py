@@ -4,62 +4,74 @@ from __future__ import annotations
 from typing import List
 
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+    DestinationGroupMemberOut,
+    DestinationGroupOut,
+    PricingMatrixOut,
     SchemeOut,
     SchemeSegmentOut,
     SurchargeOut,
-    ZoneBracketOut,
-    ZoneMemberOut,
-    ZoneOut,
 )
+from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
+from app.models.shipping_provider_destination_group_member import (
+    ShippingProviderDestinationGroupMember,
+)
+from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
+from app.models.shipping_provider_pricing_scheme_segment import (
+    ShippingProviderPricingSchemeSegment,
+)
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
-from app.models.shipping_provider_zone import ShippingProviderZone
-from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
-from app.models.shipping_provider_zone_member import ShippingProviderZoneMember
 
 
-def to_member_out(m: ShippingProviderZoneMember) -> ZoneMemberOut:
-    return ZoneMemberOut(id=m.id, zone_id=m.zone_id, level=m.level, value=m.value)
-
-
-def to_bracket_out(b: ShippingProviderZoneBracket) -> ZoneBracketOut:
-    base_kg = getattr(b, "base_kg", None)
-    return ZoneBracketOut(
-        id=b.id,
-        zone_id=b.zone_id,
-        min_kg=b.min_kg,
-        max_kg=b.max_kg,
-        pricing_mode=b.pricing_mode,
-        flat_amount=b.flat_amount,
-        base_amount=b.base_amount,
-        rate_per_kg=b.rate_per_kg,
-        base_kg=base_kg,
-        active=bool(b.active),
+def to_destination_group_member_out(
+    m: ShippingProviderDestinationGroupMember,
+) -> DestinationGroupMemberOut:
+    return DestinationGroupMemberOut(
+        id=int(m.id),
+        group_id=int(m.group_id),
+        scope=str(m.scope),
+        province_code=getattr(m, "province_code", None),
+        city_code=getattr(m, "city_code", None),
+        province_name=getattr(m, "province_name", None),
+        city_name=getattr(m, "city_name", None),
     )
 
 
-def to_zone_out(
-    z: ShippingProviderZone,
-    members: List[ShippingProviderZoneMember],
-    brackets: List[ShippingProviderZoneBracket],
-) -> ZoneOut:
-    return ZoneOut(
-        id=z.id,
-        scheme_id=z.scheme_id,
-        name=z.name,
-        active=bool(z.active),
-        segment_template_id=getattr(z, "segment_template_id", None),
-        members=[to_member_out(x) for x in members],
-        brackets=[to_bracket_out(x) for x in brackets],
+def to_pricing_matrix_out(r: ShippingProviderPricingMatrix) -> PricingMatrixOut:
+    return PricingMatrixOut(
+        id=int(r.id),
+        group_id=int(r.group_id),
+        min_kg=r.min_kg,
+        max_kg=r.max_kg,
+        pricing_mode=str(r.pricing_mode),
+        flat_amount=getattr(r, "flat_amount", None),
+        base_amount=getattr(r, "base_amount", None),
+        rate_per_kg=getattr(r, "rate_per_kg", None),
+        base_kg=getattr(r, "base_kg", None),
+        active=bool(r.active),
+    )
+
+
+def to_destination_group_out(
+    g: ShippingProviderDestinationGroup,
+    members: List[ShippingProviderDestinationGroupMember],
+    pricing_matrix: List[ShippingProviderPricingMatrix],
+) -> DestinationGroupOut:
+    return DestinationGroupOut(
+        id=int(g.id),
+        scheme_id=int(g.scheme_id),
+        name=str(g.name),
+        active=bool(g.active),
+        members=[to_destination_group_member_out(x) for x in members],
+        pricing_matrix=[to_pricing_matrix_out(x) for x in pricing_matrix],
     )
 
 
 def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
     return SurchargeOut(
-        id=s.id,
-        scheme_id=s.scheme_id,
-        name=s.name,
+        id=int(s.id),
+        scheme_id=int(s.scheme_id),
+        name=str(s.name),
         active=bool(s.active),
         priority=int(getattr(s, "priority", 100) or 100),
         scope=str(getattr(s, "scope", "always") or "always"),
@@ -74,9 +86,9 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
 
 def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSegmentOut:
     return SchemeSegmentOut(
-        id=seg.id,
-        scheme_id=seg.scheme_id,
-        ord=seg.ord,
+        id=int(seg.id),
+        scheme_id=int(seg.scheme_id),
+        ord=int(seg.ord),
         min_kg=seg.min_kg,
         max_kg=seg.max_kg,
         active=bool(seg.active),
@@ -96,28 +108,27 @@ def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
 
 def to_scheme_out(
     sch: ShippingProviderPricingScheme,
-    zones: List[ZoneOut],
-    surcharges: List[SurchargeOut],
+    destination_groups: List[DestinationGroupOut] | None = None,
+    surcharges: List[SurchargeOut] | None = None,
 ) -> SchemeOut:
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
     segs = getattr(sch, "segments", None) or []
 
     return SchemeOut(
-        id=sch.id,
-        shipping_provider_id=sch.shipping_provider_id,
+        id=int(sch.id),
+        shipping_provider_id=int(sch.shipping_provider_id),
         shipping_provider_name=_must_get_shipping_provider_name(sch),
-        name=sch.name,
+        name=str(sch.name),
         active=bool(sch.active),
-        currency=sch.currency,
-        effective_from=sch.effective_from,
-        effective_to=sch.effective_to,
-        default_pricing_mode=dpm,
-        billable_weight_rule=sch.billable_weight_rule,
         archived_at=getattr(sch, "archived_at", None),
-        default_segment_template_id=getattr(sch, "default_segment_template_id", None),
+        currency=str(sch.currency),
+        effective_from=getattr(sch, "effective_from", None),
+        effective_to=getattr(sch, "effective_to", None),
+        default_pricing_mode=str(dpm),
+        billable_weight_rule=getattr(sch, "billable_weight_rule", None),
         segments_json=getattr(sch, "segments_json", None),
         segments_updated_at=getattr(sch, "segments_updated_at", None),
         segments=[to_scheme_segment_out(x) for x in segs],
-        zones=zones,
-        surcharges=surcharges,
+        destination_groups=destination_groups or [],
+        surcharges=surcharges or [],
     )
