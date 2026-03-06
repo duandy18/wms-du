@@ -70,18 +70,56 @@ def _build_min_payload_from_schema(spec: Dict[str, Any], schema: Dict[str, Any],
     return out
 
 
+async def _pick_warehouse_id(async_client, headers: Dict[str, str]) -> int:
+    r = await async_client.get("/warehouses", headers=headers)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    rows = data.get("data") if isinstance(data, dict) else data
+    assert isinstance(rows, list) and rows, f"no warehouses: {data}"
+    first = rows[0]
+    assert isinstance(first, dict) and "id" in first, f"unexpected warehouse item shape: {first}"
+    return int(first["id"])
+
+
+async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], warehouse_id: int, provider_id: int) -> None:
+    r = await async_client.post(
+        f"/warehouses/{int(warehouse_id)}/shipping-providers/bind",
+        headers=headers,
+        json={
+            "shipping_provider_id": int(provider_id),
+            "active": True,
+            "priority": 0,
+            "pickup_cutoff_time": "18:00",
+            "remark": "surcharge test bind",
+        },
+    )
+    assert r.status_code in (200, 201, 409), r.text
+    if r.status_code == 409:
+        pr = await async_client.patch(
+            f"/warehouses/{int(warehouse_id)}/shipping-providers/{int(provider_id)}",
+            headers=headers,
+            json={"active": True, "priority": 0},
+        )
+        assert pr.status_code == 200, pr.text
+
+
 async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
     """
     目标：拿到一个可用 scheme_id。
     优先复用已有 provider + scheme；不存在则通过 openapi 生成最小 payload 创建。
+    Route A：scheme 必须带 warehouse_id，且 provider 必须先在该仓启用。
     """
+    wid = await _pick_warehouse_id(async_client, headers)
+
     # 1) 先找 provider
     pr = await async_client.get("/shipping-providers", headers=headers)
     assert pr.status_code == 200, pr.text
-    providers = pr.json()
+    providers_body = pr.json()
+    providers = providers_body.get("data") if isinstance(providers_body, dict) else providers_body
+
     provider_id: Optional[int] = None
     if isinstance(providers, list) and providers:
-        pid = providers[0].get("id")
+        pid = providers[0].get("id") if isinstance(providers[0], dict) else None
         if isinstance(pid, int) and pid > 0:
             provider_id = pid
 
@@ -102,29 +140,37 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
         )
         seed = uuid4().hex[:8]
         payload = _build_min_payload_from_schema(spec, post_schema, seed=seed)
-        # 常见字段名兜底：name/code
+        # 常见字段名兜底：name/code + Route A 所需 warehouse_id
         payload.setdefault("name", f"UT_PROVIDER_{seed}")
         payload.setdefault("code", f"UTP{seed}".upper())
+        payload.setdefault("warehouse_id", int(wid))
 
         cr = await async_client.post("/shipping-providers", headers=headers, json=payload)
         assert cr.status_code in (200, 201), cr.text
         data = cr.json()
-        # 兼容 {id:..} / {data:{id:..}}
         pid = data.get("id") if isinstance(data, dict) else None
         if not isinstance(pid, int):
             pid = (data.get("data", {}) or {}).get("id") if isinstance(data, dict) else None
         assert isinstance(pid, int) and pid > 0, data
         provider_id = pid
 
-    # 3) 找 scheme
+    # Route A：provider 必须在该仓启用
+    await _bind_provider_to_warehouse(async_client, headers, int(wid), int(provider_id))
+
+    # 3) 找 scheme（只复用当前 warehouse 下的）
     sr = await async_client.get(f"/shipping-providers/{provider_id}/pricing-schemes", headers=headers)
     assert sr.status_code == 200, sr.text
-    schemes = sr.json()
+    schemes_body = sr.json()
+    schemes = schemes_body.get("data") if isinstance(schemes_body, dict) else schemes_body
+
     scheme_id: Optional[int] = None
     if isinstance(schemes, list) and schemes:
-        sid = schemes[0].get("id")
-        if isinstance(sid, int) and sid > 0:
-            scheme_id = sid
+        for item in schemes:
+            if isinstance(item, dict) and int(item.get("warehouse_id") or 0) == int(wid):
+                sid = item.get("id")
+                if isinstance(sid, int) and sid > 0:
+                    scheme_id = sid
+                    break
     if scheme_id is not None:
         return scheme_id
 
@@ -147,6 +193,8 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
     payload = _build_min_payload_from_schema(spec, post_schema, seed=seed)
     payload.setdefault("name", f"UT_SCHEME_{seed}")
     payload.setdefault("currency", "CNY")
+    payload.setdefault("warehouse_id", int(wid))
+    payload.setdefault("active", True)
 
     cr = await async_client.post(f"/shipping-providers/{provider_id}/pricing-schemes", headers=headers, json=payload)
     assert cr.status_code in (200, 201), cr.text
@@ -170,14 +218,25 @@ async def test_surcharge_upsert_city_then_province_conflict_409(client) -> None:
     r1 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
-        json={"scope": "city", "province": prov, "city": city, "amount": 2.0, "active": True},
+        json={
+            "scope": "city",
+            "province_name": prov,
+            "city_name": city,
+            "amount": 2.0,
+            "active": True,
+        },
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
-        json={"scope": "province", "province": prov, "amount": 1.0, "active": True},
+        json={
+            "scope": "province",
+            "province_name": prov,
+            "amount": 1.0,
+            "active": True,
+        },
     )
     assert r2.status_code == 409, r2.text
     assert "conflict" in r2.text.lower()
@@ -195,14 +254,25 @@ async def test_surcharge_upsert_province_then_city_conflict_409(client) -> None:
     r1 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
-        json={"scope": "province", "province": prov, "amount": 1.5, "active": True},
+        json={
+            "scope": "province",
+            "province_name": prov,
+            "amount": 1.5,
+            "active": True,
+        },
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
-        json={"scope": "city", "province": prov, "city": city, "amount": 2.5, "active": True},
+        json={
+            "scope": "city",
+            "province_name": prov,
+            "city_name": city,
+            "amount": 2.5,
+            "active": True,
+        },
     )
     assert r2.status_code == 409, r2.text
     assert "conflict" in r2.text.lower()

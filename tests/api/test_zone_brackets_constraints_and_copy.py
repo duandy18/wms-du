@@ -42,6 +42,38 @@ def _pick_template_id(data: dict) -> int:
     raise AssertionError(f"cannot resolve template_id from response: {data}")
 
 
+def _pick_warehouse_id(client: TestClient, token: str) -> int:
+    h = _auth_headers(token)
+    r = client.get("/warehouses", headers=h)
+    assert r.status_code == 200, r.text
+    rows = r.json()["data"]
+    assert rows, "no warehouses"
+    return int(rows[0]["id"])
+
+
+def _bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int, provider_id: int) -> None:
+    h = _auth_headers(token)
+    r = client.post(
+        f"/warehouses/{int(warehouse_id)}/shipping-providers/bind",
+        headers=h,
+        json={
+            "shipping_provider_id": int(provider_id),
+            "active": True,
+            "priority": 0,
+            "pickup_cutoff_time": "18:00",
+            "remark": "zone-brackets test bind",
+        },
+    )
+    assert r.status_code in (200, 201, 409), r.text
+    if r.status_code == 409:
+        pr = client.patch(
+            f"/warehouses/{int(warehouse_id)}/shipping-providers/{int(provider_id)}",
+            headers=h,
+            json={"active": True, "priority": 0},
+        )
+        assert pr.status_code == 200, pr.text
+
+
 def _publish_template(client: TestClient, token: str, template_id: int) -> None:
     h = _auth_headers(token)
     r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
@@ -89,10 +121,14 @@ def _create_scheme_zone(client: TestClient, token: str, zone_name: str, province
     assert pr.status_code == 200, pr.text
     provider_id = int(pr.json()["data"][0]["id"])
 
+    wid = _pick_warehouse_id(client, token)
+    _bind_provider_to_warehouse(client, token, wid, provider_id)
+
     sr = client.post(
         f"/shipping-providers/{provider_id}/pricing-schemes",
         headers=h,
         json={
+            "warehouse_id": int(wid),
             "name": f"TEST-COPY-{zone_name}",
             "active": True,
             "priority": 100,

@@ -2,9 +2,17 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, Optional
+from decimal import Decimal
+from typing import Dict, Iterable
 
 from fastapi.testclient import TestClient
+
+from app.db.session import SessionLocal
+from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
+from app.models.shipping_provider_destination_group_member import (
+    ShippingProviderDestinationGroupMember,
+)
+from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 
 
 def require_env() -> None:
@@ -66,37 +74,6 @@ def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int
         assert pr.status_code == 200, pr.text
 
 
-def bind_scheme_to_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
-    """
-    Phase 3/4 合同（测试用）：
-    - 单条绑定：POST /pricing-schemes/{scheme_id}/warehouses/bind
-    """
-    h = auth_headers(token)
-    r = client.post(
-        f"/pricing-schemes/{int(scheme_id)}/warehouses/bind",
-        headers=h,
-        json={"warehouse_id": int(warehouse_id), "active": True},
-    )
-    assert r.status_code in (200, 201), r.text
-
-
-def unbind_scheme_from_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
-    h = auth_headers(token)
-    r = client.delete(
-        f"/pricing-schemes/{int(scheme_id)}/warehouses/{int(warehouse_id)}",
-        headers=h,
-    )
-    assert r.status_code in (200, 204, 404), r.text
-
-
-def assert_scheme_bound_to_warehouse(client: TestClient, token: str, scheme_id: int, warehouse_id: int) -> None:
-    h = auth_headers(token)
-    r = client.get(f"/pricing-schemes/{int(scheme_id)}/warehouses", headers=h)
-    assert r.status_code == 200, r.text
-    data = r.json()["data"] or []
-    assert any(int(x["warehouse_id"]) == int(warehouse_id) and bool(x["active"]) is True for x in data), r.text
-
-
 def ensure_second_provider(client: TestClient, token: str) -> int:
     """
     Phase 6 刚性契约：
@@ -129,7 +106,6 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
 
 
 def _pick_template_id(data: dict) -> int:
-    # 兼容常见响应形态
     for k in ("id", "template_id", "segment_template_id"):
         if k in data and data[k] is not None:
             return int(data[k])
@@ -139,14 +115,12 @@ def _pick_template_id(data: dict) -> int:
 
 
 def _publish_template(client: TestClient, token: str, template_id: int) -> None:
-    # ✅ 新合同：Zone 绑定模板必须为 published
     h = auth_headers(token)
     r = client.post(f"/segment-templates/{int(template_id)}:publish", headers=h, json={})
     assert r.status_code in (200, 201), r.text
 
 
 def _put_min_items(client: TestClient, token: str, template_id: int) -> None:
-    # ✅ publish 需要 items>=1，且 items 连续；统一写入最小行结构
     h = auth_headers(token)
     r = client.put(
         f"/segment-templates/{int(template_id)}/items",
@@ -168,7 +142,6 @@ def _create_min_template(client: TestClient, token: str, scheme_id: int, name: s
     """
     h = auth_headers(token)
 
-    # create：不假设 create endpoint 能持久化 items
     r = client.post(
         f"/pricing-schemes/{scheme_id}/segment-templates",
         headers=h,
@@ -177,20 +150,130 @@ def _create_min_template(client: TestClient, token: str, scheme_id: int, name: s
     assert r.status_code in (200, 201), r.text
     tid = _pick_template_id(r.json())
 
-    # put items：满足 publish 校验
     _put_min_items(client, token, tid)
-
-    # publish：满足 zone bind 合同
     _publish_template(client, token, tid)
     return tid
+
+
+def _insert_level3_destination_group(
+    *,
+    scheme_id: int,
+    name: str,
+) -> int:
+    db = SessionLocal()
+    try:
+        row = ShippingProviderDestinationGroup(
+            scheme_id=int(scheme_id),
+            name=str(name),
+            active=True,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return int(row.id)
+    finally:
+        db.close()
+
+
+def _replace_level3_group_provinces(
+    *,
+    group_id: int,
+    provinces: Iterable[str],
+) -> None:
+    db = SessionLocal()
+    try:
+        db.query(ShippingProviderDestinationGroupMember).filter(
+            ShippingProviderDestinationGroupMember.group_id == int(group_id)
+        ).delete(synchronize_session=False)
+
+        rows = [
+            ShippingProviderDestinationGroupMember(
+                group_id=int(group_id),
+                scope="province",
+                province_name=str(p),
+            )
+            for p in provinces
+        ]
+        db.add_all(rows)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _insert_level3_pricing_matrix_row(
+    *,
+    group_id: int,
+    min_kg: float,
+    max_kg: float | None,
+    pricing_mode: str,
+    flat_amount: float | None = None,
+    base_amount: float | None = None,
+    rate_per_kg: float | None = None,
+    base_kg: float | None = None,
+    active: bool = True,
+) -> None:
+    db = SessionLocal()
+    try:
+        row = ShippingProviderPricingMatrix(
+            group_id=int(group_id),
+            min_kg=Decimal(str(min_kg)),
+            max_kg=(None if max_kg is None else Decimal(str(max_kg))),
+            pricing_mode=str(pricing_mode),
+            flat_amount=(None if flat_amount is None else Decimal(str(flat_amount))),
+            base_amount=(None if base_amount is None else Decimal(str(base_amount))),
+            rate_per_kg=(None if rate_per_kg is None else Decimal(str(rate_per_kg))),
+            base_kg=(None if base_kg is None else Decimal(str(base_kg))),
+            active=bool(active),
+        )
+        db.add(row)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _mirror_legacy_bundle_to_level3(
+    *,
+    scheme_id: int,
+    group_name: str,
+    provinces: list[str],
+    brackets: list[dict],
+) -> int:
+    """
+    为当前 Phase C 测试构造 level3 镜像数据：
+    legacy zone/members/brackets -> destination_group/members/matrix
+    """
+    group_id = _insert_level3_destination_group(
+        scheme_id=scheme_id,
+        name=group_name,
+    )
+    _replace_level3_group_provinces(
+        group_id=group_id,
+        provinces=provinces,
+    )
+    for b in brackets:
+        _insert_level3_pricing_matrix_row(
+            group_id=group_id,
+            min_kg=float(b["min_kg"]),
+            max_kg=(None if b["max_kg"] is None else float(b["max_kg"])),
+            pricing_mode=str(b["pricing_mode"]),
+            flat_amount=(None if b.get("flat_amount") is None else float(b["flat_amount"])),
+            base_amount=(None if b.get("base_amount") is None else float(b["base_amount"])),
+            rate_per_kg=(None if b.get("rate_per_kg") is None else float(b["rate_per_kg"])),
+            base_kg=(None if b.get("base_kg") is None else float(b["base_kg"])),
+            active=bool(b.get("active", True)),
+        )
+    return group_id
 
 
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     """
     创建一套最小可算的 scheme：
-    provider -> scheme -> segment_template(published) -> zone_atomic -> brackets + surcharge
+    provider -> scheme(warehouse scoped) -> segment_template(published) -> zone_atomic -> brackets + surcharge
+    同时镜像一套 level3 数据，用于 shadow compare 测试。
     """
     h = auth_headers(token)
+
+    wid = pick_warehouse_id(client, token)
 
     pr = client.get("/shipping-providers", headers=h)
     assert pr.status_code == 200, pr.text
@@ -198,10 +281,13 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert pdata, "no shipping providers"
     provider_id = int(pdata[0]["id"])
 
+    bind_provider_to_warehouse(client, token, wid, provider_id)
+
     sr = client.post(
         f"/shipping-providers/{provider_id}/pricing-schemes",
         headers=h,
         json={
+            "warehouse_id": int(wid),
             "name": "TEST-PRICING-SCHEME",
             "active": True,
             "priority": 100,
@@ -212,32 +298,42 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    # ✅ 新合同：Zone 必绑模板（published）
     tpl_id = _create_min_template(client, token, scheme_id, name="TEST-TPL-BASE")
+
+    provinces = ["北京市", "天津市", "河北省"]
+    zone_name = "北京市、天津市、河北省"
 
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
         json={
-            "name": "北京市、天津市、河北省",
+            "name": zone_name,
             "priority": 100,
             "active": True,
-            "provinces": ["北京市", "天津市", "河北省"],
+            "provinces": provinces,
             "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
     zone_id = int(zr.json()["id"])
 
-    for b in [
+    brackets = [
         {"min_kg": 0.0, "max_kg": 1.0, "pricing_mode": "flat", "flat_amount": 2.5, "active": True},
         {"min_kg": 1.01, "max_kg": 2.0, "pricing_mode": "flat", "flat_amount": 3.8, "active": True},
         {"min_kg": 2.01, "max_kg": 3.0, "pricing_mode": "flat", "flat_amount": 4.8, "active": True},
         {"min_kg": 3.01, "max_kg": 30.0, "pricing_mode": "linear_total", "base_amount": 3.0, "rate_per_kg": 1.2, "active": True},
         {"min_kg": 30.01, "max_kg": None, "pricing_mode": "linear_total", "base_amount": 3.0, "rate_per_kg": 1.5, "active": True},
-    ]:
+    ]
+    for b in brackets:
         br = client.post(f"/zones/{zone_id}/brackets", headers=h, json=b)
         assert br.status_code == 201, br.text
+
+    group_id = _mirror_legacy_bundle_to_level3(
+        scheme_id=scheme_id,
+        group_name=zone_name,
+        provinces=provinces,
+        brackets=brackets,
+    )
 
     sur = client.post(
         f"/pricing-schemes/{scheme_id}/surcharges",
@@ -246,25 +342,38 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
             "name": "目的地附加费-北京市",
             "priority": 100,
             "active": True,
-            "condition_json": {"dest": {"province": ["北京市"]}},
-            "amount_json": {"kind": "flat", "amount": 1.5},
+            "stackable": True,
+            "scope": "province",
+            "province_name": "北京市",
+            "fixed_amount": 1.5,
         },
     )
     assert sur.status_code == 201, sur.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
+    return {
+        "provider_id": provider_id,
+        "scheme_id": scheme_id,
+        "zone_id": zone_id,
+        "template_id": tpl_id,
+        "group_id": group_id,
+    }
 
 
 def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_id: int, *, name_suffix: str) -> Dict[str, int]:
     """
     为指定 provider 创建一套最小可算的 scheme（用于推荐/候选集测试）。
+    同时镜像一套 level3 数据，用于 shadow compare 测试。
     """
     h = auth_headers(token)
+    wid = pick_warehouse_id(client, token)
+
+    bind_provider_to_warehouse(client, token, wid, provider_id)
 
     sr = client.post(
         f"/shipping-providers/{provider_id}/pricing-schemes",
         headers=h,
         json={
+            "warehouse_id": int(wid),
             "name": f"TEST-PRICING-SCHEME-{name_suffix}",
             "active": True,
             "priority": 100,
@@ -275,35 +384,53 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    # ✅ 新合同：Zone 必绑模板（published）
     tpl_id = _create_min_template(client, token, scheme_id, name=f"TEST-TPL-{name_suffix}")
+
+    provinces = ["河北省"]
+    zone_name = f"河北省-TEST-{name_suffix}"
 
     zr = client.post(
         f"/pricing-schemes/{scheme_id}/zones-atomic",
         headers=h,
         json={
-            "name": f"河北省-TEST-{name_suffix}",
+            "name": zone_name,
             "priority": 100,
             "active": True,
-            "provinces": ["河北省"],
+            "provinces": provinces,
             "segment_template_id": int(tpl_id),
         },
     )
     assert zr.status_code == 201, zr.text
     zone_id = int(zr.json()["id"])
 
-    br = client.post(
-        f"/zones/{zone_id}/brackets",
-        headers=h,
-        json={
+    brackets = [
+        {
             "min_kg": 0.0,
             "max_kg": None,
             "pricing_mode": "linear_total",
             "base_amount": 8.0,
             "rate_per_kg": 2.0,
             "active": True,
-        },
+        }
+    ]
+    br = client.post(
+        f"/zones/{zone_id}/brackets",
+        headers=h,
+        json=brackets[0],
     )
     assert br.status_code == 201, br.text
 
-    return {"provider_id": provider_id, "scheme_id": scheme_id, "zone_id": zone_id, "template_id": tpl_id}
+    group_id = _mirror_legacy_bundle_to_level3(
+        scheme_id=scheme_id,
+        group_name=zone_name,
+        provinces=provinces,
+        brackets=brackets,
+    )
+
+    return {
+        "provider_id": provider_id,
+        "scheme_id": scheme_id,
+        "zone_id": zone_id,
+        "template_id": tpl_id,
+        "group_id": group_id,
+    }

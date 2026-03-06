@@ -6,7 +6,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_warehouse import ShippingProviderPricingSchemeWarehouse
 
 
 def scheme_is_effective(sch: ShippingProviderPricingScheme, now: datetime) -> bool:
@@ -21,17 +20,29 @@ def scheme_is_effective(sch: ShippingProviderPricingScheme, now: datetime) -> bo
 
 def check_scheme_warehouse_allowed(db: Session, scheme_id: int, warehouse_id: int) -> None:
     """
-    Phase 4.x 合同：scheme 必须显式绑定起运仓，且绑定 active=true 才允许算价。
+    Route A 合同（硬仓库边界）：
+    - scheme 的作用域 = warehouse × provider（shipping_provider_pricing_schemes.warehouse_id）
+    - 因此不再存在 scheme_warehouses 绑定表，也不允许通过“绑定行 active”做第二套开关。
+
+    允许条件（严格）：
+    - scheme.id == scheme_id
+    - scheme.warehouse_id == warehouse_id
+    - scheme.active == true
+    - scheme.archived_at IS NULL（已归档不应参与算价）
     """
-    row = (
-        db.query(ShippingProviderPricingSchemeWarehouse)
-        .filter(
-            ShippingProviderPricingSchemeWarehouse.scheme_id == int(scheme_id),
-            ShippingProviderPricingSchemeWarehouse.warehouse_id == int(warehouse_id),
-        )
+    sch = (
+        db.query(ShippingProviderPricingScheme)
+        .filter(ShippingProviderPricingScheme.id == int(scheme_id))
         .first()
     )
-    if not row:
-        raise ValueError("scheme not allowed for warehouse (missing scheme-warehouse binding)")
-    if not bool(row.active):
-        raise ValueError("scheme warehouse binding inactive")
+    if not sch:
+        raise ValueError("scheme not found")
+
+    if int(getattr(sch, "warehouse_id")) != int(warehouse_id):
+        raise ValueError("scheme not allowed for warehouse (warehouse mismatch)")
+
+    if not bool(sch.active):
+        raise ValueError("scheme inactive")
+
+    if getattr(sch, "archived_at", None) is not None:
+        raise ValueError("scheme archived")

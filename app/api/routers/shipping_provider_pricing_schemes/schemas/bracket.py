@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -22,9 +22,6 @@ class ZoneBracketOut(BaseModel):
 
     # step_over: 首重（kg）
     base_kg: Optional[Decimal] = None
-
-    # Mirror field (DB enforced): always present for UI/diagnostics
-    price_json: Dict[str, Any] = Field(default_factory=dict)
 
     active: bool
 

@@ -8,44 +8,34 @@ from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 from .types import Dest
 
 
-def extract_dest_scope_key(condition_json: dict) -> tuple[str, str, str | None] | None:
+def _province_key(s: ShippingProviderSurcharge) -> str:
+    return str(getattr(s, "province_code", None) or getattr(s, "province_name", None) or "").strip()
+
+
+def _city_key(s: ShippingProviderSurcharge) -> str:
+    return str(getattr(s, "city_code", None) or getattr(s, "city_name", None) or "").strip()
+
+
+def extract_dest_scope_key(s: ShippingProviderSurcharge) -> tuple[str, str, str | None] | None:
     """
-    用于算价阶段的“同省 city 优先 / province 退让”。
-    识别新结构（优先）与旧结构（列表长度=1）。
-
-    返回：(scope, province, city?)
+    结构化 key：
+    - province -> (province, province_key, None)
+    - city     -> (city, province_key, city_key)
+    - always   -> None
     """
-    if not isinstance(condition_json, dict):
-        return None
-    dest = condition_json.get("dest")
-    if not isinstance(dest, dict):
-        return None
-
-    scope = dest.get("scope")
-    prov = dest.get("province")
-    city = dest.get("city")
-
-    # 新结构
-    if isinstance(scope, str) and scope.strip().lower() in ("province", "city"):
-        sc = scope.strip().lower()
-        if not (isinstance(prov, str) and prov.strip()):
+    scope = str(getattr(s, "scope", "") or "").strip().lower()
+    if scope == "province":
+        pk = _province_key(s)
+        if not pk:
             return None
-        pv = prov.strip()
-        if sc == "province":
-            return ("province", pv, None)
-        if isinstance(city, str) and city.strip():
-            return ("city", pv, city.strip())
-        return None
+        return ("province", pk, None)
 
-    # 旧结构（列表长度=1）
-    provs = dest.get("province")
-    cities = dest.get("city")
-    if isinstance(provs, list) and len(provs) == 1 and isinstance(provs[0], str) and provs[0].strip():
-        pv = provs[0].strip()
-        if isinstance(cities, list) and len(cities) == 1 and isinstance(cities[0], str) and cities[0].strip():
-            return ("city", pv, cities[0].strip())
-        if cities is None or (isinstance(cities, list) and len(cities) == 0):
-            return ("province", pv, None)
+    if scope == "city":
+        pk = _province_key(s)
+        ck = _city_key(s)
+        if not pk or not ck:
+            return None
+        return ("city", pk, ck)
 
     return None
 
@@ -58,16 +48,18 @@ def select_surcharges_city_wins(
 ) -> List[ShippingProviderSurcharge]:
     """
     规则：
-    - 允许叠加（flag_any 等不带 dest key 的规则全部保留）
-    - 对 dest scope 规则：同省如果命中任何 city，则丢弃该省命中的 province
-    - 同 key 重复：只取 id 最小的一个，其余记录 reason 并忽略
+    - always 保留
+    - 同省 city 命中时，province 被抑制
+    - 同 key 重复时，priority 小者优先，再按 id 小者优先
     """
+    _ = dest  # 当前无需直接读取，保留签名
+
     hit_city_provinces: set[str] = set()
     keyed: List[tuple[ShippingProviderSurcharge, tuple[str, str, str | None]]] = []
     unkeyed: List[ShippingProviderSurcharge] = []
 
     for s in matched:
-        k = extract_dest_scope_key(s.condition_json or {})
+        k = extract_dest_scope_key(s)
         if not k:
             unkeyed.append(s)
             continue
@@ -75,15 +67,19 @@ def select_surcharges_city_wins(
         if k[0] == "city":
             hit_city_provinces.add(k[1])
 
-    # 去重：同 key 取 id 最小的一个
     seen_key: dict[tuple[str, str, str | None], ShippingProviderSurcharge] = {}
     dup_ignored: List[ShippingProviderSurcharge] = []
+
     for s, k in keyed:
         prev = seen_key.get(k)
         if prev is None:
             seen_key[k] = s
             continue
-        if int(s.id) < int(prev.id):
+
+        s_pri = int(getattr(s, "priority", 100) or 100)
+        p_pri = int(getattr(prev, "priority", 100) or 100)
+
+        if (s_pri, int(s.id)) < (p_pri, int(prev.id)):
             dup_ignored.append(prev)
             seen_key[k] = s
         else:
@@ -103,6 +99,6 @@ def select_surcharges_city_wins(
         chosen_keyed.append(s)
 
     final_surcharges: List[ShippingProviderSurcharge] = []
-    final_surcharges.extend(unkeyed)
-    final_surcharges.extend(sorted(chosen_keyed, key=lambda x: int(x.id)))
+    final_surcharges.extend(sorted(unkeyed, key=lambda x: (int(getattr(x, "priority", 100) or 100), int(x.id))))
+    final_surcharges.extend(sorted(chosen_keyed, key=lambda x: (int(getattr(x, "priority", 100) or 100), int(x.id))))
     return final_surcharges

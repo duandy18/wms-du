@@ -31,9 +31,9 @@ def recommend_quotes(
       1) 候选承运商必须来自 warehouse_shipping_providers（wsp.active=true 且 sp.active=true）
          - 如果同时提供 provider_ids：取交集（sp.id in provider_ids）
          - 若该仓无可用承运商，则返回空 quotes（不回退全局）
-      2) 候选方案必须来自 shipping_provider_pricing_scheme_warehouses
-         - spsw.warehouse_id = warehouse_id AND spsw.active=true
-         - scheme.active=true 且 effective
+      2) 候选方案必须来自 shipping_provider_pricing_schemes（硬仓库边界）
+         - sch.warehouse_id = warehouse_id
+         - sch.active=true 且 effective
          - 不允许 fallback 到“该 provider 的全局方案”
       3) 对每个候选 scheme 的 calc 必须携带 warehouse_id（合同强前置）
     - 若未提供 warehouse_id：
@@ -127,12 +127,9 @@ def recommend_quotes(
                 """
                 SELECT sch.*
                 FROM shipping_provider_pricing_schemes AS sch
-                JOIN shipping_provider_pricing_scheme_warehouses AS spsw
-                  ON spsw.scheme_id = sch.id
                 WHERE sch.shipping_provider_id = :pid
+                  AND sch.warehouse_id = :wid
                   AND sch.active = true
-                  AND spsw.warehouse_id = :wid
-                  AND spsw.active = true
                 ORDER BY sch.id ASC
                 """
             )

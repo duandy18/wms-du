@@ -4,10 +4,10 @@
 -- - 幂等：以 shipping_providers.code 作为幂等键（uq_shipping_providers_code）
 -- - 最小：1 provider / 1 scheme / 1 zone / 2 brackets
 --
--- ✅ 最新合同：
--- - shipping_providers 不再有 warehouse_id（网点实体，M:N 绑定在 warehouse_shipping_providers）
+-- ✅ 最新合同（路线 A）：
+-- - scheme 作用域 = warehouse × provider（shipping_provider_pricing_schemes.warehouse_id）
 -- - 仓库启用关系：warehouse_shipping_providers(warehouse_id, shipping_provider_id)
--- - scheme 适用仓：shipping_provider_pricing_scheme_warehouses(scheme_id, warehouse_id)
+-- - 不再存在 shipping_provider_pricing_scheme_warehouses
 
 -- 0) 关键：修正序列，避免 nextval 撞主键
 -- 注意：序列最小值通常为 1，空表时不可 setval 到 0。
@@ -68,18 +68,20 @@ wsp AS (
   RETURNING warehouse_id, shipping_provider_id
 ),
 
--- 3) scheme（挂在 provider 下）
+-- 3) scheme（硬仓库边界：warehouse_id 在 scheme 上）
 sch AS (
   INSERT INTO shipping_provider_pricing_schemes (
+    warehouse_id,
     shipping_provider_id,
     name,
     active
   )
   SELECT
+    wh.id,
     sp2.id,
     'UT-SCHEME-1',
     TRUE
-  FROM sp2
+  FROM wh, sp2
   LIMIT 1
   ON CONFLICT DO NOTHING
   RETURNING id
@@ -90,21 +92,12 @@ sch2 AS (
   SELECT s.id
   FROM shipping_provider_pricing_schemes s
   JOIN sp2 ON s.shipping_provider_id = sp2.id
+  JOIN wh ON s.warehouse_id = wh.id
   WHERE s.name='UT-SCHEME-1'
   LIMIT 1
 ),
 
--- 4) scheme 适用仓绑定（ship_confirm 校验会用）
-spsw AS (
-  INSERT INTO shipping_provider_pricing_scheme_warehouses (scheme_id, warehouse_id, active)
-  SELECT sch2.id, wh.id, TRUE
-  FROM sch2, wh
-  ON CONFLICT (scheme_id, warehouse_id) DO UPDATE SET
-    active = EXCLUDED.active
-  RETURNING scheme_id, warehouse_id
-),
-
--- 5) zone（挂在 scheme 下）
+-- 4) zone（挂在 scheme 下）
 zn AS (
   INSERT INTO shipping_provider_zones (scheme_id, name, active)
   SELECT id, 'UT-ZONE-1', TRUE FROM sch2 LIMIT 1
@@ -121,7 +114,7 @@ zn2 AS (
   LIMIT 1
 )
 
--- 6) brackets（挂在 zone 下，至少 2 条）
+-- 5) brackets（挂在 zone 下，至少 2 条）
 INSERT INTO shipping_provider_zone_brackets (
   zone_id,
   min_kg,

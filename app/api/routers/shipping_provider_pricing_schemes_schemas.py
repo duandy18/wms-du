@@ -42,10 +42,6 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (  # noqa:
     SurchargeOut,
     SurchargeCreateIn,
     SurchargeUpdateIn,
-    # dest adjustment (structured destination facts)
-    DestAdjustmentOut,
-    DestAdjustmentUpsertIn,
-    DestAdjustmentUpdateIn,
     # scheme
     SchemeOut,
     SchemeSegmentOut,
@@ -91,10 +87,6 @@ __all__ = [
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
-    # dest adjustment
-    "DestAdjustmentOut",
-    "DestAdjustmentUpsertIn",
-    "DestAdjustmentUpdateIn",
     # scheme
     "SchemeOut",
     "SchemeSegmentOut",

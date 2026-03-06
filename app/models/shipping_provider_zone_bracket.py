@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, func
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -48,10 +47,6 @@ class ShippingProviderZoneBracket(Base):
 
     # step_over：首重（kg）
     base_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3), nullable=True)
-
-    # Mirror field (DB enforced): jsonb NOT NULL
-    # - maintained by trigger: trg_spzb_sync_price_json / spzb_sync_price_json()
-    price_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
