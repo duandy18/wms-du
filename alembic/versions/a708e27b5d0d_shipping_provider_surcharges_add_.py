@@ -82,7 +82,6 @@ def upgrade() -> None:
     has_condition_json = "condition_json" in cols
     has_amount_json = "amount_json" in cols
     has_condition_kind = "condition_kind" in cols
-    has_amount_kind = "amount_kind" in cols
     has_name = "name" in cols
 
     # ------------------------------------------------------------
