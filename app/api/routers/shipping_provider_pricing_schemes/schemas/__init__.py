@@ -1,15 +1,6 @@
-# app/api/routers/shipping_provider_pricing_schemes/schemas/__init__.py
-
 from .common import WeightSegmentIn, ZoneMemberOut
-from .bracket import ZoneBracketOut, ZoneBracketCreateIn, ZoneBracketUpdateIn
-from .zone import (
-    ZoneOut,
-    ZoneCreateIn,
-    ZoneUpdateIn,
-    ZoneCreateAtomicIn,
-    ZoneMemberCreateIn,
-    ZoneProvinceMembersReplaceIn,
-)
+from .pricing_matrix import PricingMatrixOut, PricingMatrixCreateIn, PricingMatrixUpdateIn
+from .destination_group import DestinationGroupMemberOut, DestinationGroupOut
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
 from .scheme import (
     SchemeOut,
@@ -19,59 +10,22 @@ from .scheme import (
     SchemeCreateIn,
     SchemeUpdateIn,
 )
-from .segment_template import (
-    SegmentTemplateOut,
-    SegmentTemplateItemOut,
-    SegmentTemplateItemIn,
-    SegmentTemplateListOut,
-    SegmentTemplateDetailOut,
-    SegmentTemplateCreateIn,
-    SegmentTemplateItemsPutIn,
-    SegmentTemplateItemActivePatchIn,
-)
-from .zone_brackets_matrix import (
-    ZoneBracketsMatrixOut,
-    ZoneBracketsMatrixGroupOut,
-    SegmentRangeOut,
-)
 
 __all__ = [
-    # common
     "WeightSegmentIn",
     "ZoneMemberOut",
-    # bracket
-    "ZoneBracketOut",
-    "ZoneBracketCreateIn",
-    "ZoneBracketUpdateIn",
-    # zone
-    "ZoneOut",
-    "ZoneCreateIn",
-    "ZoneUpdateIn",
-    "ZoneCreateAtomicIn",
-    "ZoneMemberCreateIn",
-    "ZoneProvinceMembersReplaceIn",
-    # surcharge
+    "PricingMatrixOut",
+    "PricingMatrixCreateIn",
+    "PricingMatrixUpdateIn",
+    "DestinationGroupMemberOut",
+    "DestinationGroupOut",
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
-    # scheme
     "SchemeOut",
     "SchemeSegmentOut",
     "SchemeListOut",
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
-    # segment templates
-    "SegmentTemplateOut",
-    "SegmentTemplateItemOut",
-    "SegmentTemplateItemIn",
-    "SegmentTemplateListOut",
-    "SegmentTemplateDetailOut",
-    "SegmentTemplateCreateIn",
-    "SegmentTemplateItemsPutIn",
-    "SegmentTemplateItemActivePatchIn",
-    # zone brackets matrix
-    "ZoneBracketsMatrixOut",
-    "ZoneBracketsMatrixGroupOut",
-    "SegmentRangeOut",
 ]

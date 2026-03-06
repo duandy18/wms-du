@@ -3,19 +3,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import active_schemes, cleanup, fix_archive_release, fix_detach_brackets, fix_one_click, fix_unbind_archived_templates, report
+from . import active_schemes, cleanup
 
 router = APIRouter(tags=["ops - pricing-integrity"])
 
-# 按“选 → 读 → 修 → 一键 → 清理”注册，便于运维使用
+# 终态：
+# - zone / bracket / archive-release / one-click 等旧运维动作已移除
+# - 仅保留：
+#   1) active_schemes：辅助运维挑选方案
+#   2) cleanup：清理空壳/无效 pricing schemes
 active_schemes.register(router)
-
-report.register(router)
-
-fix_archive_release.register(router)
-fix_detach_brackets.register(router)
-fix_unbind_archived_templates.register(router)
-
-fix_one_click.register(router)
-
 cleanup.register(router)

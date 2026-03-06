@@ -59,15 +59,12 @@ OBJECTS=(
   warehouse_shipping_providers
   shipping_provider_contacts
 
-  # shipping pricing (audit first; no over-abstraction)
+  # shipping pricing（终态主线）
   shipping_provider_pricing_schemes
-  shipping_provider_pricing_scheme_warehouses
   shipping_provider_pricing_scheme_segments
-  shipping_provider_pricing_scheme_segment_templates
-  shipping_provider_pricing_scheme_segment_template_items
-  shipping_provider_zones
-  shipping_provider_zone_members
-  shipping_provider_zone_brackets
+  shipping_provider_destination_groups
+  shipping_provider_destination_group_members
+  shipping_provider_pricing_matrix
   shipping_provider_surcharges
 
   # ----------------------------------------------------------
@@ -111,17 +108,11 @@ OBJECTS=(
   vw_outbound_metrics
 )
 
-# -------------------------
-# 0) 基础信息
-# -------------------------
 psql_cmd -Atc "SELECT version();" > "$OUT_DIR/$TS/00_pg_version.txt"
 psql_cmd -Atc "SHOW server_version;" > "$OUT_DIR/$TS/00_server_version.txt"
 psql_cmd -Atc "SHOW search_path;" > "$OUT_DIR/$TS/00_search_path.txt"
 psql_cmd -Atc "SELECT current_database(), current_user;" > "$OUT_DIR/$TS/00_whoami.txt"
 
-# -------------------------
-# 0.1) 过滤不存在对象（表/视图/物化视图/分区父表）
-# -------------------------
 REQ_FILE="$OUT_DIR/$TS/00_objects_requested.txt"
 printf "%s\n" "${OBJECTS[@]}" > "$REQ_FILE"
 
@@ -156,9 +147,6 @@ fi
 
 EXIST_SQL_LIST="$(printf "'%s'," "${OBJECTS[@]}" | sed 's/,$//')"
 
-# -------------------------
-# 1) \d+ 结构（表/视图都支持）
-# -------------------------
 {
   echo "\\x on"
   for o in "${OBJECTS[@]}"; do
@@ -168,9 +156,6 @@ EXIST_SQL_LIST="$(printf "'%s'," "${OBJECTS[@]}" | sed 's/,$//')"
   done
 } | psql_cmd > "$OUT_DIR/$TS/01_describe_d_plus.txt"
 
-# -------------------------
-# 2) 约束（仅表/分区父表：relkind r/p）
-# -------------------------
 psql_cmd -c "
 WITH target AS (
   SELECT c.oid, c.relname
@@ -190,9 +175,6 @@ WHERE conrelid IN (SELECT oid FROM target)
 ORDER BY conrelid::regclass::text, contype, conname;
 " > "$OUT_DIR/$TS/02_constraints.txt"
 
-# -------------------------
-# 3) 索引（仅表/分区父表）
-# -------------------------
 psql_cmd -c "
 SELECT
   tablename,
@@ -204,9 +186,6 @@ WHERE schemaname='public'
 ORDER BY tablename, indexname;
 " > "$OUT_DIR/$TS/03_indexes.txt"
 
-# -------------------------
-# 4) 外键（正向 / 反向）（仅表）
-# -------------------------
 psql_cmd -c "
 SELECT
   tc.table_name,
@@ -247,9 +226,6 @@ WHERE tc.constraint_type = 'FOREIGN KEY'
 ORDER BY referenced_table, referencing_table, tc.constraint_name, kcu.ordinal_position;
 " > "$OUT_DIR/$TS/04b_fks_inbound.txt"
 
-# -------------------------
-# 5) 列信息（仅表/视图都可查）
-# -------------------------
 psql_cmd -c "
 SELECT
   table_name,
@@ -265,9 +241,6 @@ WHERE table_schema='public'
 ORDER BY table_name, ordinal_position;
 " > "$OUT_DIR/$TS/05_columns.txt"
 
-# -------------------------
-# 6) 枚举
-# -------------------------
 psql_cmd -c "
 SELECT t.typname AS enum_type, e.enumlabel AS enum_label, e.enumsortorder
 FROM pg_type t
@@ -275,9 +248,6 @@ JOIN pg_enum e ON t.oid = e.enumtypid
 ORDER BY t.typname, e.enumsortorder;
 " > "$OUT_DIR/$TS/06_enums.txt"
 
-# -------------------------
-# 7) 触发器（仅表）
-# -------------------------
 psql_cmd -c "
 SELECT
   tgrelid::regclass AS table_name,
@@ -289,9 +259,6 @@ WHERE NOT t.tgisinternal
 ORDER BY tgrelid::regclass::text, tgname;
 " > "$OUT_DIR/$TS/07_triggers.txt"
 
-# -------------------------
-# 8) 视图定义（仅 views）
-# -------------------------
 psql_cmd -c "
 SELECT table_name, view_definition
 FROM information_schema.views
@@ -299,9 +266,6 @@ WHERE table_schema='public'
 ORDER BY table_name;
 " > "$OUT_DIR/$TS/08_views.txt"
 
-# -------------------------
-# 9) README
-# -------------------------
 {
   echo "DSN=$DSN"
   echo "TIME=$TS"

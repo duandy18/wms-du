@@ -10,26 +10,27 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
+from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
+from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_segment_template import ShippingProviderPricingSchemeSegmentTemplate
+from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
-from app.models.shipping_provider_zone import ShippingProviderZone
-
-# 这些表你在 SQL 里已经用过，说明项目里存在
-from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment  # type: ignore
-from app.models.shipping_provider_pricing_scheme_segment_template_item import (
-    ShippingProviderPricingSchemeSegmentTemplateItem,
-)
 
 
 class ShellSchemeRow(BaseModel):
     scheme_id: int
     name: str
     active: bool
-    tpl_n: int = 0
+
+    # 终态主线统计
+    group_n: int = 0
+    matrix_n: int = 0
     surcharge_n: int = 0
     seg_n: int = 0
     wh_n: int = 0
+
+    # 兼容字段：保留输出结构稳定，但已固定为 0
+    tpl_n: int = 0
     zone_n: int = 0
 
 
@@ -45,24 +46,36 @@ class CleanupShellSchemesOut(BaseModel):
 
 def _counts_for_scheme(db: Session, scheme_id: int) -> Tuple[int, int, int, int, int]:
     """
-    Route A 说明（硬仓库边界）：
-    - 旧结构：scheme × warehouses 绑定表（shipping_provider_pricing_scheme_warehouses）
-    - 新结构：scheme 自带 warehouse_id（shipping_provider_pricing_schemes.warehouse_id）
-
-    因此这里不再统计 wh_n（绑定行数量）；保留字段 wh_n=0 只是为了输出结构稳定。
+    终态主线（硬仓库边界）：
+    - scheme 自带 warehouse_id，不再统计绑定行
+    - 主线实体：destination_groups / pricing_matrix / surcharges / segments
     """
-    tpl_n = db.query(ShippingProviderPricingSchemeSegmentTemplate.id).filter(
-        ShippingProviderPricingSchemeSegmentTemplate.scheme_id == scheme_id
-    ).count()
-    surcharge_n = db.query(ShippingProviderSurcharge.id).filter(ShippingProviderSurcharge.scheme_id == scheme_id).count()
+    group_n = (
+        db.query(ShippingProviderDestinationGroup.id)
+        .filter(ShippingProviderDestinationGroup.scheme_id == scheme_id)
+        .count()
+    )
+    matrix_n = (
+        db.query(ShippingProviderPricingMatrix.id)
+        .join(
+            ShippingProviderDestinationGroup,
+            ShippingProviderDestinationGroup.id == ShippingProviderPricingMatrix.group_id,
+        )
+        .filter(ShippingProviderDestinationGroup.scheme_id == scheme_id)
+        .count()
+    )
+    surcharge_n = (
+        db.query(ShippingProviderSurcharge.id)
+        .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
+        .count()
+    )
     seg_n = (
         db.query(ShippingProviderPricingSchemeSegment.id)
         .filter(ShippingProviderPricingSchemeSegment.scheme_id == scheme_id)
         .count()
     )
-    wh_n = 0  # Route A：warehouse 绑定在 schemes.warehouse_id，不再有绑定行
-    zone_n = db.query(ShippingProviderZone.id).filter(ShippingProviderZone.scheme_id == scheme_id).count()
-    return tpl_n, surcharge_n, seg_n, wh_n, zone_n
+    wh_n = 0
+    return group_n, matrix_n, surcharge_n, seg_n, wh_n
 
 
 def register(router: APIRouter) -> None:
@@ -78,10 +91,8 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        # 运维动作：用写权限挡住误操作
         check_perm(db, user, "config.store.write")
 
-        # 只扫 inactive（避免误伤活跃方案）
         schemes = (
             db.query(ShippingProviderPricingScheme)
             .filter(ShippingProviderPricingScheme.active.is_(False))
@@ -92,11 +103,10 @@ def register(router: APIRouter) -> None:
 
         candidates: List[ShellSchemeRow] = []
         for s in schemes:
-            tpl_n, surcharge_n, seg_n, wh_n, zone_n = _counts_for_scheme(db, int(s.id))
+            group_n, matrix_n, surcharge_n, seg_n, wh_n = _counts_for_scheme(db, int(s.id))
 
-            # Route A：wh_n 固定为 0（绑定行已不存在）
-            is_shell = (tpl_n == 0 and seg_n == 0 and zone_n == 0 and surcharge_n == 0)
-            is_surcharge_only = (tpl_n == 0 and seg_n == 0 and zone_n == 0 and surcharge_n > 0)
+            is_shell = (group_n == 0 and matrix_n == 0 and seg_n == 0 and surcharge_n == 0)
+            is_surcharge_only = (group_n == 0 and matrix_n == 0 and seg_n == 0 and surcharge_n > 0)
 
             if is_shell or (include_surcharge_only and is_surcharge_only):
                 candidates.append(
@@ -104,11 +114,13 @@ def register(router: APIRouter) -> None:
                         scheme_id=int(s.id),
                         name=str(getattr(s, "name", "")),
                         active=bool(getattr(s, "active", False)),
-                        tpl_n=tpl_n,
+                        group_n=group_n,
+                        matrix_n=matrix_n,
                         surcharge_n=surcharge_n,
                         seg_n=seg_n,
                         wh_n=wh_n,
-                        zone_n=zone_n,
+                        tpl_n=0,
+                        zone_n=0,
                     )
                 )
 
@@ -119,45 +131,37 @@ def register(router: APIRouter) -> None:
                 limit=limit,
                 candidates_n=len(candidates),
                 deleted_n=0,
-                candidates=candidates[:200],  # 防止响应过大
+                candidates=candidates[:200],
             )
 
-        # 执行删除：先删子表，再删 scheme（Route A：不再删除 warehouse 绑定表）
         deleted_n = 0
         for row in candidates:
             sid = row.scheme_id
 
-            # 1) surcharges（FK: RESTRICT）
-            db.query(ShippingProviderSurcharge).filter(ShippingProviderSurcharge.scheme_id == sid).delete(
-                synchronize_session=False
-            )
-
-            # 2) segments
-            db.query(ShippingProviderPricingSchemeSegment).filter(ShippingProviderPricingSchemeSegment.scheme_id == sid).delete(
-                synchronize_session=False
-            )
-
-            # 3) template items via templates
-            tpl_ids = [
+            group_ids = [
                 int(x[0])
-                for x in db.query(ShippingProviderPricingSchemeSegmentTemplate.id)
-                .filter(ShippingProviderPricingSchemeSegmentTemplate.scheme_id == sid)
+                for x in db.query(ShippingProviderDestinationGroup.id)
+                .filter(ShippingProviderDestinationGroup.scheme_id == sid)
                 .all()
             ]
-            if tpl_ids:
-                db.query(ShippingProviderPricingSchemeSegmentTemplateItem).filter(
-                    ShippingProviderPricingSchemeSegmentTemplateItem.template_id.in_(tpl_ids)
+
+            if group_ids:
+                db.query(ShippingProviderPricingMatrix).filter(
+                    ShippingProviderPricingMatrix.group_id.in_(group_ids)
                 ).delete(synchronize_session=False)
 
-            # 4) templates
-            db.query(ShippingProviderPricingSchemeSegmentTemplate).filter(
-                ShippingProviderPricingSchemeSegmentTemplate.scheme_id == sid
+                db.query(ShippingProviderDestinationGroup).filter(
+                    ShippingProviderDestinationGroup.id.in_(group_ids)
+                ).delete(synchronize_session=False)
+
+            db.query(ShippingProviderSurcharge).filter(
+                ShippingProviderSurcharge.scheme_id == sid
             ).delete(synchronize_session=False)
 
-            # 5) zones（理论上为 0，但写上更稳）
-            db.query(ShippingProviderZone).filter(ShippingProviderZone.scheme_id == sid).delete(synchronize_session=False)
+            db.query(ShippingProviderPricingSchemeSegment).filter(
+                ShippingProviderPricingSchemeSegment.scheme_id == sid
+            ).delete(synchronize_session=False)
 
-            # 6) scheme（只删 inactive；避免误伤）
             db.query(ShippingProviderPricingScheme).filter(
                 ShippingProviderPricingScheme.id == sid,
                 ShippingProviderPricingScheme.active.is_(False),

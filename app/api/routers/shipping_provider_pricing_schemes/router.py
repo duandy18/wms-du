@@ -3,35 +3,27 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-# ===== 子路由注册函数 =====
+from app.api.routers.shipping_provider_pricing_schemes_routes_pricing_matrix import (
+    register_pricing_matrix_routes,
+)
 from app.api.routers.shipping_provider_pricing_schemes_routes_scheme import (
     register_scheme_routes,
-)
-from app.api.routers.shipping_provider_pricing_schemes_routes_zones import (
-    register_zones_routes,
-)
-from app.api.routers.shipping_provider_pricing_schemes_routes_members import (
-    register_members_routes,
-)
-from app.api.routers.shipping_provider_pricing_schemes_routes_brackets import (
-    register_brackets_routes,
 )
 from app.api.routers.shipping_provider_pricing_schemes_routes_surcharges import (
     register_surcharges_routes,
 )
-from app.api.routers.shipping_provider_pricing_schemes_routes_segment_templates import (
-    register_segment_templates_routes,
-)
 
-# ==========================
-# Router 聚合（唯一出口）
-# ==========================
 router = APIRouter(tags=["shipping-provider-pricing"])
 
-# 注意：顺序是**业务阅读顺序**，不是技术顺序
+# 顺序按业务阅读路径组织：
 register_scheme_routes(router)  # pricing-schemes CRUD
-register_segment_templates_routes(router)  # ✅ segments templates (draft/publish/activate)
-register_zones_routes(router)  # zones / zones-atomic
-register_members_routes(router)  # zone members
-register_brackets_routes(router)  # brackets + copy
+register_pricing_matrix_routes(router)  # level3 pricing_matrix CRUD + copy
 register_surcharges_routes(router)  # surcharge-only（含目的地附加费）
+
+# 当前主线：
+#   destination_group + pricing_matrix + surcharge
+#
+# 已从系统入口摘除：
+# - legacy zones
+# - legacy zone members
+# - legacy zone brackets

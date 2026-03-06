@@ -29,14 +29,9 @@ def register_list_routes(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        # 读权限
         check_perm(db, user, "config.store.read")
 
-        # ✅ 护栏：inactive 方案极多时会形成“噪声洪水”
-        # - 默认不返回 inactive（保持原行为）
-        # - 若显式请求 include_inactive=true，则需要更高权限（避免普通用户误用）
         if include_inactive:
-            # 这里复用已有权限体系：写权限作为“运维/管理员级”门槛
             check_perm(db, user, "config.store.write")
 
         provider = db.get(ShippingProvider, provider_id)
@@ -63,10 +58,12 @@ def register_list_routes(router: APIRouter) -> None:
             ShippingProviderPricingScheme.id.asc(),
         ).all()
 
-        data: List[SchemeOut] = [to_scheme_out(sch, zones=[], surcharges=[]) for sch in schemes]
+        data: List[SchemeOut] = [
+            to_scheme_out(sch, destination_groups=[], surcharges=[])
+            for sch in schemes
+        ]
         return SchemeListOut(ok=True, data=data)
 
-    # ✅ 安全快捷入口：永远只返回 active=true 且未归档（给前端默认使用，避免噪声）
     @router.get(
         "/shipping-providers/{provider_id}/pricing-schemes/active",
         response_model=SchemeListOut,
@@ -93,5 +90,8 @@ def register_list_routes(router: APIRouter) -> None:
             .all()
         )
 
-        data: List[SchemeOut] = [to_scheme_out(sch, zones=[], surcharges=[]) for sch in schemes]
+        data: List[SchemeOut] = [
+            to_scheme_out(sch, destination_groups=[], surcharges=[])
+            for sch in schemes
+        ]
         return SchemeListOut(ok=True, data=data)

@@ -39,18 +39,22 @@ from shipping_provider_pricing_schemes;
 
 -- =========================================================
 -- 1. 识别【真空壳 scheme】
---    条件：inactive 且没有任何子表引用
+--    条件：inactive 且没有任何主线子表引用
 -- =========================================================
 
 with shell_schemes as (
   select s.id, s.name
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and not exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
 )
 select
   count(*) as shell_scheme_n
@@ -61,11 +65,15 @@ select * from (
   select s.id, s.name
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and not exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
   order by s.id desc
   limit 20
 ) t;
@@ -81,11 +89,15 @@ with target as (
   select s.id
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and not exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
   order by s.id desc
   limit :BATCH_LIMIT
 )
@@ -95,7 +107,6 @@ where s.id = target.id;
 
 commit;
 \else
--- dry-run：不执行删除
 \echo 'DRY-RUN: shell schemes not deleted'
 \endif
 
@@ -108,11 +119,15 @@ with surcharge_only as (
          (select count(*) from shipping_provider_surcharges su where su.scheme_id=s.id) as surcharge_n
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
 )
 select
   count(*) as surcharge_only_scheme_n
@@ -123,11 +138,15 @@ select * from (
   select s.id, s.name
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
   order by s.id desc
   limit 20
 ) t;
@@ -144,11 +163,15 @@ with target as (
   select s.id
   from shipping_provider_pricing_schemes s
   where s.active=false
-    and not exists (select 1 from shipping_provider_zones z where z.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_segment_templates t where t.scheme_id=s.id)
+    and not exists (select 1 from shipping_provider_destination_groups g where g.scheme_id=s.id)
+    and not exists (
+      select 1
+      from shipping_provider_pricing_matrix pm
+      join shipping_provider_destination_groups g on g.id = pm.group_id
+      where g.scheme_id=s.id
+    )
     and exists (select 1 from shipping_provider_surcharges su where su.scheme_id=s.id)
     and not exists (select 1 from shipping_provider_pricing_scheme_segments seg where seg.scheme_id=s.id)
-    and not exists (select 1 from shipping_provider_pricing_scheme_warehouses wh where wh.scheme_id=s.id)
   order by s.id desc
   limit :BATCH_LIMIT
 )

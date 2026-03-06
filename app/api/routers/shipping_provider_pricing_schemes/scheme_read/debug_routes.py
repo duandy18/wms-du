@@ -27,24 +27,34 @@ def register_debug_routes(router: APIRouter) -> None:
         check_perm(db, user, "config.store.read")
 
         from app.api.routers.shipping_provider_pricing_schemes.schemas import (
+            DestinationGroupMemberOut as _DestinationGroupMemberOut,
+            DestinationGroupOut as _DestinationGroupOut,
+            PricingMatrixOut as _PricingMatrixOut,
             SchemeOut as _SchemeOut,
             SurchargeOut as _SurchargeOut,
             WeightSegmentIn as _WeightSegmentIn,
-            ZoneBracketOut as _ZoneBracketOut,
-            ZoneMemberOut as _ZoneMemberOut,
-            ZoneOut as _ZoneOut,
         )
 
-        z = _ZoneOut(
+        g = _DestinationGroupOut(
             id=123,
             scheme_id=scheme_id,
-            name="DEBUG_ZONE",
+            name="DEBUG_GROUP",
             active=True,
-            members=[_ZoneMemberOut(id=1, zone_id=123, level="province", value="北京市")],
-            brackets=[
-                _ZoneBracketOut(
+            members=[
+                _DestinationGroupMemberOut(
                     id=1,
-                    zone_id=123,
+                    group_id=123,
+                    scope="province",
+                    province_code="110000",
+                    city_code=None,
+                    province_name="北京市",
+                    city_name=None,
+                )
+            ],
+            pricing_matrix=[
+                _PricingMatrixOut(
+                    id=1,
+                    group_id=123,
                     min_kg=Decimal("0"),
                     max_kg=Decimal("1"),
                     pricing_mode="linear_total",
@@ -73,7 +83,7 @@ def register_debug_routes(router: APIRouter) -> None:
                 _WeightSegmentIn(min="2", max=""),
             ],
             segments_updated_at=datetime.now(tz=timezone.utc),
-            zones=[z],
+            destination_groups=[g],
             surcharges=[
                 _SurchargeOut(
                     id=1,

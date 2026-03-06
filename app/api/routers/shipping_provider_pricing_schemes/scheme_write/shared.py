@@ -6,8 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.api.routers.shipping_provider_pricing_schemes_utils import segments_norm_to_rows
 from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
-from app.models.shipping_provider_zone import ShippingProviderZone
-from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracket
 
 
 def replace_segments_table(db: Session, scheme_id: int, segs_norm: Optional[list]) -> None:
@@ -34,14 +32,3 @@ def replace_segments_table(db: Session, scheme_id: int, segs_norm: Optional[list
                 active=True,
             )
         )
-
-
-def scheme_has_any_brackets(db: Session, scheme_id: int) -> bool:
-    hit = (
-        db.query(ShippingProviderZoneBracket.id)
-        .join(ShippingProviderZone, ShippingProviderZone.id == ShippingProviderZoneBracket.zone_id)
-        .filter(ShippingProviderZone.scheme_id == scheme_id)
-        .limit(1)
-        .first()
-    )
-    return bool(hit)

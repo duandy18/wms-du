@@ -24,44 +24,22 @@ if os.getenv("WMS_STRICT_SCHEMA_EXPORTS", "").strip() in ("1", "true", "yes", "o
     )
 
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (  # noqa: F401
-    # common
     WeightSegmentIn,
     ZoneMemberOut,
-    # bracket
-    ZoneBracketOut,
-    ZoneBracketCreateIn,
-    ZoneBracketUpdateIn,
-    # zone
-    ZoneOut,
-    ZoneCreateIn,
-    ZoneUpdateIn,
-    ZoneCreateAtomicIn,
-    ZoneMemberCreateIn,
-    ZoneProvinceMembersReplaceIn,
-    # surcharge
+    PricingMatrixOut,
+    PricingMatrixCreateIn,
+    PricingMatrixUpdateIn,
+    DestinationGroupMemberOut,
+    DestinationGroupOut,
     SurchargeOut,
     SurchargeCreateIn,
     SurchargeUpdateIn,
-    # scheme
     SchemeOut,
     SchemeSegmentOut,
     SchemeListOut,
     SchemeDetailOut,
     SchemeCreateIn,
     SchemeUpdateIn,
-    # segment templates
-    SegmentTemplateOut,
-    SegmentTemplateItemOut,
-    SegmentTemplateItemIn,
-    SegmentTemplateListOut,
-    SegmentTemplateDetailOut,
-    SegmentTemplateCreateIn,
-    SegmentTemplateItemsPutIn,
-    SegmentTemplateItemActivePatchIn,
-    # zone brackets matrix
-    ZoneBracketsMatrixOut,
-    ZoneBracketsMatrixGroupOut,
-    SegmentRangeOut,
 )
 
 from app.api.routers.shipping_provider_pricing_schemes.validators import (  # noqa: F401
@@ -69,44 +47,21 @@ from app.api.routers.shipping_provider_pricing_schemes.validators import (  # no
 )
 
 __all__ = [
-    # common
     "WeightSegmentIn",
     "ZoneMemberOut",
-    # bracket
-    "ZoneBracketOut",
-    "ZoneBracketCreateIn",
-    "ZoneBracketUpdateIn",
-    # zone
-    "ZoneOut",
-    "ZoneCreateIn",
-    "ZoneUpdateIn",
-    "ZoneCreateAtomicIn",
-    "ZoneMemberCreateIn",
-    "ZoneProvinceMembersReplaceIn",
-    # surcharge
+    "PricingMatrixOut",
+    "PricingMatrixCreateIn",
+    "PricingMatrixUpdateIn",
+    "DestinationGroupMemberOut",
+    "DestinationGroupOut",
     "SurchargeOut",
     "SurchargeCreateIn",
     "SurchargeUpdateIn",
-    # scheme
     "SchemeOut",
     "SchemeSegmentOut",
     "SchemeListOut",
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
-    # segment templates
-    "SegmentTemplateOut",
-    "SegmentTemplateItemOut",
-    "SegmentTemplateItemIn",
-    "SegmentTemplateListOut",
-    "SegmentTemplateDetailOut",
-    "SegmentTemplateCreateIn",
-    "SegmentTemplateItemsPutIn",
-    "SegmentTemplateItemActivePatchIn",
-    # zone brackets matrix
-    "ZoneBracketsMatrixOut",
-    "ZoneBracketsMatrixGroupOut",
-    "SegmentRangeOut",
-    # validators
     "validate_default_pricing_mode",
 ]

@@ -58,7 +58,6 @@ def _build_level3_quote_result(
     breakdown: JsonObject,
     total_amount: float | None,
 ) -> JsonObject:
-    # 为了不改 API 合同，这里继续沿用 zone / bracket 键名
     return {
         "ok": True,
         "scheme_id": sch.id,
@@ -74,8 +73,8 @@ def _build_level3_quote_result(
             "city_code": dest.city_code,
         },
         "weight": weight_info,
-        "zone": group_out,
-        "bracket": matrix_out,
+        "destination_group": group_out,
+        "pricing_matrix": matrix_out,
         "breakdown": breakdown,
         "total_amount": total_amount,
     }
@@ -147,7 +146,7 @@ def calc_quote_level3(
     if not row:
         raise ValueError("no matching pricing matrix")
 
-    reasons: List[str] = ["quote_engine: level3"]
+    reasons: List[str] = []
     if hit_member is not None:
         reasons.append(
             "group_match: "
@@ -160,7 +159,7 @@ def calc_quote_level3(
 
     mn = float(row.min_kg)
     mx = float(row.max_kg) if row.max_kg is not None else None
-    reasons.append(f"matrix_match: ({mn}kg, {('inf' if mx is None else mx)}kg] (billable={bw}kg)")
+    reasons.append(f"matrix_match: [{mn}kg, {('inf' if mx is None else mx)}kg) (billable={bw}kg)")
 
     base_amt, base_detail = _calc_base_amount(row, bw, scheme_rounding)
 

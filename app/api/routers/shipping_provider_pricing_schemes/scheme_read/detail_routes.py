@@ -24,5 +24,12 @@ def register_detail_routes(router: APIRouter) -> None:
         user=Depends(get_current_user),
     ):
         check_perm(db, user, "config.store.read")
-        sch, zones, surcharges = load_scheme_entities(db, scheme_id)
-        return SchemeDetailOut(ok=True, data=to_scheme_out(sch, zones=zones, surcharges=surcharges))
+        sch, destination_groups, surcharges = load_scheme_entities(db, scheme_id)
+        return SchemeDetailOut(
+            ok=True,
+            data=to_scheme_out(
+                sch,
+                destination_groups=destination_groups,
+                surcharges=surcharges,
+            ),
+        )
