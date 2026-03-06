@@ -24,6 +24,31 @@ audit-no-legacy-stock-sql:
 	  exit 1;'
 
 # =================================
+# 运价模块守门员：禁止旧 surcharge / old table 词汇回流
+# - 只扫 app/tests（不扫 alembic，迁移历史允许保留）
+# - 防止 condition_json / amount_json / pricing_scheme_dest_adjustments /
+#   dest_adjustments 这类退役口径重新混入运行/测试代码
+# =================================
+.PHONY: audit-no-legacy-pricing-terms
+audit-no-legacy-pricing-terms:
+	@bash -c 'set -euo pipefail; \
+	  echo "[audit-no-legacy-pricing-terms] forbid retired pricing terms in app/tests ..."; \
+	  hits="$$(rg -n --hidden \
+	    --glob "!**/*.md" \
+	    "(condition_json|amount_json|pricing_scheme_dest_adjustments|dest_adjustments)" \
+	    app tests || true)"; \
+	  if [ -z "$$hits" ]; then \
+	    echo "[audit-no-legacy-pricing-terms] OK (no retired pricing terms)"; \
+	    exit 0; \
+	  fi; \
+	  echo ""; \
+	  echo "$$hits"; \
+	  echo ""; \
+	  echo "[audit-no-legacy-pricing-terms] FAIL: retired pricing terms detected in app/tests"; \
+	  echo "  use structured surcharge fields + current pricing contracts only."; \
+	  exit 1;'
+
+# =================================
 # Phase 5.1 封口：禁止任何隐性写 orders.warehouse_id
 # - 白名单仅允许：manual-assign service（devconsole 写入已被禁止）
 # =================================
@@ -56,9 +81,10 @@ audit-pricing-brackets: venv
 	  export WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)"; \
 	  echo "[audit-pricing-brackets] scanning pricing zones/brackets on TEST DB ($(DEV_TEST_DB_DSN)) ..."; \
 	  "$(PY)" scripts/audit_pricing_brackets.py;'
+
 # 统一 audit 入口
 # =================================
 
 .PHONY: audit-all
-audit-all: audit-no-legacy-stock-sql
+audit-all: audit-no-legacy-stock-sql audit-no-legacy-pricing-terms
 	@echo "[audit-all] OK"

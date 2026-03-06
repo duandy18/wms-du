@@ -51,7 +51,7 @@ def register(router: APIRouter) -> None:
         - ref 在 (platform, shop_id) 维度必须幂等（防重复确认）
         - warehouse_id 必填
         - shipping_provider_id 必填且必须是该仓可服务（warehouse_shipping_providers.active=true）
-        - scheme_id 必填且必须绑定该仓、有效期命中、且属于该 provider
+        - scheme_id 必填且必须归属该仓、有效期命中、且属于该 provider
         - tracking_no 若提供：在 provider_id 维度唯一（(shipping_provider_id, tracking_no)）
 
         错误返回：
@@ -137,7 +137,7 @@ def register(router: APIRouter) -> None:
                     "carrier not enabled for this warehouse",
                 )
 
-            # 3) scheme ∈ scheme_warehouses 且有效
+            # 3) scheme 必须归属该仓库（硬边界）且有效
             sch_row = (
                 await session.execute(
                     text(
@@ -146,11 +146,8 @@ def register(router: APIRouter) -> None:
                           sch.id,
                           sch.shipping_provider_id
                         FROM shipping_provider_pricing_schemes sch
-                        JOIN shipping_provider_pricing_scheme_warehouses spsw
-                          ON spsw.scheme_id = sch.id
                         WHERE sch.id = :sid
-                          AND spsw.warehouse_id = :wid
-                          AND spsw.active = true
+                          AND sch.warehouse_id = :wid
                           AND sch.active = true
                           AND (sch.effective_from IS NULL OR sch.effective_from <= now())
                           AND (sch.effective_to IS NULL OR sch.effective_to >= now())

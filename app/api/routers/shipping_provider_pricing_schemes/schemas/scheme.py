@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .common import WeightSegmentIn
-from .dest_adjustment import DestAdjustmentOut
 from .surcharge import SurchargeOut
 from .zone import ZoneOut
 
@@ -57,9 +56,9 @@ class SchemeOut(BaseModel):
     # 示例：
     #   {"divisor_cm":8000,"rounding":{"mode":"ceil","step_kg":1.0}}
     #
-    # 废弃说明：
-    # - amount_json.rounding（附加费内的 rounding）已废弃/不再生效；
-    #   取整唯一来源为 scheme.billable_weight_rule.rounding。
+    # 约束说明：
+    # - 取整唯一来源为 scheme.billable_weight_rule.rounding。
+    # - surcharge 不再承载独立 rounding 口径。
     billable_weight_rule: Optional[Dict[str, Any]] = None
 
     # ✅ 显式默认回退模板（zone 未绑定 segment_template_id 时使用）
@@ -76,9 +75,6 @@ class SchemeOut(BaseModel):
 
     zones: List[ZoneOut] = Field(default_factory=list)
     surcharges: List[SurchargeOut] = Field(default_factory=list)
-
-    # ✅ 新：目的地附加费（结构化事实模型）
-    dest_adjustments: List[DestAdjustmentOut] = Field(default_factory=list)
 
 
 class SchemeListOut(BaseModel):
@@ -97,6 +93,9 @@ class SchemeDetailOut(BaseModel):
 
 class SchemeCreateIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    # ✅ Route A：硬仓库边界（scheme 作用域 = warehouse × provider）
+    warehouse_id: int = Field(..., ge=1)
 
     name: str = Field(..., min_length=1, max_length=128)
     active: bool = True

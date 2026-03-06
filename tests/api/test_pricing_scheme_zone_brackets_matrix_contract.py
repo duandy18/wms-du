@@ -4,15 +4,15 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-import pytest
 import httpx
+import pytest
 
 from tests.api._helpers_pricing_matrix import (
-    login_admin_headers,
+    create_bracket_step_over,
+    create_zone,
     ensure_provider_id,
     ensure_scheme_id,
-    create_zone,
-    create_bracket_step_over,
+    login_admin_headers,
 )
 
 
@@ -69,7 +69,7 @@ async def _put_template_items(
 
     pytest.fail(
         f"cannot write segment template items for template_id={template_id}. "
-        f"last_status={getattr(last,'status_code',None)} last_body={getattr(last,'text','')}"
+        f"last_status={getattr(last, 'status_code', None)} last_body={getattr(last, 'text', '')}"
     )
 
 
@@ -109,12 +109,15 @@ async def _create_published_template(
 
 
 @pytest.mark.asyncio
-async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(client: httpx.AsyncClient) -> None:
+async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(
+    client: httpx.AsyncClient,
+) -> None:
     """
     合同目标（自建数据版，完全不依赖固定 scheme_id）：
     - groups[] 按 segment_template_id 分组
     - 每个 group 带 segments（行结构真相：来自 template items）+ zones（含 members + brackets）
     - zones 内的 segment_template_id 必须与 group.segment_template_id 一致
+    - bracket 输出走结构化合同，不再包含 price_json
     - unbound_zones[] 在新合同下应恒为空（Zone 必绑模板）
     """
     headers = await login_admin_headers(client)
@@ -124,14 +127,54 @@ async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(clien
     scheme_id = await ensure_scheme_id(client, headers, provider_id, name=f"UT_MX_GROUPS_{uniq}")
 
     # 1) 创建两套模板（create -> put items -> publish）
-    tpl1 = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_A_{uniq}", segments=[("0", "1"), ("1", None)])
-    tpl2 = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_B_{uniq}", segments=[("0", "2"), ("2", None)])
+    tpl1 = await _create_published_template(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_TPL_A_{uniq}",
+        segments=[("0", "1"), ("1", None)],
+    )
+    tpl2 = await _create_published_template(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_TPL_B_{uniq}",
+        segments=[("0", "2"), ("2", None)],
+    )
 
     # 2) 创建 4 个 zones：2 个绑 tpl1，2 个绑 tpl2
-    z1 = await create_zone(client, headers, scheme_id, name=f"UT_Z_A1_{uniq}", provinces=["北京市"], segment_template_id=tpl1)
-    z2 = await create_zone(client, headers, scheme_id, name=f"UT_Z_A2_{uniq}", provinces=["天津市"], segment_template_id=tpl1)
-    z3 = await create_zone(client, headers, scheme_id, name=f"UT_Z_B1_{uniq}", provinces=["河北省"], segment_template_id=tpl2)
-    z4 = await create_zone(client, headers, scheme_id, name=f"UT_Z_B2_{uniq}", provinces=["河南省"], segment_template_id=tpl2)
+    z1 = await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_Z_A1_{uniq}",
+        provinces=["北京市"],
+        segment_template_id=tpl1,
+    )
+    z2 = await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_Z_A2_{uniq}",
+        provinces=["天津市"],
+        segment_template_id=tpl1,
+    )
+    z3 = await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_Z_B1_{uniq}",
+        provinces=["河北省"],
+        segment_template_id=tpl2,
+    )
+    z4 = await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_Z_B2_{uniq}",
+        provinces=["河南省"],
+        segment_template_id=tpl2,
+    )
 
     # 3) 给每个 zone 写一条 bracket，确保 brackets 字段存在且可解析
     await create_bracket_step_over(client, headers, z1, "0", "1")
@@ -187,7 +230,12 @@ async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(clien
                 assert "min_kg" in b
                 assert "max_kg" in b
                 assert "pricing_mode" in b
-                assert "price_json" in b
+                assert "flat_amount" in b
+                assert "base_amount" in b
+                assert "rate_per_kg" in b
+                assert "base_kg" in b
+                assert "active" in b
+                assert "price_json" not in b
 
     assert total_zone_n == 4
     assert tpl_ids == {tpl1, tpl2}
@@ -199,7 +247,9 @@ async def test_zone_brackets_matrix_groups_by_segment_template_id_contract(clien
 
 
 @pytest.mark.asyncio
-async def test_zone_brackets_matrix_unbound_zones_contract_is_deprecated_under_zone_template_required(client: httpx.AsyncClient) -> None:
+async def test_zone_brackets_matrix_unbound_zones_contract_is_deprecated_under_zone_template_required(
+    client: httpx.AsyncClient,
+) -> None:
     """
     新合同目标（硬约束版）：
     - Zone 创建必须绑定 segment_template_id
@@ -210,15 +260,47 @@ async def test_zone_brackets_matrix_unbound_zones_contract_is_deprecated_under_z
     provider_id = await ensure_provider_id(client, headers)
 
     uniq = uuid4().hex[:8]
-    scheme_id = await ensure_scheme_id(client, headers, provider_id, name=f"UT_MX_UNBOUND_DEPRECATED_{uniq}")
+    scheme_id = await ensure_scheme_id(
+        client,
+        headers,
+        provider_id,
+        name=f"UT_MX_UNBOUND_DEPRECATED_{uniq}",
+    )
 
     # 创建 1 套模板（create -> put items -> publish）
-    tpl = await _create_published_template(client, headers, scheme_id, name=f"UT_TPL_ONLY_{uniq}", segments=[("0", "1"), ("1", None)])
+    tpl = await _create_published_template(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_TPL_ONLY_{uniq}",
+        segments=[("0", "1"), ("1", None)],
+    )
 
     # 创建 3 个 zones，全部绑定同一模板（新合同下不允许 unbound）
-    await create_zone(client, headers, scheme_id, name=f"UT_U1_{uniq}", provinces=["北京市"], segment_template_id=tpl)
-    await create_zone(client, headers, scheme_id, name=f"UT_U2_{uniq}", provinces=["天津市"], segment_template_id=tpl)
-    await create_zone(client, headers, scheme_id, name=f"UT_U3_{uniq}", provinces=["河北省"], segment_template_id=tpl)
+    await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_U1_{uniq}",
+        provinces=["北京市"],
+        segment_template_id=tpl,
+    )
+    await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_U2_{uniq}",
+        provinces=["天津市"],
+        segment_template_id=tpl,
+    )
+    await create_zone(
+        client,
+        headers,
+        scheme_id,
+        name=f"UT_U3_{uniq}",
+        provinces=["河北省"],
+        segment_template_id=tpl,
+    )
 
     resp = await client.get(f"/pricing-schemes/{scheme_id}/zone-brackets-matrix", headers=headers)
     assert resp.status_code == 200, resp.text

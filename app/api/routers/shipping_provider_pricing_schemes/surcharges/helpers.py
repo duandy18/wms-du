@@ -7,73 +7,38 @@ from sqlalchemy.orm import Session
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
-def reject_deprecated_amount_rounding(amount_json: object) -> None:
-    """
-    ✅ 护栏：amount_json.rounding 已废弃且不再生效。
-
-    取整唯一来源：
-      scheme.billable_weight_rule.rounding
-    且只在 _compute_billable_weight_kg 中执行一次（避免 double-rounding）。
-
-    为避免继续产生“新债”，写入口一律拒绝 amount_json.rounding。
-    """
-    if not isinstance(amount_json, dict):
-        return
-    if "rounding" in amount_json and amount_json.get("rounding") is not None:
-        raise HTTPException(
-            status_code=422,
-            detail="amount_json.rounding is deprecated and ignored; use scheme.billable_weight_rule.rounding",
-        )
+_ALLOWED_SCOPE = {"always", "province", "city"}
 
 
-def extract_dest_key_from_condition(condition_json: dict) -> tuple[str, str, str | None] | None:
-    """
-    解析我们约定的新结构（优先）：
+def normalize_scope(v: str) -> str:
+    t = (v or "").strip().lower()
+    if t not in _ALLOWED_SCOPE:
+        raise HTTPException(status_code=422, detail="scope must be one of: always / province / city")
+    return t
 
-      {"dest":{"scope":"province","province":"广东省"}}
-      {"dest":{"scope":"city","province":"广东省","city":"深圳市"}}
 
-    同时兼容旧结构（仅当数组长度=1）：
-      {"dest":{"province":["广东省"]}}
-      {"dest":{"province":["广东省"],"city":["深圳市"]}}
+def _norm(v: object | None) -> str:
+    if v is None:
+        return ""
+    return str(v).strip()
 
-    返回：(scope, province, city?)
-    """
-    if not isinstance(condition_json, dict):
-        return None
-    dest = condition_json.get("dest")
-    if not isinstance(dest, dict):
-        return None
 
-    scope = dest.get("scope")
-    prov = dest.get("province")
-    city = dest.get("city")
+def _same_province(
+    row: ShippingProviderSurcharge,
+    *,
+    province_code: str | None,
+    province_name: str | None,
+) -> bool:
+    row_code = _norm(getattr(row, "province_code", None))
+    row_name = _norm(getattr(row, "province_name", None))
+    target_code = _norm(province_code)
+    target_name = _norm(province_name)
 
-    # 新结构（scope + 单值）
-    if isinstance(scope, str) and scope.strip().lower() in ("province", "city"):
-        scope2 = scope.strip().lower()
-        if isinstance(prov, str) and prov.strip():
-            prov2 = prov.strip()
-        else:
-            return None
-        if scope2 == "province":
-            return ("province", prov2, None)
-        # city
-        if isinstance(city, str) and city.strip():
-            return ("city", prov2, city.strip())
-        return None
-
-    # 旧结构（列表）
-    provs = dest.get("province")
-    cities = dest.get("city")
-    if isinstance(provs, list) and len(provs) == 1 and isinstance(provs[0], str) and provs[0].strip():
-        prov2 = provs[0].strip()
-        if isinstance(cities, list) and len(cities) == 1 and isinstance(cities[0], str) and cities[0].strip():
-            return ("city", prov2, cities[0].strip())
-        if cities is None or (isinstance(cities, list) and len(cities) == 0):
-            return ("province", prov2, None)
-
-    return None
+    if row_code and target_code:
+        return row_code == target_code
+    if row_name and target_name:
+        return row_name == target_name
+    return False
 
 
 def ensure_dest_mutual_exclusion(
@@ -81,20 +46,20 @@ def ensure_dest_mutual_exclusion(
     *,
     scheme_id: int,
     target_scope: str,
-    province: str,
+    province_code: str | None,
+    province_name: str | None,
     target_id: int | None,
     active: bool,
 ) -> None:
     """
-    ✅ 护栏：同一省份：
-      - province 规则 与 任意 city 规则 不允许同时 active
-    仅对“我们能解析出 dest key 的规则”强制执行。
+    硬约束：
+    - 同一省份下，province 与 city 规则不能同时 active
     """
     if not active:
         return
 
-    province = (province or "").strip()
-    if not province:
+    scope2 = normalize_scope(target_scope)
+    if scope2 not in ("province", "city"):
         return
 
     q = (
@@ -102,6 +67,7 @@ def ensure_dest_mutual_exclusion(
         .filter(
             ShippingProviderSurcharge.scheme_id == int(scheme_id),
             ShippingProviderSurcharge.active.is_(True),
+            ShippingProviderSurcharge.scope.in_(("province", "city")),
         )
         .order_by(ShippingProviderSurcharge.id.asc())
     )
@@ -110,21 +76,15 @@ def ensure_dest_mutual_exclusion(
 
     rows = q.all()
     for s in rows:
-        k = extract_dest_key_from_condition(s.condition_json or {})
-        if not k:
+        if not _same_province(s, province_code=province_code, province_name=province_name):
             continue
-        scope2, prov2, _city2 = k
-        if prov2 != province:
-            continue
-
-        # 同省冲突：province vs city
-        if target_scope == "province" and scope2 == "city":
+        if scope2 == "province" and str(s.scope) == "city":
             raise HTTPException(
                 status_code=409,
-                detail=f"conflict: province surcharge cannot be active when city surcharges exist for province={province}",
+                detail=f"conflict: province surcharge cannot be active when city surcharges exist for province={province_name or province_code}",
             )
-        if target_scope == "city" and scope2 == "province":
+        if scope2 == "city" and str(s.scope) == "province":
             raise HTTPException(
                 status_code=409,
-                detail=f"conflict: city surcharge cannot be active when province surcharge exists for province={province}",
+                detail=f"conflict: city surcharge cannot be active when province surcharge exists for province={province_name or province_code}",
             )

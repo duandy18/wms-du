@@ -28,11 +28,11 @@ def register_debug_routes(router: APIRouter) -> None:
 
         from app.api.routers.shipping_provider_pricing_schemes.schemas import (
             SchemeOut as _SchemeOut,
-            ZoneOut as _ZoneOut,
-            ZoneBracketOut as _ZoneBracketOut,
-            ZoneMemberOut as _ZoneMemberOut,
             SurchargeOut as _SurchargeOut,
             WeightSegmentIn as _WeightSegmentIn,
+            ZoneBracketOut as _ZoneBracketOut,
+            ZoneMemberOut as _ZoneMemberOut,
+            ZoneOut as _ZoneOut,
         )
 
         z = _ZoneOut(
@@ -52,7 +52,6 @@ def register_debug_routes(router: APIRouter) -> None:
                     base_amount=Decimal("3.00"),
                     rate_per_kg=Decimal("1.20"),
                     base_kg=None,
-                    price_json={"kind": "linear_total", "base_amount": 3.0, "rate_per_kg": 1.2},
                     active=True,
                 )
             ],
@@ -81,8 +80,14 @@ def register_debug_routes(router: APIRouter) -> None:
                     scheme_id=scheme_id,
                     name="S1",
                     active=True,
-                    condition_json={},
-                    amount_json={},
+                    priority=100,
+                    scope="always",
+                    stackable=True,
+                    province_code=None,
+                    city_code=None,
+                    province_name=None,
+                    city_name=None,
+                    fixed_amount=Decimal("0.00"),
                 )
             ],
         )

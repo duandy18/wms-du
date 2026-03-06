@@ -1,12 +1,13 @@
 # app/api/routers/shipping_provider_pricing_schemes/schemas/surcharge.py
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional
+from decimal import Decimal
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-JsonObject = Dict[str, object]
+_ALLOWED_SCOPE = {"always", "province", "city"}
 
 
 class SurchargeOut(BaseModel):
@@ -16,8 +17,17 @@ class SurchargeOut(BaseModel):
     scheme_id: int
     name: str
     active: bool
-    condition_json: JsonObject
-    amount_json: JsonObject
+
+    priority: int
+    scope: str
+    stackable: bool
+
+    province_code: Optional[str] = None
+    city_code: Optional[str] = None
+    province_name: Optional[str] = None
+    city_name: Optional[str] = None
+
+    fixed_amount: Decimal
 
 
 class SurchargeCreateIn(BaseModel):
@@ -25,16 +35,53 @@ class SurchargeCreateIn(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=128)
     active: bool = True
-    condition_json: JsonObject
-    amount_json: JsonObject
 
-    @field_validator("amount_json")
+    priority: int = 100
+    scope: str = Field(default="always", min_length=1, max_length=16)
+    stackable: bool = True
+
+    province_code: Optional[str] = Field(None, max_length=32)
+    city_code: Optional[str] = Field(None, max_length=32)
+    province_name: Optional[str] = Field(None, max_length=64)
+    city_name: Optional[str] = Field(None, max_length=64)
+
+    fixed_amount: Decimal = Field(..., ge=0)
+
+    @field_validator("scope")
     @classmethod
-    def _reject_deprecated_rounding(cls, v: JsonObject):
-        # ✅ amount_json.rounding 已废弃且不再生效
-        if isinstance(v, dict) and ("rounding" in v) and (v.get("rounding") is not None):
-            raise ValueError("amount_json.rounding is deprecated and ignored; use scheme.billable_weight_rule.rounding")
-        return v
+    def _scope_ok(cls, v: str) -> str:
+        t = (v or "").strip().lower()
+        if t not in _ALLOWED_SCOPE:
+            raise ValueError("scope must be one of: always / province / city")
+        return t
+
+    @field_validator("province_code", "city_code", "province_name", "city_name")
+    @classmethod
+    def _trim(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        t = v.strip()
+        return t or None
+
+    @model_validator(mode="after")
+    def _validate_scope_and_amount(self):
+        if self.scope == "always":
+            if any([self.province_code, self.city_code, self.province_name, self.city_name]):
+                raise ValueError("always scope must not carry province/city fields")
+
+        if self.scope == "province":
+            if not self.province_name:
+                raise ValueError("province_name is required when scope=province")
+            if self.city_name or self.city_code:
+                raise ValueError("city_name/city_code must be empty when scope=province")
+
+        if self.scope == "city":
+            if not self.province_name:
+                raise ValueError("province_name is required when scope=city")
+            if not self.city_name:
+                raise ValueError("city_name is required when scope=city")
+
+        return self
 
 
 class SurchargeUpdateIn(BaseModel):
@@ -42,76 +89,66 @@ class SurchargeUpdateIn(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     active: Optional[bool] = None
-    condition_json: Optional[JsonObject] = None
-    amount_json: Optional[JsonObject] = None
 
-    @field_validator("amount_json")
+    priority: Optional[int] = None
+    scope: Optional[str] = Field(None, min_length=1, max_length=16)
+    stackable: Optional[bool] = None
+
+    province_code: Optional[str] = Field(None, max_length=32)
+    city_code: Optional[str] = Field(None, max_length=32)
+    province_name: Optional[str] = Field(None, max_length=64)
+    city_name: Optional[str] = Field(None, max_length=64)
+
+    fixed_amount: Optional[Decimal] = Field(None, ge=0)
+
+    @field_validator("scope")
     @classmethod
-    def _reject_deprecated_rounding(cls, v: Optional[JsonObject]):
-        # ✅ amount_json.rounding 已废弃且不再生效
+    def _scope_ok(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
-            return v
-        if isinstance(v, dict) and ("rounding" in v) and (v.get("rounding") is not None):
-            raise ValueError("amount_json.rounding is deprecated and ignored; use scheme.billable_weight_rule.rounding")
-        return v
+            return None
+        t = v.strip().lower()
+        if t not in _ALLOWED_SCOPE:
+            raise ValueError("scope must be one of: always / province / city")
+        return t
+
+    @field_validator("province_code", "city_code", "province_name", "city_name")
+    @classmethod
+    def _trim(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        t = v.strip()
+        return t or None
 
 
-# ✅ 新主入口：省/市 + 金额 直接写后端事实（upsert）
 class SurchargeUpsertIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     scope: Literal["province", "city"]
-    province: str = Field(..., min_length=1, max_length=64)
-    city: Optional[str] = Field(None, min_length=1, max_length=64)
+    province_name: str = Field(..., min_length=1, max_length=64)
+    city_name: Optional[str] = Field(None, min_length=1, max_length=64)
 
-    # 可选：前端不传则后端自动生成
+    province_code: Optional[str] = Field(None, max_length=32)
+    city_code: Optional[str] = Field(None, max_length=32)
+
     name: Optional[str] = Field(None, min_length=1, max_length=128)
 
-    amount: float = Field(..., ge=0.0)
+    amount: Decimal = Field(..., ge=0)
     active: bool = True
+    priority: int = 100
+    stackable: bool = True
 
-    @field_validator("province")
+    @field_validator("province_name", "city_name", "province_code", "city_code")
     @classmethod
-    def _trim_province(cls, v: str) -> str:
-        vv = (v or "").strip()
-        if not vv:
-            raise ValueError("province is required")
-        return vv
-
-    @field_validator("city")
-    @classmethod
-    def _trim_city(cls, v: Optional[str]) -> Optional[str]:
+    def _trim(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
-        vv = v.strip()
-        return vv or None
+        t = v.strip()
+        return t or None
 
-    @field_validator("scope")
-    @classmethod
-    def _scope_ok(cls, v: str) -> str:
-        vv = (v or "").strip().lower()
-        if vv not in ("province", "city"):
-            raise ValueError("scope must be province|city")
-        return vv
-
-    @field_validator("amount")
-    @classmethod
-    def _amount_ok(cls, v: float) -> float:
-        # Field(ge=0) 已覆盖，但这里再保险避免 NaN
-        if v is None:
-            raise ValueError("amount is required")
-        if not isinstance(v, (int, float)):
-            raise ValueError("amount must be a number")
-        if v != v:  # NaN
-            raise ValueError("amount must be a number")
-        if v < 0:
-            raise ValueError("amount must be >= 0")
-        return float(v)
-
-    @field_validator("city")
-    @classmethod
-    def _city_required_if_scope_city(cls, v: Optional[str], info):
-        scope = (info.data.get("scope") or "").strip().lower()
-        if scope == "city" and not v:
-            raise ValueError("city is required when scope=city")
-        return v
+    @model_validator(mode="after")
+    def _validate_city(self):
+        if self.scope == "city" and not self.city_name:
+            raise ValueError("city_name is required when scope=city")
+        if self.scope == "province" and (self.city_name or self.city_code):
+            raise ValueError("city_name/city_code must be empty when scope=province")
+        return self

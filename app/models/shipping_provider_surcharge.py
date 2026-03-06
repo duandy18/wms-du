@@ -2,9 +2,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -12,7 +22,41 @@ from app.db.base import Base
 
 class ShippingProviderSurcharge(Base):
     __tablename__ = "shipping_provider_surcharges"
-    __table_args__ = (UniqueConstraint("scheme_id", "name", name="uq_sp_surcharges_scheme_name"),)
+    __table_args__ = (
+        UniqueConstraint("scheme_id", "name", name="uq_sp_surcharges_scheme_name"),
+        CheckConstraint(
+            "scope in ('always','province','city')",
+            name="ck_sp_surcharges_scope_valid",
+        ),
+        CheckConstraint(
+            """
+            (
+              (scope = 'always'
+                AND province_name IS NULL
+                AND city_name IS NULL
+                AND province_code IS NULL
+                AND city_code IS NULL
+              )
+              OR
+              (scope = 'province'
+                AND (province_name IS NOT NULL OR province_code IS NOT NULL)
+                AND city_name IS NULL
+                AND city_code IS NULL
+              )
+              OR
+              (scope = 'city'
+                AND (province_name IS NOT NULL OR province_code IS NOT NULL)
+                AND (city_name IS NOT NULL OR city_code IS NOT NULL)
+              )
+            )
+            """,
+            name="ck_sp_surcharges_scope_fields",
+        ),
+        CheckConstraint(
+            "fixed_amount >= 0",
+            name="ck_sp_surcharges_fixed_amount_required",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
@@ -26,11 +70,16 @@ class ShippingProviderSurcharge(Base):
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
-    # 条件表达式：{"dest":{"city":["北京市"]}} / {"flag_any":["irregular"]} ...
-    condition_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="always", server_default="always")
+    stackable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
-    # 金额表达式：{"kind":"flat","amount":1.5} / {"kind":"per_kg","rate":0.5} ...
-    amount_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    province_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    city_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    province_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    city_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    fixed_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -43,4 +92,7 @@ class ShippingProviderSurcharge(Base):
     scheme = relationship("ShippingProviderPricingScheme", back_populates="surcharges")
 
     def __repr__(self) -> str:
-        return f"<ShippingProviderSurcharge id={self.id} scheme_id={self.scheme_id} name={self.name!r}>"
+        return (
+            f"<ShippingProviderSurcharge id={self.id} scheme_id={self.scheme_id} "
+            f"name={self.name!r} scope={self.scope!r}>"
+        )

@@ -128,6 +128,47 @@ def _build_payload_from_ref(components: Dict[str, Any], ref: str) -> Dict[str, A
     return payload
 
 
+async def pick_warehouse_id(client: httpx.AsyncClient, headers: Dict[str, str]) -> int:
+    """
+    Route A：scheme 必须绑定 warehouse_id，因此测试侧必须能稳定拿到一个 warehouse。
+    """
+    r = await client.get("/warehouses", headers=headers)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    rows = data.get("data") if isinstance(data, dict) else data
+    assert isinstance(rows, list) and rows, f"no warehouses: {data}"
+    first = rows[0]
+    assert isinstance(first, dict) and "id" in first, f"unexpected warehouses item shape: {first}"
+    return int(first["id"])
+
+
+async def bind_provider_to_warehouse(
+    client: httpx.AsyncClient, headers: Dict[str, str], warehouse_id: int, provider_id: int
+) -> None:
+    """
+    Route A：创建 scheme 前必须保证 provider 在该仓启用，否则 scheme 会违反“仓库隔离”合同。
+    """
+    r = await client.post(
+        f"/warehouses/{int(warehouse_id)}/shipping-providers/bind",
+        headers=headers,
+        json={
+            "shipping_provider_id": int(provider_id),
+            "active": True,
+            "priority": 0,
+            "pickup_cutoff_time": "18:00",
+            "remark": "pricing-matrix test bind",
+        },
+    )
+    assert r.status_code in (200, 201, 409), r.text
+    if r.status_code == 409:
+        pr = await client.patch(
+            f"/warehouses/{int(warehouse_id)}/shipping-providers/{int(provider_id)}",
+            headers=headers,
+            json={"active": True, "priority": 0},
+        )
+        assert pr.status_code == 200, pr.text
+
+
 async def ensure_provider_id(client: httpx.AsyncClient, headers: Dict[str, str]) -> int:
     r = await client.get("/shipping-providers", headers=headers)
     assert r.status_code == 200, r.text
@@ -187,10 +228,16 @@ async def ensure_provider_id(client: httpx.AsyncClient, headers: Dict[str, str])
 
 
 async def ensure_scheme_id(client: httpx.AsyncClient, headers: Dict[str, str], provider_id: int, name: str) -> int:
+    # Route A：scheme 必须带 warehouse_id（硬仓库边界）
+    wid = await pick_warehouse_id(client, headers)
+
+    # Route A：provider 必须在该仓启用（否则 scheme 创建应被拒绝）
+    await bind_provider_to_warehouse(client, headers, int(wid), int(provider_id))
+
     r = await client.post(
-        f"/shipping-providers/{provider_id}/pricing-schemes",
+        f"/shipping-providers/{int(provider_id)}/pricing-schemes",
         headers=headers,
-        json={"name": name},
+        json={"name": name, "warehouse_id": int(wid), "active": True},
     )
     assert r.status_code in (200, 201), r.text
 

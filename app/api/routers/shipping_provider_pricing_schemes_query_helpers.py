@@ -29,13 +29,11 @@ def load_scheme_entities(
     - ✅ Phase 6：刚性契约
       - SchemeOut.shipping_provider_name 必须由后端提供
       - 因此这里必须确定性加载 ShippingProvider 关系，避免隐式 lazy-load
-    - ✅ 目的地附加费（dest_adjustments）作为结构化事实：这里显式 selectinload，避免隐式加载漂移
     """
     sch = (
         db.query(ShippingProviderPricingScheme)
         .options(
             selectinload(ShippingProviderPricingScheme.shipping_provider),
-            selectinload(ShippingProviderPricingScheme.dest_adjustments),
         )
         .filter(ShippingProviderPricingScheme.id == scheme_id)
         .one_or_none()
@@ -99,7 +97,10 @@ def load_scheme_entities(
     surcharges_raw = (
         db.query(ShippingProviderSurcharge)
         .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
-        .order_by(ShippingProviderSurcharge.id.asc())
+        .order_by(
+            ShippingProviderSurcharge.priority.asc(),
+            ShippingProviderSurcharge.id.asc(),
+        )
         .all()
     )
     surcharges: List[SurchargeOut] = [to_surcharge_out(s) for s in surcharges_raw]

@@ -13,7 +13,6 @@ from app.models.shipping_provider_zone_bracket import ShippingProviderZoneBracke
 
 def as_bracket_out(b: ShippingProviderZoneBracket) -> ZoneBracketOut:
     base_kg = getattr(b, "base_kg", None)
-    price_json = getattr(b, "price_json", None) or {}
     return ZoneBracketOut(
         id=b.id,
         zone_id=b.zone_id,
@@ -24,7 +23,6 @@ def as_bracket_out(b: ShippingProviderZoneBracket) -> ZoneBracketOut:
         base_amount=b.base_amount,
         rate_per_kg=b.rate_per_kg,
         base_kg=base_kg,
-        price_json=price_json,
         active=bool(b.active),
     )
 

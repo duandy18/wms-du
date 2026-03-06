@@ -53,13 +53,11 @@ ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
   pickup_cutoff_time = EXCLUDED.pickup_cutoff_time,
   remark = EXCLUDED.remark;
 
-INSERT INTO shipping_provider_pricing_schemes (id, shipping_provider_id, name, active)
-VALUES (1, 1, 'UT-SCHEME-1', true)
+-- ✅ Route A：scheme 作用域 = warehouse × provider（硬仓库边界）
+-- 说明：原先 shipping_provider_pricing_scheme_warehouses 已被删除，不再写入/不再作为事实源。
+INSERT INTO shipping_provider_pricing_schemes (id, warehouse_id, shipping_provider_id, name, active)
+VALUES (1, 1, 1, 'UT-SCHEME-1', true)
 ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO shipping_provider_pricing_scheme_warehouses (scheme_id, warehouse_id, active)
-VALUES (1, 1, true)
-ON CONFLICT (scheme_id, warehouse_id) DO UPDATE SET active = EXCLUDED.active;
 
 -- ===== items =====
 INSERT INTO items (

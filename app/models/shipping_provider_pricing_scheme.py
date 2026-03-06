@@ -15,7 +15,7 @@ from app.models.shipping_provider_pricing_scheme_segment import (  # noqa: F401
     ShippingProviderPricingSchemeSegment,
 )
 
-# ✅ 新增：模板模型（路线 1）
+# ✅ 模板模型
 from app.models.shipping_provider_pricing_scheme_segment_template import (  # noqa: F401
     ShippingProviderPricingSchemeSegmentTemplate,
 )
@@ -23,21 +23,18 @@ from app.models.shipping_provider_pricing_scheme_segment_template_item import ( 
     ShippingProviderPricingSchemeSegmentTemplateItem,
 )
 
-# ✅ Phase 3：起运适用仓库（origin binding）关系表模型加载
-from app.models.shipping_provider_pricing_scheme_warehouse import (  # noqa: F401
-    ShippingProviderPricingSchemeWarehouse,
-)
-
-# ✅ 新增：目的地附加费模型（结构化）
-from app.models.pricing_scheme_dest_adjustment import (  # noqa: F401
-    PricingSchemeDestAdjustment,
-)
-
 
 class ShippingProviderPricingScheme(Base):
     __tablename__ = "shipping_provider_pricing_schemes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # ✅ Route A：硬仓库边界（scheme 作用域 = warehouse × provider）
+    warehouse_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
     shipping_provider_id: Mapped[int] = mapped_column(
         Integer,
@@ -92,30 +89,12 @@ class ShippingProviderPricingScheme(Base):
     # =========================
 
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
+    warehouse = relationship("Warehouse", lazy="selectin")
 
     zones = relationship("ShippingProviderZone", back_populates="scheme", lazy="selectin")
 
-    # 旧：JSON surcharge（保留，用于 bulky / flags）
+    # surcharge-only（含目的地附加费）
     surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
-
-    # ✅ 新：目的地附加费（结构化事实）
-    dest_adjustments = relationship(
-        "PricingSchemeDestAdjustment",
-        back_populates="scheme",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="PricingSchemeDestAdjustment.id.asc()",
-    )
-
-    # Phase 3：方案适用起运仓
-    scheme_warehouses: Mapped[list["ShippingProviderPricingSchemeWarehouse"]] = relationship(
-        "ShippingProviderPricingSchemeWarehouse",
-        back_populates="scheme",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
 
     # 现有：段表
     segments = relationship(
@@ -146,5 +125,5 @@ class ShippingProviderPricingScheme(Base):
     def __repr__(self) -> str:
         return (
             f"<ShippingProviderPricingScheme id={self.id} "
-            f"provider_id={self.shipping_provider_id} name={self.name!r}>"
+            f"warehouse_id={self.warehouse_id} provider_id={self.shipping_provider_id} name={self.name!r}>"
         )
