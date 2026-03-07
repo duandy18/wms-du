@@ -25,19 +25,12 @@ class ShippingProviderSurcharge(Base):
     __table_args__ = (
         UniqueConstraint("scheme_id", "name", name="uq_sp_surcharges_scheme_name"),
         CheckConstraint(
-            "scope in ('always','province','city')",
+            "scope in ('province','city')",
             name="ck_sp_surcharges_scope_valid",
         ),
         CheckConstraint(
             """
             (
-              (scope = 'always'
-                AND province_name IS NULL
-                AND city_name IS NULL
-                AND province_code IS NULL
-                AND city_code IS NULL
-              )
-              OR
               (scope = 'province'
                 AND (province_name IS NOT NULL OR province_code IS NOT NULL)
                 AND city_name IS NULL
@@ -70,9 +63,7 @@ class ShippingProviderSurcharge(Base):
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
-    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="always", server_default="always")
-    stackable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
 
     province_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     city_code: Mapped[str | None] = mapped_column(String(32), nullable=True)

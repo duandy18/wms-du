@@ -15,7 +15,6 @@ from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 from .matchers import _match_destination_group, _match_pricing_matrix
 from .pricing import _calc_base_amount
-from .surcharge_select import select_surcharges_city_wins
 from .surcharges import _calc_surcharge_amount, _cond_match
 from .types import Dest
 from .weight import _compute_billable_weight_kg
@@ -80,6 +79,32 @@ def _build_level3_quote_result(
     }
 
 
+def _select_covering_surcharge(
+    *,
+    surcharges: List[ShippingProviderSurcharge],
+    dest: Dest,
+    flags: Optional[List[str]],
+    reasons: List[str],
+) -> ShippingProviderSurcharge | None:
+    matched = [s for s in surcharges if _cond_match(s, dest, flags or [])]
+    if not matched:
+        return None
+
+    city_matches = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "city"]
+    if city_matches:
+        chosen = sorted(city_matches, key=lambda s: int(s.id))[0]
+        reasons.append(f"surcharge_select: city>{chosen.name}")
+        return chosen
+
+    province_matches = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "province"]
+    if province_matches:
+        chosen = sorted(province_matches, key=lambda s: int(s.id))[0]
+        reasons.append(f"surcharge_select: province>{chosen.name}")
+        return chosen
+
+    return None
+
+
 def calc_quote_level3(
     *,
     db: Session,
@@ -119,10 +144,7 @@ def calc_quote_level3(
             ShippingProviderSurcharge.scheme_id == scheme_id,
             ShippingProviderSurcharge.active.is_(True),
         )
-        .order_by(
-            ShippingProviderSurcharge.priority.asc(),
-            ShippingProviderSurcharge.id.asc(),
-        )
+        .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
 
@@ -207,38 +229,33 @@ def calc_quote_level3(
             total_amount=None,
         )
 
-    matched: List[ShippingProviderSurcharge] = []
-    for s in surcharges:
-        if _cond_match(s, dest, flags or []):
-            matched.append(s)
-
-    final_surcharges = select_surcharges_city_wins(
-        matched=matched,
+    chosen_surcharge = _select_covering_surcharge(
+        surcharges=surcharges,
         dest=dest,
+        flags=flags,
         reasons=reasons,
     )
 
     s_details: List[JsonObject] = []
     surcharge_sum = 0.0
-    for s in final_surcharges:
-        amt, detail = _calc_surcharge_amount(s, bw, scheme_rounding)
+
+    if chosen_surcharge is not None:
+        amt, detail = _calc_surcharge_amount(chosen_surcharge, bw, scheme_rounding)
         surcharge_sum += float(amt)
         s_details.append(
             {
-                "id": s.id,
-                "name": s.name,
-                "priority": int(getattr(s, "priority", 100) or 100),
-                "scope": str(getattr(s, "scope", "always") or "always"),
-                "stackable": bool(getattr(s, "stackable", True)),
-                "province_code": getattr(s, "province_code", None),
-                "city_code": getattr(s, "city_code", None),
-                "province_name": getattr(s, "province_name", None),
-                "city_name": getattr(s, "city_name", None),
+                "id": chosen_surcharge.id,
+                "name": chosen_surcharge.name,
+                "scope": str(getattr(chosen_surcharge, "scope", "province") or "province"),
+                "province_code": getattr(chosen_surcharge, "province_code", None),
+                "city_code": getattr(chosen_surcharge, "city_code", None),
+                "province_name": getattr(chosen_surcharge, "province_name", None),
+                "city_name": getattr(chosen_surcharge, "city_name", None),
                 "amount": float(amt),
                 "detail": detail,
             }
         )
-        reasons.append(f"surcharge_hit: {s.name} (+{float(amt):.2f})")
+        reasons.append(f"surcharge_hit: {chosen_surcharge.name} (+{float(amt):.2f})")
 
     extra_sum = float(surcharge_sum)
     total = float(base_amt) + float(extra_sum)

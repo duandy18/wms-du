@@ -9,11 +9,17 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_pricing_matrix_cop
 from app.api.routers.shipping_provider_pricing_schemes_routes_pricing_matrix_crud import (
     register_pricing_matrix_crud_routes,
 )
+from app.api.routers.shipping_provider_pricing_schemes_routes_pricing_matrix_replace import (
+    register_pricing_matrix_replace_routes,
+)
 
 
 def register_pricing_matrix_routes(router: APIRouter) -> None:
     # CRUD: create/update/delete
     register_pricing_matrix_crud_routes(router)
+
+    # Replace: atomic full-set replace for one destination group
+    register_pricing_matrix_replace_routes(router)
 
     # Copy: pricing-matrix:copy
     register_pricing_matrix_copy_routes(router)

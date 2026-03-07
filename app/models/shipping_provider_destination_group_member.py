@@ -3,7 +3,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,6 +41,16 @@ class ShippingProviderDestinationGroupMember(Base):
             )
             """,
             name="ck_sp_dest_group_members_scope_fields",
+        ),
+        Index(
+            "uq_spdgm_group_scope_key",
+            "group_id",
+            "scope",
+            text("COALESCE(province_code, '')"),
+            text("COALESCE(city_code, '')"),
+            text("COALESCE(province_name, '')"),
+            text("COALESCE(city_name, '')"),
+            unique=True,
         ),
     )
 

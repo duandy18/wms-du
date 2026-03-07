@@ -21,7 +21,6 @@ def extract_dest_scope_key(s: ShippingProviderSurcharge) -> tuple[str, str, str 
     结构化 key：
     - province -> (province, province_key, None)
     - city     -> (city, province_key, city_key)
-    - always   -> None
     """
     scope = str(getattr(s, "scope", "") or "").strip().lower()
     if scope == "province":
@@ -40,6 +39,36 @@ def extract_dest_scope_key(s: ShippingProviderSurcharge) -> tuple[str, str, str 
     return None
 
 
+def select_covering_surcharge(
+    *,
+    matched: List[ShippingProviderSurcharge],
+    dest: Dest,
+    reasons: List[str],
+) -> ShippingProviderSurcharge | None:
+    """
+    覆盖型附加费选择：
+    - city > province
+    - 同层同命中如出现多条，先取 id 最小者，并记录 reason
+    """
+    _ = dest
+
+    city_rows = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "city"]
+    if city_rows:
+        city_rows = sorted(city_rows, key=lambda s: int(s.id))
+        if len(city_rows) > 1:
+            reasons.append("surcharge_conflict_same_scope: city scope duplicated, choose lowest id")
+        return city_rows[0]
+
+    province_rows = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "province"]
+    if province_rows:
+        province_rows = sorted(province_rows, key=lambda s: int(s.id))
+        if len(province_rows) > 1:
+            reasons.append("surcharge_conflict_same_scope: province scope duplicated, choose lowest id")
+        return province_rows[0]
+
+    return None
+
+
 def select_surcharges_city_wins(
     *,
     matched: List[ShippingProviderSurcharge],
@@ -47,58 +76,11 @@ def select_surcharges_city_wins(
     reasons: List[str],
 ) -> List[ShippingProviderSurcharge]:
     """
-    规则：
-    - always 保留
-    - 同省 city 命中时，province 被抑制
-    - 同 key 重复时，priority 小者优先，再按 id 小者优先
+    兼容旧调用方的包装：
+    - 新语义改为“单命中覆盖型”
+    - 返回 0 或 1 条
     """
-    _ = dest  # 当前无需直接读取，保留签名
-
-    hit_city_provinces: set[str] = set()
-    keyed: List[tuple[ShippingProviderSurcharge, tuple[str, str, str | None]]] = []
-    unkeyed: List[ShippingProviderSurcharge] = []
-
-    for s in matched:
-        k = extract_dest_scope_key(s)
-        if not k:
-            unkeyed.append(s)
-            continue
-        keyed.append((s, k))
-        if k[0] == "city":
-            hit_city_provinces.add(k[1])
-
-    seen_key: dict[tuple[str, str, str | None], ShippingProviderSurcharge] = {}
-    dup_ignored: List[ShippingProviderSurcharge] = []
-
-    for s, k in keyed:
-        prev = seen_key.get(k)
-        if prev is None:
-            seen_key[k] = s
-            continue
-
-        s_pri = int(getattr(s, "priority", 100) or 100)
-        p_pri = int(getattr(prev, "priority", 100) or 100)
-
-        if (s_pri, int(s.id)) < (p_pri, int(prev.id)):
-            dup_ignored.append(prev)
-            seen_key[k] = s
-        else:
-            dup_ignored.append(s)
-
-    for s in dup_ignored:
-        reasons.append(f"surcharge_ignored_duplicate_key: id={s.id} name={s.name}")
-
-    for prov in sorted(list(hit_city_provinces)):
-        reasons.append(f"surcharge_dest_mode: province={prov} (city wins, province suppressed)")
-
-    chosen_keyed: List[ShippingProviderSurcharge] = []
-    for k, s in seen_key.items():
-        scope2, prov2, _city2 = k
-        if scope2 == "province" and prov2 in hit_city_provinces:
-            continue
-        chosen_keyed.append(s)
-
-    final_surcharges: List[ShippingProviderSurcharge] = []
-    final_surcharges.extend(sorted(unkeyed, key=lambda x: (int(getattr(x, "priority", 100) or 100), int(x.id))))
-    final_surcharges.extend(sorted(chosen_keyed, key=lambda x: (int(getattr(x, "priority", 100) or 100), int(x.id))))
-    return final_surcharges
+    chosen = select_covering_surcharge(matched=matched, dest=dest, reasons=reasons)
+    if chosen is None:
+        return []
+    return [chosen]

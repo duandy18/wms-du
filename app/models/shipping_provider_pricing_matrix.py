@@ -23,23 +23,51 @@ class ShippingProviderPricingMatrix(Base):
             name="ck_sppm_mode_valid",
         ),
         CheckConstraint(
-            "pricing_mode <> 'flat' OR flat_amount IS NOT NULL",
-            name="ck_sppm_flat_needs_flat_amount",
+            """
+            pricing_mode <> 'flat'
+            OR (
+                flat_amount IS NOT NULL
+                AND base_amount IS NULL
+                AND rate_per_kg IS NULL
+                AND base_kg IS NULL
+            )
+            """,
+            name="ck_sppm_flat_shape",
         ),
         CheckConstraint(
-            "pricing_mode <> 'linear_total' OR rate_per_kg IS NOT NULL",
-            name="ck_sppm_linear_needs_rate",
+            """
+            pricing_mode <> 'linear_total'
+            OR (
+                flat_amount IS NULL
+                AND rate_per_kg IS NOT NULL
+                AND base_kg IS NULL
+            )
+            """,
+            name="ck_sppm_linear_total_shape",
         ),
         CheckConstraint(
             """
             pricing_mode <> 'step_over'
             OR (
-                base_kg IS NOT NULL
+                flat_amount IS NULL
+                AND base_kg IS NOT NULL
                 AND base_amount IS NOT NULL
                 AND rate_per_kg IS NOT NULL
             )
             """,
-            name="ck_sppm_step_over_needs_fields",
+            name="ck_sppm_step_over_shape",
+        ),
+        CheckConstraint(
+            """
+            pricing_mode <> 'manual_quote'
+            OR (
+                flat_amount IS NULL
+                AND base_amount IS NULL
+                AND rate_per_kg IS NULL
+                AND base_kg IS NULL
+            )
+            """,
+            name="ck_sppm_manual_quote_shape",
         ),
     )
 

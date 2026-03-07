@@ -8,7 +8,6 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     DestinationGroupOut,
     PricingMatrixOut,
     SchemeOut,
-    SchemeSegmentOut,
     SurchargeOut,
 )
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
@@ -17,9 +16,6 @@ from app.models.shipping_provider_destination_group_member import (
 )
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_segment import (
-    ShippingProviderPricingSchemeSegment,
-)
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
@@ -73,25 +69,12 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
         scheme_id=int(s.scheme_id),
         name=str(s.name),
         active=bool(s.active),
-        priority=int(getattr(s, "priority", 100) or 100),
         scope=str(getattr(s, "scope", "always") or "always"),
-        stackable=bool(getattr(s, "stackable", True)),
         province_code=getattr(s, "province_code", None),
         city_code=getattr(s, "city_code", None),
         province_name=getattr(s, "province_name", None),
         city_name=getattr(s, "city_name", None),
         fixed_amount=getattr(s, "fixed_amount", None),
-    )
-
-
-def to_scheme_segment_out(seg: ShippingProviderPricingSchemeSegment) -> SchemeSegmentOut:
-    return SchemeSegmentOut(
-        id=int(seg.id),
-        scheme_id=int(seg.scheme_id),
-        ord=int(seg.ord),
-        min_kg=seg.min_kg,
-        max_kg=seg.max_kg,
-        active=bool(seg.active),
     )
 
 
@@ -112,7 +95,6 @@ def to_scheme_out(
     surcharges: List[SurchargeOut] | None = None,
 ) -> SchemeOut:
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
-    segs = getattr(sch, "segments", None) or []
 
     return SchemeOut(
         id=int(sch.id),
@@ -126,9 +108,6 @@ def to_scheme_out(
         effective_to=getattr(sch, "effective_to", None),
         default_pricing_mode=str(dpm),
         billable_weight_rule=getattr(sch, "billable_weight_rule", None),
-        segments_json=getattr(sch, "segments_json", None),
-        segments_updated_at=getattr(sch, "segments_updated_at", None),
-        segments=[to_scheme_segment_out(x) for x in segs],
         destination_groups=destination_groups or [],
         surcharges=surcharges or [],
     )
