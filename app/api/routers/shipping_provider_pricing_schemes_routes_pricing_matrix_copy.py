@@ -200,6 +200,8 @@ def register_pricing_matrix_copy_routes(router: APIRouter) -> None:
                         ),
                     )
 
+                validate_payload_for_mode(new_mode, new_flat, new_base, new_rate, new_base_kg)
+
                 tr.pricing_mode = new_mode
                 tr.flat_amount = new_flat
                 tr.base_amount = new_base

@@ -7,7 +7,6 @@ from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 from .types import Dest, _s
 
-
 JsonObject = Dict[str, object]
 
 
@@ -20,16 +19,12 @@ def _dest_code(v: object | None) -> str:
 def _cond_match(s: ShippingProviderSurcharge, dest: Dest, flags: List[str]) -> bool:
     """
     结构化 surcharge 条件匹配：
-    - always
     - province
     - city
     """
     _ = flags
 
     scope = str(getattr(s, "scope", "") or "").strip().lower()
-
-    if scope == "always":
-        return True
 
     prov_code = _dest_code(getattr(dest, "province_code", None))
     city_code = _dest_code(getattr(dest, "city_code", None))

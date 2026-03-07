@@ -4,16 +4,17 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.routers.shipping_provider_pricing_schemes_mappers import to_surcharge_out
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SurchargeCreateIn,
     SurchargeOut,
     SurchargeUpdateIn,
 )
 from app.api.routers.shipping_provider_pricing_schemes.schemas.surcharge import SurchargeUpsertIn
+from app.api.routers.shipping_provider_pricing_schemes_mappers import to_surcharge_out
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm, norm_nonempty
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
@@ -21,7 +22,10 @@ from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 from .helpers import (
     ensure_dest_mutual_exclusion,
+    handle_surcharge_integrity_error,
     normalize_scope,
+    row_scope_key,
+    surcharge_scope_key,
 )
 
 
@@ -29,13 +33,17 @@ def _same_key(
     row: ShippingProviderSurcharge,
     *,
     scope: str,
+    province_code: str | None,
     province_name: str | None,
+    city_code: str | None,
     city_name: str | None,
 ) -> bool:
-    return (
-        str(row.scope) == scope
-        and ((row.province_name or None) == (province_name or None))
-        and ((row.city_name or None) == (city_name or None))
+    return row_scope_key(row) == surcharge_scope_key(
+        scope=scope,
+        province_code=province_code,
+        province_name=province_name,
+        city_code=city_code,
+        city_name=city_name,
     )
 
 
@@ -77,17 +85,20 @@ def register_surcharges_routes(router: APIRouter) -> None:
             scheme_id=scheme_id,
             name=norm_nonempty(payload.name, "name"),
             active=bool(payload.active),
-            priority=int(payload.priority),
             scope=scope2,
-            stackable=bool(payload.stackable),
             province_code=payload.province_code,
-            city_code=payload.city_code,
+            city_code=payload.city_code if scope2 == "city" else None,
             province_name=payload.province_name,
-            city_name=payload.city_name,
+            city_name=payload.city_name if scope2 == "city" else None,
             fixed_amount=payload.fixed_amount,
         )
         db.add(s)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            handle_surcharge_integrity_error(e)
+
         db.refresh(s)
         return to_surcharge_out(s)
 
@@ -111,14 +122,16 @@ def register_surcharges_routes(router: APIRouter) -> None:
         _require_scheme(db, scheme_id)
 
         scope2 = payload.scope
+        province_code2 = payload.province_code
         province_name2 = payload.province_name
+        city_code2 = payload.city_code if payload.scope == "city" else None
         city_name2 = payload.city_name if payload.scope == "city" else None
 
         ensure_dest_mutual_exclusion(
             db,
             scheme_id=scheme_id,
             target_scope=scope2,
-            province_code=payload.province_code,
+            province_code=province_code2,
             province_name=province_name2,
             target_id=None,
             active=bool(payload.active),
@@ -136,7 +149,9 @@ def register_surcharges_routes(router: APIRouter) -> None:
             if _same_key(
                 s,
                 scope=scope2,
+                province_code=province_code2,
                 province_name=province_name2,
+                city_code=city_code2,
                 city_name=city_name2,
             ):
                 target = s
@@ -151,17 +166,20 @@ def register_surcharges_routes(router: APIRouter) -> None:
                 scheme_id=scheme_id,
                 name=norm_nonempty(name, "name"),
                 active=bool(payload.active),
-                priority=int(payload.priority),
                 scope=scope2,
-                stackable=bool(payload.stackable),
-                province_code=payload.province_code,
-                city_code=payload.city_code if scope2 == "city" else None,
+                province_code=province_code2,
+                city_code=city_code2,
                 province_name=province_name2,
                 city_name=city_name2,
                 fixed_amount=Decimal(payload.amount),
             )
             db.add(s)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError as e:
+                db.rollback()
+                handle_surcharge_integrity_error(e)
+
             db.refresh(s)
             return to_surcharge_out(s)
 
@@ -169,7 +187,7 @@ def register_surcharges_routes(router: APIRouter) -> None:
             db,
             scheme_id=scheme_id,
             target_scope=scope2,
-            province_code=payload.province_code,
+            province_code=province_code2,
             province_name=province_name2,
             target_id=int(target.id),
             active=bool(payload.active),
@@ -177,15 +195,19 @@ def register_surcharges_routes(router: APIRouter) -> None:
 
         target.name = norm_nonempty(name, "name")
         target.active = bool(payload.active)
-        target.priority = int(payload.priority)
         target.scope = scope2
-        target.stackable = bool(payload.stackable)
-        target.province_code = payload.province_code
-        target.city_code = payload.city_code if scope2 == "city" else None
+        target.province_code = province_code2
+        target.city_code = city_code2
         target.province_name = province_name2
         target.city_name = city_name2
         target.fixed_amount = Decimal(payload.amount)
-        db.commit()
+
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            handle_surcharge_integrity_error(e)
+
         db.refresh(target)
         return to_surcharge_out(target)
 
@@ -215,6 +237,10 @@ def register_surcharges_routes(router: APIRouter) -> None:
         next_province_name = data.get("province_name", s.province_name)
         next_city_name = data.get("city_name", s.city_name)
 
+        if next_scope == "province":
+            next_city_code = None
+            next_city_name = None
+
         next_fixed_amount = data.get("fixed_amount", s.fixed_amount)
 
         ensure_dest_mutual_exclusion(
@@ -234,26 +260,21 @@ def register_surcharges_routes(router: APIRouter) -> None:
             s.name = norm_nonempty(data.get("name"), "name")
         if "active" in data:
             s.active = bool(data["active"])
-        if "priority" in data and data["priority"] is not None:
-            s.priority = int(data["priority"])
         if "scope" in data and data["scope"] is not None:
             s.scope = next_scope
-        if "stackable" in data and data["stackable"] is not None:
-            s.stackable = bool(data["stackable"])
 
-        if "province_code" in data:
-            s.province_code = next_province_code
-        if "city_code" in data:
-            s.city_code = next_city_code
-        if "province_name" in data:
-            s.province_name = next_province_name
-        if "city_name" in data:
-            s.city_name = next_city_name
+        s.province_code = next_province_code
+        s.city_code = next_city_code
+        s.province_name = next_province_name
+        s.city_name = next_city_name
+        s.fixed_amount = next_fixed_amount
 
-        if "fixed_amount" in data:
-            s.fixed_amount = next_fixed_amount
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            handle_surcharge_integrity_error(e)
 
-        db.commit()
         db.refresh(s)
         return to_surcharge_out(s)
 

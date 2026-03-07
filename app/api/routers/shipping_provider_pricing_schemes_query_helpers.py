@@ -6,13 +6,13 @@ from typing import Dict, List, Tuple
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.routers.shipping_provider_pricing_schemes_mappers import (
-    to_destination_group_out,
-    to_surcharge_out,
-)
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     DestinationGroupOut,
     SurchargeOut,
+)
+from app.api.routers.shipping_provider_pricing_schemes_mappers import (
+    to_destination_group_out,
+    to_surcharge_out,
 )
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_destination_group_member import (
@@ -20,9 +20,6 @@ from app.models.shipping_provider_destination_group_member import (
 )
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_segment import (  # noqa: F401
-    ShippingProviderPricingSchemeSegment,
-)
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
@@ -114,10 +111,7 @@ def load_scheme_entities(
     surcharges_raw = (
         db.query(ShippingProviderSurcharge)
         .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
-        .order_by(
-            ShippingProviderSurcharge.priority.asc(),
-            ShippingProviderSurcharge.id.asc(),
-        )
+        .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
     surcharges: List[SurchargeOut] = [to_surcharge_out(s) for s in surcharges_raw]

@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class WeightSegmentIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    # 前端用 string；后端会做强校验并规范化
+    # 兼容旧导出链；当前主业务已不再使用 scheme 级 segments，
+    # 但保留该 schema，避免 import 链断裂。
     min: str = Field(..., min_length=1, max_length=32)
     max: str = Field(default="", max_length=32)  # 空 = ∞
 

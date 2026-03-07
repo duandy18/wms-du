@@ -32,7 +32,6 @@ def register_debug_routes(router: APIRouter) -> None:
             PricingMatrixOut as _PricingMatrixOut,
             SchemeOut as _SchemeOut,
             SurchargeOut as _SurchargeOut,
-            WeightSegmentIn as _WeightSegmentIn,
         )
 
         g = _DestinationGroupOut(
@@ -75,29 +74,23 @@ def register_debug_routes(router: APIRouter) -> None:
             active=True,
             currency="CNY",
             archived_at=datetime.now(tz=timezone.utc),
+            effective_from=None,
+            effective_to=None,
             default_pricing_mode="linear_total",
             billable_weight_rule=None,
-            segments_json=[
-                _WeightSegmentIn(min="0", max="1"),
-                _WeightSegmentIn(min="1", max="2"),
-                _WeightSegmentIn(min="2", max=""),
-            ],
-            segments_updated_at=datetime.now(tz=timezone.utc),
             destination_groups=[g],
             surcharges=[
                 _SurchargeOut(
                     id=1,
                     scheme_id=scheme_id,
-                    name="S1",
+                    name="北京市附加",
                     active=True,
-                    priority=100,
-                    scope="always",
-                    stackable=True,
-                    province_code=None,
+                    scope="province",
+                    province_code="110000",
                     city_code=None,
-                    province_name=None,
+                    province_name="北京市",
                     city_name=None,
-                    fixed_amount=Decimal("0.00"),
+                    fixed_amount=Decimal("1.00"),
                 )
             ],
         )

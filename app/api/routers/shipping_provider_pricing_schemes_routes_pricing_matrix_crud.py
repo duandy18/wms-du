@@ -95,37 +95,36 @@ def register_pricing_matrix_crud_routes(router: APIRouter) -> None:
         if not group:
             raise HTTPException(status_code=404, detail="Destination group not found")
 
-        data = payload.dict(exclude_unset=True)
+        data = payload.model_dump(exclude_unset=True)
 
-        if "min_kg" in data and data["min_kg"] is not None:
-            row.min_kg = data["min_kg"]
-        if "max_kg" in data:
-            row.max_kg = data["max_kg"]
+        next_min_kg = data["min_kg"] if "min_kg" in data and data["min_kg"] is not None else row.min_kg
+        next_max_kg = data["max_kg"] if "max_kg" in data else row.max_kg
+        validate_pricing_matrix_range(next_min_kg, next_max_kg)
 
-        validate_pricing_matrix_range(row.min_kg, row.max_kg)
+        next_mode = normalize_mode(data["pricing_mode"]) if "pricing_mode" in data and data["pricing_mode"] is not None else normalize_mode(str(row.pricing_mode))
+        next_flat_amount = data["flat_amount"] if "flat_amount" in data else row.flat_amount
+        next_base_amount = data["base_amount"] if "base_amount" in data else row.base_amount
+        next_rate_per_kg = data["rate_per_kg"] if "rate_per_kg" in data else row.rate_per_kg
+        next_base_kg = data["base_kg"] if "base_kg" in data else getattr(row, "base_kg", None)
 
-        if "pricing_mode" in data and data["pricing_mode"] is not None:
-            row.pricing_mode = normalize_mode(data["pricing_mode"])
+        validate_payload_for_mode(
+            next_mode,
+            next_flat_amount,
+            next_base_amount,
+            next_rate_per_kg,
+            next_base_kg,
+        )
 
-        if "flat_amount" in data:
-            row.flat_amount = data["flat_amount"]
-        if "base_amount" in data:
-            row.base_amount = data["base_amount"]
-        if "rate_per_kg" in data:
-            row.rate_per_kg = data["rate_per_kg"]
-        if "base_kg" in data:
-            row.base_kg = data["base_kg"]
+        row.min_kg = next_min_kg
+        row.max_kg = next_max_kg
+        row.pricing_mode = next_mode
+        row.flat_amount = next_flat_amount
+        row.base_amount = next_base_amount
+        row.rate_per_kg = next_rate_per_kg
+        row.base_kg = next_base_kg
+
         if "active" in data:
             row.active = bool(data["active"])
-
-        mode = normalize_mode(str(row.pricing_mode))
-        validate_payload_for_mode(
-            mode,
-            row.flat_amount,
-            row.base_amount,
-            row.rate_per_kg,
-            getattr(row, "base_kg", None),
-        )
 
         try:
             db.commit()

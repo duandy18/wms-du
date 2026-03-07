@@ -13,7 +13,6 @@ from app.db.deps import get_db
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_segment import ShippingProviderPricingSchemeSegment
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
@@ -48,7 +47,8 @@ def _counts_for_scheme(db: Session, scheme_id: int) -> Tuple[int, int, int, int,
     """
     终态主线（硬仓库边界）：
     - scheme 自带 warehouse_id，不再统计绑定行
-    - 主线实体：destination_groups / pricing_matrix / surcharges / segments
+    - 主线实体：destination_groups / pricing_matrix / surcharges
+    - seg_n 保留输出字段，但固定为 0
     """
     group_n = (
         db.query(ShippingProviderDestinationGroup.id)
@@ -69,11 +69,7 @@ def _counts_for_scheme(db: Session, scheme_id: int) -> Tuple[int, int, int, int,
         .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
         .count()
     )
-    seg_n = (
-        db.query(ShippingProviderPricingSchemeSegment.id)
-        .filter(ShippingProviderPricingSchemeSegment.scheme_id == scheme_id)
-        .count()
-    )
+    seg_n = 0
     wh_n = 0
     return group_n, matrix_n, surcharge_n, seg_n, wh_n
 
@@ -156,10 +152,6 @@ def register(router: APIRouter) -> None:
 
             db.query(ShippingProviderSurcharge).filter(
                 ShippingProviderSurcharge.scheme_id == sid
-            ).delete(synchronize_session=False)
-
-            db.query(ShippingProviderPricingSchemeSegment).filter(
-                ShippingProviderPricingSchemeSegment.scheme_id == sid
             ).delete(synchronize_session=False)
 
             db.query(ShippingProviderPricingScheme).filter(

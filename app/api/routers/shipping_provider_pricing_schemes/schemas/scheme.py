@@ -6,20 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .common import WeightSegmentIn
 from .destination_group import DestinationGroupOut
 from .surcharge import SurchargeOut
-
-
-class SchemeSegmentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    scheme_id: int
-    ord: int
-    min_kg: Any
-    max_kg: Any = None
-    active: bool = True
 
 
 class SchemeOut(BaseModel):
@@ -39,11 +27,6 @@ class SchemeOut(BaseModel):
 
     default_pricing_mode: str
     billable_weight_rule: Optional[Dict[str, Any]] = None
-
-    segments_json: Optional[List[WeightSegmentIn]] = None
-    segments_updated_at: Optional[datetime] = None
-
-    segments: List[SchemeSegmentOut] = Field(default_factory=list)
 
     destination_groups: List[DestinationGroupOut] = Field(default_factory=list)
     surcharges: List[SurchargeOut] = Field(default_factory=list)
@@ -78,8 +61,6 @@ class SchemeCreateIn(BaseModel):
     effective_to: Optional[datetime] = None
     billable_weight_rule: Optional[Dict[str, Any]] = None
 
-    segments_json: Optional[List[WeightSegmentIn]] = None
-
 
 class SchemeUpdateIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -96,5 +77,3 @@ class SchemeUpdateIn(BaseModel):
     effective_from: Optional[datetime] = None
     effective_to: Optional[datetime] = None
     billable_weight_rule: Optional[Dict[str, Any]] = None
-
-    segments_json: Optional[List[WeightSegmentIn]] = None

@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-_ALLOWED_SCOPE = {"always", "province", "city"}
+_ALLOWED_SCOPE = {"province", "city"}
 
 
 class SurchargeOut(BaseModel):
@@ -18,9 +18,7 @@ class SurchargeOut(BaseModel):
     name: str
     active: bool
 
-    priority: int
     scope: str
-    stackable: bool
 
     province_code: Optional[str] = None
     city_code: Optional[str] = None
@@ -36,9 +34,7 @@ class SurchargeCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     active: bool = True
 
-    priority: int = 100
-    scope: str = Field(default="always", min_length=1, max_length=16)
-    stackable: bool = True
+    scope: str = Field(..., min_length=1, max_length=16)
 
     province_code: Optional[str] = Field(None, max_length=32)
     city_code: Optional[str] = Field(None, max_length=32)
@@ -52,7 +48,7 @@ class SurchargeCreateIn(BaseModel):
     def _scope_ok(cls, v: str) -> str:
         t = (v or "").strip().lower()
         if t not in _ALLOWED_SCOPE:
-            raise ValueError("scope must be one of: always / province / city")
+            raise ValueError("scope must be one of: province / city")
         return t
 
     @field_validator("province_code", "city_code", "province_name", "city_name")
@@ -65,21 +61,17 @@ class SurchargeCreateIn(BaseModel):
 
     @model_validator(mode="after")
     def _validate_scope_and_amount(self):
-        if self.scope == "always":
-            if any([self.province_code, self.city_code, self.province_name, self.city_name]):
-                raise ValueError("always scope must not carry province/city fields")
-
         if self.scope == "province":
-            if not self.province_name:
-                raise ValueError("province_name is required when scope=province")
+            if not (self.province_name or self.province_code):
+                raise ValueError("province_name or province_code is required when scope=province")
             if self.city_name or self.city_code:
                 raise ValueError("city_name/city_code must be empty when scope=province")
 
         if self.scope == "city":
-            if not self.province_name:
-                raise ValueError("province_name is required when scope=city")
-            if not self.city_name:
-                raise ValueError("city_name is required when scope=city")
+            if not (self.province_name or self.province_code):
+                raise ValueError("province_name or province_code is required when scope=city")
+            if not (self.city_name or self.city_code):
+                raise ValueError("city_name or city_code is required when scope=city")
 
         return self
 
@@ -90,9 +82,7 @@ class SurchargeUpdateIn(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     active: Optional[bool] = None
 
-    priority: Optional[int] = None
     scope: Optional[str] = Field(None, min_length=1, max_length=16)
-    stackable: Optional[bool] = None
 
     province_code: Optional[str] = Field(None, max_length=32)
     city_code: Optional[str] = Field(None, max_length=32)
@@ -108,7 +98,7 @@ class SurchargeUpdateIn(BaseModel):
             return None
         t = v.strip().lower()
         if t not in _ALLOWED_SCOPE:
-            raise ValueError("scope must be one of: always / province / city")
+            raise ValueError("scope must be one of: province / city")
         return t
 
     @field_validator("province_code", "city_code", "province_name", "city_name")
@@ -134,8 +124,6 @@ class SurchargeUpsertIn(BaseModel):
 
     amount: Decimal = Field(..., ge=0)
     active: bool = True
-    priority: int = 100
-    stackable: bool = True
 
     @field_validator("province_name", "city_name", "province_code", "city_code")
     @classmethod
