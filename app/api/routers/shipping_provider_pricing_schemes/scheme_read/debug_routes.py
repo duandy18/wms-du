@@ -27,8 +27,8 @@ def register_debug_routes(router: APIRouter) -> None:
         check_perm(db, user, "config.store.read")
 
         from app.api.routers.shipping_provider_pricing_schemes.schemas import (
-            DestinationGroupMemberOut as _DestinationGroupMemberOut,
             DestinationGroupOut as _DestinationGroupOut,
+            DestinationGroupProvinceOut as _DestinationGroupProvinceOut,
             PricingMatrixOut as _PricingMatrixOut,
             SchemeOut as _SchemeOut,
             SurchargeOut as _SurchargeOut,
@@ -39,15 +39,12 @@ def register_debug_routes(router: APIRouter) -> None:
             scheme_id=scheme_id,
             name="DEBUG_GROUP",
             active=True,
-            members=[
-                _DestinationGroupMemberOut(
+            provinces=[
+                _DestinationGroupProvinceOut(
                     id=1,
                     group_id=123,
-                    scope="province",
                     province_code="110000",
-                    city_code=None,
                     province_name="北京市",
-                    city_name=None,
                 )
             ],
             pricing_matrix=[

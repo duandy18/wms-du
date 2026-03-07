@@ -4,10 +4,12 @@
 -- - 幂等：以 shipping_providers.code 作为幂等键（uq_shipping_providers_code）
 -- - 最小：1 provider / 1 scheme / 1 destination_group / 2 pricing_matrix
 --
--- ✅ 最新合同（路线 A）：
+-- ✅ 最新合同（路线 B 第一阶段后）：
 -- - scheme 作用域 = warehouse × provider（shipping_provider_pricing_schemes.warehouse_id）
 -- - 仓库启用关系：warehouse_shipping_providers(warehouse_id, shipping_provider_id)
 -- - 主线计价：destination_group + pricing_matrix
+-- - destination_group_members 已物理专用化为 province-only：
+--   仅保留 province_code / province_name，不再有 scope / city_code / city_name
 
 -- 0) 修正序列
 SELECT setval(
@@ -108,7 +110,7 @@ dg AS (
 )
 SELECT 1;
 
--- 2) destination_group_members
+-- 2) destination_group_members（province-only）
 WITH wh AS (
   SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
 ),
@@ -132,15 +134,13 @@ dg2 AS (
 )
 INSERT INTO shipping_provider_destination_group_members (
   group_id,
-  scope,
-  province_name,
-  city_name
+  province_code,
+  province_name
 )
 SELECT
   dg2.id,
-  'province',
-  '北京市',
-  NULL
+  NULL,
+  '北京市'
 FROM dg2
 ON CONFLICT DO NOTHING;
 

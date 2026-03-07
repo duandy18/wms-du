@@ -7,7 +7,7 @@ from .pricing_matrix import (
     PricingMatrixReplaceIn,
     PricingMatrixReplaceOut,
 )
-from .destination_group import DestinationGroupMemberOut, DestinationGroupOut
+from .destination_group import DestinationGroupProvinceOut, DestinationGroupOut
 from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
 from .scheme import (
     SchemeOut,
@@ -15,6 +15,16 @@ from .scheme import (
     SchemeDetailOut,
     SchemeCreateIn,
     SchemeUpdateIn,
+)
+from .matrix_view import (
+    MatrixCellOut,
+    MatrixGroupOut,
+    MatrixGroupProvinceOut,
+    MatrixViewDataOut,
+    MatrixViewOut,
+    MatrixViewSchemeOut,
+    MatrixWeightRangeOut,
+    PricingMatrixPatchIn,
 )
 
 __all__ = [
@@ -26,7 +36,7 @@ __all__ = [
     "PricingMatrixReplaceRowIn",
     "PricingMatrixReplaceIn",
     "PricingMatrixReplaceOut",
-    "DestinationGroupMemberOut",
+    "DestinationGroupProvinceOut",
     "DestinationGroupOut",
     "SurchargeOut",
     "SurchargeCreateIn",
@@ -36,4 +46,12 @@ __all__ = [
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
+    "MatrixCellOut",
+    "MatrixGroupOut",
+    "MatrixGroupProvinceOut",
+    "MatrixViewDataOut",
+    "MatrixViewOut",
+    "MatrixViewSchemeOut",
+    "MatrixWeightRangeOut",
+    "PricingMatrixPatchIn",
 ]

@@ -22,35 +22,21 @@ class ShippingProviderDestinationGroupMember(Base):
     __tablename__ = "shipping_provider_destination_group_members"
     __table_args__ = (
         CheckConstraint(
-            "scope in ('province','city')",
-            name="ck_sp_dest_group_members_scope_valid",
-        ),
-        CheckConstraint(
-            """
-            (
-              scope = 'province'
-              AND (province_name IS NOT NULL OR province_code IS NOT NULL)
-              AND city_name IS NULL
-              AND city_code IS NULL
-            )
-            OR
-            (
-              scope = 'city'
-              AND (province_name IS NOT NULL OR province_code IS NOT NULL)
-              AND (city_name IS NOT NULL OR city_code IS NOT NULL)
-            )
-            """,
-            name="ck_sp_dest_group_members_scope_fields",
+            "(province_name IS NOT NULL OR province_code IS NOT NULL)",
+            name="ck_sp_dest_group_members_province_required",
         ),
         Index(
-            "uq_spdgm_group_scope_key",
+            "uq_spdgm_group_province_key",
             "group_id",
-            "scope",
             text("COALESCE(province_code, '')"),
-            text("COALESCE(city_code, '')"),
             text("COALESCE(province_name, '')"),
-            text("COALESCE(city_name, '')"),
             unique=True,
+        ),
+        Index(
+            "ix_spdgm_group_province",
+            "group_id",
+            "province_code",
+            "province_name",
         ),
     )
 
@@ -62,12 +48,8 @@ class ShippingProviderDestinationGroupMember(Base):
         nullable=False,
     )
 
-    scope: Mapped[str] = mapped_column(String(16), nullable=False)
-
     province_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    city_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     province_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    city_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -80,6 +62,5 @@ class ShippingProviderDestinationGroupMember(Base):
     def __repr__(self) -> str:
         return (
             f"<ShippingProviderDestinationGroupMember id={self.id} group_id={self.group_id} "
-            f"scope={self.scope!r} province={self.province_name or self.province_code!r} "
-            f"city={self.city_name or self.city_code!r}>"
+            f"province={self.province_name or self.province_code!r}>"
         )

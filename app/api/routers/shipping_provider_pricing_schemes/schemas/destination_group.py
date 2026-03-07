@@ -8,16 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from .pricing_matrix import PricingMatrixOut
 
 
-class DestinationGroupMemberOut(BaseModel):
+class DestinationGroupProvinceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     group_id: int
-    scope: str
     province_code: Optional[str] = None
-    city_code: Optional[str] = None
     province_name: Optional[str] = None
-    city_name: Optional[str] = None
 
 
 class DestinationGroupOut(BaseModel):
@@ -28,5 +25,5 @@ class DestinationGroupOut(BaseModel):
     name: str
     active: bool
 
-    members: List[DestinationGroupMemberOut] = Field(default_factory=list)
+    provinces: List[DestinationGroupProvinceOut] = Field(default_factory=list)
     pricing_matrix: List[PricingMatrixOut] = Field(default_factory=list)

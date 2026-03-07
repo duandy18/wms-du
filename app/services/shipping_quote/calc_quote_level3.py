@@ -28,20 +28,14 @@ def _to_hit_member_out_level3(
     if hit_member is None:
         return None
 
-    scope = str(hit_member.scope or "").strip().lower()
-    if scope == "city":
-        value = hit_member.city_name or hit_member.city_code or ""
-    else:
-        value = hit_member.province_name or hit_member.province_code or ""
+    value = hit_member.province_name or hit_member.province_code or ""
 
     return {
-        "id": hit_member.id,
-        "level": scope,
+        "id": int(hit_member.id),
+        "level": "province",
         "value": value,
         "province_code": hit_member.province_code,
-        "city_code": hit_member.city_code,
         "province_name": hit_member.province_name,
-        "city_name": hit_member.city_name,
     }
 
 
@@ -59,8 +53,8 @@ def _build_level3_quote_result(
 ) -> JsonObject:
     return {
         "ok": True,
-        "scheme_id": sch.id,
-        "shipping_provider_id": sch.shipping_provider_id,
+        "scheme_id": int(sch.id),
+        "shipping_provider_id": int(sch.shipping_provider_id),
         "currency": sch.currency,
         "quote_status": quote_status,
         "reasons": reasons,
@@ -121,7 +115,7 @@ def calc_quote_level3(
         .filter(ShippingProviderDestinationGroup.scheme_id == scheme_id)
         .all()
     )
-    group_ids = [g.id for g in groups]
+    group_ids = [int(g.id) for g in groups]
 
     members: List[ShippingProviderDestinationGroupMember] = []
     matrix_rows: List[ShippingProviderPricingMatrix] = []
@@ -163,7 +157,7 @@ def calc_quote_level3(
     if not group:
         raise ValueError("no matching destination group")
 
-    group_matrix = [r for r in matrix_rows if r.group_id == group.id and bool(r.active)]
+    group_matrix = [r for r in matrix_rows if int(r.group_id) == int(group.id) and bool(r.active)]
     row = _match_pricing_matrix(group_matrix, bw)
     if not row:
         raise ValueError("no matching pricing matrix")
@@ -173,8 +167,7 @@ def calc_quote_level3(
         reasons.append(
             "group_match: "
             f"group={group.name} "
-            f"member({(hit_member.scope or '').lower()}="
-            f"{hit_member.city_name or hit_member.city_code or hit_member.province_name or hit_member.province_code})"
+            f"member(province={hit_member.province_name or hit_member.province_code})"
         )
     else:
         reasons.append(f"group_match: group={group.name} (fallback)")
@@ -186,13 +179,13 @@ def calc_quote_level3(
     base_amt, base_detail = _calc_base_amount(row, bw, scheme_rounding)
 
     group_out: JsonObject = {
-        "id": group.id,
+        "id": int(group.id),
         "name": group.name,
         "hit_member": _to_hit_member_out_level3(hit_member),
         "source": "level3",
     }
     matrix_out: JsonObject = {
-        "id": row.id,
+        "id": int(row.id),
         "min_kg": float(row.min_kg),
         "max_kg": None if row.max_kg is None else float(row.max_kg),
         "pricing_mode": str(row.pricing_mode),
@@ -244,7 +237,7 @@ def calc_quote_level3(
         surcharge_sum += float(amt)
         s_details.append(
             {
-                "id": chosen_surcharge.id,
+                "id": int(chosen_surcharge.id),
                 "name": chosen_surcharge.name,
                 "scope": str(getattr(chosen_surcharge, "scope", "province") or "province"),
                 "province_code": getattr(chosen_surcharge, "province_code", None),

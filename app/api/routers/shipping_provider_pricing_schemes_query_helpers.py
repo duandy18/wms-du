@@ -28,7 +28,7 @@ def load_scheme_entities(
     scheme_id: int,
 ) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeOut]]:
     """
-    读取 Scheme + DestinationGroups(+Members,+PricingMatrix) + Surcharges，并组装为输出对象。
+    读取 Scheme + DestinationGroups(+Provinces,+PricingMatrix) + Surcharges，并组装为输出对象。
     - 只做查询与组装，不做权限校验
     - scheme 不存在则抛 404
     - shipping_provider_name 必须由后端真实关联提供
@@ -61,28 +61,25 @@ def load_scheme_entities(
         .order_by(ShippingProviderDestinationGroup.id.asc())
         .all()
     )
-    group_ids = [g.id for g in groups_raw]
+    group_ids = [int(g.id) for g in groups_raw]
 
-    members_by_group: Dict[int, List[ShippingProviderDestinationGroupMember]] = {}
+    provinces_by_group: Dict[int, List[ShippingProviderDestinationGroupMember]] = {}
     matrix_by_group: Dict[int, List[ShippingProviderPricingMatrix]] = {}
 
     if group_ids:
-        members = (
+        provinces = (
             db.query(ShippingProviderDestinationGroupMember)
             .filter(ShippingProviderDestinationGroupMember.group_id.in_(group_ids))
             .order_by(
                 ShippingProviderDestinationGroupMember.group_id.asc(),
-                ShippingProviderDestinationGroupMember.scope.asc(),
                 ShippingProviderDestinationGroupMember.province_code.asc().nulls_last(),
-                ShippingProviderDestinationGroupMember.city_code.asc().nulls_last(),
                 ShippingProviderDestinationGroupMember.province_name.asc().nulls_last(),
-                ShippingProviderDestinationGroupMember.city_name.asc().nulls_last(),
                 ShippingProviderDestinationGroupMember.id.asc(),
             )
             .all()
         )
-        for m in members:
-            members_by_group.setdefault(m.group_id, []).append(m)
+        for p in provinces:
+            provinces_by_group.setdefault(int(p.group_id), []).append(p)
 
         matrix_rows = (
             db.query(ShippingProviderPricingMatrix)
@@ -96,15 +93,15 @@ def load_scheme_entities(
             .all()
         )
         for row in matrix_rows:
-            matrix_by_group.setdefault(row.group_id, []).append(row)
+            matrix_by_group.setdefault(int(row.group_id), []).append(row)
 
     destination_groups: List[DestinationGroupOut] = []
     for g in groups_raw:
         destination_groups.append(
             to_destination_group_out(
                 g,
-                members_by_group.get(g.id, []),
-                matrix_by_group.get(g.id, []),
+                provinces_by_group.get(int(g.id), []),
+                matrix_by_group.get(int(g.id), []),
             )
         )
 
