@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import List
 
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
-    DestinationGroupMemberOut,
     DestinationGroupOut,
+    DestinationGroupProvinceOut,
     PricingMatrixOut,
     SchemeOut,
     SurchargeOut,
@@ -19,17 +19,14 @@ from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingS
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
-def to_destination_group_member_out(
+def to_destination_group_province_out(
     m: ShippingProviderDestinationGroupMember,
-) -> DestinationGroupMemberOut:
-    return DestinationGroupMemberOut(
+) -> DestinationGroupProvinceOut:
+    return DestinationGroupProvinceOut(
         id=int(m.id),
         group_id=int(m.group_id),
-        scope=str(m.scope),
         province_code=getattr(m, "province_code", None),
-        city_code=getattr(m, "city_code", None),
         province_name=getattr(m, "province_name", None),
-        city_name=getattr(m, "city_name", None),
     )
 
 
@@ -50,7 +47,7 @@ def to_pricing_matrix_out(r: ShippingProviderPricingMatrix) -> PricingMatrixOut:
 
 def to_destination_group_out(
     g: ShippingProviderDestinationGroup,
-    members: List[ShippingProviderDestinationGroupMember],
+    provinces: List[ShippingProviderDestinationGroupMember],
     pricing_matrix: List[ShippingProviderPricingMatrix],
 ) -> DestinationGroupOut:
     return DestinationGroupOut(
@@ -58,7 +55,7 @@ def to_destination_group_out(
         scheme_id=int(g.scheme_id),
         name=str(g.name),
         active=bool(g.active),
-        members=[to_destination_group_member_out(x) for x in members],
+        provinces=[to_destination_group_province_out(x) for x in provinces],
         pricing_matrix=[to_pricing_matrix_out(x) for x in pricing_matrix],
     )
 
@@ -69,7 +66,7 @@ def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
         scheme_id=int(s.scheme_id),
         name=str(s.name),
         active=bool(s.active),
-        scope=str(getattr(s, "scope", "always") or "always"),
+        scope=str(getattr(s, "scope", "province") or "province"),
         province_code=getattr(s, "province_code", None),
         city_code=getattr(s, "city_code", None),
         province_name=getattr(s, "province_name", None),

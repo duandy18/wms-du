@@ -18,54 +18,31 @@ def _match_destination_group(
     dest: Dest,
 ) -> Tuple[Optional[ShippingProviderDestinationGroup], Optional[ShippingProviderDestinationGroupMember]]:
     """
-    Level-3 目的地收费组匹配：
-    1) 优先匹配有 members 命中的 group
+    Level-3 基本费目的地组匹配（province-only）：
+    1) 优先匹配有 province members 命中的 active group
     2) 若都不命中，则回退到 members 为空的 active group
     """
     dp_name = _s(dest.province)
-    dc_name = _s(dest.city)
     dp_code = _s(dest.province_code)
-    dc_code = _s(dest.city_code)
 
     by_group: Dict[int, List[ShippingProviderDestinationGroupMember]] = {}
     for m in members:
-        by_group.setdefault(m.group_id, []).append(m)
+        by_group.setdefault(int(m.group_id), []).append(m)
 
     def member_hit(m: ShippingProviderDestinationGroupMember) -> bool:
-        scope = (m.scope or "").strip().lower()
-
         row_prov_code = _s(m.province_code)
-        row_city_code = _s(m.city_code)
         row_prov_name = _s(m.province_name)
-        row_city_name = _s(m.city_name)
 
-        if scope == "province":
-            if row_prov_code and dp_code:
-                return row_prov_code == dp_code
-            return bool(row_prov_name and dp_name and row_prov_name == dp_name)
-
-        if scope == "city":
-            province_ok = False
-            if row_prov_code and dp_code:
-                province_ok = row_prov_code == dp_code
-            elif row_prov_name and dp_name:
-                province_ok = row_prov_name == dp_name
-
-            if not province_ok:
-                return False
-
-            if row_city_code and dc_code:
-                return row_city_code == dc_code
-            return bool(row_city_name and dc_name and row_city_name == dc_name)
-
-        return False
+        if row_prov_code and dp_code:
+            return row_prov_code == dp_code
+        return bool(row_prov_name and dp_name and row_prov_name == dp_name)
 
     groups_sorted = sorted(groups, key=lambda g: int(g.id))
 
     for g in groups_sorted:
-        if not g.active:
+        if not bool(g.active):
             continue
-        ms = by_group.get(g.id, [])
+        ms = by_group.get(int(g.id), [])
         if not ms:
             continue
         for m in ms:
@@ -73,9 +50,9 @@ def _match_destination_group(
                 return g, m
 
     for g in groups_sorted:
-        if not g.active:
+        if not bool(g.active):
             continue
-        ms = by_group.get(g.id, [])
+        ms = by_group.get(int(g.id), [])
         if ms:
             continue
         return g, None
@@ -99,7 +76,7 @@ def _match_pricing_matrix(
 
     candidates: List[ShippingProviderPricingMatrix] = []
     for r in rows:
-        if not r.active:
+        if not bool(r.active):
             continue
 
         mn = float(r.min_kg)
@@ -116,5 +93,5 @@ def _match_pricing_matrix(
     if not candidates:
         return None
 
-    candidates.sort(key=lambda r: (float(r.min_kg), r.id), reverse=True)
+    candidates.sort(key=lambda r: (float(r.min_kg), int(r.id)), reverse=True)
     return candidates[0]

@@ -23,11 +23,8 @@ class DummyGroup:
 class DummyGroupMember:
     id: int
     group_id: int
-    scope: str
     province_code: Optional[str] = None
-    city_code: Optional[str] = None
     province_name: Optional[str] = None
-    city_name: Optional[str] = None
 
 
 @dataclass
@@ -50,8 +47,8 @@ def test_match_destination_group_province_hit() -> None:
         DummyGroup(id=2, name="华东"),
     ]
     members = [
-        DummyGroupMember(id=11, group_id=1, scope="province", province_name="北京市"),
-        DummyGroupMember(id=21, group_id=2, scope="province", province_name="浙江省"),
+        DummyGroupMember(id=11, group_id=1, province_name="北京市"),
+        DummyGroupMember(id=21, group_id=2, province_name="浙江省"),
     ]
     dest = Dest(province="北京市", city="北京市", district="朝阳区")
 
@@ -63,35 +60,12 @@ def test_match_destination_group_province_hit() -> None:
     assert m.id == 11
 
 
-def test_match_destination_group_city_hit() -> None:
-    groups = [
-        DummyGroup(id=1, name="广东泛华南"),
-        DummyGroup(id=2, name="深圳特区"),
-    ]
-    members = [
-        DummyGroupMember(id=11, group_id=1, scope="province", province_name="广东省"),
-        DummyGroupMember(id=21, group_id=2, scope="city", province_name="广东省", city_name="深圳市"),
-    ]
-    dest = Dest(province="广东省", city="深圳市", district="南山区")
-
-    g, m = _match_destination_group(groups, members, dest)
-
-    assert g is not None
-    assert m is not None
-    assert g.id == 1 or g.id == 2
-    assert any(
-        x.id == 21 and x.scope == "city"
-        for x in [m]
-    ) or (g.id == 1 and m.id == 11)
-
-
 def test_match_destination_group_code_hit() -> None:
     groups = [DummyGroup(id=1, name="北京组")]
     members = [
         DummyGroupMember(
             id=11,
             group_id=1,
-            scope="province",
             province_code="110000",
         )
     ]
@@ -131,8 +105,8 @@ def test_match_destination_group_inactive_not_selected() -> None:
         DummyGroup(id=2, name="启用组", active=True),
     ]
     members = [
-        DummyGroupMember(id=11, group_id=1, scope="province", province_name="北京市"),
-        DummyGroupMember(id=21, group_id=2, scope="province", province_name="北京市"),
+        DummyGroupMember(id=11, group_id=1, province_name="北京市"),
+        DummyGroupMember(id=21, group_id=2, province_name="北京市"),
     ]
     dest = Dest(province="北京市", city="北京市", district=None)
 

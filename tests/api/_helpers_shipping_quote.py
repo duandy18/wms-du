@@ -139,7 +139,6 @@ def _replace_level3_group_provinces(
         rows = [
             ShippingProviderDestinationGroupMember(
                 group_id=int(group_id),
-                scope="province",
                 province_name=str(p),
             )
             for p in provinces
