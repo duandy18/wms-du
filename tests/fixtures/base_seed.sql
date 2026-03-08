@@ -15,6 +15,11 @@
 --   - ensure_lot_full / ensure_internal_lot_singleton
 --   - adjust_lot_impl / StockService.adjust*
 --   - tests/helpers/inventory.py: seed_batch_slot 等
+--
+-- Pricing Phase-2：
+-- - scheme 生命周期改为 draft / active / archived
+-- - 计费重量规则改为结构化字段
+-- - 运价矩阵主线改为 modules + module_ranges + destination_groups + pricing_matrix
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name, code)
@@ -45,7 +50,14 @@ VALUES
   (2, 'Fake Express', 'FAKE', true, 100, 'UT-ADDR-FAKE')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO warehouse_shipping_providers (warehouse_id, shipping_provider_id, active, priority, pickup_cutoff_time, remark)
+INSERT INTO warehouse_shipping_providers (
+  warehouse_id,
+  shipping_provider_id,
+  active,
+  priority,
+  pickup_cutoff_time,
+  remark
+)
 VALUES (1, 1, true, 0, NULL, 'seed bind')
 ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
   active = EXCLUDED.active,
@@ -53,11 +65,179 @@ ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
   pickup_cutoff_time = EXCLUDED.pickup_cutoff_time,
   remark = EXCLUDED.remark;
 
--- ✅ Route A：scheme 作用域 = warehouse × provider（硬仓库边界）
--- 说明：原先 shipping_provider_pricing_scheme_warehouses 已被删除，不再写入/不再作为事实源。
-INSERT INTO shipping_provider_pricing_schemes (id, warehouse_id, shipping_provider_id, name, active)
-VALUES (1, 1, 1, 'UT-SCHEME-1', true)
-ON CONFLICT (id) DO NOTHING;
+-- ===== shipping pricing scheme baseline =====
+-- Route A：scheme 作用域 = warehouse × provider（硬仓库边界）
+INSERT INTO shipping_provider_pricing_schemes (
+  id,
+  warehouse_id,
+  shipping_provider_id,
+  name,
+  currency,
+  effective_from,
+  effective_to,
+  default_pricing_mode,
+  archived_at,
+  status,
+  billable_weight_strategy,
+  volume_divisor,
+  rounding_mode,
+  rounding_step_kg,
+  min_billable_weight_kg
+)
+VALUES (
+  1,
+  1,
+  1,
+  'UT-SCHEME-1',
+  'CNY',
+  NULL,
+  NULL,
+  'linear_total',
+  NULL,
+  'draft',
+  'actual_only',
+  NULL,
+  'none',
+  NULL,
+  NULL
+)
+ON CONFLICT (id) DO UPDATE SET
+  warehouse_id = EXCLUDED.warehouse_id,
+  shipping_provider_id = EXCLUDED.shipping_provider_id,
+  name = EXCLUDED.name,
+  currency = EXCLUDED.currency,
+  effective_from = EXCLUDED.effective_from,
+  effective_to = EXCLUDED.effective_to,
+  default_pricing_mode = EXCLUDED.default_pricing_mode,
+  archived_at = EXCLUDED.archived_at,
+  status = EXCLUDED.status,
+  billable_weight_strategy = EXCLUDED.billable_weight_strategy,
+  volume_divisor = EXCLUDED.volume_divisor,
+  rounding_mode = EXCLUDED.rounding_mode,
+  rounding_step_kg = EXCLUDED.rounding_step_kg,
+  min_billable_weight_kg = EXCLUDED.min_billable_weight_kg;
+
+-- modules：固定两块 standard / other
+INSERT INTO shipping_provider_pricing_scheme_modules (
+  id,
+  scheme_id,
+  module_code,
+  name,
+  sort_order
+)
+VALUES
+  (1, 1, 'standard', '标准区域', 0),
+  (2, 1, 'other', '其他区域', 1)
+ON CONFLICT (id) DO UPDATE SET
+  scheme_id = EXCLUDED.scheme_id,
+  module_code = EXCLUDED.module_code,
+  name = EXCLUDED.name,
+  sort_order = EXCLUDED.sort_order;
+
+-- ranges：给 standard 模块放一套最小可用重量段；other 先留空也合法
+INSERT INTO shipping_provider_pricing_scheme_module_ranges (
+  id,
+  module_id,
+  min_kg,
+  max_kg,
+  sort_order
+)
+VALUES
+  (1, 1, 0.000, 1.000, 0),
+  (2, 1, 1.000, 2.000, 1),
+  (3, 1, 2.000, NULL, 2)
+ON CONFLICT (id) DO UPDATE SET
+  module_id = EXCLUDED.module_id,
+  min_kg = EXCLUDED.min_kg,
+  max_kg = EXCLUDED.max_kg,
+  sort_order = EXCLUDED.sort_order;
+
+-- destination groups：给 standard 模块放一个最小组
+INSERT INTO shipping_provider_destination_groups (
+  id,
+  scheme_id,
+  name,
+  active,
+  module_id,
+  sort_order
+)
+VALUES
+  (1, 1, '华北测试组', true, 1, 0)
+ON CONFLICT (id) DO UPDATE SET
+  scheme_id = EXCLUDED.scheme_id,
+  name = EXCLUDED.name,
+  active = EXCLUDED.active,
+  module_id = EXCLUDED.module_id,
+  sort_order = EXCLUDED.sort_order;
+
+INSERT INTO shipping_provider_destination_group_members (
+  id,
+  group_id,
+  province_code,
+  province_name
+)
+VALUES
+  (1, 1, NULL, '北京市'),
+  (2, 1, NULL, '天津市'),
+  (3, 1, NULL, '河北省')
+ON CONFLICT (id) DO UPDATE SET
+  group_id = EXCLUDED.group_id,
+  province_code = EXCLUDED.province_code,
+  province_name = EXCLUDED.province_name;
+
+-- pricing matrix：module-aware cell 结构
+INSERT INTO shipping_provider_pricing_matrix (
+  id,
+  group_id,
+  pricing_mode,
+  flat_amount,
+  base_amount,
+  rate_per_kg,
+  base_kg,
+  active,
+  module_range_id,
+  range_module_id
+)
+VALUES
+  (1, 1, 'flat',         2.50, NULL, NULL, NULL, true, 1, 1),
+  (2, 1, 'flat',         3.80, NULL, NULL, NULL, true, 2, 1),
+  (3, 1, 'linear_total', NULL, 3.00, 1.50, NULL, true, 3, 1)
+ON CONFLICT (id) DO UPDATE SET
+  group_id = EXCLUDED.group_id,
+  pricing_mode = EXCLUDED.pricing_mode,
+  flat_amount = EXCLUDED.flat_amount,
+  base_amount = EXCLUDED.base_amount,
+  rate_per_kg = EXCLUDED.rate_per_kg,
+  base_kg = EXCLUDED.base_kg,
+  active = EXCLUDED.active,
+  module_range_id = EXCLUDED.module_range_id,
+  range_module_id = EXCLUDED.range_module_id;
+
+-- surcharge：最小一条省级附加费
+INSERT INTO shipping_provider_surcharges (
+  id,
+  scheme_id,
+  name,
+  active,
+  scope,
+  province_code,
+  city_code,
+  province_name,
+  city_name,
+  fixed_amount
+)
+VALUES
+  (1, 1, '目的地附加费-北京市', true, 'province', NULL, NULL, '北京市', NULL, 1.50)
+ON CONFLICT (id) DO UPDATE SET
+  scheme_id = EXCLUDED.scheme_id,
+  name = EXCLUDED.name,
+  active = EXCLUDED.active,
+  scope = EXCLUDED.scope,
+  province_code = EXCLUDED.province_code,
+  city_code = EXCLUDED.city_code,
+  province_name = EXCLUDED.province_name,
+  city_name = EXCLUDED.city_name,
+  fixed_amount = EXCLUDED.fixed_amount;
 
 -- ===== items =====
 INSERT INTO items (
@@ -141,14 +321,62 @@ SELECT setval(
 );
 
 SELECT setval(
-  pg_get_serial_sequence('items','id'),
-  COALESCE((SELECT MAX(id) FROM items), 0),
+  pg_get_serial_sequence('stores','id'),
+  COALESCE((SELECT MAX(id) FROM stores), 0),
   true
 );
 
 SELECT setval(
-  pg_get_serial_sequence('stores','id'),
-  COALESCE((SELECT MAX(id) FROM stores), 0),
+  pg_get_serial_sequence('shipping_providers','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_providers), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_pricing_schemes','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_schemes), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_pricing_scheme_modules','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_scheme_modules), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_pricing_scheme_module_ranges','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_scheme_module_ranges), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_destination_groups','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_destination_groups), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_destination_group_members','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_destination_group_members), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_pricing_matrix','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_matrix), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('shipping_provider_surcharges','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_surcharges), 0),
+  true
+);
+
+SELECT setval(
+  pg_get_serial_sequence('items','id'),
+  COALESCE((SELECT MAX(id) FROM items), 0),
   true
 );
 

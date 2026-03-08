@@ -15,12 +15,10 @@ from app.services.ship_service import ShipService
 
 
 class ShipConfirmErrorCode:
-    # 422 - missing/invalid fields
     WAREHOUSE_REQUIRED = "SHIP_CONFIRM_WAREHOUSE_REQUIRED"
-    CARRIER_REQUIRED = "SHIP_CONFIRM_CARRIER_REQUIRED"  # 复用错误码：现在指 provider_id 缺失
+    CARRIER_REQUIRED = "SHIP_CONFIRM_CARRIER_REQUIRED"
     SCHEME_REQUIRED = "SHIP_CONFIRM_SCHEME_REQUIRED"
 
-    # 409 - contract conflicts
     ORDER_DUP = "SHIP_CONFIRM_ORDER_DUP"
     CARRIER_NOT_AVAILABLE = "SHIP_CONFIRM_CARRIER_NOT_AVAILABLE"
     CARRIER_NOT_ENABLED_FOR_WAREHOUSE = "SHIP_CONFIRM_CARRIER_NOT_ENABLED_FOR_WAREHOUSE"
@@ -38,30 +36,14 @@ def _raise_409(code: str, message: str) -> None:
 
 
 def register(router: APIRouter) -> None:
+
     @router.post("/ship/confirm", response_model=ShipConfirmResponse)
     async def confirm_ship(
         payload: ShipConfirmRequest,
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
     ) -> ShipConfirmResponse:
-        """
-        记录一次发货完成事件（Phase 3 + 幂等守门 + 可统计错误码）
 
-        合同（刚性）：
-        - ref 在 (platform, shop_id) 维度必须幂等（防重复确认）
-        - warehouse_id 必填
-        - shipping_provider_id 必填且必须是该仓可服务（warehouse_shipping_providers.active=true）
-        - scheme_id 必填且必须归属该仓、有效期命中、且属于该 provider
-        - tracking_no 若提供：在 provider_id 维度唯一（(shipping_provider_id, tracking_no)）
-
-        错误返回：
-        - 422：缺字段/入参不合法（detail: {code,message}）
-        - 409：合同冲突（detail: {code,message}）
-
-        失败审计（Phase 4 样板）：
-        - 对所有 422/409，写 audit_events：flow=OUTBOUND, event=SHIP_CONFIRM_REJECT
-          meta 包含 error_code / message / platform / shop_id / ref / trace_id / warehouse_id / provider_id / scheme_id
-        """
         svc = ShipService(session)
         platform_norm = payload.platform.upper()
 
@@ -72,11 +54,15 @@ def register(router: APIRouter) -> None:
                 "error_code": error_code,
                 "message": message,
             }
+
             if payload.trace_id:
                 meta["trace_id"] = payload.trace_id
+
             if payload.warehouse_id is not None:
                 meta["warehouse_id"] = payload.warehouse_id
+
             meta["provider_id"] = int(payload.shipping_provider_id)
+
             if getattr(payload, "scheme_id", None) is not None:
                 meta["scheme_id"] = int(getattr(payload, "scheme_id"))
 
@@ -91,10 +77,13 @@ def register(router: APIRouter) -> None:
             )
 
         try:
+
             if payload.warehouse_id is None:
                 _raise_422(ShipConfirmErrorCode.WAREHOUSE_REQUIRED, "warehouse_id is required")
+
             if int(payload.shipping_provider_id) <= 0:
                 _raise_422(ShipConfirmErrorCode.CARRIER_REQUIRED, "shipping_provider_id is required")
+
             if getattr(payload, "scheme_id", None) is None:
                 _raise_422(ShipConfirmErrorCode.SCHEME_REQUIRED, "scheme_id is required")
 
@@ -102,42 +91,51 @@ def register(router: APIRouter) -> None:
             provider_id = int(payload.shipping_provider_id)
             sid = int(getattr(payload, "scheme_id"))
 
-            # 1) provider_id -> provider（active）
+            # provider check
             prow = (
                 await session.execute(
-                    text("SELECT id, code, name, active FROM shipping_providers WHERE id = :pid LIMIT 1"),
+                    text(
+                        """
+                        SELECT id, code, name, active
+                        FROM shipping_providers
+                        WHERE id = :pid
+                        LIMIT 1
+                        """
+                    ),
                     {"pid": provider_id},
                 )
             ).mappings().first()
+
             if not prow or not bool(prow.get("active", True)):
                 _raise_409(ShipConfirmErrorCode.CARRIER_NOT_AVAILABLE, "carrier not available")
 
             provider_name = str(prow.get("name") or "")
             provider_code = str(prow.get("code") or "")
 
-            # 2) provider ∈ warehouse_shipping_providers
+            # warehouse binding
             wsp = (
                 await session.execute(
                     text(
                         """
                         SELECT 1
-                          FROM warehouse_shipping_providers
-                         WHERE warehouse_id = :wid
-                           AND shipping_provider_id = :pid
-                           AND active = true
-                         LIMIT 1
+                        FROM warehouse_shipping_providers
+                        WHERE warehouse_id = :wid
+                          AND shipping_provider_id = :pid
+                          AND active = true
+                        LIMIT 1
                         """
                     ),
                     {"wid": wid, "pid": provider_id},
                 )
             ).first()
+
             if not wsp:
                 _raise_409(
                     ShipConfirmErrorCode.CARRIER_NOT_ENABLED_FOR_WAREHOUSE,
                     "carrier not enabled for this warehouse",
                 )
 
-            # 3) scheme 必须归属该仓库（硬边界）且有效
+            # scheme check（终态合同）
             sch_row = (
                 await session.execute(
                     text(
@@ -148,7 +146,8 @@ def register(router: APIRouter) -> None:
                         FROM shipping_provider_pricing_schemes sch
                         WHERE sch.id = :sid
                           AND sch.warehouse_id = :wid
-                          AND sch.active = true
+                          AND sch.status = 'active'
+                          AND sch.archived_at IS NULL
                           AND (sch.effective_from IS NULL OR sch.effective_from <= now())
                           AND (sch.effective_to IS NULL OR sch.effective_to >= now())
                         LIMIT 1
@@ -157,6 +156,7 @@ def register(router: APIRouter) -> None:
                     {"sid": sid, "wid": wid},
                 )
             ).mappings().first()
+
             if not sch_row:
                 _raise_409(
                     ShipConfirmErrorCode.SCHEME_NOT_AVAILABLE_FOR_WAREHOUSE,
@@ -169,36 +169,34 @@ def register(router: APIRouter) -> None:
                     "scheme does not belong to selected carrier",
                 )
 
-            # tracking_no 幂等校验（provider_id 维度）
+            # tracking dedupe
             tno: Optional[str] = None
+
             if payload.tracking_no and payload.tracking_no.strip():
                 tno = payload.tracking_no.strip()
+
                 dup_tno = (
                     await session.execute(
                         text(
                             """
                             SELECT 1
-                              FROM shipping_records
-                             WHERE shipping_provider_id = :pid
-                               AND tracking_no = :tracking_no
-                             LIMIT 1
+                            FROM shipping_records
+                            WHERE shipping_provider_id = :pid
+                              AND tracking_no = :tracking_no
+                            LIMIT 1
                             """
                         ),
                         {"pid": provider_id, "tracking_no": tno},
                     )
                 ).first()
+
                 if dup_tno:
                     _raise_409(
                         ShipConfirmErrorCode.TRACKING_DUP,
                         "tracking_no already exists for this provider",
                     )
 
-            meta: Dict[str, Any] = {}
-            if payload.meta:
-                meta.update(payload.meta)
-
-            if payload.carrier_name and payload.carrier_name.strip():
-                meta["carrier_name_input"] = payload.carrier_name.strip()
+            meta: Dict[str, Any] = payload.meta or {}
 
             meta.update(
                 {
@@ -209,25 +207,6 @@ def register(router: APIRouter) -> None:
                     "warehouse_id": wid,
                 }
             )
-
-            if tno:
-                meta["tracking_no"] = tno
-            if payload.gross_weight_kg is not None:
-                meta["gross_weight_kg"] = payload.gross_weight_kg
-            if payload.packaging_weight_kg is not None:
-                meta["packaging_weight_kg"] = payload.packaging_weight_kg
-            if payload.cost_estimated is not None:
-                meta["cost_estimated"] = payload.cost_estimated
-            if payload.cost_real is not None:
-                meta["cost_real"] = payload.cost_real
-            if payload.status:
-                meta["status"] = payload.status
-            if payload.error_code:
-                meta["error_code"] = payload.error_code
-            if payload.error_message:
-                meta["error_message"] = payload.error_message
-            if payload.delivery_time:
-                meta["delivery_time"] = payload.delivery_time.isoformat()
 
             data = await svc.commit(
                 ref=payload.ref,
@@ -251,15 +230,6 @@ def register(router: APIRouter) -> None:
                     carrier_name,
                     tracking_no,
                     trace_id,
-                    weight_kg,
-                    gross_weight_kg,
-                    packaging_weight_kg,
-                    cost_estimated,
-                    cost_real,
-                    delivery_time,
-                    status,
-                    error_code,
-                    error_message,
                     meta
                 )
                 VALUES (
@@ -272,15 +242,6 @@ def register(router: APIRouter) -> None:
                     :carrier_name,
                     :tracking_no,
                     :trace_id,
-                    :weight_kg,
-                    :gross_weight_kg,
-                    :packaging_weight_kg,
-                    :cost_estimated,
-                    :cost_real,
-                    :delivery_time,
-                    :status,
-                    :error_code,
-                    :error_message,
                     :meta
                 )
                 ON CONFLICT (platform, shop_id, order_ref) DO NOTHING
@@ -301,15 +262,6 @@ def register(router: APIRouter) -> None:
                         "carrier_name": provider_name,
                         "tracking_no": tno,
                         "trace_id": payload.trace_id,
-                        "weight_kg": None,
-                        "gross_weight_kg": payload.gross_weight_kg,
-                        "packaging_weight_kg": payload.packaging_weight_kg,
-                        "cost_estimated": payload.cost_estimated,
-                        "cost_real": payload.cost_real,
-                        "delivery_time": payload.delivery_time,
-                        "status": payload.status or "IN_TRANSIT",
-                        "error_code": payload.error_code,
-                        "error_message": payload.error_message,
                         "meta": json_meta,
                     },
                 )
@@ -320,12 +272,15 @@ def register(router: APIRouter) -> None:
                 _raise_409(ShipConfirmErrorCode.ORDER_DUP, "order already confirmed")
 
             await session.commit()
+
             return ShipConfirmResponse(ok=data.get("ok", True), ref=payload.ref, trace_id=payload.trace_id)
 
         except HTTPException as e:
             if e.status_code in (422, 409) and isinstance(e.detail, dict):
                 code = e.detail.get("code")
                 msg = e.detail.get("message")
+
                 if isinstance(code, str) and isinstance(msg, str):
                     await _audit_reject(code, msg)
+
             raise

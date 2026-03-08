@@ -20,11 +20,14 @@ from .matrix_view import (
     MatrixCellOut,
     MatrixGroupOut,
     MatrixGroupProvinceOut,
+    MatrixModuleIn,
+    MatrixModuleOut,
+    MatrixModuleRangeOut,
     MatrixViewDataOut,
     MatrixViewOut,
     MatrixViewSchemeOut,
-    MatrixWeightRangeOut,
-    PricingMatrixPatchIn,
+    MatrixWeightRangeIn,
+    PricingMatrixPutIn,
 )
 
 __all__ = [
@@ -49,9 +52,12 @@ __all__ = [
     "MatrixCellOut",
     "MatrixGroupOut",
     "MatrixGroupProvinceOut",
+    "MatrixModuleIn",
+    "MatrixModuleOut",
+    "MatrixModuleRangeOut",
     "MatrixViewDataOut",
     "MatrixViewOut",
     "MatrixViewSchemeOut",
-    "MatrixWeightRangeOut",
-    "PricingMatrixPatchIn",
+    "MatrixWeightRangeIn",
+    "PricingMatrixPutIn",
 ]

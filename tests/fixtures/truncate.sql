@@ -7,6 +7,10 @@
 -- Phase 4E：
 -- - stocks / batches 已退场并在预演中 rename 为 *_legacy；
 -- - tests 清库不再触碰 legacy 表，避免 drop 后脚本再次炸裂。
+--
+-- Pricing Phase-2：
+-- - shipping_provider_pricing_scheme_segments 已退场；
+-- - 新主线改为 modules + module_ranges + pricing_matrix(cellized)。
 
 TRUNCATE TABLE
   -- orders / order_items
@@ -30,12 +34,13 @@ TRUNCATE TABLE
   shipping_provider_pricing_matrix,
   shipping_provider_destination_group_members,
   shipping_provider_destination_groups,
-  shipping_provider_pricing_schemes,
+  shipping_provider_pricing_scheme_module_ranges,
+  shipping_provider_pricing_scheme_modules,
   shipping_provider_surcharges,
+  shipping_provider_pricing_schemes,
   shipping_provider_contacts,
-  shipping_provider_pricing_scheme_segments,
-  shipping_providers,
   shipping_records,
+  shipping_providers,
 
   -- master data
   warehouses,

@@ -31,11 +31,22 @@ def to_destination_group_province_out(
 
 
 def to_pricing_matrix_out(r: ShippingProviderPricingMatrix) -> PricingMatrixOut:
+    """
+    Level-3 结构：
+        PricingMatrix 不再存 min_kg/max_kg
+        重量区间来自 module_range
+    """
+
+    mr = getattr(r, "module_range", None)
+
+    min_kg = getattr(mr, "min_kg", None)
+    max_kg = getattr(mr, "max_kg", None)
+
     return PricingMatrixOut(
         id=int(r.id),
         group_id=int(r.group_id),
-        min_kg=r.min_kg,
-        max_kg=r.max_kg,
+        min_kg=min_kg,
+        max_kg=max_kg,
         pricing_mode=str(r.pricing_mode),
         flat_amount=getattr(r, "flat_amount", None),
         base_amount=getattr(r, "base_amount", None),
@@ -98,13 +109,21 @@ def to_scheme_out(
         shipping_provider_id=int(sch.shipping_provider_id),
         shipping_provider_name=_must_get_shipping_provider_name(sch),
         name=str(sch.name),
-        active=bool(sch.active),
+        status=str(getattr(sch, "status", "draft")),
         archived_at=getattr(sch, "archived_at", None),
         currency=str(sch.currency),
         effective_from=getattr(sch, "effective_from", None),
         effective_to=getattr(sch, "effective_to", None),
         default_pricing_mode=str(dpm),
-        billable_weight_rule=getattr(sch, "billable_weight_rule", None),
+        billable_weight_strategy=str(getattr(sch, "billable_weight_strategy", "actual_only")),
+        volume_divisor=getattr(sch, "volume_divisor", None),
+        rounding_mode=str(getattr(sch, "rounding_mode", "none")),
+        rounding_step_kg=(
+            None if getattr(sch, "rounding_step_kg", None) is None else float(sch.rounding_step_kg)
+        ),
+        min_billable_weight_kg=(
+            None if getattr(sch, "min_billable_weight_kg", None) is None else float(sch.min_billable_weight_kg)
+        ),
         destination_groups=destination_groups or [],
         surcharges=surcharges or [],
     )

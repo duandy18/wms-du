@@ -26,20 +26,21 @@ def recommend_quotes(
     """
     返回：按 total_amount 升序的推荐列表（每个 provider 选最便宜的 effective scheme）。
 
-    Phase 3（严格，无兼容）规则：
-    - 只要提供 warehouse_id：
+    当前终态合同：
+    - 若提供 warehouse_id：
       1) 候选承运商必须来自 warehouse_shipping_providers（wsp.active=true 且 sp.active=true）
          - 如果同时提供 provider_ids：取交集（sp.id in provider_ids）
          - 若该仓无可用承运商，则返回空 quotes（不回退全局）
       2) 候选方案必须来自 shipping_provider_pricing_schemes（硬仓库边界）
          - sch.warehouse_id = warehouse_id
-         - sch.active=true 且 effective
+         - sch.status = 'active'
+         - sch.archived_at IS NULL
+         - effective window 命中
          - 不允许 fallback 到“该 provider 的全局方案”
-      3) 对每个候选 scheme 的 calc 必须携带 warehouse_id（合同强前置）
+      3) 对每个候选 scheme 的 calc 必须携带 warehouse_id
     - 若未提供 warehouse_id：
       - 兼容入口：provider_ids（若给）或全局 active providers
       - scheme 候选集为 provider 下所有 active+effective schemes
-      - calc 走兼容路径（若 calc_quote 也要求 warehouse_id，则需要上层禁止该入口或给 calc_quote 提供 Optional 支持）
     """
     now = _utcnow()
 
@@ -65,7 +66,10 @@ def recommend_quotes(
                 ORDER BY wsp.priority ASC, sp.priority ASC, sp.id ASC
                 """
             )
-            rows = db.execute(sql, {"wid": int(warehouse_id), "pids": [int(x) for x in provider_ids]}).mappings().all()
+            rows = db.execute(
+                sql,
+                {"wid": int(warehouse_id), "pids": [int(x) for x in provider_ids]},
+            ).mappings().all()
         else:
             sql = text(
                 """
@@ -114,7 +118,8 @@ def recommend_quotes(
             schemes = (
                 db.query(ShippingProviderPricingScheme)
                 .filter(ShippingProviderPricingScheme.shipping_provider_id == p.id)
-                .filter(ShippingProviderPricingScheme.active.is_(True))
+                .filter(ShippingProviderPricingScheme.status == "active")
+                .filter(ShippingProviderPricingScheme.archived_at.is_(None))
                 .order_by(ShippingProviderPricingScheme.id.asc())
                 .all()
             )
@@ -125,7 +130,8 @@ def recommend_quotes(
                 FROM shipping_provider_pricing_schemes AS sch
                 WHERE sch.shipping_provider_id = :pid
                   AND sch.warehouse_id = :wid
-                  AND sch.active = true
+                  AND sch.status = 'active'
+                  AND sch.archived_at IS NULL
                 ORDER BY sch.id ASC
                 """
             )

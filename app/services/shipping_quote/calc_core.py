@@ -9,7 +9,9 @@ from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingS
 
 
 def scheme_is_effective(sch: ShippingProviderPricingScheme, now: datetime) -> bool:
-    if not bool(sch.active):
+    if str(getattr(sch, "status", "")).strip().lower() != "active":
+        return False
+    if getattr(sch, "archived_at", None) is not None:
         return False
     if sch.effective_from is not None and sch.effective_from > now:
         return False
@@ -22,13 +24,11 @@ def check_scheme_warehouse_allowed(db: Session, scheme_id: int, warehouse_id: in
     """
     Route A 合同（硬仓库边界）：
     - scheme 的作用域 = warehouse × provider（shipping_provider_pricing_schemes.warehouse_id）
-    - 因此不再存在 scheme_warehouses 绑定表，也不允许通过“绑定行 active”做第二套开关。
-
-    允许条件（严格）：
-    - scheme.id == scheme_id
-    - scheme.warehouse_id == warehouse_id
-    - scheme.active == true
-    - scheme.archived_at IS NULL（已归档不应参与算价）
+    - 不再存在 scheme_warehouses 绑定表
+    - 允许参与算价的 scheme 必须满足：
+      1) warehouse_id 匹配
+      2) status = active
+      3) archived_at IS NULL
     """
     sch = (
         db.query(ShippingProviderPricingScheme)
@@ -41,8 +41,8 @@ def check_scheme_warehouse_allowed(db: Session, scheme_id: int, warehouse_id: in
     if int(getattr(sch, "warehouse_id")) != int(warehouse_id):
         raise ValueError("scheme not allowed for warehouse (warehouse mismatch)")
 
-    if not bool(sch.active):
-        raise ValueError("scheme inactive")
+    if str(getattr(sch, "status", "")).strip().lower() != "active":
+        raise ValueError("scheme not active")
 
     if getattr(sch, "archived_at", None) is not None:
         raise ValueError("scheme archived")

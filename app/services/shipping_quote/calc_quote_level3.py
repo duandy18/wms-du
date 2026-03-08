@@ -1,9 +1,10 @@
 # app/services/shipping_quote/calc_quote_level3.py
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_destination_group_member import (
@@ -99,6 +100,53 @@ def _select_covering_surcharge(
     return None
 
 
+def _scheme_rounding_rule(sch: ShippingProviderPricingScheme) -> JsonObject | None:
+    rounding_mode = getattr(sch, "rounding_mode", None)
+    rounding_step_kg = getattr(sch, "rounding_step_kg", None)
+
+    mode = str(rounding_mode or "").strip().lower()
+    if not mode or mode == "none":
+        return None
+
+    step = None if rounding_step_kg is None else float(rounding_step_kg)
+    if step is None or step <= 0:
+        return None
+
+    return {
+        "mode": mode,
+        "step_kg": step,
+    }
+
+
+def _scheme_billable_weight_rule(sch: ShippingProviderPricingScheme) -> JsonObject | None:
+    strategy = str(getattr(sch, "billable_weight_strategy", "") or "").strip().lower()
+    volume_divisor = getattr(sch, "volume_divisor", None)
+    min_billable_weight_kg = getattr(sch, "min_billable_weight_kg", None)
+
+    rule: Dict[str, Any] = {}
+
+    if strategy == "max_actual_volume":
+        if volume_divisor is None:
+            raise ValueError("scheme billable_weight_strategy=max_actual_volume requires volume_divisor")
+        rule["volume_divisor"] = int(volume_divisor)
+
+    if min_billable_weight_kg is not None:
+        rule["min_billable_weight_kg"] = float(min_billable_weight_kg)
+
+    rounding = _scheme_rounding_rule(sch)
+    if rounding is not None:
+        rule["rounding"] = rounding
+
+    return rule or None
+
+
+def _matrix_range(row: ShippingProviderPricingMatrix) -> Tuple[Decimal, Optional[Decimal]]:
+    mr = getattr(row, "module_range", None)
+    if mr is None:
+        raise ValueError(f"pricing_matrix row missing module_range (row_id={getattr(row, 'id', None)})")
+    return mr.min_kg, mr.max_kg
+
+
 def calc_quote_level3(
     *,
     db: Session,
@@ -128,6 +176,7 @@ def calc_quote_level3(
         )
         matrix_rows = (
             db.query(ShippingProviderPricingMatrix)
+            .options(selectinload(ShippingProviderPricingMatrix.module_range))
             .filter(ShippingProviderPricingMatrix.group_id.in_(group_ids))
             .all()
         )
@@ -142,25 +191,35 @@ def calc_quote_level3(
         .all()
     )
 
+    billable_weight_rule = _scheme_billable_weight_rule(sch)
     weight_info = _compute_billable_weight_kg(
         real_weight_kg,
         dims_cm,
-        sch.billable_weight_rule,
+        billable_weight_rule,
     )
     bw = float(weight_info["billable_weight_kg"])
 
-    scheme_rounding = sch.billable_weight_rule.get("rounding") if sch.billable_weight_rule else None
+    scheme_rounding = _scheme_rounding_rule(sch)
     weight_info["rounding"] = scheme_rounding
-    weight_info["rounding_source"] = "scheme.billable_weight_rule.rounding"
+    weight_info["rounding_source"] = "scheme.rounding_mode/rounding_step_kg"
 
     group, hit_member = _match_destination_group(groups, members, dest)
     if not group:
         raise ValueError("no matching destination group")
 
     group_matrix = [r for r in matrix_rows if int(r.group_id) == int(group.id) and bool(r.active)]
+
+    # 兼容现有 matcher：给 row 动态补上 min_kg / max_kg 视图字段
+    for r in group_matrix:
+        mn, mx = _matrix_range(r)
+        setattr(r, "min_kg", mn)
+        setattr(r, "max_kg", mx)
+
     row = _match_pricing_matrix(group_matrix, bw)
     if not row:
         raise ValueError("no matching pricing matrix")
+
+    row_min_kg, row_max_kg = _matrix_range(row)
 
     reasons: List[str] = []
     if hit_member is not None:
@@ -172,8 +231,8 @@ def calc_quote_level3(
     else:
         reasons.append(f"group_match: group={group.name} (fallback)")
 
-    mn = float(row.min_kg)
-    mx = float(row.max_kg) if row.max_kg is not None else None
+    mn = float(row_min_kg)
+    mx = float(row_max_kg) if row_max_kg is not None else None
     reasons.append(f"matrix_match: [{mn}kg, {('inf' if mx is None else mx)}kg) (billable={bw}kg)")
 
     base_amt, base_detail = _calc_base_amount(row, bw, scheme_rounding)
@@ -186,8 +245,9 @@ def calc_quote_level3(
     }
     matrix_out: JsonObject = {
         "id": int(row.id),
-        "min_kg": float(row.min_kg),
-        "max_kg": None if row.max_kg is None else float(row.max_kg),
+        "module_range_id": int(row.module_range_id),
+        "min_kg": float(row_min_kg),
+        "max_kg": None if row_max_kg is None else float(row_max_kg),
         "pricing_mode": str(row.pricing_mode),
         "flat_amount": None if row.flat_amount is None else float(row.flat_amount),
         "base_amount": None if row.base_amount is None else float(row.base_amount),
