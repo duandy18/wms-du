@@ -2,22 +2,9 @@
 from __future__ import annotations
 
 import os
-from decimal import Decimal
-from typing import Dict, Iterable
+from typing import Dict, List
 
 from fastapi.testclient import TestClient
-
-from app.db.session import SessionLocal
-from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
-from app.models.shipping_provider_destination_group_member import (
-    ShippingProviderDestinationGroupMember,
-)
-from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
-from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
-from app.models.shipping_provider_pricing_scheme_module_range import (
-    ShippingProviderPricingSchemeModuleRange,
-)
 
 
 def require_env() -> None:
@@ -110,178 +97,220 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
-def _force_scheme_active(*, scheme_id: int) -> None:
-    """
-    当前正式合同：
-    - 新建 scheme 默认 draft
-    - 报价链路只接受 active
-    测试 helper 需要把最小闭环 scheme 直接提升到 active。
-    """
-    db = SessionLocal()
-    try:
-        sch = db.get(ShippingProviderPricingScheme, int(scheme_id))
-        assert sch is not None, f"scheme not found: scheme_id={scheme_id}"
-
-        sch.status = "active"
-        sch.archived_at = None
-        db.commit()
-    finally:
-        db.close()
-
-
-def _get_standard_module_id(*, scheme_id: int) -> int:
-    db = SessionLocal()
-    try:
-        row = (
-            db.query(ShippingProviderPricingSchemeModule)
-            .filter(
-                ShippingProviderPricingSchemeModule.scheme_id == int(scheme_id),
-                ShippingProviderPricingSchemeModule.module_code == "standard",
-            )
-            .one_or_none()
-        )
-        assert row is not None, f"standard module not found for scheme_id={scheme_id}"
-        return int(row.id)
-    finally:
-        db.close()
-
-
-def _insert_level3_destination_group(
+def _put_module_groups(
+    client: TestClient,
+    token: str,
     *,
     scheme_id: int,
-    module_id: int,
-    name: str,
-    sort_order: int = 0,
-) -> int:
-    db = SessionLocal()
-    try:
-        row = ShippingProviderDestinationGroup(
-            scheme_id=int(scheme_id),
-            module_id=int(module_id),
-            name=str(name),
-            sort_order=int(sort_order),
-            active=True,
-        )
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        return int(row.id)
-    finally:
-        db.close()
+    module_code: str,
+    groups: List[dict],
+) -> List[dict]:
+    h = auth_headers(token)
+
+    r = client.put(
+        f"/pricing-schemes/{scheme_id}/modules/{module_code}/groups",
+        headers=h,
+        json={"groups": groups},
+    )
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    assert body["ok"] is True
+    return body["groups"]
 
 
-def _replace_level3_group_provinces(
+def _put_module_ranges(
+    client: TestClient,
+    token: str,
     *,
-    group_id: int,
-    provinces: Iterable[str],
-) -> None:
-    db = SessionLocal()
-    try:
-        db.query(ShippingProviderDestinationGroupMember).filter(
-            ShippingProviderDestinationGroupMember.group_id == int(group_id)
-        ).delete(synchronize_session=False)
+    scheme_id: int,
+    module_code: str,
+    ranges: List[dict],
+) -> List[dict]:
+    h = auth_headers(token)
 
-        rows = [
-            ShippingProviderDestinationGroupMember(
-                group_id=int(group_id),
-                province_name=str(p),
-            )
-            for p in provinces
-        ]
-        db.add_all(rows)
-        db.commit()
-    finally:
-        db.close()
+    r = client.put(
+        f"/pricing-schemes/{scheme_id}/modules/{module_code}/ranges",
+        headers=h,
+        json={"ranges": ranges},
+    )
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    assert body["ok"] is True
+    return body["ranges"]
 
 
-def _replace_standard_module_ranges_and_cells(
+def _put_module_matrix_cells(
+    client: TestClient,
+    token: str,
     *,
-    module_id: int,
-    group_id: int,
-    matrix_rows: list[dict],
-) -> None:
-    db = SessionLocal()
-    try:
-        old_ranges = (
-            db.query(ShippingProviderPricingSchemeModuleRange)
-            .filter(ShippingProviderPricingSchemeModuleRange.module_id == int(module_id))
-            .all()
-        )
-        old_range_ids = [int(x.id) for x in old_ranges]
+    scheme_id: int,
+    module_code: str,
+    cells: List[dict],
+) -> List[dict]:
+    h = auth_headers(token)
 
-        if old_range_ids:
-            db.query(ShippingProviderPricingMatrix).filter(
-                ShippingProviderPricingMatrix.module_range_id.in_(old_range_ids)
-            ).delete(synchronize_session=False)
+    r = client.put(
+        f"/pricing-schemes/{scheme_id}/modules/{module_code}/matrix-cells",
+        headers=h,
+        json={"cells": cells},
+    )
+    assert r.status_code == 200, r.text
 
-        db.query(ShippingProviderPricingSchemeModuleRange).filter(
-            ShippingProviderPricingSchemeModuleRange.module_id == int(module_id)
-        ).delete(synchronize_session=False)
-        db.flush()
-
-        for idx, row in enumerate(matrix_rows):
-            r = ShippingProviderPricingSchemeModuleRange(
-                module_id=int(module_id),
-                min_kg=Decimal(str(row["min_kg"])),
-                max_kg=(None if row["max_kg"] is None else Decimal(str(row["max_kg"]))),
-                sort_order=idx,
-            )
-            db.add(r)
-            db.flush()
-
-            cell = ShippingProviderPricingMatrix(
-                group_id=int(group_id),
-                module_range_id=int(r.id),
-                range_module_id=int(module_id),
-                pricing_mode=str(row["pricing_mode"]),
-                flat_amount=(None if row.get("flat_amount") is None else Decimal(str(row["flat_amount"]))),
-                base_amount=(None if row.get("base_amount") is None else Decimal(str(row["base_amount"]))),
-                rate_per_kg=(None if row.get("rate_per_kg") is None else Decimal(str(row["rate_per_kg"]))),
-                base_kg=(None if row.get("base_kg") is None else Decimal(str(row["base_kg"]))),
-                active=bool(row.get("active", True)),
-            )
-            db.add(cell)
-
-        db.commit()
-    finally:
-        db.close()
+    body = r.json()
+    assert body["ok"] is True
+    return body["cells"]
 
 
-def _create_level3_bundle(
+def _publish_scheme(client: TestClient, token: str, *, scheme_id: int) -> None:
+    h = auth_headers(token)
+
+    r = client.post(f"/pricing-schemes/{scheme_id}/publish", headers=h)
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"]["status"] == "active"
+
+
+def _create_level3_bundle_via_api(
+    client: TestClient,
+    token: str,
     *,
     scheme_id: int,
     group_name: str,
-    provinces: list[str],
-    matrix_rows: list[dict],
+    provinces: List[str],
+    matrix_rows: List[dict],
 ) -> int:
     """
-    D-2 单轨 helper（module-aware 版）：
-    只构造当前 Level-3 主线数据：
+    通过新三阶段接口构造最小 Level-3 bundle：
+
       scheme
         -> standard module
+        -> module_groups
         -> module_ranges
-        -> destination_group
-        -> destination_group_members
-        -> pricing_matrix(cells)
+        -> matrix_cells
+        -> other module（最小闭环，满足 publish）
     """
-    module_id = _get_standard_module_id(scheme_id=scheme_id)
 
-    group_id = _insert_level3_destination_group(
+    # ------------------------------
+    # standard module
+    # ------------------------------
+    standard_groups_out = _put_module_groups(
+        client,
+        token,
         scheme_id=scheme_id,
-        module_id=module_id,
-        name=group_name,
-        sort_order=0,
+        module_code="standard",
+        groups=[
+            {
+                "name": group_name,
+                "sort_order": 0,
+                "active": True,
+                "provinces": [{"province_name": p} for p in provinces],
+            }
+        ],
     )
-    _replace_level3_group_provinces(
-        group_id=group_id,
-        provinces=provinces,
+    assert len(standard_groups_out) == 1, standard_groups_out
+    standard_group_id = int(standard_groups_out[0]["id"])
+
+    standard_ranges_out = _put_module_ranges(
+        client,
+        token,
+        scheme_id=scheme_id,
+        module_code="standard",
+        ranges=[
+            {
+                "min_kg": row["min_kg"],
+                "max_kg": row["max_kg"],
+                "sort_order": idx,
+            }
+            for idx, row in enumerate(matrix_rows)
+        ],
     )
-    _replace_standard_module_ranges_and_cells(
-        module_id=module_id,
-        group_id=group_id,
-        matrix_rows=matrix_rows,
+    assert len(standard_ranges_out) == len(matrix_rows), standard_ranges_out
+
+    standard_cells_payload: List[dict] = []
+    for idx, row in enumerate(matrix_rows):
+        standard_cells_payload.append(
+            {
+                "group_id": standard_group_id,
+                "module_range_id": int(standard_ranges_out[idx]["id"]),
+                "pricing_mode": str(row["pricing_mode"]),
+                "flat_amount": row.get("flat_amount"),
+                "base_amount": row.get("base_amount"),
+                "rate_per_kg": row.get("rate_per_kg"),
+                "base_kg": row.get("base_kg"),
+                "active": bool(row.get("active", True)),
+            }
+        )
+
+    standard_cells_out = _put_module_matrix_cells(
+        client,
+        token,
+        scheme_id=scheme_id,
+        module_code="standard",
+        cells=standard_cells_payload,
     )
-    return group_id
+    assert len(standard_cells_out) == len(matrix_rows), standard_cells_out
+
+    # ------------------------------
+    # other module（必须补齐，否则 publish 会被拦）
+    # ------------------------------
+    other_ranges_out = _put_module_ranges(
+        client,
+        token,
+        scheme_id=scheme_id,
+        module_code="other",
+        ranges=[
+            {
+                "min_kg": 0,
+                "max_kg": None,
+                "sort_order": 0,
+            }
+        ],
+    )
+    assert len(other_ranges_out) == 1, other_ranges_out
+    other_range_id = int(other_ranges_out[0]["id"])
+
+    other_groups_out = _put_module_groups(
+        client,
+        token,
+        scheme_id=scheme_id,
+        module_code="other",
+        groups=[
+            {
+                "name": "OTHER",
+                "sort_order": 0,
+                "active": True,
+                "provinces": [{"province_name": "其他"}],
+            }
+        ],
+    )
+    assert len(other_groups_out) == 1, other_groups_out
+    other_group_id = int(other_groups_out[0]["id"])
+
+    other_cells_out = _put_module_matrix_cells(
+        client,
+        token,
+        scheme_id=scheme_id,
+        module_code="other",
+        cells=[
+            {
+                "group_id": other_group_id,
+                "module_range_id": other_range_id,
+                "pricing_mode": "manual_quote",
+                "flat_amount": None,
+                "base_amount": None,
+                "rate_per_kg": None,
+                "base_kg": None,
+                "active": True,
+            }
+        ],
+    )
+    assert len(other_cells_out) == 1, other_cells_out
+
+    return standard_group_id
 
 
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
@@ -294,8 +323,10 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
       -> destination_group
       -> destination_group_members
       -> module_ranges
-      -> pricing_matrix
+      -> pricing_matrix_cells
+      -> other module（最小闭环）
       -> surcharge
+      -> publish(active)
     """
     h = auth_headers(token)
 
@@ -325,8 +356,6 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    _force_scheme_active(scheme_id=scheme_id)
-
     provinces = ["北京市", "天津市", "河北省"]
     group_name = "北京市、天津市、河北省"
 
@@ -352,7 +381,9 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
         },
     ]
 
-    group_id = _create_level3_bundle(
+    group_id = _create_level3_bundle_via_api(
+        client,
+        token,
         scheme_id=scheme_id,
         group_name=group_name,
         provinces=provinces,
@@ -372,6 +403,8 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
+    _publish_scheme(client, token, scheme_id=scheme_id)
+
     return {
         "provider_id": provider_id,
         "scheme_id": scheme_id,
@@ -379,7 +412,13 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     }
 
 
-def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_id: int, *, name_suffix: str) -> Dict[str, int]:
+def create_scheme_bundle_for_provider(
+    client: TestClient,
+    token: str,
+    provider_id: int,
+    *,
+    name_suffix: str,
+) -> Dict[str, int]:
     """
     为指定 provider 创建一套最小可算的 Level-3 单轨 scheme（用于推荐/候选集测试）。
     """
@@ -404,8 +443,6 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
 
-    _force_scheme_active(scheme_id=scheme_id)
-
     provinces = ["河北省"]
     group_name = f"河北省-TEST-{name_suffix}"
 
@@ -420,12 +457,16 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
         }
     ]
 
-    group_id = _create_level3_bundle(
+    group_id = _create_level3_bundle_via_api(
+        client,
+        token,
         scheme_id=scheme_id,
         group_name=group_name,
         provinces=provinces,
         matrix_rows=matrix_rows,
     )
+
+    _publish_scheme(client, token, scheme_id=scheme_id)
 
     return {
         "provider_id": provider_id,

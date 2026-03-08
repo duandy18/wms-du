@@ -11,7 +11,9 @@ def validate_default_pricing_mode(v: str) -> str:
     - linear_total
     - step_over
 
-    注意：manual_quote 允许出现在 bracket 上作为兜底，但不允许作为 scheme 默认口径。
+    注意：
+    - manual_quote 可以出现在 matrix cell 上作为兜底方式
+    - 但不允许作为 scheme 默认口径
     """
     t = (v or "").strip().lower()
     if t not in _ALLOWED_DEFAULT_PRICING_MODES:
