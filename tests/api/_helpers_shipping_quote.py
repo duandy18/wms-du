@@ -13,6 +13,11 @@ from app.models.shipping_provider_destination_group_member import (
     ShippingProviderDestinationGroupMember,
 )
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
+from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
+from app.models.shipping_provider_pricing_scheme_module_range import (
+    ShippingProviderPricingSchemeModuleRange,
+)
 
 
 def require_env() -> None:
@@ -105,16 +110,56 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
+def _force_scheme_active(*, scheme_id: int) -> None:
+    """
+    当前正式合同：
+    - 新建 scheme 默认 draft
+    - 报价链路只接受 active
+    测试 helper 需要把最小闭环 scheme 直接提升到 active。
+    """
+    db = SessionLocal()
+    try:
+        sch = db.get(ShippingProviderPricingScheme, int(scheme_id))
+        assert sch is not None, f"scheme not found: scheme_id={scheme_id}"
+
+        sch.status = "active"
+        sch.archived_at = None
+        db.commit()
+    finally:
+        db.close()
+
+
+def _get_standard_module_id(*, scheme_id: int) -> int:
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(ShippingProviderPricingSchemeModule)
+            .filter(
+                ShippingProviderPricingSchemeModule.scheme_id == int(scheme_id),
+                ShippingProviderPricingSchemeModule.module_code == "standard",
+            )
+            .one_or_none()
+        )
+        assert row is not None, f"standard module not found for scheme_id={scheme_id}"
+        return int(row.id)
+    finally:
+        db.close()
+
+
 def _insert_level3_destination_group(
     *,
     scheme_id: int,
+    module_id: int,
     name: str,
+    sort_order: int = 0,
 ) -> int:
     db = SessionLocal()
     try:
         row = ShippingProviderDestinationGroup(
             scheme_id=int(scheme_id),
+            module_id=int(module_id),
             name=str(name),
+            sort_order=int(sort_order),
             active=True,
         )
         db.add(row)
@@ -149,32 +194,54 @@ def _replace_level3_group_provinces(
         db.close()
 
 
-def _insert_level3_pricing_matrix_row(
+def _replace_standard_module_ranges_and_cells(
     *,
+    module_id: int,
     group_id: int,
-    min_kg: float,
-    max_kg: float | None,
-    pricing_mode: str,
-    flat_amount: float | None = None,
-    base_amount: float | None = None,
-    rate_per_kg: float | None = None,
-    base_kg: float | None = None,
-    active: bool = True,
+    matrix_rows: list[dict],
 ) -> None:
     db = SessionLocal()
     try:
-        row = ShippingProviderPricingMatrix(
-            group_id=int(group_id),
-            min_kg=Decimal(str(min_kg)),
-            max_kg=(None if max_kg is None else Decimal(str(max_kg))),
-            pricing_mode=str(pricing_mode),
-            flat_amount=(None if flat_amount is None else Decimal(str(flat_amount))),
-            base_amount=(None if base_amount is None else Decimal(str(base_amount))),
-            rate_per_kg=(None if rate_per_kg is None else Decimal(str(rate_per_kg))),
-            base_kg=(None if base_kg is None else Decimal(str(base_kg))),
-            active=bool(active),
+        old_ranges = (
+            db.query(ShippingProviderPricingSchemeModuleRange)
+            .filter(ShippingProviderPricingSchemeModuleRange.module_id == int(module_id))
+            .all()
         )
-        db.add(row)
+        old_range_ids = [int(x.id) for x in old_ranges]
+
+        if old_range_ids:
+            db.query(ShippingProviderPricingMatrix).filter(
+                ShippingProviderPricingMatrix.module_range_id.in_(old_range_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(ShippingProviderPricingSchemeModuleRange).filter(
+            ShippingProviderPricingSchemeModuleRange.module_id == int(module_id)
+        ).delete(synchronize_session=False)
+        db.flush()
+
+        for idx, row in enumerate(matrix_rows):
+            r = ShippingProviderPricingSchemeModuleRange(
+                module_id=int(module_id),
+                min_kg=Decimal(str(row["min_kg"])),
+                max_kg=(None if row["max_kg"] is None else Decimal(str(row["max_kg"]))),
+                sort_order=idx,
+            )
+            db.add(r)
+            db.flush()
+
+            cell = ShippingProviderPricingMatrix(
+                group_id=int(group_id),
+                module_range_id=int(r.id),
+                range_module_id=int(module_id),
+                pricing_mode=str(row["pricing_mode"]),
+                flat_amount=(None if row.get("flat_amount") is None else Decimal(str(row["flat_amount"]))),
+                base_amount=(None if row.get("base_amount") is None else Decimal(str(row["base_amount"]))),
+                rate_per_kg=(None if row.get("rate_per_kg") is None else Decimal(str(row["rate_per_kg"]))),
+                base_kg=(None if row.get("base_kg") is None else Decimal(str(row["base_kg"]))),
+                active=bool(row.get("active", True)),
+            )
+            db.add(cell)
+
         db.commit()
     finally:
         db.close()
@@ -188,29 +255,32 @@ def _create_level3_bundle(
     matrix_rows: list[dict],
 ) -> int:
     """
-    D-2 单轨 helper：
-    只构造 Level-3 数据，不再创建 legacy zone / zone_members / zone_brackets。
+    D-2 单轨 helper（module-aware 版）：
+    只构造当前 Level-3 主线数据：
+      scheme
+        -> standard module
+        -> module_ranges
+        -> destination_group
+        -> destination_group_members
+        -> pricing_matrix(cells)
     """
+    module_id = _get_standard_module_id(scheme_id=scheme_id)
+
     group_id = _insert_level3_destination_group(
         scheme_id=scheme_id,
+        module_id=module_id,
         name=group_name,
+        sort_order=0,
     )
     _replace_level3_group_provinces(
         group_id=group_id,
         provinces=provinces,
     )
-    for row in matrix_rows:
-        _insert_level3_pricing_matrix_row(
-            group_id=group_id,
-            min_kg=float(row["min_kg"]),
-            max_kg=(None if row["max_kg"] is None else float(row["max_kg"])),
-            pricing_mode=str(row["pricing_mode"]),
-            flat_amount=(None if row.get("flat_amount") is None else float(row["flat_amount"])),
-            base_amount=(None if row.get("base_amount") is None else float(row["base_amount"])),
-            rate_per_kg=(None if row.get("rate_per_kg") is None else float(row["rate_per_kg"])),
-            base_kg=(None if row.get("base_kg") is None else float(row["base_kg"])),
-            active=bool(row.get("active", True)),
-        )
+    _replace_standard_module_ranges_and_cells(
+        module_id=module_id,
+        group_id=group_id,
+        matrix_rows=matrix_rows,
+    )
     return group_id
 
 
@@ -220,8 +290,10 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
 
     provider
       -> scheme(warehouse scoped)
+      -> standard module
       -> destination_group
       -> destination_group_members
+      -> module_ranges
       -> pricing_matrix
       -> surcharge
     """
@@ -243,13 +315,17 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
         json={
             "warehouse_id": int(wid),
             "name": "TEST-PRICING-SCHEME",
-            "active": True,
             "currency": "CNY",
-            "billable_weight_rule": {"rounding": {"mode": "ceil", "step_kg": 1.0}},
+            "default_pricing_mode": "linear_total",
+            "billable_weight_strategy": "actual_only",
+            "rounding_mode": "ceil",
+            "rounding_step_kg": 1.0,
         },
     )
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
+
+    _force_scheme_active(scheme_id=scheme_id)
 
     provinces = ["北京市", "天津市", "河北省"]
     group_name = "北京市、天津市、河北省"
@@ -318,13 +394,17 @@ def create_scheme_bundle_for_provider(client: TestClient, token: str, provider_i
         json={
             "warehouse_id": int(wid),
             "name": f"TEST-PRICING-SCHEME-{name_suffix}",
-            "active": True,
             "currency": "CNY",
-            "billable_weight_rule": {"rounding": {"mode": "ceil", "step_kg": 1.0}},
+            "default_pricing_mode": "linear_total",
+            "billable_weight_strategy": "actual_only",
+            "rounding_mode": "ceil",
+            "rounding_step_kg": 1.0,
         },
     )
     assert sr.status_code == 201, sr.text
     scheme_id = int(sr.json()["data"]["id"])
+
+    _force_scheme_active(scheme_id=scheme_id)
 
     provinces = ["河北省"]
     group_name = f"河北省-TEST-{name_suffix}"

@@ -3,14 +3,39 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .surcharge import SurchargeOut
 
-
 _ALLOWED_PRICING_MODES = {"flat", "linear_total", "step_over", "manual_quote"}
+_ALLOWED_MODULE_CODES = {"standard", "other"}
+
+
+class MatrixModuleRangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    module_id: int
+    module_key: str
+    range_key: str
+    min_kg: Decimal
+    max_kg: Optional[Decimal] = None
+    sort_order: int
+    label: str
+
+
+class MatrixModuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    module_key: str
+    scheme_id: int
+    module_code: str
+    name: str
+    sort_order: int
+    ranges: List[MatrixModuleRangeOut] = Field(default_factory=list)
 
 
 class MatrixGroupProvinceOut(BaseModel):
@@ -28,19 +53,12 @@ class MatrixGroupOut(BaseModel):
     id: int
     group_key: str
     scheme_id: int
+    module_id: int
+    module_key: str
     name: str
+    sort_order: int
     active: bool
     provinces: List[MatrixGroupProvinceOut] = Field(default_factory=list)
-
-
-class MatrixWeightRangeOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    range_key: str
-    min_kg: Decimal
-    max_kg: Optional[Decimal] = None
-    sort_order: int
-    label: str
 
 
 class MatrixCellOut(BaseModel):
@@ -49,6 +67,8 @@ class MatrixCellOut(BaseModel):
     cell_key: str
     pricing_matrix_id: Optional[int] = None
 
+    module_id: int
+    module_key: str
     group_id: int
     group_key: str
     range_key: str
@@ -70,7 +90,7 @@ class MatrixViewSchemeOut(BaseModel):
     shipping_provider_name: str
 
     name: str
-    active: bool
+    status: str
     archived_at: Optional[datetime] = None
 
     currency: str
@@ -78,15 +98,20 @@ class MatrixViewSchemeOut(BaseModel):
     effective_to: Optional[datetime] = None
 
     default_pricing_mode: str
-    billable_weight_rule: Optional[Dict[str, Any]] = None
+
+    billable_weight_strategy: str
+    volume_divisor: Optional[int] = None
+    rounding_mode: str
+    rounding_step_kg: Optional[float] = None
+    min_billable_weight_kg: Optional[float] = None
 
 
 class MatrixViewDataOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     scheme: MatrixViewSchemeOut
+    modules: List[MatrixModuleOut] = Field(default_factory=list)
     groups: List[MatrixGroupOut] = Field(default_factory=list)
-    weight_ranges: List[MatrixWeightRangeOut] = Field(default_factory=list)
     cells: List[MatrixCellOut] = Field(default_factory=list)
     surcharges: List[SurchargeOut] = Field(default_factory=list)
 
@@ -99,8 +124,25 @@ class MatrixViewOut(BaseModel):
 
 
 # =========================
-# PATCH /matrix input
+# PUT /matrix input
 # =========================
+
+
+class MatrixModuleIn(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    module_key: str = Field(..., min_length=1, max_length=128)
+    module_code: Literal["standard", "other"]
+    name: str = Field(..., min_length=1, max_length=64)
+    sort_order: Optional[int] = Field(None, ge=0)
+
+    @field_validator("module_key", "name")
+    @classmethod
+    def _trim_required(cls, v: str) -> str:
+        t = v.strip()
+        if not t:
+            raise ValueError("must not be empty")
+        return t
 
 
 class MatrixGroupProvinceIn(BaseModel):
@@ -128,10 +170,13 @@ class MatrixGroupIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     group_key: str = Field(..., min_length=1, max_length=128)
+    module_key: str = Field(..., min_length=1, max_length=128)
+    name: str = Field(..., min_length=1, max_length=128)
+    sort_order: Optional[int] = Field(None, ge=0)
     active: bool = True
     provinces: List[MatrixGroupProvinceIn] = Field(default_factory=list)
 
-    @field_validator("group_key")
+    @field_validator("group_key", "module_key", "name")
     @classmethod
     def _trim_required(cls, v: str) -> str:
         t = v.strip()
@@ -144,16 +189,17 @@ class MatrixWeightRangeIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     range_key: str = Field(..., min_length=1, max_length=128)
+    module_key: str = Field(..., min_length=1, max_length=128)
     min_kg: Decimal = Field(..., ge=0)
     max_kg: Optional[Decimal] = Field(None, ge=0)
     sort_order: Optional[int] = Field(None, ge=0)
 
-    @field_validator("range_key")
+    @field_validator("range_key", "module_key")
     @classmethod
     def _trim_range_key(cls, v: str) -> str:
         t = v.strip()
         if not t:
-            raise ValueError("range_key is required")
+            raise ValueError("key is required")
         return t
 
     @model_validator(mode="after")
@@ -199,6 +245,8 @@ class MatrixCellIn(BaseModel):
                 raise ValueError("flat pricing_mode only allows flat_amount")
 
         if self.pricing_mode == "linear_total":
+            if self.base_amount is None:
+                raise ValueError("linear_total pricing_mode requires base_amount")
             if self.rate_per_kg is None:
                 raise ValueError("linear_total pricing_mode requires rate_per_kg")
             if self.flat_amount is not None or self.base_kg is not None:
@@ -221,9 +269,10 @@ class MatrixCellIn(BaseModel):
         return self
 
 
-class PricingMatrixPatchIn(BaseModel):
+class PricingMatrixPutIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    modules: List[MatrixModuleIn] = Field(default_factory=list)
     groups: List[MatrixGroupIn] = Field(default_factory=list)
     weight_ranges: List[MatrixWeightRangeIn] = Field(default_factory=list)
     cells: List[MatrixCellIn] = Field(default_factory=list)

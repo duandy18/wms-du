@@ -29,38 +29,29 @@ def load_scheme_entities(
 ) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeOut]]:
     """
     读取 Scheme + DestinationGroups(+Provinces,+PricingMatrix) + Surcharges，并组装为输出对象。
-    - 只做查询与组装，不做权限校验
-    - scheme 不存在则抛 404
-    - shipping_provider_name 必须由后端真实关联提供
     """
+
     sch = (
         db.query(ShippingProviderPricingScheme)
-        .options(
-            selectinload(ShippingProviderPricingScheme.shipping_provider),
-        )
+        .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
         .filter(ShippingProviderPricingScheme.id == scheme_id)
         .one_or_none()
     )
+
     if not sch:
         raise HTTPException(status_code=404, detail="Scheme not found")
-
-    sp = getattr(sch, "shipping_provider", None)
-    sp_name = getattr(sp, "name", None) if sp is not None else None
-    if not isinstance(sp_name, str) or not sp_name.strip():
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Scheme shipping provider missing/invalid "
-                f"(scheme_id={scheme_id}, shipping_provider_id={sch.shipping_provider_id})"
-            ),
-        )
 
     groups_raw = (
         db.query(ShippingProviderDestinationGroup)
         .filter(ShippingProviderDestinationGroup.scheme_id == scheme_id)
-        .order_by(ShippingProviderDestinationGroup.id.asc())
+        .order_by(
+            ShippingProviderDestinationGroup.module_id.asc(),
+            ShippingProviderDestinationGroup.sort_order.asc(),
+            ShippingProviderDestinationGroup.id.asc(),
+        )
         .all()
     )
+
     group_ids = [int(g.id) for g in groups_raw]
 
     provinces_by_group: Dict[int, List[ShippingProviderDestinationGroupMember]] = {}
@@ -78,6 +69,7 @@ def load_scheme_entities(
             )
             .all()
         )
+
         for p in provinces:
             provinces_by_group.setdefault(int(p.group_id), []).append(p)
 
@@ -86,16 +78,17 @@ def load_scheme_entities(
             .filter(ShippingProviderPricingMatrix.group_id.in_(group_ids))
             .order_by(
                 ShippingProviderPricingMatrix.group_id.asc(),
-                ShippingProviderPricingMatrix.min_kg.asc(),
-                ShippingProviderPricingMatrix.max_kg.asc().nulls_last(),
+                ShippingProviderPricingMatrix.module_range_id.asc(),
                 ShippingProviderPricingMatrix.id.asc(),
             )
             .all()
         )
+
         for row in matrix_rows:
             matrix_by_group.setdefault(int(row.group_id), []).append(row)
 
     destination_groups: List[DestinationGroupOut] = []
+
     for g in groups_raw:
         destination_groups.append(
             to_destination_group_out(
@@ -111,6 +104,7 @@ def load_scheme_entities(
         .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
+
     surcharges: List[SurchargeOut] = [to_surcharge_out(s) for s in surcharges_raw]
 
     return sch, destination_groups, surcharges

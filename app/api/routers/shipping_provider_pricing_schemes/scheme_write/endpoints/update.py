@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SchemeDetailOut,
     SchemeUpdateIn,
-)
-from app.api.routers.shipping_provider_pricing_schemes.validators import (
-    validate_default_pricing_mode,
 )
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
 from app.api.routers.shipping_provider_pricing_schemes_query_helpers import load_scheme_entities
@@ -20,77 +19,241 @@ from app.api.routers.shipping_provider_pricing_schemes_utils import (
     validate_effective_window,
 )
 from app.db.deps import get_db
+from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
+from app.models.shipping_provider_destination_group_member import (
+    ShippingProviderDestinationGroupMember,
+)
+from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
+from app.models.shipping_provider_pricing_scheme_module_range import (
+    ShippingProviderPricingSchemeModuleRange,
+)
+from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
 
-def _activate_scheme_exclusive(db: Session, scheme_id: int) -> ShippingProviderPricingScheme:
-    """
-    系统级裁决：同一 provider + warehouse 下，任意时刻只能有一个 active=true（且 archived_at is null）。
-    """
+def _validate_merged_billable_weight_fields(
+    *,
+    billable_weight_strategy: str,
+    volume_divisor: int | None,
+    rounding_mode: str,
+    rounding_step_kg: float | None,
+) -> None:
+    if billable_weight_strategy == "actual_only":
+        if volume_divisor is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="volume_divisor must be empty when billable_weight_strategy=actual_only",
+            )
+
+    if billable_weight_strategy == "max_actual_volume":
+        if volume_divisor is None:
+            raise HTTPException(
+                status_code=422,
+                detail="volume_divisor is required when billable_weight_strategy=max_actual_volume",
+            )
+
+    if rounding_mode == "none":
+        if rounding_step_kg is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="rounding_step_kg must be empty when rounding_mode=none",
+            )
+
+    if rounding_mode == "ceil":
+        if rounding_step_kg is None:
+            raise HTTPException(
+                status_code=422,
+                detail="rounding_step_kg is required when rounding_mode=ceil",
+            )
+
+
+def _load_scheme_for_write_or_404(db: Session, scheme_id: int) -> ShippingProviderPricingScheme:
     sch = (
         db.query(ShippingProviderPricingScheme)
+        .options(selectinload(ShippingProviderPricingScheme.shipping_provider))
         .filter(ShippingProviderPricingScheme.id == scheme_id)
-        .with_for_update()
         .one_or_none()
     )
     if not sch:
         raise HTTPException(status_code=404, detail="Scheme not found")
+    return sch
 
-    if sch.archived_at is not None:
-        raise HTTPException(status_code=400, detail="Archived scheme cannot be activated")
 
-    provider_id = int(sch.shipping_provider_id)
-    warehouse_id = int(sch.warehouse_id)
-
-    (
-        db.query(ShippingProviderPricingScheme.id)
-        .filter(
-            ShippingProviderPricingScheme.shipping_provider_id == provider_id,
-            ShippingProviderPricingScheme.warehouse_id == warehouse_id,
+def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int) -> None:
+    source_modules = (
+        db.query(ShippingProviderPricingSchemeModule)
+        .filter(ShippingProviderPricingSchemeModule.scheme_id == source_scheme_id)
+        .order_by(
+            ShippingProviderPricingSchemeModule.sort_order.asc(),
+            ShippingProviderPricingSchemeModule.id.asc(),
         )
-        .with_for_update()
         .all()
     )
+    source_module_ids = [int(m.id) for m in source_modules]
+
+    source_ranges = []
+    source_groups = []
+    source_members = []
+    source_cells = []
+
+    if source_module_ids:
+        source_ranges = (
+            db.query(ShippingProviderPricingSchemeModuleRange)
+            .filter(ShippingProviderPricingSchemeModuleRange.module_id.in_(source_module_ids))
+            .order_by(
+                ShippingProviderPricingSchemeModuleRange.module_id.asc(),
+                ShippingProviderPricingSchemeModuleRange.sort_order.asc(),
+                ShippingProviderPricingSchemeModuleRange.id.asc(),
+            )
+            .all()
+        )
+
+        source_groups = (
+            db.query(ShippingProviderDestinationGroup)
+            .filter(ShippingProviderDestinationGroup.scheme_id == source_scheme_id)
+            .order_by(
+                ShippingProviderDestinationGroup.module_id.asc(),
+                ShippingProviderDestinationGroup.sort_order.asc(),
+                ShippingProviderDestinationGroup.id.asc(),
+            )
+            .all()
+        )
+        source_group_ids = [int(g.id) for g in source_groups]
+
+        if source_group_ids:
+            source_members = (
+                db.query(ShippingProviderDestinationGroupMember)
+                .filter(ShippingProviderDestinationGroupMember.group_id.in_(source_group_ids))
+                .order_by(
+                    ShippingProviderDestinationGroupMember.group_id.asc(),
+                    ShippingProviderDestinationGroupMember.id.asc(),
+                )
+                .all()
+            )
+            source_cells = (
+                db.query(ShippingProviderPricingMatrix)
+                .filter(ShippingProviderPricingMatrix.group_id.in_(source_group_ids))
+                .order_by(
+                    ShippingProviderPricingMatrix.group_id.asc(),
+                    ShippingProviderPricingMatrix.module_range_id.asc(),
+                    ShippingProviderPricingMatrix.id.asc(),
+                )
+                .all()
+            )
+
+    source_surcharges = (
+        db.query(ShippingProviderSurcharge)
+        .filter(ShippingProviderSurcharge.scheme_id == source_scheme_id)
+        .order_by(ShippingProviderSurcharge.id.asc())
+        .all()
+    )
+
+    module_id_map: dict[int, int] = {}
+    range_id_map: dict[int, int] = {}
+    group_id_map: dict[int, int] = {}
+
+    for mod in source_modules:
+        copied = ShippingProviderPricingSchemeModule(
+            scheme_id=int(target_scheme_id),
+            module_code=str(mod.module_code),
+            name=str(mod.name),
+            sort_order=int(mod.sort_order),
+        )
+        db.add(copied)
+        db.flush()
+        module_id_map[int(mod.id)] = int(copied.id)
+
+    for row in source_ranges:
+        copied = ShippingProviderPricingSchemeModuleRange(
+            module_id=module_id_map[int(row.module_id)],
+            min_kg=row.min_kg,
+            max_kg=row.max_kg,
+            sort_order=int(row.sort_order),
+        )
+        db.add(copied)
+        db.flush()
+        range_id_map[int(row.id)] = int(copied.id)
+
+    for g in source_groups:
+        copied = ShippingProviderDestinationGroup(
+            scheme_id=int(target_scheme_id),
+            module_id=module_id_map[int(g.module_id)],
+            name=str(g.name),
+            sort_order=int(g.sort_order),
+            active=bool(g.active),
+        )
+        db.add(copied)
+        db.flush()
+        group_id_map[int(g.id)] = int(copied.id)
+
+    for m in source_members:
+        db.add(
+            ShippingProviderDestinationGroupMember(
+                group_id=group_id_map[int(m.group_id)],
+                province_code=m.province_code,
+                province_name=m.province_name,
+            )
+        )
+
+    for c in source_cells:
+        db.add(
+            ShippingProviderPricingMatrix(
+                group_id=group_id_map[int(c.group_id)],
+                module_range_id=range_id_map[int(c.module_range_id)],
+                range_module_id=module_id_map[int(c.range_module_id)],
+                pricing_mode=str(c.pricing_mode),
+                flat_amount=c.flat_amount,
+                base_amount=c.base_amount,
+                rate_per_kg=c.rate_per_kg,
+                base_kg=c.base_kg,
+                active=bool(c.active),
+            )
+        )
+
+    for s in source_surcharges:
+        db.add(
+            ShippingProviderSurcharge(
+                scheme_id=int(target_scheme_id),
+                name=str(s.name),
+                active=bool(s.active),
+                scope=str(s.scope),
+                province_code=s.province_code,
+                city_code=s.city_code,
+                province_name=s.province_name,
+                city_name=s.city_name,
+                fixed_amount=s.fixed_amount,
+            )
+        )
+
+    db.flush()
+
+
+def _archive_other_active_schemes(
+    db: Session,
+    *,
+    provider_id: int,
+    warehouse_id: int,
+    keep_scheme_id: int,
+) -> None:
+    now = datetime.now(timezone.utc)
 
     db.execute(
         update(ShippingProviderPricingScheme)
         .where(
-            ShippingProviderPricingScheme.shipping_provider_id == provider_id,
-            ShippingProviderPricingScheme.warehouse_id == warehouse_id,
-            ShippingProviderPricingScheme.id != scheme_id,
-            ShippingProviderPricingScheme.archived_at.is_(None),
-            ShippingProviderPricingScheme.active.is_(True),
+            ShippingProviderPricingScheme.shipping_provider_id == int(provider_id),
+            ShippingProviderPricingScheme.warehouse_id == int(warehouse_id),
+            ShippingProviderPricingScheme.id != int(keep_scheme_id),
+            ShippingProviderPricingScheme.status == "active",
         )
-        .values(active=False)
+        .values(
+            status="archived",
+            archived_at=now,
+        )
     )
-
-    sch.active = True
-    return sch
 
 
 def register_update_routes(router: APIRouter) -> None:
-    @router.post(
-        "/pricing-schemes/{scheme_id}/activate-exclusive",
-        response_model=SchemeDetailOut,
-    )
-    def activate_scheme_exclusive(
-        scheme_id: int = Path(..., ge=1),
-        db: Session = Depends(get_db),
-        user=Depends(get_current_user),
-    ):
-        check_perm(db, user, "config.store.write")
-
-        sch = _activate_scheme_exclusive(db, scheme_id)
-
-        db.commit()
-        db.refresh(sch)
-
-        sch2, destination_groups, surcharges = load_scheme_entities(db, scheme_id)
-        return SchemeDetailOut(
-            ok=True,
-            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
-        )
-
     @router.patch(
         "/pricing-schemes/{scheme_id}",
         response_model=SchemeDetailOut,
@@ -103,48 +266,96 @@ def register_update_routes(router: APIRouter) -> None:
     ):
         check_perm(db, user, "config.store.write")
 
-        sch = db.get(ShippingProviderPricingScheme, scheme_id)
-        if not sch:
-            raise HTTPException(status_code=404, detail="Scheme not found")
+        sch = _load_scheme_for_write_or_404(db, scheme_id)
 
-        fields_set = payload.model_fields_set
+        if str(sch.status) != "draft":
+            raise HTTPException(status_code=400, detail="Only draft scheme can be modified")
+
         data = payload.model_dump(exclude_unset=True)
 
         if "name" in data:
             sch.name = norm_nonempty(data.get("name"), "name")
 
-        if "archived_at" in fields_set:
-            sch.archived_at = payload.archived_at
-            if sch.archived_at is not None:
-                sch.active = False
-
-        if "active" in data:
-            next_active = bool(data["active"])
-            if next_active:
-                if sch.archived_at is not None:
-                    raise HTTPException(status_code=400, detail="Archived scheme cannot be activated")
-                _activate_scheme_exclusive(db, scheme_id)
-            else:
-                sch.active = False
-
-        if "currency" in data:
-            sch.currency = (data["currency"] or "CNY").strip() or "CNY"
-
-        if "effective_from" in data:
-            sch.effective_from = data["effective_from"]
-        if "effective_to" in data:
-            sch.effective_to = data["effective_to"]
-
         validate_effective_window(sch.effective_from, sch.effective_to)
 
-        if "billable_weight_rule" in data:
-            sch.billable_weight_rule = data["billable_weight_rule"]
+        db.commit()
+        db.refresh(sch)
 
-        if "default_pricing_mode" in data:
-            try:
-                sch.default_pricing_mode = validate_default_pricing_mode(data["default_pricing_mode"])
-            except ValueError as e:
-                raise HTTPException(status_code=422, detail=str(e))
+        sch2, destination_groups, surcharges = load_scheme_entities(db, scheme_id)
+        return SchemeDetailOut(
+            ok=True,
+            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
+        )
+
+    @router.post(
+        "/pricing-schemes/{scheme_id}/clone",
+        response_model=SchemeDetailOut,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def clone_scheme(
+        scheme_id: int = Path(..., ge=1),
+        db: Session = Depends(get_db),
+        user=Depends(get_current_user),
+    ):
+        check_perm(db, user, "config.store.write")
+
+        source = _load_scheme_for_write_or_404(db, scheme_id)
+
+        cloned = ShippingProviderPricingScheme(
+            warehouse_id=int(source.warehouse_id),
+            shipping_provider_id=int(source.shipping_provider_id),
+            name=f"{source.name}-副本",
+            status="draft",
+            archived_at=None,
+            currency=str(source.currency),
+            default_pricing_mode=str(source.default_pricing_mode),
+            billable_weight_strategy=str(source.billable_weight_strategy),
+            volume_divisor=source.volume_divisor,
+            rounding_mode=str(source.rounding_mode),
+            rounding_step_kg=source.rounding_step_kg,
+            min_billable_weight_kg=source.min_billable_weight_kg,
+            effective_from=source.effective_from,
+            effective_to=source.effective_to,
+        )
+        db.add(cloned)
+        db.flush()
+
+        _clone_scheme_tree(db, int(source.id), int(cloned.id))
+
+        db.commit()
+        db.refresh(cloned)
+
+        sch2, destination_groups, surcharges = load_scheme_entities(db, int(cloned.id))
+        return SchemeDetailOut(
+            ok=True,
+            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
+        )
+
+    @router.post(
+        "/pricing-schemes/{scheme_id}/publish",
+        response_model=SchemeDetailOut,
+    )
+    def publish_scheme(
+        scheme_id: int = Path(..., ge=1),
+        db: Session = Depends(get_db),
+        user=Depends(get_current_user),
+    ):
+        check_perm(db, user, "config.store.write")
+
+        sch = _load_scheme_for_write_or_404(db, scheme_id)
+
+        if str(sch.status) != "draft":
+            raise HTTPException(status_code=400, detail="Only draft scheme can be published")
+
+        _archive_other_active_schemes(
+            db,
+            provider_id=int(sch.shipping_provider_id),
+            warehouse_id=int(sch.warehouse_id),
+            keep_scheme_id=int(sch.id),
+        )
+
+        sch.status = "active"
+        sch.archived_at = None
 
         db.commit()
         db.refresh(sch)

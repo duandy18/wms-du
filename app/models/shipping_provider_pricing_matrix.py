@@ -1,11 +1,21 @@
-# app/models/shipping_provider_pricing_matrix.py
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -14,9 +24,10 @@ from app.db.base import Base
 class ShippingProviderPricingMatrix(Base):
     __tablename__ = "shipping_provider_pricing_matrix"
     __table_args__ = (
-        CheckConstraint(
-            "min_kg >= 0 AND (max_kg IS NULL OR max_kg > min_kg)",
-            name="ck_sppm_range_valid",
+        UniqueConstraint(
+            "group_id",
+            "module_range_id",
+            name="uq_sppm_group_module_range",
         ),
         CheckConstraint(
             "pricing_mode in ('flat','linear_total','step_over','manual_quote')",
@@ -39,6 +50,7 @@ class ShippingProviderPricingMatrix(Base):
             pricing_mode <> 'linear_total'
             OR (
                 flat_amount IS NULL
+                AND base_amount IS NOT NULL
                 AND rate_per_kg IS NOT NULL
                 AND base_kg IS NULL
             )
@@ -69,6 +81,21 @@ class ShippingProviderPricingMatrix(Base):
             """,
             name="ck_sppm_manual_quote_shape",
         ),
+        ForeignKeyConstraint(
+            ["group_id", "range_module_id"],
+            ["shipping_provider_destination_groups.id", "shipping_provider_destination_groups.module_id"],
+            ondelete="CASCADE",
+            name="fk_sppm_group_same_module",
+        ),
+        ForeignKeyConstraint(
+            ["module_range_id", "range_module_id"],
+            [
+                "shipping_provider_pricing_scheme_module_ranges.id",
+                "shipping_provider_pricing_scheme_module_ranges.module_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_sppm_range_same_module",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -77,10 +104,8 @@ class ShippingProviderPricingMatrix(Base):
         Integer,
         ForeignKey("shipping_provider_destination_groups.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
-
-    min_kg: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
-    max_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3), nullable=True)
 
     pricing_mode: Mapped[str] = mapped_column(String(32), nullable=False)
 
@@ -90,6 +115,17 @@ class ShippingProviderPricingMatrix(Base):
     base_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3), nullable=True)
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+    module_range_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_scheme_module_ranges.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    range_module_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -103,10 +139,21 @@ class ShippingProviderPricingMatrix(Base):
         onupdate=func.now(),
     )
 
-    group = relationship("ShippingProviderDestinationGroup", back_populates="matrix_rows")
+    group = relationship(
+        "ShippingProviderDestinationGroup",
+        back_populates="matrix_rows",
+        foreign_keys=[group_id],
+    )
+    module_range = relationship(
+        "ShippingProviderPricingSchemeModuleRange",
+        foreign_keys=[module_range_id],
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return (
-            f"<ShippingProviderPricingMatrix id={self.id} group_id={self.group_id} "
-            f"min={self.min_kg} max={self.max_kg} mode={self.pricing_mode}>"
+            f"<ShippingProviderPricingMatrix id={self.id} "
+            f"group_id={self.group_id} "
+            f"module_range_id={self.module_range_id} "
+            f"mode={self.pricing_mode}>"
         )

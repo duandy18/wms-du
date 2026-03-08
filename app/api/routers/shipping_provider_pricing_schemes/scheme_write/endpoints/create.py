@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import text, update
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -21,6 +21,57 @@ from app.api.routers.shipping_provider_pricing_schemes_utils import (
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
+from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
+
+
+def _validate_billable_weight_fields(payload: SchemeCreateIn) -> None:
+    if payload.billable_weight_strategy == "actual_only":
+        if payload.volume_divisor is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="volume_divisor must be empty when billable_weight_strategy=actual_only",
+            )
+
+    if payload.billable_weight_strategy == "max_actual_volume":
+        if payload.volume_divisor is None:
+            raise HTTPException(
+                status_code=422,
+                detail="volume_divisor is required when billable_weight_strategy=max_actual_volume",
+            )
+
+    if payload.rounding_mode == "none":
+        if payload.rounding_step_kg is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="rounding_step_kg must be empty when rounding_mode=none",
+            )
+
+    if payload.rounding_mode == "ceil":
+        if payload.rounding_step_kg is None:
+            raise HTTPException(
+                status_code=422,
+                detail="rounding_step_kg is required when rounding_mode=ceil",
+            )
+
+
+def _create_default_modules(db: Session, scheme_id: int) -> None:
+    db.add(
+        ShippingProviderPricingSchemeModule(
+            scheme_id=int(scheme_id),
+            module_code="standard",
+            name="标准区域",
+            sort_order=0,
+        )
+    )
+    db.add(
+        ShippingProviderPricingSchemeModule(
+            scheme_id=int(scheme_id),
+            module_code="other",
+            name="其他区域",
+            sort_order=1,
+        )
+    )
+    db.flush()
 
 
 def register_create_routes(router: APIRouter) -> None:
@@ -41,9 +92,7 @@ def register_create_routes(router: APIRouter) -> None:
         if not provider:
             raise HTTPException(status_code=404, detail="ShippingProvider not found")
 
-        if getattr(payload, "warehouse_id", None) is None:
-            raise HTTPException(status_code=422, detail="warehouse_id is required")
-        warehouse_id = int(getattr(payload, "warehouse_id"))
+        warehouse_id = int(payload.warehouse_id)
         if warehouse_id <= 0:
             raise HTTPException(status_code=422, detail="warehouse_id must be >= 1")
 
@@ -77,42 +126,28 @@ def register_create_routes(router: APIRouter) -> None:
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-        next_active = bool(payload.active)
-
-        if next_active:
-            (
-                db.query(ShippingProviderPricingScheme.id)
-                .filter(
-                    ShippingProviderPricingScheme.shipping_provider_id == int(provider_id),
-                    ShippingProviderPricingScheme.warehouse_id == int(warehouse_id),
-                )
-                .with_for_update()
-                .all()
-            )
-
-            db.execute(
-                update(ShippingProviderPricingScheme)
-                .where(
-                    ShippingProviderPricingScheme.shipping_provider_id == int(provider_id),
-                    ShippingProviderPricingScheme.warehouse_id == int(warehouse_id),
-                    ShippingProviderPricingScheme.archived_at.is_(None),
-                    ShippingProviderPricingScheme.active.is_(True),
-                )
-                .values(active=False)
-            )
+        _validate_billable_weight_fields(payload)
 
         sch = ShippingProviderPricingScheme(
-            warehouse_id=int(warehouse_id),
+            warehouse_id=warehouse_id,
             shipping_provider_id=int(provider_id),
             name=norm_nonempty(payload.name, "name"),
-            active=next_active,
+            status="draft",
             currency=(payload.currency or "CNY").strip() or "CNY",
             default_pricing_mode=dpm,
+            billable_weight_strategy=payload.billable_weight_strategy,
+            volume_divisor=payload.volume_divisor,
+            rounding_mode=payload.rounding_mode,
+            rounding_step_kg=payload.rounding_step_kg,
+            min_billable_weight_kg=payload.min_billable_weight_kg,
             effective_from=payload.effective_from,
             effective_to=payload.effective_to,
-            billable_weight_rule=payload.billable_weight_rule,
         )
         db.add(sch)
+        db.flush()
+
+        _create_default_modules(db, int(sch.id))
+
         db.commit()
         db.refresh(sch)
 
