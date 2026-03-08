@@ -18,7 +18,6 @@ from app.models.shipping_provider_destination_group import ShippingProviderDesti
 from app.models.shipping_provider_destination_group_member import (
     ShippingProviderDestinationGroupMember,
 )
-from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
@@ -28,7 +27,7 @@ def load_scheme_entities(
     scheme_id: int,
 ) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeOut]]:
     """
-    读取 Scheme + DestinationGroups(+Provinces,+PricingMatrix) + Surcharges，并组装为输出对象。
+    读取 Scheme + DestinationGroups(+Provinces) + Surcharges，并组装为输出对象。
     """
 
     sch = (
@@ -55,7 +54,6 @@ def load_scheme_entities(
     group_ids = [int(g.id) for g in groups_raw]
 
     provinces_by_group: Dict[int, List[ShippingProviderDestinationGroupMember]] = {}
-    matrix_by_group: Dict[int, List[ShippingProviderPricingMatrix]] = {}
 
     if group_ids:
         provinces = (
@@ -73,20 +71,6 @@ def load_scheme_entities(
         for p in provinces:
             provinces_by_group.setdefault(int(p.group_id), []).append(p)
 
-        matrix_rows = (
-            db.query(ShippingProviderPricingMatrix)
-            .filter(ShippingProviderPricingMatrix.group_id.in_(group_ids))
-            .order_by(
-                ShippingProviderPricingMatrix.group_id.asc(),
-                ShippingProviderPricingMatrix.module_range_id.asc(),
-                ShippingProviderPricingMatrix.id.asc(),
-            )
-            .all()
-        )
-
-        for row in matrix_rows:
-            matrix_by_group.setdefault(int(row.group_id), []).append(row)
-
     destination_groups: List[DestinationGroupOut] = []
 
     for g in groups_raw:
@@ -94,7 +78,6 @@ def load_scheme_entities(
             to_destination_group_out(
                 g,
                 provinces_by_group.get(int(g.id), []),
-                matrix_by_group.get(int(g.id), []),
             )
         )
 

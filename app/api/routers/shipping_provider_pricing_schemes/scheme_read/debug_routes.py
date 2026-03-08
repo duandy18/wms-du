@@ -29,7 +29,6 @@ def register_debug_routes(router: APIRouter) -> None:
         from app.api.routers.shipping_provider_pricing_schemes.schemas import (
             DestinationGroupOut as _DestinationGroupOut,
             DestinationGroupProvinceOut as _DestinationGroupProvinceOut,
-            PricingMatrixOut as _PricingMatrixOut,
             SchemeOut as _SchemeOut,
             SurchargeOut as _SurchargeOut,
         )
@@ -47,20 +46,6 @@ def register_debug_routes(router: APIRouter) -> None:
                     province_name="北京市",
                 )
             ],
-            pricing_matrix=[
-                _PricingMatrixOut(
-                    id=1,
-                    group_id=123,
-                    min_kg=Decimal("0"),
-                    max_kg=Decimal("1"),
-                    pricing_mode="linear_total",
-                    flat_amount=None,
-                    base_amount=Decimal("3.00"),
-                    rate_per_kg=Decimal("1.20"),
-                    base_kg=None,
-                    active=True,
-                )
-            ],
         )
 
         sch = _SchemeOut(
@@ -68,13 +53,17 @@ def register_debug_routes(router: APIRouter) -> None:
             shipping_provider_id=1,
             shipping_provider_name="DEBUG_PROVIDER",
             name="DEBUG_SCHEME",
-            active=True,
-            currency="CNY",
+            status="draft",
             archived_at=datetime.now(tz=timezone.utc),
+            currency="CNY",
             effective_from=None,
             effective_to=None,
             default_pricing_mode="linear_total",
-            billable_weight_rule=None,
+            billable_weight_strategy="actual_only",
+            volume_divisor=None,
+            rounding_mode="none",
+            rounding_step_kg=None,
+            min_billable_weight_kg=None,
             destination_groups=[g],
             surcharges=[
                 _SurchargeOut(

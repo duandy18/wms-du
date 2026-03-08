@@ -7,6 +7,9 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
+from app.api.routers.shipping_provider_pricing_schemes.module_resources_shared import (
+    validate_scheme_publishable,
+)
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SchemeDetailOut,
     SchemeUpdateIn,
@@ -346,6 +349,8 @@ def register_update_routes(router: APIRouter) -> None:
 
         if str(sch.status) != "draft":
             raise HTTPException(status_code=400, detail="Only draft scheme can be published")
+
+        validate_scheme_publishable(db, scheme_id=scheme_id)
 
         _archive_other_active_schemes(
             db,

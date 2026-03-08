@@ -5,8 +5,6 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .pricing_matrix import PricingMatrixOut
-
 
 class DestinationGroupProvinceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -26,4 +24,3 @@ class DestinationGroupOut(BaseModel):
     active: bool
 
     provinces: List[DestinationGroupProvinceOut] = Field(default_factory=list)
-    pricing_matrix: List[PricingMatrixOut] = Field(default_factory=list)

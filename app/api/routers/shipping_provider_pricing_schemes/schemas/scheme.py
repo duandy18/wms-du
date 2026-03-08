@@ -12,7 +12,7 @@ from .surcharge import SurchargeOut
 _ALLOWED_SCHEME_STATUS = {"draft", "active", "archived"}
 _ALLOWED_BILLABLE_STRATEGY = {"actual_only", "max_actual_volume"}
 _ALLOWED_ROUNDING_MODE = {"none", "ceil"}
-_ALLOWED_DEFAULT_PRICING_MODE = {"flat", "linear_total", "step_over", "manual_quote"}
+_ALLOWED_DEFAULT_PRICING_MODE = {"flat", "linear_total", "step_over"}
 
 
 class SchemeOut(BaseModel):
@@ -77,7 +77,7 @@ class SchemeCreateIn(BaseModel):
     @model_validator(mode="after")
     def _validate_shape(self):
         if self.default_pricing_mode not in _ALLOWED_DEFAULT_PRICING_MODE:
-            raise ValueError("default_pricing_mode must be one of: flat / linear_total / step_over / manual_quote")
+            raise ValueError("default_pricing_mode must be one of: flat / linear_total / step_over")
 
         if self.billable_weight_strategy not in _ALLOWED_BILLABLE_STRATEGY:
             raise ValueError("billable_weight_strategy must be one of: actual_only / max_actual_volume")
@@ -128,7 +128,7 @@ class SchemeUpdateIn(BaseModel):
             raise ValueError("status must be one of: draft / active / archived")
 
         if self.default_pricing_mode is not None and self.default_pricing_mode not in _ALLOWED_DEFAULT_PRICING_MODE:
-            raise ValueError("default_pricing_mode must be one of: flat / linear_total / step_over / manual_quote")
+            raise ValueError("default_pricing_mode must be one of: flat / linear_total / step_over")
 
         if self.billable_weight_strategy is not None and self.billable_weight_strategy not in _ALLOWED_BILLABLE_STRATEGY:
             raise ValueError("billable_weight_strategy must be one of: actual_only / max_actual_volume")

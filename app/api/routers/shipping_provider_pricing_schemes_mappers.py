@@ -6,7 +6,6 @@ from typing import List
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     DestinationGroupOut,
     DestinationGroupProvinceOut,
-    PricingMatrixOut,
     SchemeOut,
     SurchargeOut,
 )
@@ -14,7 +13,6 @@ from app.models.shipping_provider_destination_group import ShippingProviderDesti
 from app.models.shipping_provider_destination_group_member import (
     ShippingProviderDestinationGroupMember,
 )
-from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
 from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
 
@@ -30,36 +28,10 @@ def to_destination_group_province_out(
     )
 
 
-def to_pricing_matrix_out(r: ShippingProviderPricingMatrix) -> PricingMatrixOut:
-    """
-    Level-3 结构：
-        PricingMatrix 不再存 min_kg/max_kg
-        重量区间来自 module_range
-    """
-
-    mr = getattr(r, "module_range", None)
-
-    min_kg = getattr(mr, "min_kg", None)
-    max_kg = getattr(mr, "max_kg", None)
-
-    return PricingMatrixOut(
-        id=int(r.id),
-        group_id=int(r.group_id),
-        min_kg=min_kg,
-        max_kg=max_kg,
-        pricing_mode=str(r.pricing_mode),
-        flat_amount=getattr(r, "flat_amount", None),
-        base_amount=getattr(r, "base_amount", None),
-        rate_per_kg=getattr(r, "rate_per_kg", None),
-        base_kg=getattr(r, "base_kg", None),
-        active=bool(r.active),
-    )
-
-
 def to_destination_group_out(
     g: ShippingProviderDestinationGroup,
     provinces: List[ShippingProviderDestinationGroupMember],
-    pricing_matrix: List[ShippingProviderPricingMatrix],
+    pricing_matrix: list[object] | None = None,
 ) -> DestinationGroupOut:
     return DestinationGroupOut(
         id=int(g.id),
@@ -67,7 +39,6 @@ def to_destination_group_out(
         name=str(g.name),
         active=bool(g.active),
         provinces=[to_destination_group_province_out(x) for x in provinces],
-        pricing_matrix=[to_pricing_matrix_out(x) for x in pricing_matrix],
     )
 
 

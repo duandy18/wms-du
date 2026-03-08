@@ -1,14 +1,24 @@
-from .common import WeightSegmentIn, ZoneMemberOut
-from .pricing_matrix import (
-    PricingMatrixOut,
-    PricingMatrixCreateIn,
-    PricingMatrixUpdateIn,
-    PricingMatrixReplaceRowIn,
-    PricingMatrixReplaceIn,
-    PricingMatrixReplaceOut,
-)
 from .destination_group import DestinationGroupProvinceOut, DestinationGroupOut
-from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
+from .module_groups import (
+    ModuleGroupProvinceIn,
+    ModuleGroupProvinceOut,
+    ModuleGroupPutItemIn,
+    ModuleGroupOut,
+    ModuleGroupsPutIn,
+    ModuleGroupsOut,
+)
+from .module_matrix_cells import (
+    ModuleMatrixCellPutItemIn,
+    ModuleMatrixCellOut,
+    ModuleMatrixCellsPutIn,
+    ModuleMatrixCellsOut,
+)
+from .module_ranges import (
+    ModuleRangePutItemIn,
+    ModuleRangeOut,
+    ModuleRangesPutIn,
+    ModuleRangesOut,
+)
 from .scheme import (
     SchemeOut,
     SchemeListOut,
@@ -16,48 +26,31 @@ from .scheme import (
     SchemeCreateIn,
     SchemeUpdateIn,
 )
-from .matrix_view import (
-    MatrixCellOut,
-    MatrixGroupOut,
-    MatrixGroupProvinceOut,
-    MatrixModuleIn,
-    MatrixModuleOut,
-    MatrixModuleRangeOut,
-    MatrixViewDataOut,
-    MatrixViewOut,
-    MatrixViewSchemeOut,
-    MatrixWeightRangeIn,
-    PricingMatrixPutIn,
-)
+from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
 
 __all__ = [
-    "WeightSegmentIn",
-    "ZoneMemberOut",
-    "PricingMatrixOut",
-    "PricingMatrixCreateIn",
-    "PricingMatrixUpdateIn",
-    "PricingMatrixReplaceRowIn",
-    "PricingMatrixReplaceIn",
-    "PricingMatrixReplaceOut",
     "DestinationGroupProvinceOut",
     "DestinationGroupOut",
-    "SurchargeOut",
-    "SurchargeCreateIn",
-    "SurchargeUpdateIn",
+    "ModuleGroupProvinceIn",
+    "ModuleGroupProvinceOut",
+    "ModuleGroupPutItemIn",
+    "ModuleGroupOut",
+    "ModuleGroupsPutIn",
+    "ModuleGroupsOut",
+    "ModuleMatrixCellPutItemIn",
+    "ModuleMatrixCellOut",
+    "ModuleMatrixCellsPutIn",
+    "ModuleMatrixCellsOut",
+    "ModuleRangePutItemIn",
+    "ModuleRangeOut",
+    "ModuleRangesPutIn",
+    "ModuleRangesOut",
     "SchemeOut",
     "SchemeListOut",
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
-    "MatrixCellOut",
-    "MatrixGroupOut",
-    "MatrixGroupProvinceOut",
-    "MatrixModuleIn",
-    "MatrixModuleOut",
-    "MatrixModuleRangeOut",
-    "MatrixViewDataOut",
-    "MatrixViewOut",
-    "MatrixViewSchemeOut",
-    "MatrixWeightRangeIn",
-    "PricingMatrixPutIn",
+    "SurchargeOut",
+    "SurchargeCreateIn",
+    "SurchargeUpdateIn",
 ]
