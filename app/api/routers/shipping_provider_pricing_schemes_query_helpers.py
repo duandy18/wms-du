@@ -12,14 +12,14 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
 )
 from app.api.routers.shipping_provider_pricing_schemes_mappers import (
     to_destination_group_out,
-    to_surcharge_out,
+    to_surcharge_outs_from_config,
 )
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_destination_group_member import (
     ShippingProviderDestinationGroupMember,
 )
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
+from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
 
 
 def load_scheme_entities(
@@ -28,6 +28,10 @@ def load_scheme_entities(
 ) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeOut]]:
     """
     读取 Scheme + DestinationGroups(+Provinces) + Surcharges，并组装为输出对象。
+    surcharge 主线已切到：
+      - shipping_provider_surcharge_configs
+      - shipping_provider_surcharge_config_cities
+    对外仍展平为兼容的 SurchargeOut 列表。
     """
 
     sch = (
@@ -80,13 +84,16 @@ def load_scheme_entities(
             )
         )
 
-    surcharges_raw = (
-        db.query(ShippingProviderSurcharge)
-        .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
-        .order_by(ShippingProviderSurcharge.id.asc())
+    surcharge_configs = (
+        db.query(ShippingProviderSurchargeConfig)
+        .options(selectinload(ShippingProviderSurchargeConfig.cities))
+        .filter(ShippingProviderSurchargeConfig.scheme_id == scheme_id)
+        .order_by(ShippingProviderSurchargeConfig.id.asc())
         .all()
     )
 
-    surcharges: List[SurchargeOut] = [to_surcharge_out(s) for s in surcharges_raw]
+    surcharges: List[SurchargeOut] = []
+    for cfg in surcharge_configs:
+        surcharges.extend(to_surcharge_outs_from_config(cfg))
 
     return sch, destination_groups, surcharges

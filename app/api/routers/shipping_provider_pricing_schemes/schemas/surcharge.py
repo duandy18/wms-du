@@ -62,16 +62,16 @@ class SurchargeCreateIn(BaseModel):
     @model_validator(mode="after")
     def _validate_scope_and_amount(self):
         if self.scope == "province":
-            if not (self.province_name or self.province_code):
-                raise ValueError("province_name or province_code is required when scope=province")
+            if not self.province_code:
+                raise ValueError("province_code is required when scope=province")
             if self.city_name or self.city_code:
                 raise ValueError("city_name/city_code must be empty when scope=province")
 
         if self.scope == "city":
-            if not (self.province_name or self.province_code):
-                raise ValueError("province_name or province_code is required when scope=city")
-            if not (self.city_name or self.city_code):
-                raise ValueError("city_name or city_code is required when scope=city")
+            if not self.province_code:
+                raise ValueError("province_code is required when scope=city")
+            if not self.city_code:
+                raise ValueError("city_code is required when scope=city")
 
         return self
 
@@ -114,18 +114,19 @@ class SurchargeUpsertIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     scope: Literal["province", "city"]
-    province_name: str = Field(..., min_length=1, max_length=64)
-    city_name: Optional[str] = Field(None, min_length=1, max_length=64)
 
-    province_code: Optional[str] = Field(None, max_length=32)
+    province_code: str = Field(..., min_length=1, max_length=32)
+    province_name: Optional[str] = Field(None, max_length=64)
+
     city_code: Optional[str] = Field(None, max_length=32)
+    city_name: Optional[str] = Field(None, max_length=64)
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
 
     amount: Decimal = Field(..., ge=0)
     active: bool = True
 
-    @field_validator("province_name", "city_name", "province_code", "city_code")
+    @field_validator("province_code", "province_name", "city_code", "city_name")
     @classmethod
     def _trim(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -135,8 +136,14 @@ class SurchargeUpsertIn(BaseModel):
 
     @model_validator(mode="after")
     def _validate_city(self):
-        if self.scope == "city" and not self.city_name:
-            raise ValueError("city_name is required when scope=city")
+        if not self.province_code:
+            raise ValueError("province_code is required")
+
+        if self.scope == "city":
+            if not self.city_code:
+                raise ValueError("city_code is required when scope=city")
+
         if self.scope == "province" and (self.city_name or self.city_code):
             raise ValueError("city_name/city_code must be empty when scope=province")
+
         return self

@@ -107,7 +107,14 @@ class ShippingProviderPricingScheme(Base):
         lazy="selectin",
         cascade="all, delete-orphan",
     )
-    surcharges = relationship("ShippingProviderSurcharge", back_populates="scheme", lazy="selectin")
+
+    # 新结构：每省一条 config + 子表 cities
+    surcharge_configs = relationship(
+        "ShippingProviderSurchargeConfig",
+        back_populates="scheme",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return (

@@ -140,7 +140,6 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
         )
         seed = uuid4().hex[:8]
         payload = _build_min_payload_from_schema(spec, post_schema, seed=seed)
-        # 常见字段名兜底：name/code + Route A 所需 warehouse_id
         payload.setdefault("name", f"UT_PROVIDER_{seed}")
         payload.setdefault("code", f"UTP{seed}".upper())
         payload.setdefault("warehouse_id", int(wid))
@@ -207,72 +206,103 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
 
 
 @pytest.mark.anyio
-async def test_surcharge_upsert_city_then_province_conflict_409(client) -> None:
+async def test_surcharge_upsert_city_then_province_switches_to_province_mode(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    prov = "UT_PROV_GUANGDONG"
-    city = "UT_CITY_SHENZHEN"
+    province_code = "440000"
+    province_name = "广东省"
+    city_code = "440300"
+    city_name = "深圳市"
 
     r1 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
         json={
             "scope": "city",
-            "province_name": prov,
-            "city_name": city,
+            "province_code": province_code,
+            "province_name": province_name,
+            "city_code": city_code,
+            "city_name": city_name,
             "amount": 2.0,
             "active": True,
         },
     )
     assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+    assert body1["scope"] == "city"
+    assert body1["province_code"] == province_code
+    assert body1["city_code"] == city_code
+    assert float(body1["fixed_amount"]) == 2.0
 
     r2 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
         json={
             "scope": "province",
-            "province_name": prov,
+            "province_code": province_code,
+            "province_name": province_name,
             "amount": 1.0,
             "active": True,
         },
     )
-    assert r2.status_code == 409, r2.text
-    assert "conflict" in r2.text.lower()
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert body2["scope"] == "province"
+    assert body2["province_code"] == province_code
+    assert body2["city_code"] is None
+    assert body2["province_name"] == province_name
+    assert float(body2["fixed_amount"]) == 1.0
 
 
 @pytest.mark.anyio
-async def test_surcharge_upsert_province_then_city_conflict_409(client) -> None:
+async def test_surcharge_upsert_province_then_city_switches_to_cities_mode(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    prov = "UT_PROV_GUANGDONG_2"
-    city = "UT_CITY_GUANGZHOU_2"
+    province_code = "440000"
+    province_name = "广东省"
+    city_code = "440100"
+    city_name = "广州市"
 
     r1 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
         json={
             "scope": "province",
-            "province_name": prov,
+            "province_code": province_code,
+            "province_name": province_name,
             "amount": 1.5,
             "active": True,
         },
     )
     assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+    assert body1["scope"] == "province"
+    assert body1["province_code"] == province_code
+    assert body1["city_code"] is None
+    assert float(body1["fixed_amount"]) == 1.5
 
     r2 = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharges:upsert",
         headers=h,
         json={
             "scope": "city",
-            "province_name": prov,
-            "city_name": city,
+            "province_code": province_code,
+            "province_name": province_name,
+            "city_code": city_code,
+            "city_name": city_name,
             "amount": 2.5,
             "active": True,
         },
     )
-    assert r2.status_code == 409, r2.text
-    assert "conflict" in r2.text.lower()
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert body2["scope"] == "city"
+    assert body2["province_code"] == province_code
+    assert body2["city_code"] == city_code
+    assert body2["province_name"] == province_name
+    assert body2["city_name"] == city_name
+    assert float(body2["fixed_amount"]) == 2.5
