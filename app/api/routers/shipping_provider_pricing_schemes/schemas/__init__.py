@@ -2,10 +2,11 @@ from .destination_group import DestinationGroupProvinceOut, DestinationGroupOut
 from .module_groups import (
     ModuleGroupProvinceIn,
     ModuleGroupProvinceOut,
-    ModuleGroupPutItemIn,
     ModuleGroupOut,
-    ModuleGroupsPutIn,
     ModuleGroupsOut,
+    ModuleGroupWriteIn,
+    ModuleGroupSingleOut,
+    ModuleGroupDeleteOut,
 )
 from .module_matrix_cells import (
     ModuleMatrixCellPutItemIn,
@@ -33,10 +34,11 @@ __all__ = [
     "DestinationGroupOut",
     "ModuleGroupProvinceIn",
     "ModuleGroupProvinceOut",
-    "ModuleGroupPutItemIn",
     "ModuleGroupOut",
-    "ModuleGroupsPutIn",
     "ModuleGroupsOut",
+    "ModuleGroupWriteIn",
+    "ModuleGroupSingleOut",
+    "ModuleGroupDeleteOut",
     "ModuleMatrixCellPutItemIn",
     "ModuleMatrixCellOut",
     "ModuleMatrixCellsPutIn",

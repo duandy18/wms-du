@@ -44,7 +44,6 @@ def load_scheme_entities(
         db.query(ShippingProviderDestinationGroup)
         .filter(ShippingProviderDestinationGroup.scheme_id == scheme_id)
         .order_by(
-            ShippingProviderDestinationGroup.module_id.asc(),
             ShippingProviderDestinationGroup.sort_order.asc(),
             ShippingProviderDestinationGroup.id.asc(),
         )

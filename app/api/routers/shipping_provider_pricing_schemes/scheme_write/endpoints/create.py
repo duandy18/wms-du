@@ -21,7 +21,6 @@ from app.api.routers.shipping_provider_pricing_schemes_utils import (
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
 
 
 def _validate_billable_weight_fields(payload: SchemeCreateIn) -> None:
@@ -52,26 +51,6 @@ def _validate_billable_weight_fields(payload: SchemeCreateIn) -> None:
                 status_code=422,
                 detail="rounding_step_kg is required when rounding_mode=ceil",
             )
-
-
-def _create_default_modules(db: Session, scheme_id: int) -> None:
-    db.add(
-        ShippingProviderPricingSchemeModule(
-            scheme_id=int(scheme_id),
-            module_code="standard",
-            name="标准区域",
-            sort_order=0,
-        )
-    )
-    db.add(
-        ShippingProviderPricingSchemeModule(
-            scheme_id=int(scheme_id),
-            module_code="other",
-            name="其他区域",
-            sort_order=1,
-        )
-    )
-    db.flush()
 
 
 def register_create_routes(router: APIRouter) -> None:
@@ -145,8 +124,6 @@ def register_create_routes(router: APIRouter) -> None:
         )
         db.add(sch)
         db.flush()
-
-        _create_default_modules(db, int(sch.id))
 
         db.commit()
         db.refresh(sch)

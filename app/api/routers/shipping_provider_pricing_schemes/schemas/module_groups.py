@@ -1,14 +1,9 @@
-# app/api/routers/shipping_provider_pricing_schemes/schemas/module_groups.py
 from __future__ import annotations
 
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
-# ---------------------------------------------------------
-# Out Models
-# ---------------------------------------------------------
 
 class ModuleGroupProvinceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -24,8 +19,6 @@ class ModuleGroupOut(BaseModel):
 
     id: int
     scheme_id: int
-    module_id: int
-    module_code: str
 
     name: str
     sort_order: int
@@ -38,13 +31,8 @@ class ModuleGroupsOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     ok: bool = True
-    module_code: str
     groups: List[ModuleGroupOut] = Field(default_factory=list)
 
-
-# ---------------------------------------------------------
-# PUT Input Models
-# ---------------------------------------------------------
 
 class ModuleGroupProvinceIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -67,58 +55,23 @@ class ModuleGroupProvinceIn(BaseModel):
         return self
 
 
-class ModuleGroupPutItemIn(BaseModel):
+class ModuleGroupWriteIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=128)
     sort_order: Optional[int] = Field(None, ge=0)
     active: bool = True
-
     provinces: List[ModuleGroupProvinceIn] = Field(default_factory=list, min_length=1)
 
-    @field_validator("name")
-    @classmethod
-    def _trim_name(cls, v: str) -> str:
-        t = v.strip()
-        if not t:
-            raise ValueError("group name must not be empty")
-        return t
 
-
-class ModuleGroupsPutIn(BaseModel):
+class ModuleGroupSingleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    groups: List[ModuleGroupPutItemIn] = Field(default_factory=list, min_length=1)
+    ok: bool = True
+    group: ModuleGroupOut
 
-    # ---------------------------------------------------------
-    # module 内 province 不允许跨 group 重复
-    # ---------------------------------------------------------
 
-    @model_validator(mode="after")
-    def _validate_province_conflicts(self):
+class ModuleGroupDeleteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-        owner: Dict[Tuple[str, str], str] = {}
-
-        for g in self.groups:
-
-            seen = set()
-
-            for p in g.provinces:
-
-                key = (str(p.province_code or ""), str(p.province_name or ""))
-
-                if key in seen:
-                    raise ValueError(f"duplicate province inside group '{g.name}'")
-
-                seen.add(key)
-
-                if key in owner and owner[key] != g.name:
-                    label = p.province_name or p.province_code or "unknown"
-                    raise ValueError(
-                        f"province {label} appears in multiple groups "
-                        f"('{owner[key]}' and '{g.name}')"
-                    )
-
-                owner[key] = g.name
-
-        return self
+    ok: bool = True
+    deleted_group_id: int

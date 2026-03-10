@@ -14,6 +14,9 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     SchemeDetailOut,
     SchemeUpdateIn,
 )
+from app.api.routers.shipping_provider_pricing_schemes.validators import (
+    validate_default_pricing_mode,
+)
 from app.api.routers.shipping_provider_pricing_schemes_mappers import to_scheme_out
 from app.api.routers.shipping_provider_pricing_schemes_query_helpers import load_scheme_entities
 from app.api.routers.shipping_provider_pricing_schemes_utils import (
@@ -28,7 +31,6 @@ from app.models.shipping_provider_destination_group_member import (
 )
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_pricing_scheme_module import ShippingProviderPricingSchemeModule
 from app.models.shipping_provider_pricing_scheme_module_range import (
     ShippingProviderPricingSchemeModuleRange,
 )
@@ -84,95 +86,68 @@ def _load_scheme_for_write_or_404(db: Session, scheme_id: int) -> ShippingProvid
 
 
 def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int) -> None:
-    source_modules = (
-        db.query(ShippingProviderPricingSchemeModule)
-        .filter(ShippingProviderPricingSchemeModule.scheme_id == source_scheme_id)
+    source_ranges = (
+        db.query(ShippingProviderPricingSchemeModuleRange)
+        .filter(ShippingProviderPricingSchemeModuleRange.scheme_id == int(source_scheme_id))
         .order_by(
-            ShippingProviderPricingSchemeModule.sort_order.asc(),
-            ShippingProviderPricingSchemeModule.id.asc(),
+            ShippingProviderPricingSchemeModuleRange.sort_order.asc(),
+            ShippingProviderPricingSchemeModuleRange.id.asc(),
         )
         .all()
     )
-    source_module_ids = [int(m.id) for m in source_modules]
 
-    source_ranges = []
-    source_groups = []
+    source_groups = (
+        db.query(ShippingProviderDestinationGroup)
+        .filter(ShippingProviderDestinationGroup.scheme_id == int(source_scheme_id))
+        .order_by(
+            ShippingProviderDestinationGroup.sort_order.asc(),
+            ShippingProviderDestinationGroup.id.asc(),
+        )
+        .all()
+    )
+    source_group_ids = [int(g.id) for g in source_groups]
+
     source_members = []
     source_cells = []
 
-    if source_module_ids:
-        source_ranges = (
-            db.query(ShippingProviderPricingSchemeModuleRange)
-            .filter(ShippingProviderPricingSchemeModuleRange.module_id.in_(source_module_ids))
+    if source_group_ids:
+        source_members = (
+            db.query(ShippingProviderDestinationGroupMember)
+            .filter(ShippingProviderDestinationGroupMember.group_id.in_(source_group_ids))
             .order_by(
-                ShippingProviderPricingSchemeModuleRange.module_id.asc(),
-                ShippingProviderPricingSchemeModuleRange.sort_order.asc(),
-                ShippingProviderPricingSchemeModuleRange.id.asc(),
+                ShippingProviderDestinationGroupMember.group_id.asc(),
+                ShippingProviderDestinationGroupMember.id.asc(),
             )
             .all()
         )
-
-        source_groups = (
-            db.query(ShippingProviderDestinationGroup)
-            .filter(ShippingProviderDestinationGroup.scheme_id == source_scheme_id)
+        source_cells = (
+            db.query(ShippingProviderPricingMatrix)
+            .filter(ShippingProviderPricingMatrix.group_id.in_(source_group_ids))
             .order_by(
-                ShippingProviderDestinationGroup.module_id.asc(),
-                ShippingProviderDestinationGroup.sort_order.asc(),
-                ShippingProviderDestinationGroup.id.asc(),
+                ShippingProviderPricingMatrix.group_id.asc(),
+                ShippingProviderPricingMatrix.module_range_id.asc(),
+                ShippingProviderPricingMatrix.id.asc(),
             )
             .all()
         )
-        source_group_ids = [int(g.id) for g in source_groups]
-
-        if source_group_ids:
-            source_members = (
-                db.query(ShippingProviderDestinationGroupMember)
-                .filter(ShippingProviderDestinationGroupMember.group_id.in_(source_group_ids))
-                .order_by(
-                    ShippingProviderDestinationGroupMember.group_id.asc(),
-                    ShippingProviderDestinationGroupMember.id.asc(),
-                )
-                .all()
-            )
-            source_cells = (
-                db.query(ShippingProviderPricingMatrix)
-                .filter(ShippingProviderPricingMatrix.group_id.in_(source_group_ids))
-                .order_by(
-                    ShippingProviderPricingMatrix.group_id.asc(),
-                    ShippingProviderPricingMatrix.module_range_id.asc(),
-                    ShippingProviderPricingMatrix.id.asc(),
-                )
-                .all()
-            )
 
     source_surcharges = (
         db.query(ShippingProviderSurcharge)
-        .filter(ShippingProviderSurcharge.scheme_id == source_scheme_id)
+        .filter(ShippingProviderSurcharge.scheme_id == int(source_scheme_id))
         .order_by(ShippingProviderSurcharge.id.asc())
         .all()
     )
 
-    module_id_map: dict[int, int] = {}
     range_id_map: dict[int, int] = {}
     group_id_map: dict[int, int] = {}
 
-    for mod in source_modules:
-        copied = ShippingProviderPricingSchemeModule(
-            scheme_id=int(target_scheme_id),
-            module_code=str(mod.module_code),
-            name=str(mod.name),
-            sort_order=int(mod.sort_order),
-        )
-        db.add(copied)
-        db.flush()
-        module_id_map[int(mod.id)] = int(copied.id)
-
     for row in source_ranges:
         copied = ShippingProviderPricingSchemeModuleRange(
-            module_id=module_id_map[int(row.module_id)],
+            scheme_id=int(target_scheme_id),
             min_kg=row.min_kg,
             max_kg=row.max_kg,
             sort_order=int(row.sort_order),
+            default_pricing_mode=str(row.default_pricing_mode),
         )
         db.add(copied)
         db.flush()
@@ -181,7 +156,6 @@ def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int
     for g in source_groups:
         copied = ShippingProviderDestinationGroup(
             scheme_id=int(target_scheme_id),
-            module_id=module_id_map[int(g.module_id)],
             name=str(g.name),
             sort_order=int(g.sort_order),
             active=bool(g.active),
@@ -204,7 +178,6 @@ def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int
             ShippingProviderPricingMatrix(
                 group_id=group_id_map[int(c.group_id)],
                 module_range_id=range_id_map[int(c.module_range_id)],
-                range_module_id=module_id_map[int(c.range_module_id)],
                 pricing_mode=str(c.pricing_mode),
                 flat_amount=c.flat_amount,
                 base_amount=c.base_amount,
@@ -279,7 +252,39 @@ def register_update_routes(router: APIRouter) -> None:
         if "name" in data:
             sch.name = norm_nonempty(data.get("name"), "name")
 
+        if "currency" in data:
+            sch.currency = str(data.get("currency") or "CNY").strip() or "CNY"
+
+        if "effective_from" in data:
+            sch.effective_from = data.get("effective_from")
+        if "effective_to" in data:
+            sch.effective_to = data.get("effective_to")
+
+        if "default_pricing_mode" in data:
+            try:
+                sch.default_pricing_mode = validate_default_pricing_mode(data.get("default_pricing_mode"))
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+
+        if "billable_weight_strategy" in data:
+            sch.billable_weight_strategy = str(data.get("billable_weight_strategy"))
+        if "volume_divisor" in data:
+            sch.volume_divisor = data.get("volume_divisor")
+        if "rounding_mode" in data:
+            sch.rounding_mode = str(data.get("rounding_mode"))
+        if "rounding_step_kg" in data:
+            sch.rounding_step_kg = data.get("rounding_step_kg")
+        if "min_billable_weight_kg" in data:
+            sch.min_billable_weight_kg = data.get("min_billable_weight_kg")
+
         validate_effective_window(sch.effective_from, sch.effective_to)
+
+        _validate_merged_billable_weight_fields(
+            billable_weight_strategy=str(sch.billable_weight_strategy),
+            volume_divisor=sch.volume_divisor,
+            rounding_mode=str(sch.rounding_mode),
+            rounding_step_kg=sch.rounding_step_kg,
+        )
 
         db.commit()
         db.refresh(sch)

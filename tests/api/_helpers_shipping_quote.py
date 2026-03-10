@@ -67,10 +67,6 @@ def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int
 
 
 def ensure_second_provider(client: TestClient, token: str) -> int:
-    """
-    Phase 6 刚性契约：
-    - POST /shipping-providers 创建必须带 warehouse_id
-    """
     h = auth_headers(token)
     pr = client.get("/shipping-providers", headers=h)
     assert pr.status_code == 200, pr.text
@@ -97,40 +93,52 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     return int(cr.json()["data"]["id"])
 
 
-def _put_module_groups(
+# ---------------------------------------------------------
+# scheme-scoped CRUD helper
+# ---------------------------------------------------------
+def _put_scheme_groups(
     client: TestClient,
     token: str,
     *,
     scheme_id: int,
-    module_code: str,
     groups: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
 
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/groups",
-        headers=h,
-        json={"groups": groups},
-    )
-    assert r.status_code == 200, r.text
+    created: List[dict] = []
 
-    body = r.json()
-    assert body["ok"] is True
-    return body["groups"]
+    for g in groups:
+        r = client.post(
+            f"/pricing-schemes/{scheme_id}/groups",
+            headers=h,
+            json={
+                "sort_order": g.get("sort_order", 0),
+                "active": g.get("active", True),
+                "provinces": g["provinces"],
+            },
+        )
+
+        assert r.status_code == 200, r.text
+
+        body = r.json()
+        assert body["ok"] is True
+
+        created.append(body["group"])
+
+    return created
 
 
-def _put_module_ranges(
+def _put_scheme_ranges(
     client: TestClient,
     token: str,
     *,
     scheme_id: int,
-    module_code: str,
     ranges: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
 
     r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/ranges",
+        f"/pricing-schemes/{scheme_id}/ranges",
         headers=h,
         json={"ranges": ranges},
     )
@@ -141,18 +149,17 @@ def _put_module_ranges(
     return body["ranges"]
 
 
-def _put_module_matrix_cells(
+def _put_scheme_matrix_cells(
     client: TestClient,
     token: str,
     *,
     scheme_id: int,
-    module_code: str,
     cells: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
 
     r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/matrix-cells",
+        f"/pricing-schemes/{scheme_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
@@ -187,21 +194,16 @@ def _create_level3_bundle_via_api(
     通过新三阶段接口构造最小 Level-3 bundle：
 
       scheme
-        -> standard module
-        -> module_groups
-        -> module_ranges
+        -> destination_group
+        -> destination_group_members
+        -> ranges
         -> matrix_cells
-        -> other module（最小闭环，满足 publish）
     """
 
-    # ------------------------------
-    # standard module
-    # ------------------------------
-    standard_groups_out = _put_module_groups(
+    groups_out = _put_scheme_groups(
         client,
         token,
         scheme_id=scheme_id,
-        module_code="standard",
         groups=[
             {
                 "name": group_name,
@@ -211,31 +213,31 @@ def _create_level3_bundle_via_api(
             }
         ],
     )
-    assert len(standard_groups_out) == 1, standard_groups_out
-    standard_group_id = int(standard_groups_out[0]["id"])
+    assert len(groups_out) == 1, groups_out
+    group_id = int(groups_out[0]["id"])
 
-    standard_ranges_out = _put_module_ranges(
+    ranges_out = _put_scheme_ranges(
         client,
         token,
         scheme_id=scheme_id,
-        module_code="standard",
         ranges=[
             {
                 "min_kg": row["min_kg"],
                 "max_kg": row["max_kg"],
                 "sort_order": idx,
+                "default_pricing_mode": str(row["pricing_mode"]),
             }
             for idx, row in enumerate(matrix_rows)
         ],
     )
-    assert len(standard_ranges_out) == len(matrix_rows), standard_ranges_out
+    assert len(ranges_out) == len(matrix_rows), ranges_out
 
-    standard_cells_payload: List[dict] = []
+    cells_payload: List[dict] = []
     for idx, row in enumerate(matrix_rows):
-        standard_cells_payload.append(
+        cells_payload.append(
             {
-                "group_id": standard_group_id,
-                "module_range_id": int(standard_ranges_out[idx]["id"]),
+                "group_id": group_id,
+                "module_range_id": int(ranges_out[idx]["id"]),
                 "pricing_mode": str(row["pricing_mode"]),
                 "flat_amount": row.get("flat_amount"),
                 "base_amount": row.get("base_amount"),
@@ -245,72 +247,15 @@ def _create_level3_bundle_via_api(
             }
         )
 
-    standard_cells_out = _put_module_matrix_cells(
+    cells_out = _put_scheme_matrix_cells(
         client,
         token,
         scheme_id=scheme_id,
-        module_code="standard",
-        cells=standard_cells_payload,
+        cells=cells_payload,
     )
-    assert len(standard_cells_out) == len(matrix_rows), standard_cells_out
+    assert len(cells_out) == len(matrix_rows), cells_out
 
-    # ------------------------------
-    # other module（必须补齐，否则 publish 会被拦）
-    # ------------------------------
-    other_ranges_out = _put_module_ranges(
-        client,
-        token,
-        scheme_id=scheme_id,
-        module_code="other",
-        ranges=[
-            {
-                "min_kg": 0,
-                "max_kg": None,
-                "sort_order": 0,
-            }
-        ],
-    )
-    assert len(other_ranges_out) == 1, other_ranges_out
-    other_range_id = int(other_ranges_out[0]["id"])
-
-    other_groups_out = _put_module_groups(
-        client,
-        token,
-        scheme_id=scheme_id,
-        module_code="other",
-        groups=[
-            {
-                "name": "OTHER",
-                "sort_order": 0,
-                "active": True,
-                "provinces": [{"province_name": "其他"}],
-            }
-        ],
-    )
-    assert len(other_groups_out) == 1, other_groups_out
-    other_group_id = int(other_groups_out[0]["id"])
-
-    other_cells_out = _put_module_matrix_cells(
-        client,
-        token,
-        scheme_id=scheme_id,
-        module_code="other",
-        cells=[
-            {
-                "group_id": other_group_id,
-                "module_range_id": other_range_id,
-                "pricing_mode": "manual_quote",
-                "flat_amount": None,
-                "base_amount": None,
-                "rate_per_kg": None,
-                "base_kg": None,
-                "active": True,
-            }
-        ],
-    )
-    assert len(other_cells_out) == 1, other_cells_out
-
-    return standard_group_id
+    return group_id
 
 
 def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
@@ -319,12 +264,10 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
 
     provider
       -> scheme(warehouse scoped)
-      -> standard module
       -> destination_group
       -> destination_group_members
-      -> module_ranges
+      -> ranges
       -> pricing_matrix_cells
-      -> other module（最小闭环）
       -> surcharge
       -> publish(active)
     """
