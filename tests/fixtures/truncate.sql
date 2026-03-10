@@ -11,6 +11,10 @@
 -- Pricing Phase-3：
 -- - shipping_provider_pricing_scheme_modules 已退场；
 -- - 新主线改为 ranges + pricing_matrix(cellized)。
+--
+-- Pricing Phase-surcharge-config：
+-- - surcharge 主线已切到 surcharge_configs + surcharge_config_cities；
+-- - tests 清库不再触碰 shipping_provider_surcharges 旧表。
 
 TRUNCATE TABLE
   -- orders / order_items
@@ -35,7 +39,8 @@ TRUNCATE TABLE
   shipping_provider_destination_group_members,
   shipping_provider_destination_groups,
   shipping_provider_pricing_scheme_module_ranges,
-  shipping_provider_surcharges,
+  shipping_provider_surcharge_config_cities,
+  shipping_provider_surcharge_configs,
   shipping_provider_pricing_schemes,
   shipping_provider_contacts,
   shipping_records,

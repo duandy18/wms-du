@@ -13,7 +13,8 @@ from app.db.deps import get_db
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
+from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
+from app.models.shipping_provider_surcharge_config_city import ShippingProviderSurchargeConfigCity
 
 
 class ShellSchemeRow(BaseModel):
@@ -47,7 +48,7 @@ def _counts_for_scheme(db: Session, scheme_id: int) -> Tuple[int, int, int, int,
     """
     终态主线（硬仓库边界）：
     - scheme 自带 warehouse_id，不再统计绑定行
-    - 主线实体：destination_groups / pricing_matrix / surcharges
+    - 主线实体：destination_groups / pricing_matrix / surcharge_configs(+cities)
     - seg_n 保留输出字段，但固定为 0
     """
     group_n = (
@@ -65,8 +66,8 @@ def _counts_for_scheme(db: Session, scheme_id: int) -> Tuple[int, int, int, int,
         .count()
     )
     surcharge_n = (
-        db.query(ShippingProviderSurcharge.id)
-        .filter(ShippingProviderSurcharge.scheme_id == scheme_id)
+        db.query(ShippingProviderSurchargeConfig.id)
+        .filter(ShippingProviderSurchargeConfig.scheme_id == scheme_id)
         .count()
     )
     seg_n = 0
@@ -150,9 +151,21 @@ def register(router: APIRouter) -> None:
                     ShippingProviderDestinationGroup.id.in_(group_ids)
                 ).delete(synchronize_session=False)
 
-            db.query(ShippingProviderSurcharge).filter(
-                ShippingProviderSurcharge.scheme_id == sid
-            ).delete(synchronize_session=False)
+            config_ids = [
+                int(x[0])
+                for x in db.query(ShippingProviderSurchargeConfig.id)
+                .filter(ShippingProviderSurchargeConfig.scheme_id == sid)
+                .all()
+            ]
+
+            if config_ids:
+                db.query(ShippingProviderSurchargeConfigCity).filter(
+                    ShippingProviderSurchargeConfigCity.config_id.in_(config_ids)
+                ).delete(synchronize_session=False)
+
+                db.query(ShippingProviderSurchargeConfig).filter(
+                    ShippingProviderSurchargeConfig.id.in_(config_ids)
+                ).delete(synchronize_session=False)
 
             db.query(ShippingProviderPricingScheme).filter(
                 ShippingProviderPricingScheme.id == sid,

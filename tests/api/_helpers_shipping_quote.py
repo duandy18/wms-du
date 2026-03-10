@@ -340,6 +340,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
             "name": "目的地附加费-北京市",
             "active": True,
             "scope": "province",
+            "province_code": "110000",
             "province_name": "北京市",
             "fixed_amount": 1.5,
         },

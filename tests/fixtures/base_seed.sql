@@ -20,6 +20,10 @@
 -- - scheme 生命周期改为 draft / active / archived
 -- - 计费重量规则改为结构化字段
 -- - 运价主线改为 scheme + ranges + destination_groups + pricing_matrix
+--
+-- Pricing Phase-surcharge-config：
+-- - surcharge 主线已切到 config + cities 子表
+-- - base_seed 不再写 shipping_provider_surcharges 旧表
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name, code)
@@ -194,31 +198,25 @@ ON CONFLICT (id) DO UPDATE SET
   active = EXCLUDED.active,
   module_range_id = EXCLUDED.module_range_id;
 
--- surcharge：最小一条省级附加费
-INSERT INTO shipping_provider_surcharges (
+-- surcharge_config：最小一条省级附加费（新架构）
+INSERT INTO shipping_provider_surcharge_configs (
   id,
   scheme_id,
-  name,
-  active,
-  scope,
   province_code,
-  city_code,
   province_name,
-  city_name,
-  fixed_amount
+  province_mode,
+  fixed_amount,
+  active
 )
 VALUES
-  (1, 1, '目的地附加费-北京市', true, 'province', NULL, NULL, '北京市', NULL, 1.50)
+  (1, 1, '110000', '北京市', 'province', 1.50, true)
 ON CONFLICT (id) DO UPDATE SET
   scheme_id = EXCLUDED.scheme_id,
-  name = EXCLUDED.name,
-  active = EXCLUDED.active,
-  scope = EXCLUDED.scope,
   province_code = EXCLUDED.province_code,
-  city_code = EXCLUDED.city_code,
   province_name = EXCLUDED.province_name,
-  city_name = EXCLUDED.city_name,
-  fixed_amount = EXCLUDED.fixed_amount;
+  province_mode = EXCLUDED.province_mode,
+  fixed_amount = EXCLUDED.fixed_amount,
+  active = EXCLUDED.active;
 
 -- ===== items =====
 INSERT INTO items (
@@ -344,8 +342,8 @@ SELECT setval(
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_surcharges','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_surcharges), 0),
+  pg_get_serial_sequence('shipping_provider_surcharge_configs','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_surcharge_configs), 0),
   true
 );
 

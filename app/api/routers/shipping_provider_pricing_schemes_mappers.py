@@ -14,7 +14,8 @@ from app.models.shipping_provider_destination_group_member import (
     ShippingProviderDestinationGroupMember,
 )
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
+from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
+from app.models.shipping_provider_surcharge_config_city import ShippingProviderSurchargeConfigCity
 
 
 def to_destination_group_province_out(
@@ -42,19 +43,56 @@ def to_destination_group_out(
     )
 
 
-def to_surcharge_out(s: ShippingProviderSurcharge) -> SurchargeOut:
+def _to_surcharge_out_from_config(
+    cfg: ShippingProviderSurchargeConfig,
+) -> SurchargeOut:
     return SurchargeOut(
-        id=int(s.id),
-        scheme_id=int(s.scheme_id),
-        name=str(s.name),
-        active=bool(s.active),
-        scope=str(getattr(s, "scope", "province") or "province"),
-        province_code=getattr(s, "province_code", None),
-        city_code=getattr(s, "city_code", None),
-        province_name=getattr(s, "province_name", None),
-        city_name=getattr(s, "city_name", None),
-        fixed_amount=getattr(s, "fixed_amount", None),
+        id=int(cfg.id),
+        scheme_id=int(cfg.scheme_id),
+        name=str(getattr(cfg, "province_name", None) or getattr(cfg, "province_code", None) or f"cfg#{cfg.id}"),
+        active=bool(cfg.active),
+        scope="province",
+        province_code=getattr(cfg, "province_code", None),
+        city_code=None,
+        province_name=getattr(cfg, "province_name", None),
+        city_name=None,
+        fixed_amount=getattr(cfg, "fixed_amount", None),
     )
+
+
+def _to_surcharge_out_from_city(
+    cfg: ShippingProviderSurchargeConfig,
+    city_row: ShippingProviderSurchargeConfigCity,
+) -> SurchargeOut:
+    return SurchargeOut(
+        id=int(city_row.id),
+        scheme_id=int(cfg.scheme_id),
+        name=str(
+            f"{getattr(cfg, 'province_name', None) or getattr(cfg, 'province_code', None)}-"
+            f"{getattr(city_row, 'city_name', None) or getattr(city_row, 'city_code', None)}"
+        ),
+        active=bool(cfg.active) and bool(city_row.active),
+        scope="city",
+        province_code=getattr(cfg, "province_code", None),
+        city_code=getattr(city_row, "city_code", None),
+        province_name=getattr(cfg, "province_name", None),
+        city_name=getattr(city_row, "city_name", None),
+        fixed_amount=getattr(city_row, "fixed_amount", None),
+    )
+
+
+def to_surcharge_outs_from_config(
+    cfg: ShippingProviderSurchargeConfig,
+) -> List[SurchargeOut]:
+    province_mode = str(getattr(cfg, "province_mode", "province") or "province").strip().lower()
+
+    if province_mode == "province":
+        return [_to_surcharge_out_from_config(cfg)]
+
+    out: List[SurchargeOut] = []
+    for city_row in getattr(cfg, "cities", []) or []:
+        out.append(_to_surcharge_out_from_city(cfg, city_row))
+    return out
 
 
 def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:

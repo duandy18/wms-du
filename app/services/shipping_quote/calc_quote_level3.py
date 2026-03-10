@@ -12,15 +12,21 @@ from app.models.shipping_provider_destination_group_member import (
 )
 from app.models.shipping_provider_pricing_matrix import ShippingProviderPricingMatrix
 from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingScheme
-from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
+from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
+from app.models.shipping_provider_surcharge_config_city import ShippingProviderSurchargeConfigCity
 
 from .matchers import _match_destination_group, _match_pricing_matrix
 from .pricing import _calc_base_amount
-from .surcharges import _calc_surcharge_amount, _cond_match
 from .types import Dest
 from .weight import _compute_billable_weight_kg
 
 JsonObject = Dict[str, object]
+
+
+def _s(v: object | None) -> str:
+    if v is None:
+        return ""
+    return str(v).strip()
 
 
 def _to_hit_member_out_level3(
@@ -74,32 +80,6 @@ def _build_level3_quote_result(
     }
 
 
-def _select_covering_surcharge(
-    *,
-    surcharges: List[ShippingProviderSurcharge],
-    dest: Dest,
-    flags: Optional[List[str]],
-    reasons: List[str],
-) -> ShippingProviderSurcharge | None:
-    matched = [s for s in surcharges if _cond_match(s, dest, flags or [])]
-    if not matched:
-        return None
-
-    city_matches = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "city"]
-    if city_matches:
-        chosen = sorted(city_matches, key=lambda s: int(s.id))[0]
-        reasons.append(f"surcharge_select: city>{chosen.name}")
-        return chosen
-
-    province_matches = [s for s in matched if str(getattr(s, "scope", "")).strip().lower() == "province"]
-    if province_matches:
-        chosen = sorted(province_matches, key=lambda s: int(s.id))[0]
-        reasons.append(f"surcharge_select: province>{chosen.name}")
-        return chosen
-
-    return None
-
-
 def _scheme_rounding_rule(sch: ShippingProviderPricingScheme) -> JsonObject | None:
     rounding_mode = getattr(sch, "rounding_mode", None)
     rounding_step_kg = getattr(sch, "rounding_step_kg", None)
@@ -147,6 +127,81 @@ def _matrix_range(row: ShippingProviderPricingMatrix) -> Tuple[Decimal, Optional
     return mr.min_kg, mr.max_kg
 
 
+def _province_match(
+    cfg: ShippingProviderSurchargeConfig,
+    dest: Dest,
+) -> bool:
+    row_prov_code = _s(getattr(cfg, "province_code", None))
+    row_prov_name = _s(getattr(cfg, "province_name", None))
+    dest_prov_code = _s(getattr(dest, "province_code", None))
+    dest_prov_name = _s(getattr(dest, "province", None))
+
+    if row_prov_code and dest_prov_code:
+        return row_prov_code == dest_prov_code
+    if row_prov_name and dest_prov_name:
+        return row_prov_name == dest_prov_name
+    return False
+
+
+def _city_match(
+    row: ShippingProviderSurchargeConfigCity,
+    dest: Dest,
+) -> bool:
+    row_city_code = _s(getattr(row, "city_code", None))
+    row_city_name = _s(getattr(row, "city_name", None))
+    dest_city_code = _s(getattr(dest, "city_code", None))
+    dest_city_name = _s(getattr(dest, "city", None))
+
+    if row_city_code and dest_city_code:
+        return row_city_code == dest_city_code
+    if row_city_name and dest_city_name:
+        return row_city_name == dest_city_name
+    return False
+
+
+def _select_surcharge_from_configs(
+    *,
+    configs: List[ShippingProviderSurchargeConfig],
+    dest: Dest,
+    reasons: List[str],
+) -> tuple[
+    ShippingProviderSurchargeConfig | None,
+    ShippingProviderSurchargeConfigCity | None,
+    float,
+    JsonObject | None,
+]:
+    matched_configs = [cfg for cfg in configs if bool(getattr(cfg, "active", False)) and _province_match(cfg, dest)]
+    if not matched_configs:
+        return None, None, 0.0, None
+
+    cfg = sorted(matched_configs, key=lambda x: int(x.id))[0]
+    province_mode = str(getattr(cfg, "province_mode", "province") or "province").strip().lower()
+
+    if province_mode == "province":
+        amt = float(getattr(cfg, "fixed_amount", 0) or 0.0)
+        reasons.append(
+            f"surcharge_select: province>{getattr(cfg, 'province_name', None) or getattr(cfg, 'province_code', None) or cfg.id}"
+        )
+        return cfg, None, amt, {"kind": "fixed", "amount": amt}
+
+    city_rows = [
+        row
+        for row in (getattr(cfg, "cities", []) or [])
+        if bool(getattr(row, "active", False)) and _city_match(row, dest)
+    ]
+    if not city_rows:
+        return cfg, None, 0.0, None
+
+    city_row = sorted(city_rows, key=lambda x: int(x.id))[0]
+    amt = float(getattr(city_row, "fixed_amount", 0) or 0.0)
+    reasons.append(
+        "surcharge_select: city>"
+        f"{getattr(cfg, 'province_name', None) or getattr(cfg, 'province_code', None)}-"
+        f"{getattr(city_row, 'city_name', None) or getattr(city_row, 'city_code', None)}"
+    )
+    return cfg, city_row, amt, {"kind": "fixed", "amount": amt}
+
+
 def calc_quote_level3(
     *,
     db: Session,
@@ -156,6 +211,8 @@ def calc_quote_level3(
     dims_cm: Optional[Tuple[float, float, float]],
     flags: Optional[List[str]],
 ) -> JsonObject:
+    _ = flags
+
     scheme_id = int(sch.id)
 
     groups = (
@@ -181,13 +238,11 @@ def calc_quote_level3(
             .all()
         )
 
-    surcharges = (
-        db.query(ShippingProviderSurcharge)
-        .filter(
-            ShippingProviderSurcharge.scheme_id == scheme_id,
-            ShippingProviderSurcharge.active.is_(True),
-        )
-        .order_by(ShippingProviderSurcharge.id.asc())
+    surcharge_configs = (
+        db.query(ShippingProviderSurchargeConfig)
+        .options(selectinload(ShippingProviderSurchargeConfig.cities))
+        .filter(ShippingProviderSurchargeConfig.scheme_id == scheme_id)
+        .order_by(ShippingProviderSurchargeConfig.id.asc())
         .all()
     )
 
@@ -209,7 +264,6 @@ def calc_quote_level3(
 
     group_matrix = [r for r in matrix_rows if int(r.group_id) == int(group.id) and bool(r.active)]
 
-    # 兼容现有 matcher：给 row 动态补上 min_kg / max_kg 视图字段
     for r in group_matrix:
         mn, mx = _matrix_range(r)
         setattr(r, "min_kg", mn)
@@ -282,33 +336,36 @@ def calc_quote_level3(
             total_amount=None,
         )
 
-    chosen_surcharge = _select_covering_surcharge(
-        surcharges=surcharges,
+    chosen_cfg, chosen_city, surcharge_amt, surcharge_detail = _select_surcharge_from_configs(
+        configs=surcharge_configs,
         dest=dest,
-        flags=flags,
         reasons=reasons,
     )
 
     s_details: List[JsonObject] = []
     surcharge_sum = 0.0
 
-    if chosen_surcharge is not None:
-        amt, detail = _calc_surcharge_amount(chosen_surcharge, bw, scheme_rounding)
-        surcharge_sum += float(amt)
+    if chosen_cfg is not None and surcharge_detail is not None:
+        surcharge_sum += float(surcharge_amt)
+
         s_details.append(
             {
-                "id": int(chosen_surcharge.id),
-                "name": chosen_surcharge.name,
-                "scope": str(getattr(chosen_surcharge, "scope", "province") or "province"),
-                "province_code": getattr(chosen_surcharge, "province_code", None),
-                "city_code": getattr(chosen_surcharge, "city_code", None),
-                "province_name": getattr(chosen_surcharge, "province_name", None),
-                "city_name": getattr(chosen_surcharge, "city_name", None),
-                "amount": float(amt),
-                "detail": detail,
+                "id": int(chosen_city.id) if chosen_city is not None else int(chosen_cfg.id),
+                "name": (
+                    f"{chosen_cfg.province_name or chosen_cfg.province_code}-{chosen_city.city_name or chosen_city.city_code}"
+                    if chosen_city is not None
+                    else str(chosen_cfg.province_name or chosen_cfg.province_code or chosen_cfg.id)
+                ),
+                "scope": "city" if chosen_city is not None else "province",
+                "province_code": getattr(chosen_cfg, "province_code", None),
+                "city_code": getattr(chosen_city, "city_code", None) if chosen_city is not None else None,
+                "province_name": getattr(chosen_cfg, "province_name", None),
+                "city_name": getattr(chosen_city, "city_name", None) if chosen_city is not None else None,
+                "amount": float(surcharge_amt),
+                "detail": surcharge_detail,
             }
         )
-        reasons.append(f"surcharge_hit: {chosen_surcharge.name} (+{float(amt):.2f})")
+        reasons.append(f"surcharge_hit: +{float(surcharge_amt):.2f}")
 
     extra_sum = float(surcharge_sum)
     total = float(base_amt) + float(extra_sum)

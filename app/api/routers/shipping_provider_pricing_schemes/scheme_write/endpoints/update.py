@@ -34,7 +34,8 @@ from app.models.shipping_provider_pricing_scheme import ShippingProviderPricingS
 from app.models.shipping_provider_pricing_scheme_module_range import (
     ShippingProviderPricingSchemeModuleRange,
 )
-from app.models.shipping_provider_surcharge import ShippingProviderSurcharge
+from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
+from app.models.shipping_provider_surcharge_config_city import ShippingProviderSurchargeConfigCity
 
 
 def _validate_merged_billable_weight_fields(
@@ -131,10 +132,11 @@ def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int
             .all()
         )
 
-    source_surcharges = (
-        db.query(ShippingProviderSurcharge)
-        .filter(ShippingProviderSurcharge.scheme_id == int(source_scheme_id))
-        .order_by(ShippingProviderSurcharge.id.asc())
+    source_surcharge_configs = (
+        db.query(ShippingProviderSurchargeConfig)
+        .options(selectinload(ShippingProviderSurchargeConfig.cities))
+        .filter(ShippingProviderSurchargeConfig.scheme_id == int(source_scheme_id))
+        .order_by(ShippingProviderSurchargeConfig.id.asc())
         .all()
     )
 
@@ -187,20 +189,28 @@ def _clone_scheme_tree(db: Session, source_scheme_id: int, target_scheme_id: int
             )
         )
 
-    for s in source_surcharges:
-        db.add(
-            ShippingProviderSurcharge(
-                scheme_id=int(target_scheme_id),
-                name=str(s.name),
-                active=bool(s.active),
-                scope=str(s.scope),
-                province_code=s.province_code,
-                city_code=s.city_code,
-                province_name=s.province_name,
-                city_name=s.city_name,
-                fixed_amount=s.fixed_amount,
-            )
+    for cfg in source_surcharge_configs:
+        copied_cfg = ShippingProviderSurchargeConfig(
+            scheme_id=int(target_scheme_id),
+            province_code=cfg.province_code,
+            province_name=cfg.province_name,
+            province_mode=str(cfg.province_mode),
+            fixed_amount=cfg.fixed_amount,
+            active=bool(cfg.active),
         )
+        db.add(copied_cfg)
+        db.flush()
+
+        for city_row in getattr(cfg, "cities", []) or []:
+            db.add(
+                ShippingProviderSurchargeConfigCity(
+                    config_id=int(copied_cfg.id),
+                    city_code=city_row.city_code,
+                    city_name=city_row.city_name,
+                    fixed_amount=city_row.fixed_amount,
+                    active=bool(city_row.active),
+                )
+            )
 
     db.flush()
 
