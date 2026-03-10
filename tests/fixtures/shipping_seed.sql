@@ -2,14 +2,14 @@
 -- 目标：让 pricing quote 相关测试有最小可用数据
 -- 策略：
 -- - 幂等：以 shipping_providers.code 作为幂等键（uq_shipping_providers_code）
--- - 最小：1 provider / 1 scheme / 1 module / 1 destination_group / 2 pricing_matrix cells
+-- - 最小：1 provider / 1 scheme / 1 range set / 1 destination_group / 2 pricing_matrix cells
 --
 -- 最新合同：
 -- - scheme 作用域 = warehouse × provider
 -- - scheme 生命周期：status = draft / active / archived
--- - 主线计价：module + module_ranges + destination_group + pricing_matrix
+-- - 主线计价：ranges + destination_group + pricing_matrix
 -- - destination_group_members 为 province-only
--- - pricing_matrix 不再直接存 min_kg / max_kg，而是引用 module_range_id
+-- - pricing_matrix 引用 module_range_id（当前表名未改），但不再有 module / range_module_id
 
 -- 0) 修正序列
 SELECT setval(
@@ -21,12 +21,6 @@ SELECT setval(
 SELECT setval(
   pg_get_serial_sequence('shipping_provider_pricing_schemes','id'),
   COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_schemes), 1),
-  true
-);
-
-SELECT setval(
-  pg_get_serial_sequence('shipping_provider_pricing_scheme_modules','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_scheme_modules), 1),
   true
 );
 
@@ -54,7 +48,7 @@ SELECT setval(
   true
 );
 
--- 1) provider / warehouse bind / scheme / module / ranges / group
+-- 1) provider / warehouse bind / scheme / ranges / group
 WITH wh AS (
   SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
 ),
@@ -135,95 +129,56 @@ sch2 AS (
   WHERE s.name = 'UT-SCHEME-1'
   LIMIT 1
 ),
-mod AS (
-  INSERT INTO shipping_provider_pricing_scheme_modules (
-    scheme_id,
-    module_code,
-    name,
-    sort_order
-  )
-  SELECT
-    sch2.id,
-    'standard',
-    '标准区域',
-    0
-  FROM sch2
-  ON CONFLICT ON CONSTRAINT uq_sppsm_scheme_module_code DO NOTHING
-  RETURNING id
-),
-mod2 AS (
-  SELECT id FROM mod
-  UNION ALL
-  SELECT m.id
-  FROM shipping_provider_pricing_scheme_modules m
-  JOIN sch2 ON m.scheme_id = sch2.id
-  WHERE m.module_code = 'standard'
-  LIMIT 1
-),
-mod_other AS (
-  INSERT INTO shipping_provider_pricing_scheme_modules (
-    scheme_id,
-    module_code,
-    name,
-    sort_order
-  )
-  SELECT
-    sch2.id,
-    'other',
-    '其他区域',
-    1
-  FROM sch2
-  ON CONFLICT ON CONSTRAINT uq_sppsm_scheme_module_code DO NOTHING
-  RETURNING id
-),
 r1 AS (
   INSERT INTO shipping_provider_pricing_scheme_module_ranges (
-    module_id,
+    scheme_id,
     min_kg,
     max_kg,
-    sort_order
+    sort_order,
+    default_pricing_mode
   )
   SELECT
-    mod2.id,
+    sch2.id,
     0.000::numeric(10,3),
     1.000::numeric(10,3),
-    0
-  FROM mod2
-  ON CONFLICT ON CONSTRAINT uq_sppsmr_module_range DO NOTHING
+    0,
+    'flat'
+  FROM sch2
+  ON CONFLICT ON CONSTRAINT uq_sppsmr_scheme_range DO NOTHING
   RETURNING id
 ),
 r2 AS (
   INSERT INTO shipping_provider_pricing_scheme_module_ranges (
-    module_id,
+    scheme_id,
     min_kg,
     max_kg,
-    sort_order
+    sort_order,
+    default_pricing_mode
   )
   SELECT
-    mod2.id,
+    sch2.id,
     1.000::numeric(10,3),
     2.000::numeric(10,3),
-    1
-  FROM mod2
-  ON CONFLICT ON CONSTRAINT uq_sppsmr_module_range DO NOTHING
+    1,
+    'flat'
+  FROM sch2
+  ON CONFLICT ON CONSTRAINT uq_sppsmr_scheme_range DO NOTHING
   RETURNING id
 ),
 dg AS (
   INSERT INTO shipping_provider_destination_groups (
     scheme_id,
-    module_id,
     name,
     sort_order,
     active
   )
   SELECT
     sch2.id,
-    mod2.id,
     'UT-GROUP-1',
     0,
     TRUE
-  FROM sch2, mod2
-  ON CONFLICT ON CONSTRAINT uq_sp_dest_groups_module_name DO NOTHING
+  FROM sch2
+  ON CONFLICT ON CONSTRAINT uq_sp_dest_groups_scheme_sort_order DO NOTHING
   RETURNING id
 )
 SELECT 1;
@@ -243,19 +198,11 @@ sch2 AS (
   WHERE s.name = 'UT-SCHEME-1'
   LIMIT 1
 ),
-mod2 AS (
-  SELECT m.id
-  FROM shipping_provider_pricing_scheme_modules m
-  JOIN sch2 ON m.scheme_id = sch2.id
-  WHERE m.module_code = 'standard'
-  LIMIT 1
-),
 dg2 AS (
   SELECT g.id
   FROM shipping_provider_destination_groups g
   JOIN sch2 ON g.scheme_id = sch2.id
-  JOIN mod2 ON g.module_id = mod2.id
-  WHERE g.name = 'UT-GROUP-1'
+  WHERE g.sort_order = 0
   LIMIT 1
 )
 INSERT INTO shipping_provider_destination_group_members (
@@ -285,29 +232,20 @@ sch2 AS (
   WHERE s.name = 'UT-SCHEME-1'
   LIMIT 1
 ),
-mod2 AS (
-  SELECT m.id
-  FROM shipping_provider_pricing_scheme_modules m
-  JOIN sch2 ON m.scheme_id = sch2.id
-  WHERE m.module_code = 'standard'
-  LIMIT 1
-),
 dg2 AS (
-  SELECT g.id, g.module_id
+  SELECT g.id
   FROM shipping_provider_destination_groups g
   JOIN sch2 ON g.scheme_id = sch2.id
-  JOIN mod2 ON g.module_id = mod2.id
-  WHERE g.name = 'UT-GROUP-1'
+  WHERE g.sort_order = 0
   LIMIT 1
 ),
 ranges AS (
   SELECT
     r.id,
-    r.module_id,
     r.min_kg,
     r.max_kg
   FROM shipping_provider_pricing_scheme_module_ranges r
-  JOIN mod2 ON r.module_id = mod2.id
+  JOIN sch2 ON r.scheme_id = sch2.id
   WHERE (r.min_kg = 0.000::numeric(10,3) AND r.max_kg = 1.000::numeric(10,3))
      OR (r.min_kg = 1.000::numeric(10,3) AND r.max_kg = 2.000::numeric(10,3))
 )
@@ -319,8 +257,7 @@ INSERT INTO shipping_provider_pricing_matrix (
   rate_per_kg,
   base_kg,
   active,
-  module_range_id,
-  range_module_id
+  module_range_id
 )
 SELECT
   dg2.id,
@@ -334,8 +271,7 @@ SELECT
   NULL,
   NULL,
   TRUE,
-  ranges.id,
-  ranges.module_id
+  ranges.id
 FROM dg2
-JOIN ranges ON ranges.module_id = dg2.module_id
+CROSS JOIN ranges
 ON CONFLICT ON CONSTRAINT uq_sppm_group_module_range DO NOTHING;

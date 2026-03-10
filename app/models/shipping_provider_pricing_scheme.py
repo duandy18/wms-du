@@ -25,6 +25,10 @@ class ShippingProviderPricingScheme(Base):
             "rounding_mode in ('none','ceil')",
             name="ck_spps_rounding_mode",
         ),
+        CheckConstraint(
+            "default_pricing_mode in ('flat','linear_total','step_over','manual_quote')",
+            name="ck_spps_default_pricing_mode_valid",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -91,8 +95,14 @@ class ShippingProviderPricingScheme(Base):
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
     warehouse = relationship("Warehouse", lazy="selectin")
 
-    modules = relationship(
-        "ShippingProviderPricingSchemeModule",
+    ranges = relationship(
+        "ShippingProviderPricingSchemeModuleRange",
+        back_populates="scheme",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+    destination_groups = relationship(
+        "ShippingProviderDestinationGroup",
         back_populates="scheme",
         lazy="selectin",
         cascade="all, delete-orphan",

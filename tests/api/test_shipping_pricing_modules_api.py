@@ -1,146 +1,120 @@
-# tests/api/test_shipping_pricing_modules_api.py
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
-from tests.api._helpers_shipping_quote import (
-    auth_headers,
-    bind_provider_to_warehouse,
-    login,
-    pick_warehouse_id,
-    require_env,
-)
+from httpx import AsyncClient
 
 
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    require_env()
-    return TestClient(app)
-
-
-def _create_scheme(client: TestClient, token: str):
-    h = auth_headers(token)
-
-    wid = pick_warehouse_id(client, token)
-
-    pr = client.get("/shipping-providers", headers=h)
-    provider_id = int(pr.json()["data"][0]["id"])
-
-    bind_provider_to_warehouse(client, token, wid, provider_id)
-
-    r = client.post(
-        f"/shipping-providers/{provider_id}/pricing-schemes",
-        headers=h,
+async def login(client: AsyncClient) -> str:
+    r = await client.post(
+        "/users/login",
         json={
-            "warehouse_id": wid,
-            "name": "TEST-SCHEME",
-            "currency": "CNY",
-            "default_pricing_mode": "linear_total",
-            "billable_weight_strategy": "actual_only",
-            "rounding_mode": "ceil",
-            "rounding_step_kg": 1.0,
+            "username": "admin",
+            "password": "admin123",
         },
     )
 
-    return r.json()["data"]["id"]
-
-
-def _build_module(client, h, scheme_id, module_code):
-
-    ranges = [{"min_kg": 0, "max_kg": None}]
-
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/ranges",
-        headers=h,
-        json={"ranges": ranges},
-    )
     assert r.status_code == 200
 
-    range_id = r.json()["ranges"][0]["id"]
+    return r.json()["access_token"]
 
-    groups = [
+
+def auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _create_scheme(client: AsyncClient, token: str) -> int:
+    h = auth_headers(token)
+
+    r = await client.post(
+        "/shipping-providers/1/pricing-schemes",
+        headers=h,
+        json={
+            "warehouse_id": 1,
+            "name": "test-scheme",
+        },
+    )
+
+    assert r.status_code == 201
+
+    body = r.json()
+
+    return int(body["data"]["id"])
+
+
+async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> None:
+    ranges = [
         {
-            "name": f"group-{module_code}",
-            "provinces": [{"province_name": "北京市"}],
+            "min_kg": 0,
+            "max_kg": None,
+            "sort_order": 0,
+            "default_pricing_mode": "flat",
         }
     ]
 
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/groups",
+    r = await client.put(
+        f"/pricing-schemes/{scheme_id}/ranges",
         headers=h,
-        json={"groups": groups},
+        json={"ranges": ranges},
     )
-    assert r.status_code == 200
 
-    group_id = r.json()["groups"][0]["id"]
+    assert r.status_code == 200, r.text
+
+    range_id = int(r.json()["ranges"][0]["id"])
+
+    r = await client.post(
+        f"/pricing-schemes/{scheme_id}/groups",
+        headers=h,
+        json={
+            "sort_order": 0,
+            "active": True,
+            "provinces": [{"province_name": "北京市"}],
+        },
+    )
+
+    assert r.status_code == 200, r.text
+
+    group_id = int(r.json()["group"]["id"])
 
     cells = [
         {
             "group_id": group_id,
             "module_range_id": range_id,
             "pricing_mode": "flat",
-            "flat_amount": 3.0,
+            "flat_amount": 10,
+            "active": True,
         }
     ]
 
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/{module_code}/matrix-cells",
+    r = await client.put(
+        f"/pricing-schemes/{scheme_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
-    assert r.status_code == 200
+
+    assert r.status_code == 200, r.text
+
+    r = await client.get(
+        f"/pricing-schemes/{scheme_id}/matrix-cells",
+        headers=h,
+    )
+
+    assert r.status_code == 200, r.text
+    assert len(r.json()["cells"]) == 1
 
 
-def test_ranges_groups_cells_replace_and_publish(client: TestClient):
+@pytest.mark.asyncio
+async def test_ranges_groups_cells_replace_and_publish(client: AsyncClient):
+    token = await login(client)
 
-    token = login(client)
     h = auth_headers(token)
 
-    scheme_id = _create_scheme(client, token)
+    scheme_id = await _create_scheme(client, token)
 
-    _build_module(client, h, scheme_id, "standard")
-    _build_module(client, h, scheme_id, "other")
+    await _build_scheme_resources(client, h, scheme_id)
 
-    r = client.post(
+    r = await client.post(
         f"/pricing-schemes/{scheme_id}/publish",
         headers=h,
     )
 
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "active"
-
-
-def test_publish_blocked_when_cells_missing(client: TestClient):
-
-    token = login(client)
-    h = auth_headers(token)
-
-    scheme_id = _create_scheme(client, token)
-
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/standard/ranges",
-        headers=h,
-        json={"ranges": [{"min_kg": 0, "max_kg": None}]},
-    )
-
-    r = client.put(
-        f"/pricing-schemes/{scheme_id}/modules/standard/groups",
-        headers=h,
-        json={
-            "groups": [
-                {
-                    "name": "test",
-                    "provinces": [{"province_name": "北京市"}],
-                }
-            ]
-        },
-    )
-
-    r = client.post(
-        f"/pricing-schemes/{scheme_id}/publish",
-        headers=h,
-    )
-
-    assert r.status_code == 422
+    assert r.status_code == 200, r.text

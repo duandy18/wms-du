@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -18,21 +18,33 @@ class ShippingProviderPricingSchemeModuleRange(Base):
             "min_kg >= 0 AND (max_kg IS NULL OR max_kg > min_kg)",
             name="ck_sppsmr_range_valid",
         ),
-        UniqueConstraint("module_id", "sort_order", name="uq_sppsmr_module_sort_order"),
-        UniqueConstraint("module_id", "min_kg", "max_kg", name="uq_sppsmr_module_range"),
+        CheckConstraint(
+            "default_pricing_mode in ('flat','linear_total','step_over','manual_quote')",
+            name="ck_sppsmr_default_mode_valid",
+        ),
+        UniqueConstraint("scheme_id", "sort_order", name="uq_sppsmr_scheme_sort_order"),
+        UniqueConstraint("scheme_id", "min_kg", "max_kg", name="uq_sppsmr_scheme_range"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    module_id: Mapped[int] = mapped_column(
+    scheme_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("shipping_provider_pricing_scheme_modules.id", ondelete="CASCADE"),
+        ForeignKey("shipping_provider_pricing_schemes.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     min_kg: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     max_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    default_pricing_mode: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="flat",
+        server_default="flat",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -46,7 +58,7 @@ class ShippingProviderPricingSchemeModuleRange(Base):
         onupdate=func.now(),
     )
 
-    module = relationship("ShippingProviderPricingSchemeModule", back_populates="ranges")
+    scheme = relationship("ShippingProviderPricingScheme", back_populates="ranges", lazy="selectin")
     matrix_cells = relationship(
         "ShippingProviderPricingMatrix",
         back_populates="module_range",
@@ -57,5 +69,6 @@ class ShippingProviderPricingSchemeModuleRange(Base):
     def __repr__(self) -> str:
         return (
             f"<ShippingProviderPricingSchemeModuleRange id={self.id} "
-            f"module_id={self.module_id} min_kg={self.min_kg} max_kg={self.max_kg}>"
+            f"scheme_id={self.scheme_id} min_kg={self.min_kg} max_kg={self.max_kg} "
+            f"default_pricing_mode={self.default_pricing_mode!r}>"
         )

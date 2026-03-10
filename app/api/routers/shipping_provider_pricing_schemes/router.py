@@ -27,7 +27,7 @@ router = APIRouter(tags=["shipping-provider-pricing"])
 register_scheme_routes(router)
 
 # -------------------------------------------------------------
-# 新主线：三阶段资源接口
+# 主线资源：单方案直挂的三阶段资源接口
 # -------------------------------------------------------------
 register_module_ranges_routes(router)
 register_module_groups_routes(router)
@@ -45,15 +45,15 @@ register_surcharges_routes(router)
 # Level-3 pricing 当前正式写入模型：
 #
 #   scheme
-#     └ modules
-#         ├ module_ranges
-#         ├ destination_groups
-#         └ pricing_matrix_cells
+#     ├ ranges
+#     ├ destination_groups
+#     ├ pricing_matrix_cells
+#     └ surcharges
 #
 # 系统主写接口：
 #
-#   /pricing-schemes/{scheme_id}/modules/{module_code}/ranges
-#   /pricing-schemes/{scheme_id}/modules/{module_code}/groups
-#   /pricing-schemes/{scheme_id}/modules/{module_code}/matrix-cells
+#   /pricing-schemes/{scheme_id}/ranges
+#   /pricing-schemes/{scheme_id}/groups
+#   /pricing-schemes/{scheme_id}/matrix-cells
 #
-# 已移除旧整表 matrix editor 主线。
+# 已移除旧 modules/{module_code} 双模块主线。

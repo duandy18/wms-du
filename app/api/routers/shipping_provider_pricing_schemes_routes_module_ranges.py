@@ -14,10 +14,9 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas.module_ranges imp
     ModuleRangesPutIn,
 )
 from app.api.routers.shipping_provider_pricing_schemes.module_resources_shared import (
-    load_scheme_or_404,
     ensure_scheme_draft,
-    load_module_or_404,
-    list_module_ranges,
+    list_scheme_ranges,
+    load_scheme_or_404,
     validate_ranges_no_overlap,
 )
 from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
@@ -34,23 +33,19 @@ def _label(min_kg: Decimal, max_kg: Decimal | None) -> str:
 
 
 def register_module_ranges_routes(router: APIRouter) -> None:
-
     @router.get(
-        "/pricing-schemes/{scheme_id}/modules/{module_code}/ranges",
+        "/pricing-schemes/{scheme_id}/ranges",
         response_model=ModuleRangesOut,
     )
-    def get_module_ranges(
+    def get_scheme_ranges(
         scheme_id: int = Path(..., ge=1),
-        module_code: str = Path(...),
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
         check_perm(db, user, "config.store.write")
 
         sch = load_scheme_or_404(db, scheme_id)
-        mod = load_module_or_404(db, scheme_id=sch.id, module_code=module_code)
-
-        rows = list_module_ranges(db, module_id=int(mod.id))
+        rows = list_scheme_ranges(db, scheme_id=int(sch.id))
 
         out: List[ModuleRangeOut] = []
 
@@ -58,28 +53,26 @@ def register_module_ranges_routes(router: APIRouter) -> None:
             out.append(
                 ModuleRangeOut(
                     id=int(r.id),
-                    module_id=int(r.module_id),
-                    module_code=str(mod.module_code),
+                    scheme_id=int(r.scheme_id),
                     min_kg=r.min_kg,
                     max_kg=r.max_kg,
                     sort_order=int(r.sort_order),
+                    default_pricing_mode=str(r.default_pricing_mode),
                     label=_label(r.min_kg, r.max_kg),
                 )
             )
 
         return ModuleRangesOut(
             ok=True,
-            module_code=str(mod.module_code),
             ranges=out,
         )
 
     @router.put(
-        "/pricing-schemes/{scheme_id}/modules/{module_code}/ranges",
+        "/pricing-schemes/{scheme_id}/ranges",
         response_model=ModuleRangesOut,
     )
-    def put_module_ranges(
+    def put_scheme_ranges(
         scheme_id: int = Path(..., ge=1),
-        module_code: str = Path(...),
         payload: ModuleRangesPutIn = ...,
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
@@ -89,8 +82,6 @@ def register_module_ranges_routes(router: APIRouter) -> None:
         sch = load_scheme_or_404(db, scheme_id)
         ensure_scheme_draft(sch)
 
-        mod = load_module_or_404(db, scheme_id=sch.id, module_code=module_code)
-
         ranges = payload.ranges
 
         pairs: List[Tuple[Decimal, Decimal | None]] = [
@@ -99,9 +90,8 @@ def register_module_ranges_routes(router: APIRouter) -> None:
 
         validate_ranges_no_overlap(pairs)
 
-        # 删除旧 ranges（CASCADE 删除 matrix cells）
         db.query(ShippingProviderPricingSchemeModuleRange).filter(
-            ShippingProviderPricingSchemeModuleRange.module_id == int(mod.id)
+            ShippingProviderPricingSchemeModuleRange.scheme_id == int(sch.id)
         ).delete(synchronize_session=False)
 
         db.flush()
@@ -109,12 +99,12 @@ def register_module_ranges_routes(router: APIRouter) -> None:
         created: List[ShippingProviderPricingSchemeModuleRange] = []
 
         for idx, r in enumerate(ranges):
-
             row = ShippingProviderPricingSchemeModuleRange(
-                module_id=int(mod.id),
+                scheme_id=int(sch.id),
                 min_kg=r.min_kg,
                 max_kg=r.max_kg,
                 sort_order=int(r.sort_order if r.sort_order is not None else idx),
+                default_pricing_mode=str(r.default_pricing_mode),
             )
 
             db.add(row)
@@ -130,17 +120,16 @@ def register_module_ranges_routes(router: APIRouter) -> None:
             out.append(
                 ModuleRangeOut(
                     id=int(r.id),
-                    module_id=int(r.module_id),
-                    module_code=str(mod.module_code),
+                    scheme_id=int(r.scheme_id),
                     min_kg=r.min_kg,
                     max_kg=r.max_kg,
                     sort_order=int(r.sort_order),
+                    default_pricing_mode=str(r.default_pricing_mode),
                     label=_label(r.min_kg, r.max_kg),
                 )
             )
 
         return ModuleRangesOut(
             ok=True,
-            module_code=str(mod.module_code),
             ranges=out,
         )

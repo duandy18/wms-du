@@ -92,9 +92,10 @@ MODEL_SPECS = [
     ("app.models.internal_outbound", "InternalOutboundDoc"),
     ("app.models.internal_outbound", "InternalOutboundLine"),
     # ------------------------------------------------------------------
-    # 运价（终态主线：destination_group + pricing_matrix + surcharge）
+    # 运价（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge）
     # ------------------------------------------------------------------
     ("app.models.shipping_provider_pricing_scheme", "ShippingProviderPricingScheme"),
+    ("app.models.shipping_provider_pricing_scheme_module_range", "ShippingProviderPricingSchemeModuleRange"),
     ("app.models.shipping_provider_destination_group", "ShippingProviderDestinationGroup"),
     ("app.models.shipping_provider_destination_group_member", "ShippingProviderDestinationGroupMember"),
     ("app.models.shipping_provider_pricing_matrix", "ShippingProviderPricingMatrix"),
@@ -159,6 +160,7 @@ __all__ = [
     "InternalOutboundLine",
     # ---- Pricing ----
     "ShippingProviderPricingScheme",
+    "ShippingProviderPricingSchemeModuleRange",
     "ShippingProviderDestinationGroup",
     "ShippingProviderDestinationGroupMember",
     "ShippingProviderPricingMatrix",

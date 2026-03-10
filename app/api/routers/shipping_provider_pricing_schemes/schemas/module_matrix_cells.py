@@ -10,10 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 _ALLOWED_PRICING_MODES = {"flat", "linear_total", "step_over", "manual_quote"}
 
 
-# ---------------------------------------------------------
-# Out Models
-# ---------------------------------------------------------
-
 class ModuleMatrixCellOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,7 +17,6 @@ class ModuleMatrixCellOut(BaseModel):
 
     group_id: int
     module_range_id: int
-    range_module_id: int
 
     pricing_mode: str
 
@@ -37,13 +32,8 @@ class ModuleMatrixCellsOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     ok: bool = True
-    module_code: str
     cells: List[ModuleMatrixCellOut] = Field(default_factory=list)
 
-
-# ---------------------------------------------------------
-# PUT Input
-# ---------------------------------------------------------
 
 class ModuleMatrixCellPutItemIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -62,7 +52,6 @@ class ModuleMatrixCellPutItemIn(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape(self):
-
         mode = str(self.pricing_mode)
 
         if mode not in _ALLOWED_PRICING_MODES:

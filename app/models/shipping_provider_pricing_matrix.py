@@ -1,3 +1,4 @@
+# app/models/shipping_provider_pricing_matrix.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,7 +10,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    ForeignKeyConstraint,
     Integer,
     Numeric,
     String,
@@ -81,21 +81,6 @@ class ShippingProviderPricingMatrix(Base):
             """,
             name="ck_sppm_manual_quote_shape",
         ),
-        ForeignKeyConstraint(
-            ["group_id", "range_module_id"],
-            ["shipping_provider_destination_groups.id", "shipping_provider_destination_groups.module_id"],
-            ondelete="CASCADE",
-            name="fk_sppm_group_same_module",
-        ),
-        ForeignKeyConstraint(
-            ["module_range_id", "range_module_id"],
-            [
-                "shipping_provider_pricing_scheme_module_ranges.id",
-                "shipping_provider_pricing_scheme_module_ranges.module_id",
-            ],
-            ondelete="CASCADE",
-            name="fk_sppm_range_same_module",
-        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -122,11 +107,6 @@ class ShippingProviderPricingMatrix(Base):
         nullable=False,
     )
 
-    range_module_id: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-    )
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -146,6 +126,7 @@ class ShippingProviderPricingMatrix(Base):
     )
     module_range = relationship(
         "ShippingProviderPricingSchemeModuleRange",
+        back_populates="matrix_cells",
         foreign_keys=[module_range_id],
         lazy="selectin",
     )

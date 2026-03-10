@@ -16,10 +16,10 @@
 --   - adjust_lot_impl / StockService.adjust*
 --   - tests/helpers/inventory.py: seed_batch_slot 等
 --
--- Pricing Phase-2：
+-- Pricing Phase-3：
 -- - scheme 生命周期改为 draft / active / archived
 -- - 计费重量规则改为结构化字段
--- - 运价矩阵主线改为 modules + module_ranges + destination_groups + pricing_matrix
+-- - 运价主线改为 scheme + ranges + destination_groups + pricing_matrix
 
 -- ===== warehouses =====
 INSERT INTO warehouses (id, name, code)
@@ -117,57 +117,40 @@ ON CONFLICT (id) DO UPDATE SET
   rounding_step_kg = EXCLUDED.rounding_step_kg,
   min_billable_weight_kg = EXCLUDED.min_billable_weight_kg;
 
--- modules：固定两块 standard / other
-INSERT INTO shipping_provider_pricing_scheme_modules (
-  id,
-  scheme_id,
-  module_code,
-  name,
-  sort_order
-)
-VALUES
-  (1, 1, 'standard', '标准区域', 0),
-  (2, 1, 'other', '其他区域', 1)
-ON CONFLICT (id) DO UPDATE SET
-  scheme_id = EXCLUDED.scheme_id,
-  module_code = EXCLUDED.module_code,
-  name = EXCLUDED.name,
-  sort_order = EXCLUDED.sort_order;
-
--- ranges：给 standard 模块放一套最小可用重量段；other 先留空也合法
+-- ranges：单方案直挂
 INSERT INTO shipping_provider_pricing_scheme_module_ranges (
   id,
-  module_id,
+  scheme_id,
   min_kg,
   max_kg,
-  sort_order
+  sort_order,
+  default_pricing_mode
 )
 VALUES
-  (1, 1, 0.000, 1.000, 0),
-  (2, 1, 1.000, 2.000, 1),
-  (3, 1, 2.000, NULL, 2)
+  (1, 1, 0.000, 1.000, 0, 'flat'),
+  (2, 1, 1.000, 2.000, 1, 'flat'),
+  (3, 1, 2.000, NULL, 2, 'linear_total')
 ON CONFLICT (id) DO UPDATE SET
-  module_id = EXCLUDED.module_id,
+  scheme_id = EXCLUDED.scheme_id,
   min_kg = EXCLUDED.min_kg,
   max_kg = EXCLUDED.max_kg,
-  sort_order = EXCLUDED.sort_order;
+  sort_order = EXCLUDED.sort_order,
+  default_pricing_mode = EXCLUDED.default_pricing_mode;
 
--- destination groups：给 standard 模块放一个最小组
+-- destination groups：单方案直挂
 INSERT INTO shipping_provider_destination_groups (
   id,
   scheme_id,
   name,
   active,
-  module_id,
   sort_order
 )
 VALUES
-  (1, 1, '华北测试组', true, 1, 0)
+  (1, 1, '华北测试组', true, 0)
 ON CONFLICT (id) DO UPDATE SET
   scheme_id = EXCLUDED.scheme_id,
   name = EXCLUDED.name,
   active = EXCLUDED.active,
-  module_id = EXCLUDED.module_id,
   sort_order = EXCLUDED.sort_order;
 
 INSERT INTO shipping_provider_destination_group_members (
@@ -185,7 +168,7 @@ ON CONFLICT (id) DO UPDATE SET
   province_code = EXCLUDED.province_code,
   province_name = EXCLUDED.province_name;
 
--- pricing matrix：module-aware cell 结构
+-- pricing matrix：单方案 cell 结构
 INSERT INTO shipping_provider_pricing_matrix (
   id,
   group_id,
@@ -195,13 +178,12 @@ INSERT INTO shipping_provider_pricing_matrix (
   rate_per_kg,
   base_kg,
   active,
-  module_range_id,
-  range_module_id
+  module_range_id
 )
 VALUES
-  (1, 1, 'flat',         2.50, NULL, NULL, NULL, true, 1, 1),
-  (2, 1, 'flat',         3.80, NULL, NULL, NULL, true, 2, 1),
-  (3, 1, 'linear_total', NULL, 3.00, 1.50, NULL, true, 3, 1)
+  (1, 1, 'flat',         2.50, NULL, NULL, NULL, true, 1),
+  (2, 1, 'flat',         3.80, NULL, NULL, NULL, true, 2),
+  (3, 1, 'linear_total', NULL, 3.00, 1.50, NULL, true, 3)
 ON CONFLICT (id) DO UPDATE SET
   group_id = EXCLUDED.group_id,
   pricing_mode = EXCLUDED.pricing_mode,
@@ -210,8 +192,7 @@ ON CONFLICT (id) DO UPDATE SET
   rate_per_kg = EXCLUDED.rate_per_kg,
   base_kg = EXCLUDED.base_kg,
   active = EXCLUDED.active,
-  module_range_id = EXCLUDED.module_range_id,
-  range_module_id = EXCLUDED.range_module_id;
+  module_range_id = EXCLUDED.module_range_id;
 
 -- surcharge：最小一条省级附加费
 INSERT INTO shipping_provider_surcharges (
@@ -335,12 +316,6 @@ SELECT setval(
 SELECT setval(
   pg_get_serial_sequence('shipping_provider_pricing_schemes','id'),
   COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_schemes), 0),
-  true
-);
-
-SELECT setval(
-  pg_get_serial_sequence('shipping_provider_pricing_scheme_modules','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_scheme_modules), 0),
   true
 );
 
