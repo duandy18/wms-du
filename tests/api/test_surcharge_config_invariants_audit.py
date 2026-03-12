@@ -1,7 +1,7 @@
-# tests/api/test_surcharge_upsert_mutual_exclusion_409.py
+# tests/api/test_surcharge_config_invariants_audit.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import pytest
@@ -84,7 +84,7 @@ async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], war
             "active": True,
             "priority": 0,
             "pickup_cutoff_time": "18:00",
-            "remark": "surcharge test bind",
+            "remark": "surcharge audit bind",
         },
     )
     assert r.status_code in (200, 201, 409), r.text
@@ -188,7 +188,7 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
     return sid
 
 
-async def _create_surcharge_config(
+async def _create_config(
     async_client,
     headers: Dict[str, str],
     *,
@@ -197,8 +197,8 @@ async def _create_surcharge_config(
     province_name: str,
     province_mode: str,
     fixed_amount: float,
-    cities: list[dict[str, object]],
-) -> dict:
+    cities: List[Dict[str, object]],
+) -> tuple[int, dict]:
     r = await async_client.post(
         f"/pricing-schemes/{scheme_id}/surcharge-configs",
         headers=headers,
@@ -214,288 +214,205 @@ async def _create_surcharge_config(
     assert r.status_code == 201, r.text
     body = r.json()
     assert isinstance(body, dict), body
-    return body
+    return int(body["id"]), body
 
 
 @pytest.mark.anyio
-async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(client) -> None:
+async def test_surcharge_config_invariant_province_mode_rejects_non_empty_cities(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    province_code = "440000"
-    province_name = "广东省"
-    city_code = "440300"
-    city_name = "深圳市"
-
-    body1 = await _create_surcharge_config(
-        client,
-        h,
-        scheme_id=scheme_id,
-        province_code=province_code,
-        province_name=province_name,
-        province_mode="cities",
-        fixed_amount=0,
-        cities=[
-            {
-                "city_code": city_code,
-                "city_name": city_name,
-                "fixed_amount": 2.0,
-                "active": True,
-            }
-        ],
-    )
-    assert body1["province_mode"] == "cities"
-    assert body1["province_code"] == province_code
-    assert body1["province_name"] == province_name
-    assert float(body1["fixed_amount"]) == 0.0
-    assert len(body1["cities"]) == 1
-    assert body1["cities"][0]["city_code"] == city_code
-    assert body1["cities"][0]["city_name"] == city_name
-    assert float(body1["cities"][0]["fixed_amount"]) == 2.0
-
-    config_id = int(body1["id"])
-
-    r2 = await client.patch(
-        f"/surcharge-configs/{config_id}",
+    r = await client.post(
+        f"/pricing-schemes/{scheme_id}/surcharge-configs",
         headers=h,
         json={
-            "province_code": province_code,
-            "province_name": province_name,
+            "province_code": "110000",
+            "province_name": "北京市",
             "province_mode": "province",
-            "fixed_amount": 1.0,
-            "active": True,
-            "cities": [],
-        },
-    )
-    assert r2.status_code == 200, r2.text
-    body2 = r2.json()
-    assert body2["id"] == config_id
-    assert body2["province_mode"] == "province"
-    assert body2["province_code"] == province_code
-    assert body2["province_name"] == province_name
-    assert float(body2["fixed_amount"]) == 1.0
-    assert body2["cities"] == []
-
-
-@pytest.mark.anyio
-async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(client) -> None:
-    token = await _login(client)
-    h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
-
-    province_code = "450000"
-    province_name = "广西壮族自治区"
-    city_code = "450100"
-    city_name = "南宁市"
-
-    body1 = await _create_surcharge_config(
-        client,
-        h,
-        scheme_id=scheme_id,
-        province_code=province_code,
-        province_name=province_name,
-        province_mode="province",
-        fixed_amount=1.5,
-        cities=[],
-    )
-    assert body1["province_mode"] == "province"
-    assert body1["province_code"] == province_code
-    assert body1["province_name"] == province_name
-    assert float(body1["fixed_amount"]) == 1.5
-    assert body1["cities"] == []
-
-    config_id = int(body1["id"])
-
-    r2 = await client.patch(
-        f"/surcharge-configs/{config_id}",
-        headers=h,
-        json={
-            "province_code": province_code,
-            "province_name": province_name,
-            "province_mode": "cities",
-            "fixed_amount": 0,
+            "fixed_amount": 1.5,
             "active": True,
             "cities": [
                 {
-                    "city_code": city_code,
-                    "city_name": city_name,
-                    "fixed_amount": 2.5,
+                    "city_code": "110100",
+                    "city_name": "北京市",
+                    "fixed_amount": 2.0,
                     "active": True,
                 }
             ],
         },
     )
-    assert r2.status_code == 200, r2.text
-    body2 = r2.json()
-    assert body2["id"] == config_id
-    assert body2["province_mode"] == "cities"
-    assert body2["province_code"] == province_code
-    assert body2["province_name"] == province_name
-    assert float(body2["fixed_amount"]) == 0.0
-    assert len(body2["cities"]) == 1
-    assert body2["cities"][0]["city_code"] == city_code
-    assert body2["cities"][0]["city_name"] == city_name
-    assert float(body2["cities"][0]["fixed_amount"]) == 2.5
+    assert r.status_code == 422, r.text
+    assert "cities" in r.text
 
 
 @pytest.mark.anyio
-async def test_surcharge_config_batch_province_create_skips_existing_and_payload_duplicates(client) -> None:
+async def test_surcharge_config_invariant_cities_mode_allows_empty_container(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    existing = await _create_surcharge_config(
-        client,
-        h,
-        scheme_id=scheme_id,
-        province_code="110000",
-        province_name="北京市",
-        province_mode="province",
-        fixed_amount=1.0,
-        cities=[],
-    )
-    assert existing["province_code"] == "110000"
-
     r = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/batch-province",
+        f"/pricing-schemes/{scheme_id}/surcharge-configs",
         headers=h,
         json={
-            "items": [
-                {
-                    "province_code": "110000",
-                    "province_name": "北京市",
-                    "fixed_amount": 1.1,
-                    "active": True,
-                },
-                {
-                    "province_code": "120000",
-                    "province_name": "天津市",
-                    "fixed_amount": 2.2,
-                    "active": True,
-                },
-                {
-                    "province_code": "120000",
-                    "province_name": "天津市",
-                    "fixed_amount": 2.2,
-                    "active": True,
-                },
-                {
-                    "province_code": "130000",
-                    "province_name": "河北省",
-                    "fixed_amount": 3.3,
-                    "active": False,
-                },
-            ]
+            "province_code": "120000",
+            "province_name": "天津市",
+            "province_mode": "cities",
+            "fixed_amount": 0,
+            "active": True,
+            "cities": [],
         },
     )
     assert r.status_code == 201, r.text
     body = r.json()
-
-    created = body["created"]
-    skipped = body["skipped"]
-
-    assert len(created) == 2, body
-    assert [row["province_code"] for row in created] == ["120000", "130000"]
-    assert all(row["province_mode"] == "province" for row in created)
-    assert float(created[0]["fixed_amount"]) == 2.2
-    assert created[0]["active"] is True
-    assert created[0]["cities"] == []
-    assert float(created[1]["fixed_amount"]) == 3.3
-    assert created[1]["active"] is False
-    assert created[1]["cities"] == []
-
-    assert len(skipped) == 2, body
-    assert skipped[0] == {
-        "province_code": "110000",
-        "province_name": "北京市",
-        "reason": "already_exists",
-    }
-    assert skipped[1] == {
-        "province_code": "120000",
-        "province_name": "天津市",
-        "reason": "duplicate_in_payload",
-    }
+    assert body["province_mode"] == "cities"
+    assert body["province_code"] == "120000"
+    assert body["province_name"] == "天津市"
+    assert float(body["fixed_amount"]) == 0.0
+    assert body["cities"] == []
 
 
 @pytest.mark.anyio
-async def test_surcharge_config_city_container_create_then_patch_add_cities(client) -> None:
+async def test_surcharge_config_invariant_cities_mode_requires_zero_fixed_amount(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    r1 = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
+    r = await client.post(
+        f"/pricing-schemes/{scheme_id}/surcharge-configs",
         headers=h,
         json={
-            "province_code": "320000",
-            "province_name": "江苏省",
+            "province_code": "310000",
+            "province_name": "上海市",
+            "province_mode": "cities",
+            "fixed_amount": 9.9,
             "active": True,
+            "cities": [
+                {
+                    "city_code": "310100",
+                    "city_name": "上海市",
+                    "fixed_amount": 2.0,
+                    "active": True,
+                }
+            ],
         },
     )
-    assert r1.status_code == 201, r1.text
-    body1 = r1.json()
-    assert body1["province_mode"] == "cities"
-    assert body1["province_code"] == "320000"
-    assert body1["province_name"] == "江苏省"
-    assert float(body1["fixed_amount"]) == 0.0
-    assert body1["cities"] == []
+    assert r.status_code == 422, r.text
+    assert "fixed_amount" in r.text
 
-    config_id = int(body1["id"])
+
+@pytest.mark.anyio
+async def test_surcharge_config_patch_invariant_switch_to_province_requires_empty_cities(client) -> None:
+    token = await _login(client)
+    h = _auth_headers(token)
+    scheme_id = await _ensure_scheme_id(client, h)
+
+    config_id, _ = await _create_config(
+        client,
+        h,
+        scheme_id=scheme_id,
+        province_code="440000",
+        province_name="广东省",
+        province_mode="cities",
+        fixed_amount=0,
+        cities=[
+            {
+                "city_code": "440300",
+                "city_name": "深圳市",
+                "fixed_amount": 2.0,
+                "active": True,
+            }
+        ],
+    )
+
+    r = await client.patch(
+        f"/surcharge-configs/{config_id}",
+        headers=h,
+        json={
+            "province_mode": "province",
+            "fixed_amount": 1.0,
+            "cities": [
+                {
+                    "city_code": "440300",
+                    "city_name": "深圳市",
+                    "fixed_amount": 2.0,
+                    "active": True,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "cities" in r.text
+
+
+@pytest.mark.anyio
+async def test_surcharge_config_patch_invariant_switch_to_cities_requires_zero_fixed_amount_but_allows_empty_container(
+    client,
+) -> None:
+    token = await _login(client)
+    h = _auth_headers(token)
+    scheme_id = await _ensure_scheme_id(client, h)
+
+    config_id, _ = await _create_config(
+        client,
+        h,
+        scheme_id=scheme_id,
+        province_code="450000",
+        province_name="广西壮族自治区",
+        province_mode="province",
+        fixed_amount=1.5,
+        cities=[],
+    )
+
+    r1 = await client.patch(
+        f"/surcharge-configs/{config_id}",
+        headers=h,
+        json={
+            "province_mode": "cities",
+            "fixed_amount": 3.5,
+            "cities": [],
+        },
+    )
+    assert r1.status_code == 422, r1.text
+    assert "fixed_amount" in r1.text
 
     r2 = await client.patch(
         f"/surcharge-configs/{config_id}",
         headers=h,
         json={
-            "cities": [
-                {
-                    "city_code": "320100",
-                    "city_name": "南京市",
-                    "fixed_amount": 2.0,
-                    "active": True,
-                },
-                {
-                    "city_code": "320500",
-                    "city_name": "苏州市",
-                    "fixed_amount": 3.0,
-                    "active": True,
-                },
-            ]
+            "province_mode": "cities",
+            "fixed_amount": 0,
+            "cities": [],
         },
     )
     assert r2.status_code == 200, r2.text
-    body2 = r2.json()
-    assert body2["id"] == config_id
-    assert body2["province_mode"] == "cities"
-    assert len(body2["cities"]) == 2
-    assert [row["city_code"] for row in body2["cities"]] == ["320100", "320500"]
+    body = r2.json()
+    assert body["id"] == config_id
+    assert body["province_mode"] == "cities"
+    assert float(body["fixed_amount"]) == 0.0
+    assert body["cities"] == []
 
 
 @pytest.mark.anyio
-async def test_surcharge_config_city_container_create_rejects_duplicate_province(client) -> None:
+async def test_surcharge_config_city_container_route_allows_empty_container(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
     scheme_id = await _ensure_scheme_id(client, h)
 
-    r1 = await client.post(
+    r = await client.post(
         f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
         headers=h,
         json={
-            "province_code": "330000",
-            "province_name": "浙江省",
+            "province_code": "500000",
+            "province_name": "重庆市",
             "active": True,
         },
     )
-    assert r1.status_code == 201, r1.text
-
-    r2 = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
-        headers=h,
-        json={
-            "province_code": "330000",
-            "province_name": "浙江省",
-            "active": True,
-        },
-    )
-    assert r2.status_code == 409, r2.text
-    assert "already exists" in r2.text
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["province_code"] == "500000"
+    assert body["province_name"] == "重庆市"
+    assert body["province_mode"] == "cities"
+    assert float(body["fixed_amount"]) == 0.0
+    assert body["cities"] == []

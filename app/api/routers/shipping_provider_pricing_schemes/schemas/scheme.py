@@ -7,7 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .destination_group import DestinationGroupOut
-from .surcharge import SurchargeOut
+from .surcharge import SurchargeConfigOut
 
 _ALLOWED_SCHEME_STATUS = {"draft", "active", "archived"}
 _ALLOWED_BILLABLE_STRATEGY = {"actual_only", "max_actual_volume"}
@@ -39,7 +39,7 @@ class SchemeOut(BaseModel):
     min_billable_weight_kg: Optional[float] = None
 
     destination_groups: List[DestinationGroupOut] = Field(default_factory=list)
-    surcharges: List[SurchargeOut] = Field(default_factory=list)
+    surcharge_configs: List[SurchargeConfigOut] = Field(default_factory=list)
 
 
 class SchemeListOut(BaseModel):

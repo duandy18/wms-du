@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     DestinationGroupOut,
-    SurchargeOut,
+    SurchargeConfigOut,
 )
 from app.api.routers.shipping_provider_pricing_schemes_mappers import (
     to_destination_group_out,
-    to_surcharge_outs_from_config,
+    to_surcharge_config_out,
 )
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_destination_group_member import (
@@ -25,13 +25,13 @@ from app.models.shipping_provider_surcharge_config import ShippingProviderSurcha
 def load_scheme_entities(
     db: Session,
     scheme_id: int,
-) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeOut]]:
+) -> Tuple[ShippingProviderPricingScheme, List[DestinationGroupOut], List[SurchargeConfigOut]]:
     """
-    读取 Scheme + DestinationGroups(+Provinces) + Surcharges，并组装为输出对象。
+    读取 Scheme + DestinationGroups(+Provinces) + SurchargeConfigs(+Cities)，并组装为输出对象。
     surcharge 主线已切到：
       - shipping_provider_surcharge_configs
       - shipping_provider_surcharge_config_cities
-    对外仍展平为兼容的 SurchargeOut 列表。
+    对外直接输出终态树结构 surcharge_configs。
     """
 
     sch = (
@@ -84,7 +84,7 @@ def load_scheme_entities(
             )
         )
 
-    surcharge_configs = (
+    surcharge_configs_raw = (
         db.query(ShippingProviderSurchargeConfig)
         .options(selectinload(ShippingProviderSurchargeConfig.cities))
         .filter(ShippingProviderSurchargeConfig.scheme_id == scheme_id)
@@ -92,8 +92,6 @@ def load_scheme_entities(
         .all()
     )
 
-    surcharges: List[SurchargeOut] = []
-    for cfg in surcharge_configs:
-        surcharges.extend(to_surcharge_outs_from_config(cfg))
+    surcharge_configs = [to_surcharge_config_out(cfg) for cfg in surcharge_configs_raw]
 
-    return sch, destination_groups, surcharges
+    return sch, destination_groups, surcharge_configs

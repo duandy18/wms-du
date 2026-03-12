@@ -7,7 +7,8 @@ from app.api.routers.shipping_provider_pricing_schemes.schemas import (
     DestinationGroupOut,
     DestinationGroupProvinceOut,
     SchemeOut,
-    SurchargeOut,
+    SurchargeConfigCityOut,
+    SurchargeConfigOut,
 )
 from app.models.shipping_provider_destination_group import ShippingProviderDestinationGroup
 from app.models.shipping_provider_destination_group_member import (
@@ -43,56 +44,37 @@ def to_destination_group_out(
     )
 
 
-def _to_surcharge_out_from_config(
+def to_surcharge_config_city_out(
+    city_row: ShippingProviderSurchargeConfigCity,
+) -> SurchargeConfigCityOut:
+    return SurchargeConfigCityOut(
+        id=int(city_row.id),
+        config_id=int(city_row.config_id),
+        city_code=str(city_row.city_code),
+        city_name=getattr(city_row, "city_name", None),
+        fixed_amount=city_row.fixed_amount,
+        active=bool(city_row.active),
+    )
+
+
+def to_surcharge_config_out(
     cfg: ShippingProviderSurchargeConfig,
-) -> SurchargeOut:
-    return SurchargeOut(
+) -> SurchargeConfigOut:
+    cities = [
+        to_surcharge_config_city_out(city_row)
+        for city_row in (getattr(cfg, "cities", []) or [])
+    ]
+
+    return SurchargeConfigOut(
         id=int(cfg.id),
         scheme_id=int(cfg.scheme_id),
-        name=str(getattr(cfg, "province_name", None) or getattr(cfg, "province_code", None) or f"cfg#{cfg.id}"),
+        province_code=str(cfg.province_code),
+        province_name=getattr(cfg, "province_name", None),
+        province_mode=str(getattr(cfg, "province_mode", "province")),
+        fixed_amount=cfg.fixed_amount,
         active=bool(cfg.active),
-        scope="province",
-        province_code=getattr(cfg, "province_code", None),
-        city_code=None,
-        province_name=getattr(cfg, "province_name", None),
-        city_name=None,
-        fixed_amount=getattr(cfg, "fixed_amount", None),
+        cities=cities,
     )
-
-
-def _to_surcharge_out_from_city(
-    cfg: ShippingProviderSurchargeConfig,
-    city_row: ShippingProviderSurchargeConfigCity,
-) -> SurchargeOut:
-    return SurchargeOut(
-        id=int(city_row.id),
-        scheme_id=int(cfg.scheme_id),
-        name=str(
-            f"{getattr(cfg, 'province_name', None) or getattr(cfg, 'province_code', None)}-"
-            f"{getattr(city_row, 'city_name', None) or getattr(city_row, 'city_code', None)}"
-        ),
-        active=bool(cfg.active) and bool(city_row.active),
-        scope="city",
-        province_code=getattr(cfg, "province_code", None),
-        city_code=getattr(city_row, "city_code", None),
-        province_name=getattr(cfg, "province_name", None),
-        city_name=getattr(city_row, "city_name", None),
-        fixed_amount=getattr(city_row, "fixed_amount", None),
-    )
-
-
-def to_surcharge_outs_from_config(
-    cfg: ShippingProviderSurchargeConfig,
-) -> List[SurchargeOut]:
-    province_mode = str(getattr(cfg, "province_mode", "province") or "province").strip().lower()
-
-    if province_mode == "province":
-        return [_to_surcharge_out_from_config(cfg)]
-
-    out: List[SurchargeOut] = []
-    for city_row in getattr(cfg, "cities", []) or []:
-        out.append(_to_surcharge_out_from_city(cfg, city_row))
-    return out
 
 
 def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
@@ -109,7 +91,7 @@ def _must_get_shipping_provider_name(sch: ShippingProviderPricingScheme) -> str:
 def to_scheme_out(
     sch: ShippingProviderPricingScheme,
     destination_groups: List[DestinationGroupOut] | None = None,
-    surcharges: List[SurchargeOut] | None = None,
+    surcharge_configs: List[SurchargeConfigOut] | None = None,
 ) -> SchemeOut:
     dpm = getattr(sch, "default_pricing_mode", "linear_total")
 
@@ -134,5 +116,5 @@ def to_scheme_out(
             None if getattr(sch, "min_billable_weight_kg", None) is None else float(sch.min_billable_weight_kg)
         ),
         destination_groups=destination_groups or [],
-        surcharges=surcharges or [],
+        surcharge_configs=surcharge_configs or [],
     )

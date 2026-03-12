@@ -268,7 +268,7 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
       -> destination_group_members
       -> ranges
       -> pricing_matrix_cells
-      -> surcharge
+      -> surcharge_config
       -> publish(active)
     """
     h = auth_headers(token)
@@ -334,15 +334,15 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
 
     sur = client.post(
-        f"/pricing-schemes/{scheme_id}/surcharges",
+        f"/pricing-schemes/{scheme_id}/surcharge-configs",
         headers=h,
         json={
-            "name": "目的地附加费-北京市",
-            "active": True,
-            "scope": "province",
             "province_code": "110000",
             "province_name": "北京市",
+            "province_mode": "province",
             "fixed_amount": 1.5,
+            "active": True,
+            "cities": [],
         },
     )
     assert sur.status_code == 201, sur.text
