@@ -30,7 +30,8 @@ def register_debug_routes(router: APIRouter) -> None:
             DestinationGroupOut as _DestinationGroupOut,
             DestinationGroupProvinceOut as _DestinationGroupProvinceOut,
             SchemeOut as _SchemeOut,
-            SurchargeOut as _SurchargeOut,
+            SurchargeConfigCityOut as _SurchargeConfigCityOut,
+            SurchargeConfigOut as _SurchargeConfigOut,
         )
 
         g = _DestinationGroupOut(
@@ -44,6 +45,26 @@ def register_debug_routes(router: APIRouter) -> None:
                     group_id=123,
                     province_code="110000",
                     province_name="北京市",
+                )
+            ],
+        )
+
+        cfg = _SurchargeConfigOut(
+            id=1,
+            scheme_id=scheme_id,
+            province_code="110000",
+            province_name="北京市",
+            province_mode="cities",
+            fixed_amount=Decimal("0"),
+            active=True,
+            cities=[
+                _SurchargeConfigCityOut(
+                    id=11,
+                    config_id=1,
+                    city_code="110100",
+                    city_name="北京市",
+                    fixed_amount=Decimal("1.00"),
+                    active=True,
                 )
             ],
         )
@@ -65,20 +86,7 @@ def register_debug_routes(router: APIRouter) -> None:
             rounding_step_kg=None,
             min_billable_weight_kg=None,
             destination_groups=[g],
-            surcharges=[
-                _SurchargeOut(
-                    id=1,
-                    scheme_id=scheme_id,
-                    name="北京市附加",
-                    active=True,
-                    scope="province",
-                    province_code="110000",
-                    city_code=None,
-                    province_name="北京市",
-                    city_name=None,
-                    fixed_amount=Decimal("1.00"),
-                )
-            ],
+            surcharge_configs=[cfg],
         )
 
         return SchemeDetailOut(ok=True, data=sch)

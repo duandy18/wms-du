@@ -27,7 +27,13 @@ from .scheme import (
     SchemeCreateIn,
     SchemeUpdateIn,
 )
-from .surcharge import SurchargeOut, SurchargeCreateIn, SurchargeUpdateIn
+from .surcharge import (
+    SurchargeConfigCityOut,
+    SurchargeConfigOut,
+    SurchargeConfigCityIn,
+    SurchargeConfigCreateIn,
+    SurchargeConfigUpdateIn,
+)
 
 __all__ = [
     "DestinationGroupProvinceOut",
@@ -52,7 +58,9 @@ __all__ = [
     "SchemeDetailOut",
     "SchemeCreateIn",
     "SchemeUpdateIn",
-    "SurchargeOut",
-    "SurchargeCreateIn",
-    "SurchargeUpdateIn",
+    "SurchargeConfigCityOut",
+    "SurchargeConfigOut",
+    "SurchargeConfigCityIn",
+    "SurchargeConfigCreateIn",
+    "SurchargeConfigUpdateIn",
 ]

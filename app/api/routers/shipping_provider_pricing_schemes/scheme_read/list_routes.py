@@ -22,12 +22,12 @@ def _build_scheme_list(db: Session, query):
     result = []
 
     for sch in schemes:
-        sch2, destination_groups, surcharges = load_scheme_entities(db, int(sch.id))
+        sch2, destination_groups, surcharge_configs = load_scheme_entities(db, int(sch.id))
         result.append(
             to_scheme_out(
                 sch2,
                 destination_groups=destination_groups,
-                surcharges=surcharges,
+                surcharge_configs=surcharge_configs,
             )
         )
 

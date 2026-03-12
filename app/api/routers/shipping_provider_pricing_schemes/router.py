@@ -15,8 +15,8 @@ from app.api.routers.shipping_provider_pricing_schemes_routes_module_ranges impo
 from app.api.routers.shipping_provider_pricing_schemes_routes_scheme import (
     register_scheme_routes,
 )
-from app.api.routers.shipping_provider_pricing_schemes_routes_surcharges import (
-    register_surcharges_routes,
+from app.api.routers.shipping_provider_pricing_schemes_routes_surcharge_configs import (
+    register_surcharge_config_routes,
 )
 
 router = APIRouter(tags=["shipping-provider-pricing"])
@@ -34,9 +34,9 @@ register_module_groups_routes(router)
 register_module_matrix_cells_routes(router)
 
 # -------------------------------------------------------------
-# surcharge
+# surcharge_configs
 # -------------------------------------------------------------
-register_surcharges_routes(router)
+register_surcharge_config_routes(router)
 
 # -------------------------------------------------------------
 # 说明
@@ -48,12 +48,13 @@ register_surcharges_routes(router)
 #     ├ ranges
 #     ├ destination_groups
 #     ├ pricing_matrix_cells
-#     └ surcharges
+#     └ surcharge_configs
 #
 # 系统主写接口：
 #
 #   /pricing-schemes/{scheme_id}/ranges
 #   /pricing-schemes/{scheme_id}/groups
 #   /pricing-schemes/{scheme_id}/matrix-cells
+#   /pricing-schemes/{scheme_id}/surcharge-configs
 #
 # 已移除旧 modules/{module_code} 双模块主线。

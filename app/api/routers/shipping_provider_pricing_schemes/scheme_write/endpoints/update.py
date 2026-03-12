@@ -299,10 +299,14 @@ def register_update_routes(router: APIRouter) -> None:
         db.commit()
         db.refresh(sch)
 
-        sch2, destination_groups, surcharges = load_scheme_entities(db, scheme_id)
+        sch2, destination_groups, surcharge_configs = load_scheme_entities(db, scheme_id)
         return SchemeDetailOut(
             ok=True,
-            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
+            data=to_scheme_out(
+                sch2,
+                destination_groups=destination_groups,
+                surcharge_configs=surcharge_configs,
+            ),
         )
 
     @router.post(
@@ -343,10 +347,14 @@ def register_update_routes(router: APIRouter) -> None:
         db.commit()
         db.refresh(cloned)
 
-        sch2, destination_groups, surcharges = load_scheme_entities(db, int(cloned.id))
+        sch2, destination_groups, surcharge_configs = load_scheme_entities(db, int(cloned.id))
         return SchemeDetailOut(
             ok=True,
-            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
+            data=to_scheme_out(
+                sch2,
+                destination_groups=destination_groups,
+                surcharge_configs=surcharge_configs,
+            ),
         )
 
     @router.post(
@@ -380,8 +388,12 @@ def register_update_routes(router: APIRouter) -> None:
         db.commit()
         db.refresh(sch)
 
-        sch2, destination_groups, surcharges = load_scheme_entities(db, scheme_id)
+        sch2, destination_groups, surcharge_configs = load_scheme_entities(db, scheme_id)
         return SchemeDetailOut(
             ok=True,
-            data=to_scheme_out(sch2, destination_groups=destination_groups, surcharges=surcharges),
+            data=to_scheme_out(
+                sch2,
+                destination_groups=destination_groups,
+                surcharge_configs=surcharge_configs,
+            ),
         )

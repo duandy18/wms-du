@@ -128,4 +128,11 @@ def register_create_routes(router: APIRouter) -> None:
         db.commit()
         db.refresh(sch)
 
-        return SchemeDetailOut(ok=True, data=to_scheme_out(sch, destination_groups=[], surcharges=[]))
+        return SchemeDetailOut(
+            ok=True,
+            data=to_scheme_out(
+                sch,
+                destination_groups=[],
+                surcharge_configs=[],
+            ),
+        )
