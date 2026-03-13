@@ -12,7 +12,7 @@ from app.api.deps import get_session
 from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import ShipRequest, ShipResponse
 from app.services.order_event_bus import OrderEventBus
-from app.services.ship_service import ShipService
+from app.tms.shipment import ShipCommitAuditCommand, TransportShipmentService
 
 
 def register(router: APIRouter) -> None:
@@ -26,7 +26,7 @@ def register(router: APIRouter) -> None:
         ext_order_no: str,
         body: ShipRequest,
         session: AsyncSession = Depends(get_session),
-    ):
+    ) -> ShipResponse:
         plat = platform.upper()
 
         order_ref, trace_id = await get_order_ref_and_trace_id(
@@ -36,7 +36,7 @@ def register(router: APIRouter) -> None:
             ext_order_no=ext_order_no,
         )
 
-        svc = ShipService(session=session)
+        shipment_svc = TransportShipmentService(session=session)
         occurred_at = body.occurred_at or datetime.now(timezone.utc)
 
         lines_meta = [{"item_id": line.item_id, "qty": line.qty} for line in body.lines]
@@ -49,8 +49,14 @@ def register(router: APIRouter) -> None:
         }
 
         try:
-            result = await svc.commit(
-                ref=order_ref, platform=plat, shop_id=shop_id, trace_id=trace_id, meta=meta
+            result = await shipment_svc.ship_commit_audit(
+                ShipCommitAuditCommand(
+                    ref=order_ref,
+                    platform=plat,
+                    shop_id=shop_id,
+                    trace_id=trace_id,
+                    meta=meta,
+                )
             )
 
             try:
@@ -90,5 +96,7 @@ def register(router: APIRouter) -> None:
             raise
 
         return ShipResponse(
-            status="OK" if result.get("ok") else "ERROR", ref=order_ref, event="SHIP_COMMIT"
+            status="OK" if result.ok else "ERROR",
+            ref=order_ref,
+            event="SHIP_COMMIT",
         )

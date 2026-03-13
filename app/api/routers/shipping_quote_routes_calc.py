@@ -12,6 +12,7 @@ from app.api.routers.shipping_quote_schemas import QuoteCalcIn, QuoteCalcOut
 from app.db.deps import get_db
 from app.services.audit_writer_sync import SyncAuditEventWriter
 from app.services.shipping_quote_service import Dest, calc_quote
+from app.tms.quote_snapshot import build_quote_snapshot
 
 
 def register(router: APIRouter) -> None:
@@ -94,6 +95,22 @@ def register(router: APIRouter) -> None:
 
             raise_500(QuoteCalcErrorCode.FAILED, msg)
 
+        quote_snapshot = build_quote_snapshot(
+            source="shipping_quote.calc",
+            input_payload=payload.model_dump(),
+            selected_quote={
+                "quote_status": str(result.get("quote_status") or "OK"),
+                "scheme_id": int(payload.scheme_id),
+                "currency": result.get("currency"),
+                "total_amount": result.get("total_amount"),
+                "weight": result.get("weight") or {},
+                "destination_group": result.get("destination_group"),
+                "pricing_matrix": result.get("pricing_matrix"),
+                "breakdown": result.get("breakdown") or {},
+                "reasons": result.get("reasons") or [],
+            },
+        )
+
         return QuoteCalcOut(
             ok=bool(result.get("ok", True)),
             quote_status=str(result.get("quote_status") or "OK"),
@@ -104,4 +121,5 @@ def register(router: APIRouter) -> None:
             pricing_matrix=result.get("pricing_matrix"),
             breakdown=result.get("breakdown") or {},
             reasons=result.get("reasons") or [],
+            quote_snapshot=quote_snapshot,
         )

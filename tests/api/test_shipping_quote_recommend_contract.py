@@ -23,6 +23,25 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def _assert_quote_snapshot_shape(snapshot: object) -> None:
+    assert isinstance(snapshot, dict)
+    assert snapshot.get("version") == "v1"
+    assert isinstance(snapshot.get("source"), str)
+
+    input_payload = snapshot.get("input")
+    assert isinstance(input_payload, dict)
+
+    selected_quote = snapshot.get("selected_quote")
+    assert isinstance(selected_quote, dict)
+
+    total_amount = selected_quote.get("total_amount")
+    assert isinstance(total_amount, (int, float))
+
+    reasons = selected_quote.get("reasons")
+    assert isinstance(reasons, list)
+    assert len(reasons) > 0
+
+
 def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(client: TestClient) -> None:
     token = login(client)
     h = auth_headers(token)
@@ -61,6 +80,8 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     assert calc_body["quote_status"] == "OK"
     assert "destination_group" in calc_body
     assert "pricing_matrix" in calc_body
+    assert "quote_snapshot" in calc_body
+    _assert_quote_snapshot_shape(calc_body["quote_snapshot"])
 
     rr = client.post(
         "/shipping-quote/recommend",
@@ -90,6 +111,14 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     assert any(int(q["scheme_id"]) == ids_a["scheme_id"] for q in quotes)
     assert all("destination_group" in q for q in quotes)
     assert all("pricing_matrix" in q for q in quotes)
+    assert all("quote_snapshot" in q for q in quotes)
+
+    for quote in quotes:
+        _assert_quote_snapshot_shape(quote["quote_snapshot"])
+        assert quote["quote_snapshot"]["source"] == "shipping_quote.recommend"
+        selected_quote = quote["quote_snapshot"]["selected_quote"]
+        assert int(selected_quote["scheme_id"]) == int(quote["scheme_id"])
+        assert abs(float(selected_quote["total_amount"]) - float(quote["total_amount"])) < 1e-9
 
 
 def test_shipping_quote_recommend_provider_ids_intersect_warehouse_phase3(client: TestClient) -> None:

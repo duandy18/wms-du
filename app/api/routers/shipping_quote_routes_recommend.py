@@ -11,7 +11,8 @@ from app.services.audit_writer_sync import SyncAuditEventWriter
 from app.services.shipping_quote_service import Dest, recommend_quotes
 
 from app.api.routers.shipping_quote_helpers import check_perm, dims_from_payload
-from app.api.routers.shipping_quote_schemas import QuoteRecommendIn, QuoteRecommendOut
+from app.api.routers.shipping_quote_schemas import QuoteRecommendItemOut, QuoteRecommendIn, QuoteRecommendOut
+from app.tms.quote_snapshot import build_quote_snapshot
 
 
 class QuoteRecommendErrorCode:
@@ -34,13 +35,12 @@ def register(router: APIRouter) -> None:
 
         dims = dims_from_payload(payload.length_cm, payload.width_cm, payload.height_cm)
 
-        # ✅ 合同：推荐入口必然有 warehouse_id
         audit_ref = f"WH:{int(payload.warehouse_id)}"
 
         try:
             result = recommend_quotes(
                 db=db,
-                provider_ids=payload.provider_ids or None,  # 仅过滤交集，不是入口
+                provider_ids=payload.provider_ids or None,
                 warehouse_id=int(payload.warehouse_id),
                 dest=Dest(
                     province=payload.dest.province,
@@ -100,8 +100,49 @@ def register(router: APIRouter) -> None:
 
             raise_500(QuoteRecommendErrorCode.FAILED, msg)
 
+        quote_items: list[QuoteRecommendItemOut] = []
+        for item in result.get("quotes") or []:
+            quote_snapshot = build_quote_snapshot(
+                source="shipping_quote.recommend",
+                input_payload=payload.model_dump(),
+                selected_quote={
+                    "provider_id": item.get("provider_id"),
+                    "carrier_code": item.get("carrier_code"),
+                    "carrier_name": item.get("carrier_name"),
+                    "scheme_id": item.get("scheme_id"),
+                    "scheme_name": item.get("scheme_name"),
+                    "quote_status": item.get("quote_status"),
+                    "currency": item.get("currency"),
+                    "total_amount": item.get("total_amount"),
+                    "weight": item.get("weight") or {},
+                    "destination_group": item.get("destination_group"),
+                    "pricing_matrix": item.get("pricing_matrix"),
+                    "breakdown": item.get("breakdown") or {},
+                    "reasons": item.get("reasons") or [],
+                },
+            )
+
+            quote_items.append(
+                QuoteRecommendItemOut(
+                    provider_id=int(item["provider_id"]),
+                    carrier_code=item.get("carrier_code"),
+                    carrier_name=str(item.get("carrier_name") or ""),
+                    scheme_id=int(item["scheme_id"]),
+                    scheme_name=str(item.get("scheme_name") or ""),
+                    total_amount=float(item["total_amount"]),
+                    currency=item.get("currency"),
+                    quote_status=str(item.get("quote_status") or "OK"),
+                    weight=item.get("weight") or {},
+                    destination_group=item.get("destination_group"),
+                    pricing_matrix=item.get("pricing_matrix"),
+                    breakdown=item.get("breakdown") or {},
+                    reasons=item.get("reasons") or [],
+                    quote_snapshot=quote_snapshot,
+                )
+            )
+
         return QuoteRecommendOut(
             ok=True,
             recommended_scheme_id=result.get("recommended_scheme_id"),
-            quotes=result.get("quotes") or [],
+            quotes=quote_items,
         )

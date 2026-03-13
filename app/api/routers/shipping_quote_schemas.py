@@ -42,6 +42,8 @@ class QuoteCalcOut(BaseModel):
     breakdown: Dict[str, Any]
     reasons: List[str] = Field(default_factory=list)
 
+    quote_snapshot: Optional[Dict[str, Any]] = None
+
 
 class QuoteRecommendIn(BaseModel):
     warehouse_id: int = Field(..., ge=1)
@@ -76,6 +78,8 @@ class QuoteRecommendItemOut(BaseModel):
     pricing_matrix: Optional[Dict[str, Any]] = None
     breakdown: Dict[str, Any]
     reasons: List[str] = Field(default_factory=list)
+
+    quote_snapshot: Optional[Dict[str, Any]] = None
 
 
 class QuoteRecommendOut(BaseModel):
