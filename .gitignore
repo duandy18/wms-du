@@ -105,7 +105,7 @@ _archive_migrations/
 tools/audits/
 tools/model_db_check_*.txt
 tools/model_db_diff_*.txt
-reports/
+/reports/
 output/
 out/
 *.tar.gz
