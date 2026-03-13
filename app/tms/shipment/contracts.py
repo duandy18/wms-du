@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.tms.quote_snapshot.contracts import QuoteSnapshotData
+
 
 class ShipmentApplicationError(Exception):
     def __init__(self, *, status_code: int, code: str, message: str) -> None:
@@ -11,37 +13,6 @@ class ShipmentApplicationError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
-
-
-@dataclass(frozen=True, slots=True)
-class ConfirmShipmentCommand:
-    ref: str
-    platform: str
-    shop_id: str
-    trace_id: str | None
-
-    warehouse_id: int
-    shipping_provider_id: int
-    scheme_id: int
-
-    tracking_no: str | None
-    gross_weight_kg: float | None
-    packaging_weight_kg: float | None
-    cost_estimated: float | None
-    cost_real: float | None
-    delivery_time: datetime | None
-    status: str | None
-    error_code: str | None
-    error_message: str | None
-
-    meta: dict[str, object] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ConfirmShipmentResult:
-    ok: bool
-    ref: str
-    trace_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +55,7 @@ class ShipWithWaybillCommand:
     district: str | None
     address_detail: str | None
 
+    quote_snapshot: QuoteSnapshotData | dict[str, object]
     meta: dict[str, object] | None
 
 

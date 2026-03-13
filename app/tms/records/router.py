@@ -1,4 +1,9 @@
-# app/api/routers/shipping_records.py
+# app/tms/records/router.py
+#
+# 分拆说明：
+# - 本文件是 TMS / Records 的路由壳。
+# - 目标是把 shipping_records 相关入口从历史 app/api/routers 外壳中收口到 TMS 语义下。
+# - 当前不改 URL，只调整物理归属。
 from __future__ import annotations
 
 from fastapi import APIRouter

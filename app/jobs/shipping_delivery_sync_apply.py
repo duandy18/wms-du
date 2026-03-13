@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.jobs.shipping_delivery_sync_config import INTERNAL_FINAL_STATUSES
 from app.jobs.shipping_delivery_sync_types import PlatformOrderStatus
-from app.services.audit_writer import AuditEventWriter
+from app.tms.shipment.audit import write_ship_status_update_audit
+from app.tms.shipment.status_sync import apply_shipment_status_update
 
 
 async def update_shipping_record_status_from_platform(
@@ -23,7 +24,7 @@ async def update_shipping_record_status_from_platform(
     plat_status: PlatformOrderStatus,
 ) -> bool:
     """
-    根据平台状态更新 shipping_records + 写审计事件。
+    根据平台状态同步更新 Shipment 主实体与 projection，并写审计事件。
 
     返回：
       True  = 有更新
@@ -71,44 +72,32 @@ async def update_shipping_record_status_from_platform(
         "status": plat_status.platform_status,
     }
 
-    import json
-
-    update_sql = text(
-        """
-        UPDATE shipping_records
-           SET status = :status,
-               delivery_time = :delivery_time,
-               meta = :meta
-         WHERE id = :id
-        """
-    )
-    await session.execute(
-        update_sql,
-        {
-            "id": record_id,
-            "status": new_status,
-            "delivery_time": delivery_time,
-            "meta": json.dumps(new_meta, ensure_ascii=False),
-        },
-    )
-
-    await AuditEventWriter.write(
+    applied = await apply_shipment_status_update(
         session,
-        flow="OUTBOUND",
-        event="SHIP_STATUS_UPDATE",
+        record_id=record_id,
+        status=new_status,
+        delivery_time=delivery_time,
+        error_code=None,
+        error_message=None,
+        meta=new_meta,
+    )
+
+    await write_ship_status_update_audit(
+        session,
         ref=order_ref,
         trace_id=trace_id,
-        meta={
-            "old_status": current_status,
-            "new_status": new_status,
-            "delivery_time": delivery_time.isoformat() if delivery_time else None,
+        old_status=current_status,
+        new_status=new_status,
+        delivery_time=applied.delivery_time,
+        old_error_code=error_code,
+        old_error_message=error_message,
+        error_code=error_code,
+        error_message=error_message,
+        extra_meta={
             "platform": plat_status.platform,
             "shop_id": plat_status.shop_id,
             "platform_status": plat_status.platform_status,
-            "error_code": error_code,
-            "error_message": error_message,
         },
-        auto_commit=False,
     )
 
     return True

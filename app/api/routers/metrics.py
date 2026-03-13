@@ -44,7 +44,7 @@ async def get_alerts_today(
 ) -> AlertsResponse:
     """
     可报警面板（Phase 4.3）：
-    - OUTBOUND：基于 SHIP_CONFIRM_REJECT 的 error_code（需要 platform）
+    - OUTBOUND：基于历史 SHIP_CONFIRM_REJECT 事件的 error_code（需要 platform）
     - SHIPPING_QUOTE：基于 QUOTE_*_REJECT 的 error_code
     """
     return await load_alerts(session=session, platform=platform, day=day, test_mode=test_mode)
@@ -145,6 +145,10 @@ async def get_outbound_failures(
 ) -> OutboundFailuresMetricsResponse:
     """
     出库失败统计：routing/pick/ship/inventory 等失败点汇总 + 明细。
+
+    说明：
+    - 这里仍会统计历史 SHIP_CONFIRM_REJECT 事件；
+    - 该事件仅代表历史 confirm_shipment 拒绝记录，不代表当前仍存在现役 /ship/confirm 写入口。
     """
     svc = OutboundMetricsV2Service()
     return await svc.load_failures(session=session, day=day, platform=platform)

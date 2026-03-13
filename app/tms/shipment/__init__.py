@@ -2,15 +2,14 @@
 """
 TMS / TransportShipment module shell.
 
-Phase 1 目标：
-- 收口 Shipment 执行主逻辑
-- 统一 shipping_record 写入口
-- 为后续 route / file physical migration 做准备
+Phase 2 终态目标：
+- ship_with_waybill 成为 Shipment 唯一主写入口
+- Shipment 主真相落在 transport_shipments
+- shipping_records 降级为 projection / ledger
+- status 更新必须同步主实体与 projection
 """
 
 from .contracts import (
-    ConfirmShipmentCommand,
-    ConfirmShipmentResult,
     ShipmentApplicationError,
     ShipCommitAuditCommand,
     ShipCommitAuditResult,
@@ -27,8 +26,6 @@ from .quote_snapshot import (
 from .service import TransportShipmentService
 
 __all__ = [
-    "ConfirmShipmentCommand",
-    "ConfirmShipmentResult",
     "ShipmentApplicationError",
     "ShipCommitAuditCommand",
     "ShipCommitAuditResult",

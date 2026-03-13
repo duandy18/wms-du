@@ -15,6 +15,30 @@ class QuoteDestIn(BaseModel):
     city_code: Optional[str] = Field(default=None, min_length=1)
 
 
+class QuoteSnapshotSelectedQuote(BaseModel):
+    quote_status: str = Field(default="OK")
+    scheme_id: Optional[int] = None
+    scheme_name: Optional[str] = None
+    provider_id: Optional[int] = None
+    carrier_code: Optional[str] = None
+    carrier_name: Optional[str] = None
+    currency: Optional[str] = None
+    total_amount: float
+
+    weight: Dict[str, Any] = Field(default_factory=dict)
+    destination_group: Optional[Dict[str, Any]] = None
+    pricing_matrix: Optional[Dict[str, Any]] = None
+    breakdown: Dict[str, Any] = Field(default_factory=dict)
+    reasons: List[str] = Field(default_factory=list, min_length=1)
+
+
+class QuoteSnapshot(BaseModel):
+    version: str = Field(..., min_length=1)
+    source: str = Field(..., min_length=1)
+    input: Dict[str, Any] = Field(default_factory=dict)
+    selected_quote: QuoteSnapshotSelectedQuote
+
+
 class QuoteCalcIn(BaseModel):
     warehouse_id: int = Field(..., ge=1)
 
@@ -42,7 +66,7 @@ class QuoteCalcOut(BaseModel):
     breakdown: Dict[str, Any]
     reasons: List[str] = Field(default_factory=list)
 
-    quote_snapshot: Optional[Dict[str, Any]] = None
+    quote_snapshot: Optional[QuoteSnapshot] = None
 
 
 class QuoteRecommendIn(BaseModel):
@@ -79,7 +103,7 @@ class QuoteRecommendItemOut(BaseModel):
     breakdown: Dict[str, Any]
     reasons: List[str] = Field(default_factory=list)
 
-    quote_snapshot: Optional[Dict[str, Any]] = None
+    quote_snapshot: Optional[QuoteSnapshot] = None
 
 
 class QuoteRecommendOut(BaseModel):

@@ -103,7 +103,7 @@ class OutboundFailuresMetricsResponse(BaseModel):
 
     # ✅ 新增：按 error_code 拆分（Phase 4：可统计、可追责）
     # 说明：
-    # - 对于 SHIP_CONFIRM_REJECT：error_code 一定存在（如 SHIP_CONFIRM_TRACKING_DUP）
+    # - 对于历史 SHIP_CONFIRM_REJECT 事件：error_code 一定存在（如 SHIP_CONFIRM_TRACKING_DUP）
     # - 对于旧口径 OUTBOUND_FAIL/ROUTING：若缺 error_code，则不会计入 breakdown（或归入 UNKNOWN）
     routing_failures_by_code: Dict[str, int] = {}
     pick_failures_by_code: Dict[str, int] = {}

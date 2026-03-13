@@ -52,7 +52,9 @@ class FileOwnershipRule:
 
     说明：
     - Phase 1 先冻结语义归属，不要求立刻物理迁目录。
-    - 允许“当前挂在旧目录，但领域归属已改判为 TMS”。
+    - 当前已进入后端 router 壳物理归位阶段，因此规则同时覆盖：
+      1) 历史叶子 route 文件；
+      2) 新的 TMS router 壳文件。
     """
 
     path_prefix: str
@@ -251,10 +253,22 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="Quote 兼容导出层。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_quote",
+        path_prefix="app/tms/quote/router.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_QUOTE,
-        note="Quote 路由。",
+        note="Quote 新主路由壳。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/api/routers/shipping_quote_routes_",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_QUOTE,
+        note="Quote 历史叶子路由实现。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/api/routers/outbound_ship_routes_calc.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_QUOTE,
+        note="历史挂在 outbound_ship 下，但语义属于 Quote。",
     ),
     FileOwnershipRule(
         path_prefix="app/tms/quote_snapshot/",
@@ -269,7 +283,31 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="面单申请服务。",
     ),
     FileOwnershipRule(
+        path_prefix="app/tms/shipment/orders_v2_router.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="Shipment 在 orders_fulfillment_v2 下的新主路由壳。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/shipment/router.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="Shipment 新主路由壳。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/shipment/",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="Shipment 主模块。",
+    ),
+    FileOwnershipRule(
         path_prefix="app/api/routers/orders_fulfillment_v2_routes_4_ship_with_waybill.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="当前挂在 Fulfillment，但语义属于 Shipment。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/api/routers/orders_fulfillment_v2_routes_3_ship.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
         note="当前挂在 Fulfillment，但语义属于 Shipment。",
@@ -290,7 +328,7 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         path_prefix="app/api/routers/outbound_ship_routes_confirm.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="当前挂在 Outbound，但语义属于 Shipment；属于待收口旧入口。",
+        note="当前挂在 Outbound，但语义属于 Shipment；已由 TMS router 壳统一挂载。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/outbound_ship_schemas.py",
@@ -305,10 +343,10 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="运输账本事实模型。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_records.py",
+        path_prefix="app/tms/records/router.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="账本查询与状态入口。",
+        note="Records 新主路由壳。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/shipping_records_routes_read.py",
@@ -335,10 +373,10 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="平台状态同步 runner。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_reports.py",
+        path_prefix="app/tms/reports/router.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
-        note="运输报表总路由。",
+        note="Reports 新主路由壳。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/shipping_reports_routes_",

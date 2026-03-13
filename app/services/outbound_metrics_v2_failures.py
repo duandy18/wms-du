@@ -25,6 +25,8 @@ async def load_failures(
     出库失败诊断（v2，PROD-only 简化口径）：
 
     ✅ 默认排除测试店铺（store_id 级别门禁）。
+    ✅ 保留历史 SHIP_CONFIRM_REJECT 事件统计能力；
+       但该事件仅代表历史 confirm_shipment 拒绝记录，不代表当前仍有现役 confirm 写入口。
     """
     fail_sql = text(
         """
