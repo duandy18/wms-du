@@ -21,6 +21,29 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def _assert_quote_snapshot_shape(snapshot: object, *, expected_total: float | None = None) -> None:
+    assert isinstance(snapshot, dict)
+
+    assert snapshot.get("version") == "v1"
+    assert isinstance(snapshot.get("source"), str)
+
+    input_payload = snapshot.get("input")
+    assert isinstance(input_payload, dict)
+
+    selected_quote = snapshot.get("selected_quote")
+    assert isinstance(selected_quote, dict)
+
+    reasons = selected_quote.get("reasons")
+    assert isinstance(reasons, list)
+    assert len(reasons) > 0
+
+    total_amount = selected_quote.get("total_amount")
+    assert isinstance(total_amount, (int, float))
+
+    if expected_total is not None:
+        assert abs(float(total_amount) - float(expected_total)) < 1e-9
+
+
 def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
     token = login(client)
     ids = create_scheme_bundle(client, token)
@@ -58,6 +81,8 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
     assert any("total=" in x for x in reasons)
     assert all("quote_engine:" not in x for x in reasons)
     assert all("level3_compare" not in x for x in reasons)
+
+    _assert_quote_snapshot_shape(body.get("quote_snapshot"), expected_total=5.3)
 
 
 def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
@@ -98,6 +123,8 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
     assert all("quote_engine:" not in x for x in reasons)
     assert all("level3_compare" not in x for x in reasons)
 
+    _assert_quote_snapshot_shape(body.get("quote_snapshot"), expected_total=9.3)
+
 
 def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: TestClient) -> None:
     token = login(client)
@@ -136,6 +163,8 @@ def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: T
     assert any("matrix_match:" in x for x in reasons)
     assert all("level3_compare" not in x for x in reasons)
 
+    _assert_quote_snapshot_shape(body.get("quote_snapshot"), expected_total=5.3)
+
 
 def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(client: TestClient) -> None:
     token = login(client)
@@ -173,6 +202,8 @@ def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(clie
     assert any("group_match:" in x for x in reasons)
     assert any("matrix_match:" in x for x in reasons)
     assert all("level3_compare" not in x for x in reasons)
+
+    _assert_quote_snapshot_shape(body.get("quote_snapshot"), expected_total=49.5)
 
 
 def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -> None:
@@ -225,6 +256,14 @@ def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -
     assert any("matrix_match:" in x for x in reasons)
     assert all("quote_engine:" not in x for x in reasons)
     assert all("level3_compare" not in x for x in reasons)
+
+    snapshot = body.get("quote_snapshot")
+    _assert_quote_snapshot_shape(snapshot)
+
+    assert snapshot["source"] == "shipping_quote.calc"
+    selected_quote = snapshot["selected_quote"]
+    assert selected_quote["scheme_id"] == ids["scheme_id"]
+    assert abs(float(selected_quote["total_amount"]) - float(body["total_amount"])) < 1e-9
 
 
 def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> None:

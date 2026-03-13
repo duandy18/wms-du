@@ -1,23 +1,22 @@
-# tests/api/test_ship_service_commit_writes_audit.py
-# tests/api/test_ship_service_commit_writes_audit.py
-from datetime import datetime, timezone
+# tests/api/test_transport_shipment_service_commit_audit.py
+from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.ship_service import ShipService
+from app.tms.shipment import ShipCommitAuditCommand, TransportShipmentService
 
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.mark.asyncio
-async def test_ship_service_commit_writes_audit(session: AsyncSession):
+async def test_transport_shipment_service_commit_audit_writes_audit(session: AsyncSession) -> None:
     """
-    最小合同：ShipService.commit 会写 OUTBOUND / SHIP_COMMIT 审计事件。
+    最小合同：TransportShipmentService.ship_commit_audit 会写
+    OUTBOUND / SHIP_COMMIT 审计事件。
 
     - 使用固定 ref 清理历史审计；
-    - 调用 ShipService(session).commit(...) 一次；
+    - 调用 TransportShipmentService(session).ship_commit_audit(...) 一次；
     - 校验 audit_events 至少写入一条对应记录。
     """
     ref = "UT-SHIP-SVC-001"
@@ -25,7 +24,6 @@ async def test_ship_service_commit_writes_audit(session: AsyncSession):
     shop_id = "NO-STORE"
     trace_id = "TRACE-UT-SHIP-001"
 
-    # 清理同 ref 的历史审计
     await session.execute(
         text(
             """
@@ -39,20 +37,21 @@ async def test_ship_service_commit_writes_audit(session: AsyncSession):
     )
     await session.commit()
 
-    svc = ShipService(session)
+    svc = TransportShipmentService(session)
 
-    resp = await svc.commit(
-        ref=ref,
-        platform=platform,
-        shop_id=shop_id,
-        trace_id=trace_id,
-        meta={"carrier": "DUMMY", "tracking_no": "T123456"},
+    resp = await svc.ship_commit_audit(
+        ShipCommitAuditCommand(
+            ref=ref,
+            platform=platform,
+            shop_id=shop_id,
+            trace_id=trace_id,
+            meta={"carrier": "DUMMY", "tracking_no": "T123456"},
+        )
     )
-    assert resp["ok"] is True
-    assert resp["ref"] == ref
-    assert resp["trace_id"] == trace_id
+    assert resp.ok is True
+    assert resp.ref == ref
+    assert resp.trace_id == trace_id
 
-    # 校验 audit_events 中确实写入记录
     rec = await session.execute(
         text(
             """
