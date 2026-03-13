@@ -55,7 +55,8 @@ def register(router: APIRouter) -> None:
             city=body.city,
             district=body.district,
             address_detail=body.address_detail,
-            meta=dict(body.meta or {}),
+            quote_snapshot=body.meta.quote_snapshot.model_dump() if body.meta else {},
+            meta=dict(body.meta.extra) if body.meta else {},
         )
 
         try:

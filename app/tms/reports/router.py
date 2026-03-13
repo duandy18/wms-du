@@ -1,4 +1,9 @@
-# app/api/routers/shipping_reports.py
+# app/tms/reports/router.py
+#
+# 分拆说明：
+# - 本文件是 TMS / Reports 的路由壳。
+# - 目标是把 shipping_reports 相关入口从历史 app/api/routers 外壳中收口到 TMS 语义下。
+# - 当前不改 URL，只调整物理归属。
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -11,11 +16,8 @@ router = APIRouter(tags=["shipping-reports"])
 
 
 def _register_all_routes() -> None:
-    # 聚合统计类
     shipping_reports_routes_aggregates.register(router)
-    # 明细列表
     shipping_reports_routes_list.register(router)
-    # 下拉选项
     shipping_reports_routes_options.register(router)
 
 

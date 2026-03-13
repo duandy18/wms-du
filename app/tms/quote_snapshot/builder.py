@@ -1,9 +1,15 @@
 # app/tms/quote_snapshot/builder.py
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
-from .contracts import QUOTE_SNAPSHOT_VERSION
+from .contracts import (
+    QUOTE_SNAPSHOT_VERSION,
+    QuoteSnapshotData,
+    QuoteSnapshotInputPayload,
+    QuoteSnapshotSelectedQuote,
+    QuoteSnapshotSelectedQuotePayload,
+)
 
 
 def _safe_dict(value: Any) -> dict[str, object]:
@@ -21,9 +27,9 @@ def _safe_list_of_str(value: Any) -> list[str]:
 def build_quote_snapshot(
     *,
     source: str,
-    input_payload: Mapping[str, Any],
-    selected_quote: Mapping[str, Any],
-) -> dict[str, object]:
+    input_payload: QuoteSnapshotInputPayload,
+    selected_quote: QuoteSnapshotSelectedQuotePayload,
+) -> QuoteSnapshotData:
     """
     构建统一 QuoteSnapshot 合同。
 
@@ -34,7 +40,7 @@ def build_quote_snapshot(
     """
     selected = dict(selected_quote)
 
-    snapshot_selected_quote: dict[str, object] = {
+    snapshot_selected_quote: QuoteSnapshotSelectedQuote = {
         "quote_status": str(selected.get("quote_status") or "OK"),
         "scheme_id": selected.get("scheme_id"),
         "scheme_name": selected.get("scheme_name"),
@@ -50,9 +56,10 @@ def build_quote_snapshot(
         "reasons": _safe_list_of_str(selected.get("reasons")),
     }
 
-    return {
+    snapshot: QuoteSnapshotData = {
         "version": QUOTE_SNAPSHOT_VERSION,
         "source": str(source),
         "input": dict(input_payload),
         "selected_quote": snapshot_selected_quote,
     }
+    return snapshot

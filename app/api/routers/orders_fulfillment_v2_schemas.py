@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, conint
 
+from app.api.routers.shipping_quote_schemas import QuoteSnapshot
+
 
 # ---------------------------------------------------------------------------
 # 1) 订单拣货 v2
@@ -65,6 +67,11 @@ class ShipResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ShipWithWaybillMeta(BaseModel):
+    quote_snapshot: QuoteSnapshot
+    extra: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ShipWithWaybillRequest(BaseModel):
     warehouse_id: conint(gt=0) = Field(..., description="发货仓库 ID")
     shipping_provider_id: conint(gt=0) = Field(..., description="承运商/网点 ID（强身份，必填）")
@@ -82,7 +89,10 @@ class ShipWithWaybillRequest(BaseModel):
     district: Optional[str] = None
     address_detail: Optional[str] = None
 
-    meta: Optional[Dict[str, Any]] = Field(default=None, description="必须包含 quote_snapshot（input + selected_quote）")
+    meta: Optional[ShipWithWaybillMeta] = Field(
+        default=None,
+        description="必须包含 quote_snapshot（input + selected_quote）",
+    )
 
 
 class ShipWithWaybillResponse(BaseModel):

@@ -35,6 +35,10 @@ async def _load_outbound_reject_stats(
       "SHIP_CONFIRM_TRACKING_DUP": {"count": 12, "sample_refs": ["REF1","REF2",...]},
       ...
     }
+
+    注意：
+    - 这里统计的是历史 SHIP_CONFIRM_REJECT 事件；
+    - confirm_shipment 现役入口已删除，该口径仅用于历史异常观测。
     """
     sql = text(
         """
@@ -95,13 +99,17 @@ async def _load_shipping_quote_reject_stats(
 def _rules_outbound() -> List[Tuple[str, int, str, str]]:
     """
     (code, threshold, title, message)
+
+    注意：
+    - 这里的规则面向历史 SHIP_CONFIRM_REJECT 事件监控；
+    - 不代表系统当前仍存在 /ship/confirm 现役入口。
     """
     return [
-        ("SHIP_CONFIRM_TRACKING_DUP", 5, "面单号重复", "同一承运商下重复运单号过多，疑似重复扫描/重复确认。"),
-        ("SHIP_CONFIRM_ORDER_DUP", 2, "订单重复确认", "同一订单 ref 被重复确认，可能存在重复提交/幂等问题。"),
-        ("SHIP_CONFIRM_SCHEME_NOT_AVAILABLE_FOR_WAREHOUSE", 1, "方案不适用该仓", "出库确认命中“方案不适用该仓”，配置可能被误解绑/停用。"),
-        ("SHIP_CONFIRM_CARRIER_NOT_ENABLED_FOR_WAREHOUSE", 1, "承运商未在仓启用", "出库确认命中“承运商未在该仓启用”，仓库快递能力配置可能缺失。"),
-        ("SHIP_CONFIRM_CARRIER_NOT_AVAILABLE", 1, "承运商不可用", "承运商主数据 inactive 或不存在，需检查主数据。"),
+        ("SHIP_CONFIRM_TRACKING_DUP", 5, "历史确认事件中面单号重复", "历史 SHIP_CONFIRM_REJECT 事件中，同一承运商下重复运单号过多，疑似重复扫描/重复确认。"),
+        ("SHIP_CONFIRM_ORDER_DUP", 2, "历史确认事件中订单重复确认", "历史 SHIP_CONFIRM_REJECT 事件中，同一订单 ref 被重复确认，可能存在重复提交/幂等问题。"),
+        ("SHIP_CONFIRM_SCHEME_NOT_AVAILABLE_FOR_WAREHOUSE", 1, "历史确认事件中方案不适用该仓", "历史 SHIP_CONFIRM_REJECT 事件命中“方案不适用该仓”，请检查当时配置与审计链路。"),
+        ("SHIP_CONFIRM_CARRIER_NOT_ENABLED_FOR_WAREHOUSE", 1, "历史确认事件中承运商未在仓启用", "历史 SHIP_CONFIRM_REJECT 事件命中“承运商未在该仓启用”，请检查当时仓库快递能力配置。"),
+        ("SHIP_CONFIRM_CARRIER_NOT_AVAILABLE", 1, "历史确认事件中承运商不可用", "历史 SHIP_CONFIRM_REJECT 事件显示承运商 inactive 或不存在，请检查历史主数据。"),
     ]
 
 
@@ -160,6 +168,7 @@ async def load_alerts(
                             "platform": platform,
                             "test_mode": test_mode,
                             "sample_refs": stat.get("sample_refs") or [],
+                            "event_scope": "historical_ship_confirm_reject",
                         },
                     )
                 )

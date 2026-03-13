@@ -92,6 +92,11 @@ MODEL_SPECS = [
     ("app.models.internal_outbound", "InternalOutboundDoc"),
     ("app.models.internal_outbound", "InternalOutboundLine"),
     # ------------------------------------------------------------------
+    # 运输执行 / 账本（Phase-2：Shipment 主实体 + Record 投影）
+    # ------------------------------------------------------------------
+    ("app.models.transport_shipment", "TransportShipment"),
+    ("app.models.shipping_record", "ShippingRecord"),
+    # ------------------------------------------------------------------
     # 运价（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge_config）
     # ------------------------------------------------------------------
     ("app.models.shipping_provider_surcharge_config_city", "ShippingProviderSurchargeConfigCity"),
@@ -159,6 +164,9 @@ __all__ = [
     # ---- Internal Outbound ----
     "InternalOutboundDoc",
     "InternalOutboundLine",
+    # ---- Shipment / Ledger ----
+    "TransportShipment",
+    "ShippingRecord",
     # ---- Pricing ----
     "ShippingProviderPricingScheme",
     "ShippingProviderPricingSchemeModuleRange",

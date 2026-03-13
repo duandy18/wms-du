@@ -19,7 +19,7 @@ def register(router: APIRouter) -> None:
     @router.post(
         "/shipping-records/{record_id}/status",
         response_model=ShippingStatusUpdateOut,
-        summary="更新单条发货账本的状态 / delivery_time",
+        summary="同步更新单条 Shipment projection / 主实体状态",
         status_code=status.HTTP_200_OK,
     )
     async def update_shipping_record_status(

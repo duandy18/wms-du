@@ -40,7 +40,7 @@ class ShippingRecordOut(BaseModel):
 class ShippingStatusUpdateIn(BaseModel):
     status: Literal["IN_TRANSIT", "DELIVERED", "LOST", "RETURNED"] = Field(
         ...,
-        description="发货状态：IN_TRANSIT / DELIVERED / LOST / RETURNED",
+        description="Shipment 状态：IN_TRANSIT / DELIVERED / LOST / RETURNED",
     )
     delivery_time: Optional[datetime] = Field(
         None,
