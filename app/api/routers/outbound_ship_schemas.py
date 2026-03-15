@@ -60,6 +60,10 @@ class ShipCalcResponse(BaseModel):
 class ShipPrepareItem(BaseModel):
     item_id: int
     qty: int
+    sku: Optional[str] = None
+    title: Optional[str] = None
+    unit_weight_kg: Optional[float] = None
+    line_weight_kg: Optional[float] = None
 
 
 class ShipPrepareRequest(BaseModel):

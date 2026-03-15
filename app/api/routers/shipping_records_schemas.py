@@ -27,6 +27,17 @@ class ShippingRecordOut(BaseModel):
     cost_estimated: Optional[float] = None
     cost_real: Optional[float] = None
 
+    billing_weight_kg: Optional[float] = None
+    freight_amount: Optional[float] = None
+    surcharge_amount: Optional[float] = None
+    weight_diff_kg: Optional[float] = None
+    cost_diff: Optional[float] = None
+
+    reconcile_status: Optional[str] = None
+    carrier_bill_item_id: Optional[int] = None
+    reconciled_at: Optional[datetime] = None
+    reconcile_note: Optional[str] = None
+
     delivery_time: Optional[datetime] = None
     status: Optional[str] = None
 

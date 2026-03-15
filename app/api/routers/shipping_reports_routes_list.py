@@ -32,6 +32,9 @@ def register(router: APIRouter) -> None:
         city: Optional[str] = Query(None),
         district: Optional[str] = Query(None),
         warehouse_id: Optional[int] = Query(None),
+        reconcile_status: Optional[str] = Query(None),
+        min_cost_diff: Optional[float] = Query(None, ge=0),
+        min_weight_diff: Optional[float] = Query(None, ge=0),
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
         session: AsyncSession = Depends(get_session),
@@ -48,6 +51,7 @@ def register(router: APIRouter) -> None:
         province_clean = clean_opt_str(province)
         city_clean = clean_opt_str(city)
         district_clean = clean_opt_str(district)
+        reconcile_status_clean = clean_opt_str(reconcile_status)
 
         where_sql, params = build_where_clause(
             from_dt=from_dt,
@@ -59,6 +63,9 @@ def register(router: APIRouter) -> None:
             warehouse_id=warehouse_id,
             city=city_clean,
             district=district_clean,
+            reconcile_status=reconcile_status_clean,
+            min_cost_diff=min_cost_diff,
+            min_weight_diff=min_weight_diff,
             include_province_filter=True,
         )
         params["limit"] = limit
@@ -81,9 +88,18 @@ def register(router: APIRouter) -> None:
               trace_id,
               carrier_code,
               carrier_name,
+              tracking_no,
               gross_weight_kg,
               packaging_weight_kg,
               cost_estimated,
+              cost_real,
+              billing_weight_kg,
+              freight_amount,
+              surcharge_amount,
+              weight_diff_kg,
+              cost_diff,
+              reconcile_status,
+              reconciled_at,
               status,
               meta,
               created_at
@@ -109,6 +125,7 @@ def register(router: APIRouter) -> None:
                     trace_id=r.get("trace_id"),
                     carrier_code=r.get("carrier_code"),
                     carrier_name=r.get("carrier_name"),
+                    tracking_no=r.get("tracking_no"),
                     gross_weight_kg=(
                         float(r["gross_weight_kg"]) if r["gross_weight_kg"] is not None else None
                     ),
@@ -119,6 +136,32 @@ def register(router: APIRouter) -> None:
                     ),
                     cost_estimated=(
                         float(r["cost_estimated"]) if r["cost_estimated"] is not None else None
+                    ),
+                    cost_real=(
+                        float(r["cost_real"]) if r["cost_real"] is not None else None
+                    ),
+                    billing_weight_kg=(
+                        float(r["billing_weight_kg"])
+                        if r["billing_weight_kg"] is not None
+                        else None
+                    ),
+                    freight_amount=(
+                        float(r["freight_amount"]) if r["freight_amount"] is not None else None
+                    ),
+                    surcharge_amount=(
+                        float(r["surcharge_amount"])
+                        if r["surcharge_amount"] is not None
+                        else None
+                    ),
+                    weight_diff_kg=(
+                        float(r["weight_diff_kg"]) if r["weight_diff_kg"] is not None else None
+                    ),
+                    cost_diff=(
+                        float(r["cost_diff"]) if r["cost_diff"] is not None else None
+                    ),
+                    reconcile_status=r.get("reconcile_status"),
+                    reconciled_at=(
+                        r["reconciled_at"].isoformat() if r.get("reconciled_at") is not None else None
                     ),
                     status=r.get("status"),
                     meta=r.get("meta"),

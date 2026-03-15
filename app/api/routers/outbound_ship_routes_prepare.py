@@ -168,7 +168,17 @@ def register(router: APIRouter) -> None:
                 json_agg(
                   json_build_object(
                     'item_id', oi.item_id,
-                    'qty', COALESCE(oi.qty, 0)
+                    'qty', COALESCE(oi.qty, 0),
+                    'sku', COALESCE(NULLIF(oi.sku_id, ''), it.sku),
+                    'title', COALESCE(NULLIF(oi.title, ''), it.name),
+                    'unit_weight_kg', CASE
+                      WHEN it.weight_kg IS NOT NULL THEN (it.weight_kg)::float
+                      ELSE NULL
+                    END,
+                    'line_weight_kg', CASE
+                      WHEN oi.id IS NOT NULL THEN (COALESCE(oi.qty, 0) * COALESCE(it.weight_kg, 0))::float
+                      ELSE NULL
+                    END
                   )
                 ) FILTER (WHERE oi.id IS NOT NULL),
                 '[]'::json
@@ -208,7 +218,17 @@ def register(router: APIRouter) -> None:
 
         total_qty = int(row["total_qty"] or 0)
         items_raw = row.get("items") or []
-        items = [ShipPrepareItem(item_id=int(it["item_id"]), qty=int(it["qty"])) for it in items_raw]
+        items = [
+            ShipPrepareItem(
+                item_id=int(it["item_id"]),
+                qty=int(it["qty"]),
+                sku=str(it.get("sku")).strip() if it.get("sku") is not None else None,
+                title=str(it.get("title")).strip() if it.get("title") is not None else None,
+                unit_weight_kg=float(it["unit_weight_kg"]) if it.get("unit_weight_kg") is not None else None,
+                line_weight_kg=float(it["line_weight_kg"]) if it.get("line_weight_kg") is not None else None,
+            )
+            for it in items_raw
+        ]
 
         est_weight = float(row.get("estimated_weight_kg") or 0.0)
         weight_kg: Optional[float] = est_weight if est_weight > 0 else None

@@ -10,5 +10,8 @@ pytest-cov>=4.1
 aiosqlite>=0.20
 APScheduler>=3.10
 
+# Excel import
+openpyxl>=3.1
+
 # Misc developer tools
 ipython

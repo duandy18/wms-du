@@ -29,6 +29,9 @@ def build_where_clause(
     warehouse_id: Optional[int],
     city: Optional[str] = None,
     district: Optional[str] = None,
+    reconcile_status: Optional[str] = None,
+    min_cost_diff: Optional[float] = None,
+    min_weight_diff: Optional[float] = None,
     include_province_filter: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """
@@ -45,10 +48,6 @@ def build_where_clause(
     params: dict[str, Any] = {}
 
     # ----------------- PROD-only 护栏：排除测试店铺（store_id 级别） -----------------
-    # 说明：
-    # - platform_test_shops.store_id NOT NULL，说明 store_id 才是事实锚点
-    # - shipping_records 没有 store_id，因此通过 stores(platform, shop_id) 解析
-    # - shop_id 统一 CAST text + trim 对齐，兼容 stores.shop_id 为数值/文本
     conditions.append(
         """
         NOT EXISTS (
@@ -91,6 +90,15 @@ def build_where_clause(
     if warehouse_id is not None:
         conditions.append("warehouse_id = :warehouse_id")
         params["warehouse_id"] = warehouse_id
+    if reconcile_status:
+        conditions.append("reconcile_status = :reconcile_status")
+        params["reconcile_status"] = reconcile_status
+    if min_cost_diff is not None:
+        conditions.append("ABS(cost_diff) >= :min_cost_diff")
+        params["min_cost_diff"] = min_cost_diff
+    if min_weight_diff is not None:
+        conditions.append("ABS(weight_diff_kg) >= :min_weight_diff")
+        params["min_weight_diff"] = min_weight_diff
 
     where_sql = " AND ".join(conditions)
     return where_sql, params
