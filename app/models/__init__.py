@@ -96,6 +96,7 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     ("app.models.transport_shipment", "TransportShipment"),
     ("app.models.shipping_record", "ShippingRecord"),
+    ("app.models.carrier_bill_item", "CarrierBillItem"),
     # ------------------------------------------------------------------
     # 运价（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge_config）
     # ------------------------------------------------------------------
@@ -167,6 +168,7 @@ __all__ = [
     # ---- Shipment / Ledger ----
     "TransportShipment",
     "ShippingRecord",
+    "CarrierBillItem",
     # ---- Pricing ----
     "ShippingProviderPricingScheme",
     "ShippingProviderPricingSchemeModuleRange",

@@ -72,6 +72,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     from app.api.routers.internal_outbound import router as internal_outbound_router
 
+    from app.tms.billing.router import router as tms_billing_router
     from app.tms.quote.router import router as tms_quote_router
     from app.tms.records.router import router as tms_records_router
     from app.tms.reports.router import router as tms_reports_router
@@ -152,6 +153,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(tms_quote_router)
     app.include_router(tms_reports_router)
     app.include_router(tms_records_router)
+    app.include_router(tms_billing_router)
 
     app.include_router(debug_trace_router)
     app.include_router(metrics_router)

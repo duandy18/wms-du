@@ -79,10 +79,21 @@ class ShippingListRow(BaseModel):
 
     carrier_code: Optional[str] = None
     carrier_name: Optional[str] = None
+    tracking_no: Optional[str] = None
 
     gross_weight_kg: Optional[float] = None
     packaging_weight_kg: Optional[float] = None
     cost_estimated: Optional[float] = None
+    cost_real: Optional[float] = None
+
+    billing_weight_kg: Optional[float] = None
+    freight_amount: Optional[float] = None
+    surcharge_amount: Optional[float] = None
+    weight_diff_kg: Optional[float] = None
+    cost_diff: Optional[float] = None
+
+    reconcile_status: Optional[str] = None
+    reconciled_at: Optional[str] = None
 
     status: Optional[str] = None
     meta: Optional[dict[str, Any]] = None
