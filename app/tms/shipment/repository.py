@@ -196,6 +196,7 @@ async def upsert_waybill_shipping_record(
                 cost_real,
                 delivery_time,
                 status,
+                reconcile_status,
                 error_code,
                 error_message,
                 meta
@@ -218,6 +219,7 @@ async def upsert_waybill_shipping_record(
                 :cost_real,
                 :delivery_time,
                 :status,
+                :reconcile_status,
                 :error_code,
                 :error_message,
                 CAST(:meta AS jsonb)
@@ -237,6 +239,7 @@ async def upsert_waybill_shipping_record(
                 cost_real = EXCLUDED.cost_real,
                 delivery_time = EXCLUDED.delivery_time,
                 status = EXCLUDED.status,
+                reconcile_status = EXCLUDED.reconcile_status,
                 error_code = EXCLUDED.error_code,
                 error_message = EXCLUDED.error_message,
                 meta = EXCLUDED.meta
@@ -260,6 +263,7 @@ async def upsert_waybill_shipping_record(
             "cost_real": None,
             "delivery_time": None,
             "status": "IN_TRANSIT",
+            "reconcile_status": "UNMATCHED",
             "error_code": None,
             "error_message": None,
             "meta": _json_dumps(meta),

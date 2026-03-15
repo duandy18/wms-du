@@ -86,12 +86,6 @@ def upgrade() -> None:
         unique=False,
     )
 
-    op.alter_column(
-        "shipping_records",
-        "reconcile_status",
-        server_default=None,
-    )
-
 
 def downgrade() -> None:
     """Downgrade schema."""
