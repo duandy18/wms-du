@@ -41,29 +41,7 @@ class PickResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 2) 订单发运 v2（只写审计）
-# ---------------------------------------------------------------------------
-
-
-class ShipLineIn(BaseModel):
-    item_id: conint(gt=0)
-    qty: conint(gt=0)
-
-
-class ShipRequest(BaseModel):
-    warehouse_id: conint(gt=0)
-    lines: List[ShipLineIn] = Field(default_factory=list)
-    occurred_at: Optional[datetime] = Field(default=None, description="发运时间（缺省为当前 UTC 时间）")
-
-
-class ShipResponse(BaseModel):
-    status: str
-    ref: str
-    event: str = "SHIP_COMMIT"
-
-
-# ---------------------------------------------------------------------------
-# 3) ship-with-waybill（模式 2：强制固化“可解释证据包”）
+# 2) ship-with-waybill（模式 2：强制固化“可解释证据包”）
 # ---------------------------------------------------------------------------
 
 

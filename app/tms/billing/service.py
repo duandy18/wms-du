@@ -1,7 +1,6 @@
 # app/tms/billing/service.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -12,9 +11,10 @@ from .contracts import (
     ReconcileCarrierBillResult,
 )
 from .repository import (
+    delete_shipping_record_reconciliation_by_shipping_record_id,
     list_carrier_bill_items_for_reconcile,
     list_shipping_records_for_reconcile,
-    update_shipping_record_reconcile_result,
+    upsert_shipping_record_reconciliation,
 )
 
 
@@ -26,25 +26,17 @@ def _to_decimal(value: object | None) -> Decimal | None:
     return Decimal(str(value))
 
 
-class CarrierBillReconcileService:
-    WEIGHT_TOLERANCE_KG = Decimal("0.0005")
-    COST_TOLERANCE = Decimal("0.01")
+def _has_weight_diff(weight_diff_kg: Decimal | None) -> bool:
+    return weight_diff_kg is not None and weight_diff_kg != Decimal("0")
 
+
+def _has_cost_diff(cost_diff: Decimal | None) -> bool:
+    return cost_diff is not None and cost_diff != Decimal("0")
+
+
+class CarrierBillReconcileService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-
-    def _resolve_reconcile_status(
-        self,
-        *,
-        weight_diff_kg: Decimal | None,
-        cost_diff: Decimal | None,
-    ) -> str:
-        weight_ok = (
-            weight_diff_kg is None
-            or abs(weight_diff_kg) <= self.WEIGHT_TOLERANCE_KG
-        )
-        cost_ok = cost_diff is None or abs(cost_diff) <= self.COST_TOLERANCE
-        return "MATCHED" if weight_ok and cost_ok else "DIFF"
 
     async def reconcile(
         self,
@@ -93,8 +85,6 @@ class CarrierBillReconcileService:
         unmatched_count = 0
         updated_count = 0
 
-        reconciled_at = datetime.now(timezone.utc)
-
         for tracking_no, bill_row in bill_map.items():
             record_row = record_map.get(tracking_no)
             if record_row is None:
@@ -121,30 +111,28 @@ class CarrierBillReconcileService:
             if cost_real is not None and cost_estimated is not None:
                 cost_diff = cost_real - cost_estimated
 
-            reconcile_status = self._resolve_reconcile_status(
-                weight_diff_kg=weight_diff_kg,
-                cost_diff=cost_diff,
-            )
+            has_diff = _has_weight_diff(weight_diff_kg) or _has_cost_diff(cost_diff)
 
-            await update_shipping_record_reconcile_result(
-                self.session,
-                record_id=int(record_row["id"]),
-                billing_weight_kg=billing_weight_kg,
-                freight_amount=freight_amount,
-                surcharge_amount=surcharge_amount,
-                cost_real=cost_real,
-                weight_diff_kg=weight_diff_kg,
-                cost_diff=cost_diff,
-                reconcile_status=reconcile_status,
-                carrier_bill_item_id=int(bill_row["id"]),
-                reconciled_at=reconciled_at,
-            )
-            updated_count += 1
+            shipping_record_id = int(record_row["id"])
 
-            if reconcile_status == "MATCHED":
-                matched_count += 1
-            else:
+            if has_diff:
+                await upsert_shipping_record_reconciliation(
+                    self.session,
+                    shipping_record_id=shipping_record_id,
+                    carrier_bill_item_id=int(bill_row["id"]),
+                    tracking_no=tracking_no,
+                    weight_diff_kg=weight_diff_kg,
+                    cost_diff=cost_diff,
+                    adjust_amount=None,
+                )
                 diff_count += 1
+                updated_count += 1
+            else:
+                await delete_shipping_record_reconciliation_by_shipping_record_id(
+                    self.session,
+                    shipping_record_id=shipping_record_id,
+                )
+                matched_count += 1
 
         await self.session.commit()
 

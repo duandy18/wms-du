@@ -17,6 +17,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.fake_platform import router as fake_platform_router
     from app.api.routers.finance_overview import router as finance_overview_router
     from app.api.routers.flow_replay import router as flow_replay_router
+    from app.api.routers.geo_cn import router as geo_router
     from app.api.routers.inbound_receipts import po_receive_router as po_receive_router
     from app.api.routers.inbound_receipts import router as inbound_receipts_router
     from app.api.routers.intelligence import router as intelligence_router
@@ -50,11 +51,9 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.purchase_reports import router as purchase_reports_router
     from app.api.routers.return_tasks import router as return_tasks_router
     from app.api.routers.roles import router as roles_router
-    from app.api.routers.shipping_provider_contacts import router as shipping_provider_contacts_router
     from app.api.routers.shipping_provider_pricing_schemes.router import (
         router as shipping_provider_pricing_schemes_router,
     )
-    from app.api.routers.shipping_providers import router as shipping_providers_router
     from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
     from app.api.routers.snapshot import router as snapshot_router
     from app.api.routers.snapshot_v3 import router as snapshot_v3_router
@@ -66,18 +65,16 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.suppliers import router as suppliers_router
     from app.api.routers.user import router as user_router
     from app.api.routers.warehouses import router as warehouses_router
-    from app.api.routers.geo_cn import router as geo_router
 
     from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
-
     from app.api.routers.internal_outbound import router as internal_outbound_router
 
     from app.tms.billing.router import router as tms_billing_router
+    from app.tms.config.router import router as tms_config_router
     from app.tms.quote.router import router as tms_quote_router
     from app.tms.records.router import router as tms_records_router
     from app.tms.reports.router import router as tms_reports_router
     from app.tms.shipment.orders_v2_router import router as tms_orders_shipment_v2_router
-    from app.tms.shipment.router import router as tms_shipment_router
 
     # ---------------------------------------------------------------------------
     # scan routes
@@ -117,7 +114,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(outbound_router)
     app.include_router(outbound_ship_router)
-    app.include_router(tms_shipment_router)
     app.include_router(internal_outbound_router)
     app.include_router(outbound_ops_router)
 
@@ -145,8 +141,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(suppliers_router)
     app.include_router(supplier_contacts_router)
 
-    app.include_router(shipping_providers_router)
-    app.include_router(shipping_provider_contacts_router)
+    app.include_router(tms_config_router)
     app.include_router(shipping_provider_pricing_schemes_router)
     app.include_router(geo_router)
     app.include_router(pricing_integrity_ops_router)

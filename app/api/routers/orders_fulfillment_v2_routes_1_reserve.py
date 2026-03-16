@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_session
-from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.services.order_fulfillment_manual_assign import manual_assign_fulfillment_warehouse
+from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
 
 
 class ManualAssignRequest(BaseModel):

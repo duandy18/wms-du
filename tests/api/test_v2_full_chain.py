@@ -81,6 +81,91 @@ async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: in
     )
 
 
+async def _pick_active_shipping_provider_for_warehouse(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+) -> dict[str, object] | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  sp.id AS provider_id,
+                  sp.code AS carrier_code,
+                  sp.name AS carrier_name
+                FROM warehouse_shipping_providers AS wsp
+                JOIN shipping_providers AS sp
+                  ON sp.id = wsp.shipping_provider_id
+                WHERE wsp.warehouse_id = :wid
+                  AND wsp.active = true
+                  AND sp.active = true
+                ORDER BY wsp.priority ASC, sp.priority ASC, sp.id ASC
+                LIMIT 1
+                """
+            ),
+            {"wid": warehouse_id},
+        )
+    ).mappings().first()
+
+    return dict(row) if row else None
+
+
+def _build_quote_snapshot(
+    *,
+    warehouse_id: int,
+    provider_id: int,
+    carrier_code: str | None,
+    carrier_name: str | None,
+    province: str,
+    city: str,
+    district: str,
+    weight_kg: float,
+) -> dict[str, object]:
+    return {
+        "version": "v1",
+        "source": "unit-test",
+        "input": {
+            "warehouse_id": warehouse_id,
+            "dest": {
+                "province": province,
+                "city": city,
+                "district": district,
+                "province_code": "UT-PROV-CODE",
+                "city_code": "UT-CITY-CODE",
+            },
+            "real_weight_kg": weight_kg,
+            "flags": [],
+        },
+        "selected_quote": {
+            "quote_status": "OK",
+            "scheme_id": 999001,
+            "scheme_name": "UT-SCHEME",
+            "provider_id": provider_id,
+            "carrier_code": carrier_code,
+            "carrier_name": carrier_name,
+            "currency": "CNY",
+            "total_amount": 12.34,
+            "weight": {
+                "real_weight_kg": weight_kg,
+                "billable_weight_kg": weight_kg,
+            },
+            "destination_group": {
+                "group_id": 999001,
+                "group_name": "UT-DEST-GROUP",
+            },
+            "pricing_matrix": {
+                "matrix_id": 999001,
+                "hit": True,
+            },
+            "breakdown": {
+                "base_fee": 12.34,
+            },
+            "reasons": ["unit-test-selected-quote"],
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
@@ -89,7 +174,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     1) ingest：创建订单并写 trace_id
     2) 人工履约决策：调用 manual-assign 指定执行仓，并标记可进入履约
     3) 入库（为后续 pick/ship 准备库存）
-    4) pick → ship_commit
+    4) pick → ship-with-waybill
     5) debug trace：至少出现 ORDER_CREATED + SHIPMENT/SHIP_COMMIT
     """
     plat = "PDD"
@@ -100,6 +185,9 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     now = datetime.now(timezone.utc)
 
     province = "UT-PROV"
+    city = "UT-CITY"
+    district = "UT-DISTRICT"
+
     await _ensure_store_route_to_wh1(db_session_like_pg, plat=plat, shop_id=shop_id, province=province)
     await db_session_like_pg.commit()
 
@@ -119,7 +207,13 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         order_amount=0,
         pay_amount=0,
         items=[{"item_id": 3001, "qty": 1, "title": "猫粮"}],
-        address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
+        address={
+            "province": province,
+            "city": city,
+            "district": district,
+            "receiver_name": "X",
+            "receiver_phone": "000",
+        },
         extras=None,
         trace_id=trace_id,
     )
@@ -182,20 +276,58 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert isinstance(pick_list, list)
     assert len(pick_list) == 1
 
-    # 5) ship
+    provider = await _pick_active_shipping_provider_for_warehouse(db_session_like_pg, warehouse_id=1)
+    if provider is None:
+        pytest.skip("warehouse 1 has no active shipping provider binding")
+
+    shipping_provider_id = int(provider["provider_id"])
+    carrier_code = provider.get("carrier_code")
+    carrier_name = provider.get("carrier_name")
+    weight_kg = 1.0
+
+    quote_snapshot = _build_quote_snapshot(
+        warehouse_id=1,
+        provider_id=shipping_provider_id,
+        carrier_code=str(carrier_code) if carrier_code is not None else None,
+        carrier_name=str(carrier_name) if carrier_name is not None else None,
+        province=province,
+        city=city,
+        district=district,
+        weight_kg=weight_kg,
+    )
+
+    # 5) ship-with-waybill（Shipment Execution 唯一主入口）
     resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/ship",
+        f"/orders/{plat}/{shop_id}/{ext}/ship-with-waybill",
         json={
             "warehouse_id": 1,
-            "lines": [{"item_id": 3001, "qty": 1}],
+            "shipping_provider_id": shipping_provider_id,
+            "carrier_code": carrier_code,
+            "carrier_name": carrier_name,
+            "weight_kg": weight_kg,
+            "receiver_name": "X",
+            "receiver_phone": "000",
+            "province": province,
+            "city": city,
+            "district": district,
+            "address_detail": "UT-ADDR-001",
+            "meta": {
+                "quote_snapshot": quote_snapshot,
+                "extra": {
+                    "source": "tests.api.test_v2_full_chain",
+                },
+            },
         },
+        headers=headers,
     )
-    print("[HTTP] ship status:", resp.status_code, "body:", resp.text)
+    print("[HTTP] ship-with-waybill status:", resp.status_code, "body:", resp.text)
     assert resp.status_code == 200, resp.text
     ship_data = resp.json()
+    assert ship_data["ok"] is True
     assert ship_data["ref"] == order_ref
-    assert ship_data["event"] == "SHIP_COMMIT"
-    assert ship_data["status"] in ("OK", "IDEMPOTENT")
+    assert int(ship_data["shipping_provider_id"]) == shipping_provider_id
+    assert str(ship_data["tracking_no"]).strip() != ""
+    assert ship_data["status"] == "IN_TRANSIT"
 
     # 6) dev/orders
     resp = await client.get(f"/dev/orders/{plat}/{shop_id}/{ext}")

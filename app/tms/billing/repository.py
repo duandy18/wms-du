@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import bindparam, text
@@ -227,47 +226,65 @@ async def list_shipping_records_for_reconcile(
     return [dict(r) for r in rows]
 
 
-async def update_shipping_record_reconcile_result(
+async def upsert_shipping_record_reconciliation(
     session: AsyncSession,
     *,
-    record_id: int,
-    billing_weight_kg: object | None,
-    freight_amount: object | None,
-    surcharge_amount: object | None,
-    cost_real: object | None,
+    shipping_record_id: int,
+    carrier_bill_item_id: int,
+    tracking_no: str,
     weight_diff_kg: object | None,
     cost_diff: object | None,
-    reconcile_status: str,
-    carrier_bill_item_id: int,
-    reconciled_at: datetime,
+    adjust_amount: object | None,
 ) -> None:
     sql = text(
         """
-        UPDATE shipping_records
-           SET billing_weight_kg = :billing_weight_kg,
-               freight_amount = :freight_amount,
-               surcharge_amount = :surcharge_amount,
-               cost_real = :cost_real,
-               weight_diff_kg = :weight_diff_kg,
-               cost_diff = :cost_diff,
-               reconcile_status = :reconcile_status,
-               carrier_bill_item_id = :carrier_bill_item_id,
-               reconciled_at = :reconciled_at
-         WHERE id = :id
+        INSERT INTO shipping_record_reconciliations (
+            shipping_record_id,
+            carrier_bill_item_id,
+            tracking_no,
+            weight_diff_kg,
+            cost_diff,
+            adjust_amount
+        )
+        VALUES (
+            :shipping_record_id,
+            :carrier_bill_item_id,
+            :tracking_no,
+            :weight_diff_kg,
+            :cost_diff,
+            :adjust_amount
+        )
+        ON CONFLICT (shipping_record_id)
+        DO UPDATE SET
+            carrier_bill_item_id = EXCLUDED.carrier_bill_item_id,
+            tracking_no = EXCLUDED.tracking_no,
+            weight_diff_kg = EXCLUDED.weight_diff_kg,
+            cost_diff = EXCLUDED.cost_diff,
+            adjust_amount = EXCLUDED.adjust_amount
         """
     )
     await session.execute(
         sql,
         {
-            "id": record_id,
-            "billing_weight_kg": billing_weight_kg,
-            "freight_amount": freight_amount,
-            "surcharge_amount": surcharge_amount,
-            "cost_real": cost_real,
+            "shipping_record_id": shipping_record_id,
+            "carrier_bill_item_id": carrier_bill_item_id,
+            "tracking_no": tracking_no,
             "weight_diff_kg": weight_diff_kg,
             "cost_diff": cost_diff,
-            "reconcile_status": reconcile_status,
-            "carrier_bill_item_id": carrier_bill_item_id,
-            "reconciled_at": reconciled_at,
+            "adjust_amount": adjust_amount,
         },
     )
+
+
+async def delete_shipping_record_reconciliation_by_shipping_record_id(
+    session: AsyncSession,
+    *,
+    shipping_record_id: int,
+) -> None:
+    sql = text(
+        """
+        DELETE FROM shipping_record_reconciliations
+        WHERE shipping_record_id = :shipping_record_id
+        """
+    )
+    await session.execute(sql, {"shipping_record_id": shipping_record_id})

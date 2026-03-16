@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import (
     ShipWithWaybillRequest,
     ShipWithWaybillResponse,
@@ -15,6 +14,7 @@ from app.tms.shipment import (
     ShipWithWaybillCommand,
     TransportShipmentService,
 )
+from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
 
 
 def register(router: APIRouter) -> None:
