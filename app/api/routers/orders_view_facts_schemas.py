@@ -4,17 +4,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PlatformOrderLineOut(BaseModel):
     """
     平台订单“原始行”（镜像用）
     只输出平台侧可理解字段，不输出作业字段。
-
-    Phase 5+ 镜像口径：
-    - 基础字段来自 order_items：item_id/sku_id/title/qty/price/discount/amount/extras
-    - extras（JSONB）用于承载平台原始字段（规格、属性、平台 SKU 信息等）
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -37,7 +33,6 @@ class PlatformOrderLineOut(BaseModel):
 class PlatformOrderAddressOut(BaseModel):
     """
     平台订单收件信息（镜像用）
-    字段命名对齐你们 ingest 的 receiver_* / province/city/district/detail
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -54,10 +49,6 @@ class PlatformOrderAddressOut(BaseModel):
 class PlatformOrderOut(BaseModel):
     """
     平台订单“镜像头” + “原始行 items”
-
-    raw：
-    - 为详情页/排障保留的“原始包”（orders/order_items/order_address 原始行的 json-friendly 版本）
-    - 不携带履约累积语义（shipped/returned 等）
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -77,7 +68,7 @@ class PlatformOrderOut(BaseModel):
     buyer_phone: Optional[str] = None
 
     address: Optional[PlatformOrderAddressOut] = None
-    items: List[PlatformOrderLineOut] = []
+    items: List[PlatformOrderLineOut] = Field(default_factory=list)
 
     raw: Optional[Dict[str, Any]] = None
 
@@ -89,11 +80,13 @@ class OrderViewResponse(BaseModel):
 
 class OrderFactItemOut(BaseModel):
     """
-    facts：订单镜像的“数量事实”（只读、无履约语义）。
+    正式 orders facts 合同（完整版）
 
-    说明：
-    - 镜像详情里“数量”有意义（qty_ordered）
-    - shipped/returned 等履约累积字段对“平台镜像详情”无意义，因此不输出
+    含义：
+    - qty_ordered：订单行要求数量
+    - qty_shipped：已出库数量（按 stock_ledger 汇总）
+    - qty_returned：已回仓数量（按 inbound_receipts / lines 汇总）
+    - qty_remaining_refundable：剩余可退货数量
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -103,8 +96,16 @@ class OrderFactItemOut(BaseModel):
     title: Optional[str] = None
 
     qty_ordered: int = 0
+    qty_shipped: int = 0
+    qty_returned: int = 0
+    qty_remaining_refundable: int = 0
 
 
 class OrderFactsResponse(BaseModel):
     ok: bool = True
-    items: List[OrderFactItemOut]
+    order_id: int
+    platform: str
+    shop_id: str
+    ext_order_no: str
+    issues: List[str] = Field(default_factory=list)
+    items: List[OrderFactItemOut] = Field(default_factory=list)

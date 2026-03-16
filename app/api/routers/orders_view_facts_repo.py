@@ -46,6 +46,42 @@ async def load_order_head_by_keys(
     return row
 
 
+async def load_order_head_by_id(
+    session: AsyncSession, *, order_id: int
+) -> Mapping[str, Any]:
+    row = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      id,
+                      platform,
+                      shop_id,
+                      ext_order_no,
+                      status,
+                      created_at,
+                      updated_at,
+                      order_amount,
+                      pay_amount,
+                      buyer_name,
+                      buyer_phone
+                    FROM orders
+                    WHERE id = :oid
+                    LIMIT 1
+                    """
+                ),
+                {"oid": int(order_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        raise ValueError(f"order not found: id={order_id}")
+    return row
+
+
 async def load_order_head_raw_by_id(session: AsyncSession, *, order_id: int) -> Optional[Dict[str, Any]]:
     row = (
         (
@@ -114,7 +150,6 @@ async def load_order_address_raw(session: AsyncSession, *, order_id: int) -> Opt
     return dict(row)
 
 
-# 🔥 关键修改：镜像层改为读取 platform_order_lines（原始平台单行）
 async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[Dict[str, Any]]:
     """
     平台镜像行：
@@ -123,8 +158,6 @@ async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[D
     - 不读取 order_items
     - 完全还原平台原始单行
     """
-
-    # 1️⃣ 通过 order_id 反查三件套
     head = (
         (
             await session.execute(
@@ -150,7 +183,6 @@ async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[D
     shop_id = str(head["shop_id"])
     ext = str(head["ext_order_no"])
 
-    # 2️⃣ 读取 platform_order_lines（最原始平台数据）
     rows = (
         (
             await session.execute(
@@ -239,17 +271,31 @@ async def load_order_address(session: AsyncSession, *, order_id: int) -> Optiona
     }
 
 
-async def load_order_facts(session: AsyncSession, *, order_id: int) -> List[Dict[str, Any]]:
-    rows = (
+async def load_order_facts_full(
+    session: AsyncSession, *, order_id: int
+) -> Dict[str, Any]:
+    """
+    正式 orders facts 合同（完整版）。
+
+    口径：
+    - qty_ordered   来自 order_items.qty
+    - qty_shipped   来自 stock_ledger(ref=ORD:PLAT:SHOP:EXT, delta<0)
+    - qty_returned  来自 inbound_receipts(source_type='ORDER', status='CONFIRMED')
+    - qty_remaining_refundable = max(min(qty_ordered, qty_shipped) - qty_returned, 0)
+    """
+    head = await load_order_head_by_id(session, order_id=order_id)
+
+    platform = str(head["platform"]).upper()
+    shop_id = str(head["shop_id"])
+    ext_order_no = str(head["ext_order_no"])
+    order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
+
+    item_rows = (
         (
             await session.execute(
                 text(
                     """
-                    SELECT
-                      item_id,
-                      sku_id,
-                      title,
-                      qty
+                    SELECT item_id, qty, sku_id, title
                     FROM order_items
                     WHERE order_id = :oid
                     ORDER BY id ASC
@@ -262,15 +308,107 @@ async def load_order_facts(session: AsyncSession, *, order_id: int) -> List[Dict
         .all()
     )
 
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        qty = int(r["qty"]) if r.get("qty") is not None else 0
-        out.append(
-            {
-                "item_id": int(r["item_id"]) if r.get("item_id") is not None else 0,
-                "sku_id": str(r["sku_id"]) if r.get("sku_id") is not None else None,
-                "title": str(r["title"]) if r.get("title") is not None else None,
-                "qty_ordered": qty,
-            }
+    shipped_rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      item_id,
+                      SUM(-delta) AS qty_shipped
+                    FROM stock_ledger
+                    WHERE ref = :ref
+                      AND delta < 0
+                    GROUP BY item_id
+                    """
+                ),
+                {"ref": order_ref},
+            )
         )
-    return out
+        .mappings()
+        .all()
+    )
+
+    returned_rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      rl.item_id,
+                      SUM(COALESCE(rl.qty_base, 0)) AS qty_returned
+                    FROM inbound_receipt_lines AS rl
+                    JOIN inbound_receipts AS r
+                      ON r.id = rl.receipt_id
+                    WHERE r.source_type = 'ORDER'
+                      AND r.source_id = :oid
+                      AND r.status = 'CONFIRMED'
+                    GROUP BY rl.item_id
+                    """
+                ),
+                {"oid": int(order_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    shipped_map: Dict[int, int] = {
+        int(r["item_id"]): int(r.get("qty_shipped") or 0) for r in shipped_rows
+    }
+    returned_map: Dict[int, int] = {
+        int(r["item_id"]): int(r.get("qty_returned") or 0) for r in returned_rows
+    }
+
+    items_map: Dict[int, Dict[str, Any]] = {}
+    items: List[Dict[str, Any]] = []
+    issues: List[str] = []
+
+    for r in item_rows:
+        item_id = int(r["item_id"])
+        qty_ordered = int(r.get("qty") or 0)
+        qty_shipped = int(shipped_map.get(item_id, 0))
+        qty_returned = int(returned_map.get(item_id, 0))
+        qty_remaining_refundable = max(min(qty_ordered, qty_shipped) - qty_returned, 0)
+
+        if qty_shipped > qty_ordered:
+            issues.append(
+                f"item_id={item_id} shipped({qty_shipped}) > ordered({qty_ordered})"
+            )
+        if qty_returned > qty_shipped:
+            issues.append(
+                f"item_id={item_id} returned({qty_returned}) > shipped({qty_shipped})"
+            )
+
+        row = {
+            "item_id": item_id,
+            "sku_id": str(r["sku_id"]) if r.get("sku_id") is not None else None,
+            "title": str(r["title"]) if r.get("title") is not None else None,
+            "qty_ordered": qty_ordered,
+            "qty_shipped": qty_shipped,
+            "qty_returned": qty_returned,
+            "qty_remaining_refundable": qty_remaining_refundable,
+        }
+        items_map[item_id] = row
+        items.append(row)
+
+    for item_id in shipped_map.keys():
+        if item_id not in items_map:
+            issues.append(
+                f"ledger has shipped item_id={item_id}, but order_items has no row for it"
+            )
+
+    for item_id in returned_map.keys():
+        if item_id not in items_map:
+            issues.append(
+                f"RMA has returned item_id={item_id}, but order_items has no row for it"
+            )
+
+    return {
+        "order_id": int(head["id"]),
+        "platform": platform,
+        "shop_id": shop_id,
+        "ext_order_no": ext_order_no,
+        "issues": issues,
+        "items": items,
+    }
