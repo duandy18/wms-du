@@ -8,15 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_session
 from app.api.lot_code_contract import (
     fetch_item_expiry_policy_map,
     validate_lot_code_contract,
 )
-from app.api.deps import get_session
-from app.api.routers.orders_fulfillment_v2_helpers import get_order_ref_and_trace_id
 from app.api.routers.orders_fulfillment_v2_schemas import PickRequest, PickResponse
 from app.models.enums import MovementType
 from app.services.pick_service import PickService
+from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
 
 
 def _requires_batch_from_expiry_policy(v: object) -> bool:

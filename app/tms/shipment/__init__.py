@@ -1,13 +1,19 @@
 # app/tms/shipment/__init__.py
 """
-TMS / TransportShipment module shell.
+TMS / TransportShipment module.
 
-Phase 2 终态目标：
-- ship_with_waybill 成为 Shipment 唯一主写入口
-- Shipment 主真相落在 transport_shipments
-- shipping_records 降级为 projection / ledger
-- status 更新必须同步主实体与 projection
+当前终态：
+- /ship-with-waybill 是 Shipment Execution 唯一主入口；
+- shipping_records 的 create/upsert 写入口统一由 TransportShipment 控制；
+- QuoteSnapshot 主合同归属 app.tms.quote_snapshot，由 Shipment 消费；
+- 本地物流状态真相与双写同步路线已废止，不再作为 Shipment 主能力。
 """
+
+from app.tms.quote_snapshot import (
+    extract_cost_estimated,
+    extract_quote_snapshot,
+    validate_quote_snapshot,
+)
 
 from .contracts import (
     ShipmentApplicationError,
@@ -17,11 +23,6 @@ from .contracts import (
     ShipWithWaybillResult,
     UpdateShipmentStatusCommand,
     UpdateShipmentStatusResult,
-)
-from .quote_snapshot import (
-    extract_cost_estimated,
-    extract_quote_snapshot,
-    validate_quote_snapshot,
 )
 from .service import TransportShipmentService
 

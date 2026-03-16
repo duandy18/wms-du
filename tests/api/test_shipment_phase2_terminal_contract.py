@@ -1,7 +1,6 @@
 # tests/api/test_shipment_phase2_terminal_contract.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -138,7 +137,7 @@ async def test_ship_confirm_route_is_removed(client: AsyncClient) -> None:
     assert resp.status_code == 404, resp.text
 
 
-async def test_shipping_record_status_api_syncs_projection_and_transport_shipment(
+async def test_shipping_record_status_api_is_removed(
     client: AsyncClient,
     session: AsyncSession,
 ) -> None:
@@ -165,72 +164,16 @@ async def test_shipping_record_status_api_syncs_projection_and_transport_shipmen
         shop_id=shop_id,
     )
 
-    delivered_at = datetime.now(timezone.utc).replace(microsecond=0)
-
     update_resp = await client.post(
         f"/shipping-records/{record_id}/status",
         headers=headers,
         json={
             "status": "DELIVERED",
-            "delivery_time": delivered_at.isoformat(),
+            "delivery_time": None,
             "error_code": None,
             "error_message": None,
             "meta": {"api_case": "phase2-terminal"},
         },
     )
-    assert update_resp.status_code == 200, update_resp.text
 
-    body = update_resp.json()
-    assert body["ok"] is True
-    assert int(body["id"]) == record_id
-    assert body["status"] == "DELIVERED"
-
-    record_row = (
-        await session.execute(
-            text(
-                """
-                SELECT
-                  shipment_id,
-                  status,
-                  delivery_time,
-                  error_code,
-                  error_message,
-                  meta
-                FROM shipping_records
-                WHERE id = :id
-                """
-            ),
-            {"id": record_id},
-        )
-    ).mappings().first()
-    assert record_row is not None
-    assert record_row["shipment_id"] is not None
-    assert record_row["status"] == "DELIVERED"
-    assert record_row["delivery_time"] == delivered_at
-    assert record_row["error_code"] is None
-    assert record_row["error_message"] is None
-    assert isinstance(record_row["meta"], dict)
-    assert record_row["meta"]["api_case"] == "phase2-terminal"
-
-    shipment_row = (
-        await session.execute(
-            text(
-                """
-                SELECT
-                  id,
-                  status,
-                  delivery_time,
-                  error_code,
-                  error_message
-                FROM transport_shipments
-                WHERE id = :id
-                """
-            ),
-            {"id": int(record_row["shipment_id"])},
-        )
-    ).mappings().first()
-    assert shipment_row is not None
-    assert shipment_row["status"] == "DELIVERED"
-    assert shipment_row["delivery_time"] == delivered_at
-    assert shipment_row["error_code"] is None
-    assert shipment_row["error_message"] is None
+    assert update_resp.status_code == 404, update_resp.text

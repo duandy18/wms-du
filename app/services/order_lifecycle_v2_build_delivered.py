@@ -14,28 +14,15 @@ def inject_delivered_stage(
     ref: Optional[str],
 ) -> List[LifecycleStage]:
     """
-    根据 shipping_records(status=DELIVERED) 注入一个 delivered 阶段。
+    delivered 阶段注入逻辑已废止。
+
+    当前终态：
+    - 运输生命周期在 shipped（交运完成）处收口；
+    - delivered / lost / returned / 在途等后续物流状态，不再由本地 shipping_records 承担真相；
+    - 若业务需要查看物流后续状态，应通过平台商铺 API / 平台事件侧获取。
+
+    保留本函数仅作为过渡空实现，避免历史 import 立即失效。
     """
-    if ts is None:
-        return stages
-    if any(st.key == "delivered" for st in stages):
-        return stages
-
-    delivered_stage = LifecycleStage(
-        key="delivered",
-        label="订单送达",
-        ts=ts,
-        present=True,
-        description="基于 shipping_records(status=DELIVERED) 推断的送达时间。",
-        source="shipping_records",
-        ref=ref,
-        evidence_type="explicit_shipping_record",
-        evidence={
-            "ref": ref,
-            "status": "DELIVERED",
-            "source": "shipping_records",
-        },
-    )
-
-    stages.append(delivered_stage)
+    del ts
+    del ref
     return stages

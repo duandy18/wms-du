@@ -241,6 +241,24 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="附加费城市子模型。",
     ),
     FileOwnershipRule(
+        path_prefix="app/tms/config/router.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
+        note="TransportConfig 总路由壳。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/config/providers/",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
+        note="TransportConfig / providers 子域。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/config/warehouse_provider_bindings/",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
+        note="TransportConfig / warehouse-provider-bindings 子域。",
+    ),
+    FileOwnershipRule(
         path_prefix="app/services/shipping_quote/",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_QUOTE,
@@ -289,12 +307,6 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="Shipment 在 orders_fulfillment_v2 下的新主路由壳。",
     ),
     FileOwnershipRule(
-        path_prefix="app/tms/shipment/router.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="Shipment 新主路由壳。",
-    ),
-    FileOwnershipRule(
         path_prefix="app/tms/shipment/",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
@@ -305,18 +317,6 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
         note="当前挂在 Fulfillment，但语义属于 Shipment。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/api/routers/orders_fulfillment_v2_routes_3_ship.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="当前挂在 Fulfillment，但语义属于 Shipment。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/api/routers/orders_fulfillment_v2_helpers.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="当前仍是兼容转发层；其中 quote_snapshot 相关逻辑已改为消费 Quote 域合同。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/orders_fulfillment_v2_schemas.py",
@@ -343,22 +343,34 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="运输账本事实模型。",
     ),
     FileOwnershipRule(
-        path_prefix="app/tms/records/router.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="Records 新主路由壳。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_records_routes_read.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="账本读取入口。",
-    ),
-    FileOwnershipRule(
         path_prefix="app/api/routers/shipping_records_routes_status.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="账本状态推进入口。",
+        note="历史 shipping_records 状态路由；冻结归属仍属于 TransportLedger。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/records/router.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
+        note="Records 新主路由装配入口。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/records/contracts.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
+        note="Records 账本只读合同。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/records/repository.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
+        note="Records 账本只读查询实现。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/records/routes_read.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
+        note="Records 账本读取路由。",
     ),
     FileOwnershipRule(
         path_prefix="app/jobs/shipping_delivery_sync_apply.py",
@@ -373,22 +385,34 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="平台状态同步 runner。",
     ),
     FileOwnershipRule(
+        path_prefix="app/api/routers/shipping_reports_routes_",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
+        note="历史运输报表叶子路由；冻结归属仍属于 TransportReports。",
+    ),
+    FileOwnershipRule(
         path_prefix="app/tms/reports/router.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
         note="Reports 新主路由壳。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_reports_routes_",
+        path_prefix="app/tms/reports/routes_",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
-        note="运输报表子路由。",
+        note="运输报表子路由实现。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_reports_helpers.py",
+        path_prefix="app/tms/reports/helpers.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
         note="运输报表 helper。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/reports/contracts.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_REPORTS,
+        note="运输报表合同定义。",
     ),
 )
 

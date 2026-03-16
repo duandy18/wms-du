@@ -3,6 +3,7 @@
 TMS / TransportRecords module shell.
 
 语义定位：
-- TransportRecords 负责 shipping_records 的读取与状态变更入口
-- 当前阶段先建立模块壳与 router 归属，不改变 URL
+- TransportRecords 负责 shipping_records（物流台帐）的读取入口
+- 当前阶段 shipping_records 只保留“我方发货事实”
+- 物流状态不再由本模块维护，不再提供状态写入口
 """
