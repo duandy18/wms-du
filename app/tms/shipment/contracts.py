@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from app.tms.quote_snapshot.contracts import QuoteSnapshotData
 
@@ -70,21 +69,3 @@ class ShipWithWaybillResult:
     status: str
     label_base64: str | None
     label_format: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class UpdateShipmentStatusCommand:
-    record_id: int
-    status: str
-    delivery_time: datetime | None
-    error_code: str | None
-    error_message: str | None
-    meta: dict[str, object] | None
-
-
-@dataclass(frozen=True, slots=True)
-class UpdateShipmentStatusResult:
-    ok: bool
-    id: int
-    status: str
-    delivery_time: datetime | None

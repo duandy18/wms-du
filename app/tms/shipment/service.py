@@ -3,7 +3,7 @@
 # - 本文件已从“单文件大而全”结构拆分为“应用编排层”。
 # - ShippingRecord 当前语义已收口为“物流台帐表”；
 # - transport_shipments 仍未物理删除，但本文件不再把 shipping_records 绑定为其 projection；
-# - 物流状态同步能力已停止对外开放，后续状态真相改由平台读取。
+# - 物流状态写链路已删除，平台状态不再回写运输账本。
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -19,8 +19,6 @@ from .contracts import (
     ShipCommitAuditResult,
     ShipWithWaybillCommand,
     ShipWithWaybillResult,
-    UpdateShipmentStatusCommand,
-    UpdateShipmentStatusResult,
 )
 from .repository import upsert_waybill_shipping_record
 from .validators import (
@@ -160,17 +158,6 @@ class TransportShipmentService:
             status="IN_TRANSIT",
             label_base64=None,
             label_format=None,
-        )
-
-    async def update_shipment_status(
-        self,
-        command: UpdateShipmentStatusCommand,
-    ) -> UpdateShipmentStatusResult:
-        del command
-        self._raise(
-            status_code=410,
-            code="SHIPMENT_STATUS_WRITE_REMOVED",
-            message="shipment status write has been removed; logistics status should be read from platform APIs",
         )
 
     @staticmethod

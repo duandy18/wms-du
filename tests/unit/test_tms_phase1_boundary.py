@@ -93,14 +93,6 @@ def test_tms_records_router_is_frozen_as_transport_ledger() -> None:
     assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_LEDGER
 
 
-def test_shipping_records_routes_status_is_frozen_as_transport_ledger() -> None:
-    rule = find_file_ownership("app/api/routers/shipping_records_routes_status.py")
-
-    assert rule is not None
-    assert rule.owner_domain == DomainOwner.TMS
-    assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_LEDGER
-
-
 def test_tms_reports_router_is_frozen_as_transport_reports() -> None:
     rule = find_file_ownership("app/tms/reports/router.py")
 

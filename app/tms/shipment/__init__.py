@@ -6,7 +6,7 @@ TMS / TransportShipment module.
 - /ship-with-waybill 是 Shipment Execution 唯一主入口；
 - shipping_records 的 create/upsert 写入口统一由 TransportShipment 控制；
 - QuoteSnapshot 主合同归属 app.tms.quote_snapshot，由 Shipment 消费；
-- 本地物流状态真相与双写同步路线已废止，不再作为 Shipment 主能力。
+- 平台状态不再回写运输账本，不再提供本地状态写能力。
 """
 
 from app.tms.quote_snapshot import (
@@ -21,8 +21,6 @@ from .contracts import (
     ShipCommitAuditResult,
     ShipWithWaybillCommand,
     ShipWithWaybillResult,
-    UpdateShipmentStatusCommand,
-    UpdateShipmentStatusResult,
 )
 from .service import TransportShipmentService
 
@@ -32,8 +30,6 @@ __all__ = [
     "ShipCommitAuditResult",
     "ShipWithWaybillCommand",
     "ShipWithWaybillResult",
-    "UpdateShipmentStatusCommand",
-    "UpdateShipmentStatusResult",
     "extract_cost_estimated",
     "extract_quote_snapshot",
     "validate_quote_snapshot",
