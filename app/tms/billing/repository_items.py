@@ -1,10 +1,32 @@
-# app/tms/billing/repository.py
+# app/tms/billing/repository_items.py
+"""
+【拆分说明】
+
+本文件从原 repository.py 中拆分而来。
+
+职责：
+- carrier_bill_items（账单明细表）相关操作
+
+设计原则：
+- import_batch_id 是明细所属批次的唯一内部主链
+- import_batch_no / carrier_code 为展示与检索字段，不承担系统内部主驱动职责
+
+拆分原因：
+- 原 repository.py 同时承担批次、明细、对账结果、发货记录辅助查询四类职责，已出现膨胀
+- 本文件只负责“账单明细”，避免跨职责污染
+
+重要约束：
+- 不得在本文件中操作 carrier_bill_import_batches
+- 不得在本文件中操作 shipping_record_reconciliations
+- 不得在本文件中承载 shipping_records 的辅助查询
+"""
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -12,9 +34,24 @@ def _json_dumps(obj: dict[str, object]) -> str:
     return json.dumps(obj, ensure_ascii=False)
 
 
+async def delete_carrier_bill_items_by_batch(
+    session: AsyncSession,
+    *,
+    import_batch_id: int,
+) -> None:
+    sql = text(
+        """
+        DELETE FROM carrier_bill_items
+        WHERE import_batch_id = :import_batch_id
+        """
+    )
+    await session.execute(sql, {"import_batch_id": import_batch_id})
+
+
 async def insert_carrier_bill_items(
     session: AsyncSession,
     *,
+    import_batch_id: int,
     rows: list[dict[str, object]],
     carrier_code: str,
     import_batch_no: str,
@@ -23,6 +60,7 @@ async def insert_carrier_bill_items(
     sql = text(
         """
         INSERT INTO carrier_bill_items (
+            import_batch_id,
             import_batch_no,
             carrier_code,
             bill_month,
@@ -43,6 +81,7 @@ async def insert_carrier_bill_items(
             raw_payload
         )
         VALUES (
+            :import_batch_id,
             :import_batch_no,
             :carrier_code,
             :bill_month,
@@ -70,6 +109,7 @@ async def insert_carrier_bill_items(
         await session.execute(
             sql,
             {
+                "import_batch_id": import_batch_id,
                 "import_batch_no": import_batch_no,
                 "carrier_code": carrier_code,
                 "bill_month": bill_month,
@@ -98,6 +138,7 @@ async def insert_carrier_bill_items(
 async def list_carrier_bill_items(
     session: AsyncSession,
     *,
+    import_batch_id: int | None,
     import_batch_no: str | None,
     carrier_code: str | None,
     tracking_no: str | None,
@@ -107,50 +148,65 @@ async def list_carrier_bill_items(
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
 
+    if import_batch_id is not None:
+        where_parts.append("cbi.import_batch_id = :import_batch_id")
+        params["import_batch_id"] = import_batch_id
+
     if import_batch_no:
-        where_parts.append("import_batch_no = :import_batch_no")
+        where_parts.append("cbi.import_batch_no = :import_batch_no")
         params["import_batch_no"] = import_batch_no
 
     if carrier_code:
-        where_parts.append("upper(carrier_code) = upper(:carrier_code)")
+        where_parts.append("upper(cbi.carrier_code) = upper(:carrier_code)")
         params["carrier_code"] = carrier_code
 
     if tracking_no:
-        where_parts.append("tracking_no = :tracking_no")
+        where_parts.append("cbi.tracking_no = :tracking_no")
         params["tracking_no"] = tracking_no
 
     where_sql = " AND ".join(where_parts)
 
-    count_sql = text(f"SELECT COUNT(*) FROM carrier_bill_items WHERE {where_sql}")
+    count_sql = text(
+        f"""
+        SELECT COUNT(*)
+        FROM carrier_bill_items cbi
+        JOIN carrier_bill_import_batches b
+          ON b.id = cbi.import_batch_id
+        WHERE {where_sql}
+        """
+    )
     count_params = {k: v for k, v in params.items() if k not in {"limit", "offset"}}
     total = int((await session.execute(count_sql, count_params)).scalar() or 0)
 
     query_sql = text(
         f"""
         SELECT
-            id,
-            import_batch_no,
-            carrier_code,
-            bill_month,
-            tracking_no,
-            business_time,
-            destination_province,
-            destination_city,
-            billing_weight_kg,
-            freight_amount,
-            surcharge_amount,
-            total_amount,
-            settlement_object,
-            order_customer,
-            sender_name,
-            network_name,
-            size_text,
-            parent_customer,
-            raw_payload,
-            created_at
-        FROM carrier_bill_items
+            cbi.id,
+            cbi.import_batch_id,
+            cbi.import_batch_no,
+            cbi.carrier_code,
+            cbi.bill_month,
+            cbi.tracking_no,
+            cbi.business_time,
+            cbi.destination_province,
+            cbi.destination_city,
+            cbi.billing_weight_kg,
+            cbi.freight_amount,
+            cbi.surcharge_amount,
+            cbi.total_amount,
+            cbi.settlement_object,
+            cbi.order_customer,
+            cbi.sender_name,
+            cbi.network_name,
+            cbi.size_text,
+            cbi.parent_customer,
+            cbi.raw_payload,
+            cbi.created_at
+        FROM carrier_bill_items cbi
+        JOIN carrier_bill_import_batches b
+          ON b.id = cbi.import_batch_id
         WHERE {where_sql}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY cbi.created_at DESC, cbi.id DESC
         LIMIT :limit OFFSET :offset
         """
     )
@@ -161,20 +217,20 @@ async def list_carrier_bill_items(
 async def list_carrier_bill_items_for_reconcile(
     session: AsyncSession,
     *,
-    import_batch_no: str,
-    carrier_code: str,
+    import_batch_id: int,
 ) -> list[dict[str, Any]]:
     sql = text(
         """
         SELECT
             id,
+            import_batch_id,
             tracking_no,
+            business_time,
             billing_weight_kg,
             freight_amount,
             surcharge_amount
         FROM carrier_bill_items
-        WHERE import_batch_no = :import_batch_no
-          AND upper(carrier_code) = upper(:carrier_code)
+        WHERE import_batch_id = :import_batch_id
         ORDER BY id ASC
         """
     )
@@ -182,109 +238,8 @@ async def list_carrier_bill_items_for_reconcile(
         await session.execute(
             sql,
             {
-                "import_batch_no": import_batch_no,
-                "carrier_code": carrier_code,
+                "import_batch_id": import_batch_id,
             },
         )
     ).mappings().all()
     return [dict(r) for r in rows]
-
-
-async def list_shipping_records_for_reconcile(
-    session: AsyncSession,
-    *,
-    carrier_code: str,
-    tracking_nos: list[str],
-) -> list[dict[str, Any]]:
-    if not tracking_nos:
-        return []
-
-    sql = (
-        text(
-            """
-            SELECT
-                id,
-                tracking_no,
-                gross_weight_kg,
-                cost_estimated
-            FROM shipping_records
-            WHERE upper(carrier_code) = upper(:carrier_code)
-              AND tracking_no IN :tracking_nos
-            """
-        ).bindparams(bindparam("tracking_nos", expanding=True))
-    )
-
-    rows = (
-        await session.execute(
-            sql,
-            {
-                "carrier_code": carrier_code,
-                "tracking_nos": tracking_nos,
-            },
-        )
-    ).mappings().all()
-    return [dict(r) for r in rows]
-
-
-async def upsert_shipping_record_reconciliation(
-    session: AsyncSession,
-    *,
-    shipping_record_id: int,
-    carrier_bill_item_id: int,
-    tracking_no: str,
-    weight_diff_kg: object | None,
-    cost_diff: object | None,
-    adjust_amount: object | None,
-) -> None:
-    sql = text(
-        """
-        INSERT INTO shipping_record_reconciliations (
-            shipping_record_id,
-            carrier_bill_item_id,
-            tracking_no,
-            weight_diff_kg,
-            cost_diff,
-            adjust_amount
-        )
-        VALUES (
-            :shipping_record_id,
-            :carrier_bill_item_id,
-            :tracking_no,
-            :weight_diff_kg,
-            :cost_diff,
-            :adjust_amount
-        )
-        ON CONFLICT (shipping_record_id)
-        DO UPDATE SET
-            carrier_bill_item_id = EXCLUDED.carrier_bill_item_id,
-            tracking_no = EXCLUDED.tracking_no,
-            weight_diff_kg = EXCLUDED.weight_diff_kg,
-            cost_diff = EXCLUDED.cost_diff,
-            adjust_amount = EXCLUDED.adjust_amount
-        """
-    )
-    await session.execute(
-        sql,
-        {
-            "shipping_record_id": shipping_record_id,
-            "carrier_bill_item_id": carrier_bill_item_id,
-            "tracking_no": tracking_no,
-            "weight_diff_kg": weight_diff_kg,
-            "cost_diff": cost_diff,
-            "adjust_amount": adjust_amount,
-        },
-    )
-
-
-async def delete_shipping_record_reconciliation_by_shipping_record_id(
-    session: AsyncSession,
-    *,
-    shipping_record_id: int,
-) -> None:
-    sql = text(
-        """
-        DELETE FROM shipping_record_reconciliations
-        WHERE shipping_record_id = :shipping_record_id
-        """
-    )
-    await session.execute(sql, {"shipping_record_id": shipping_record_id})

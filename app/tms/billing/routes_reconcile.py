@@ -29,7 +29,6 @@ def register(router: APIRouter) -> None:
         service = CarrierBillReconcileService(session)
         return await service.reconcile(
             ReconcileCarrierBillCommand(
-                carrier_code=payload.carrier_code.strip(),
-                import_batch_no=payload.import_batch_no.strip(),
+                import_batch_id=payload.import_batch_id,
             )
         )
