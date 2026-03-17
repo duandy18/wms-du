@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from . import routes_import
 from . import routes_items
 from . import routes_reconcile
+from . import routes_reconciliations
 
 router = APIRouter(tags=["shipping-bills"])
 
@@ -20,6 +21,7 @@ def _register_all_routes() -> None:
     routes_import.register(router)
     routes_items.register(router)
     routes_reconcile.register(router)
+    routes_reconciliations.register(router)
 
 
 _register_all_routes()

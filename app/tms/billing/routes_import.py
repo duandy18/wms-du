@@ -14,7 +14,17 @@ from .contracts import (
     ImportCarrierBillCommand,
 )
 from .importer import parse_and_normalize_carrier_bill_xlsx
-from .repository import insert_carrier_bill_items
+
+# ✅ 拆分后的 repository 引用
+from .repository_batches import (
+    create_carrier_bill_import_batch,
+    get_carrier_bill_import_batch_by_business_key,
+    update_carrier_bill_import_batch,
+)
+from .repository_items import (
+    delete_carrier_bill_items_by_batch,
+    insert_carrier_bill_items,
+)
 
 
 def register(router: APIRouter) -> None:
@@ -36,7 +46,11 @@ def register(router: APIRouter) -> None:
 
         carrier_code_clean = carrier_code.strip()
         import_batch_no_clean = import_batch_no.strip()
-        bill_month_clean = bill_month.strip() if isinstance(bill_month, str) and bill_month.strip() else None
+        bill_month_clean = (
+            bill_month.strip()
+            if isinstance(bill_month, str) and bill_month.strip()
+            else None
+        )
 
         if not carrier_code_clean:
             raise HTTPException(status_code=422, detail="carrier_code is required")
@@ -55,18 +69,61 @@ def register(router: APIRouter) -> None:
             file_bytes=file_bytes,
         )
 
-        valid_rows, errors_data, skipped_count = parse_and_normalize_carrier_bill_xlsx(file_bytes)
+        valid_rows, errors_data, skipped_count = parse_and_normalize_carrier_bill_xlsx(
+            file_bytes
+        )
+
+        row_count = len(valid_rows) + skipped_count + len(errors_data)
+        success_count = len(valid_rows)
+        error_count = len(errors_data)
+
+        batch_row = await get_carrier_bill_import_batch_by_business_key(
+            session,
+            carrier_code=carrier_code_clean,
+            import_batch_no=import_batch_no_clean,
+        )
+
+        if batch_row is None:
+            import_batch_id = await create_carrier_bill_import_batch(
+                session,
+                carrier_code=carrier_code_clean,
+                import_batch_no=import_batch_no_clean,
+                bill_month=bill_month_clean,
+                source_filename=filename or None,
+                row_count=row_count,
+                success_count=success_count,
+                error_count=error_count,
+                status="imported" if success_count > 0 else "failed",
+            )
+        else:
+            import_batch_id = int(batch_row["id"])
+            await delete_carrier_bill_items_by_batch(
+                session,
+                import_batch_id=import_batch_id,
+            )
+            await update_carrier_bill_import_batch(
+                session,
+                import_batch_id=import_batch_id,
+                bill_month=bill_month_clean,
+                source_filename=filename or None,
+                row_count=row_count,
+                success_count=success_count,
+                error_count=error_count,
+                status="imported" if success_count > 0 else "failed",
+            )
 
         imported_count = 0
         if valid_rows:
             imported_count = await insert_carrier_bill_items(
                 session,
+                import_batch_id=import_batch_id,
                 rows=valid_rows,
                 carrier_code=carrier_code_clean,
                 import_batch_no=import_batch_no_clean,
                 bill_month=bill_month_clean,
             )
-            await session.commit()
+
+        await session.commit()
 
         errors = [
             CarrierBillImportRowError(row_no=e.row_no, message=e.message)
@@ -75,6 +132,7 @@ def register(router: APIRouter) -> None:
 
         return CarrierBillImportResult(
             ok=True,
+            import_batch_id=import_batch_id,
             carrier_code=carrier_code_clean,
             import_batch_no=import_batch_no_clean,
             imported_count=imported_count,

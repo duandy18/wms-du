@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Numeric, String, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,12 +18,19 @@ class CarrierBillItem(Base):
     - 承载快递公司发来的账单行原始证据；
     - 当前阶段只负责“导入 + 查询”；
     - 不承担自动对账结果，不回写 shipping_records；
-    - import_batch_no 用于区分每次导入批次。
+    - import_batch_id 是账单导入批次头表主关联；
+    - import_batch_no 保留为业务展示批次号。
     """
 
     __tablename__ = "carrier_bill_items"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    import_batch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("carrier_bill_import_batches.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
     import_batch_no: Mapped[str] = mapped_column(String(64), nullable=False)
     carrier_code: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -71,8 +78,18 @@ class CarrierBillItem(Base):
     )
 
     __table_args__ = (
+        Index("ix_carrier_bill_items_import_batch_id", "import_batch_id"),
         Index("ix_carrier_bill_items_batch_no", "import_batch_no"),
         Index("ix_carrier_bill_items_tracking_no", "tracking_no"),
         Index("ix_carrier_bill_items_carrier_tracking", "carrier_code", "tracking_no"),
         Index("ix_carrier_bill_items_business_time", "business_time"),
     )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CarrierBillItem id={self.id} "
+            f"import_batch_id={self.import_batch_id} "
+            f"import_batch_no={self.import_batch_no} "
+            f"carrier_code={self.carrier_code} "
+            f"tracking_no={self.tracking_no}>"
+        )

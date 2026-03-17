@@ -2,21 +2,37 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
+ReconciliationStatus = Literal["diff", "bill_only", "record_only"]
+
 
 class ShippingRecordReconciliation(Base):
     """
-    发货对账差异处理表 shipping_record_reconciliations
+    发货对账异常表 shipping_record_reconciliations
 
     语义定位：
-    - 只记录“已匹配成功且存在差异”的运单；
+    - 本表只记录“异常态”，不记录 matched；
+    - 异常态包括：
+      * diff        = 账单与台帐均存在，但存在差异
+      * bill_only   = 账单存在，但台帐不存在
+      * record_only = 台帐存在，但账单不存在
     - 原始来源是 shipping_records（物流台帐）与 carrier_bill_items（快递账单）；
-    - 不保存全量账单/台帐原始值，只保存差异结果与处理金额；
+    - import_batch_id 是账单导入批次头表主关联；
     - adjust_amount 为人工处理结果：
       * NULL = 尚未处理
       * 0 = 接受账单，不调整
@@ -27,17 +43,37 @@ class ShippingRecordReconciliation(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
-    shipping_record_id: Mapped[int] = mapped_column(
+    import_batch_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("shipping_records.id", ondelete="RESTRICT"),
+        ForeignKey("carrier_bill_import_batches.id", ondelete="RESTRICT"),
         nullable=False,
-        unique=True,
     )
 
-    carrier_bill_item_id: Mapped[int] = mapped_column(
+    status: Mapped[ReconciliationStatus] = mapped_column(
+        String(16),
+        nullable=False,
+    )
+
+    carrier_code: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+
+    import_batch_no: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+
+    shipping_record_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("shipping_records.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
+    carrier_bill_item_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("carrier_bill_items.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
 
     tracking_no: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -64,16 +100,60 @@ class ShippingRecordReconciliation(Base):
     )
 
     __table_args__ = (
-        Index("ix_shipping_record_reconciliations_tracking_no", "tracking_no"),
+        CheckConstraint(
+            "status IN ('diff', 'bill_only', 'record_only')",
+            name="ck_shipping_record_reconciliations_status",
+        ),
+        CheckConstraint(
+            """
+            (
+              (status = 'diff' AND shipping_record_id IS NOT NULL AND carrier_bill_item_id IS NOT NULL)
+              OR
+              (status = 'bill_only' AND shipping_record_id IS NULL AND carrier_bill_item_id IS NOT NULL)
+              OR
+              (status = 'record_only' AND shipping_record_id IS NOT NULL AND carrier_bill_item_id IS NULL)
+            )
+            """,
+            name="ck_shipping_record_reconciliations_status_shape",
+        ),
+        Index(
+            "ix_shipping_record_reconciliations_tracking_no",
+            "tracking_no",
+        ),
         Index(
             "ix_shipping_record_reconciliations_bill_item_id",
             "carrier_bill_item_id",
+        ),
+        Index(
+            "ix_shipping_record_reconciliations_import_batch_id",
+            "import_batch_id",
+        ),
+        Index(
+            "uq_shipping_record_reconciliations_shipping_record_id_notnull",
+            "shipping_record_id",
+            unique=True,
+            postgresql_where=text("shipping_record_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_shipping_record_reconciliations_bill_item_id_notnull",
+            "carrier_bill_item_id",
+            unique=True,
+            postgresql_where=text("carrier_bill_item_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_shipping_record_reconciliations_batch_status",
+            "import_batch_id",
+            "status",
         ),
     )
 
     def __repr__(self) -> str:
         return (
             f"<ShippingRecordReconciliation id={self.id} "
+            f"import_batch_id={self.import_batch_id} "
+            f"status={self.status} "
+            f"carrier_code={self.carrier_code} "
+            f"import_batch_no={self.import_batch_no} "
             f"shipping_record_id={self.shipping_record_id} "
             f"bill_item_id={self.carrier_bill_item_id} "
             f"tracking_no={self.tracking_no}>"

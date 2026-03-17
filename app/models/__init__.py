@@ -96,7 +96,9 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     ("app.models.transport_shipment", "TransportShipment"),
     ("app.models.shipping_record", "ShippingRecord"),
+    ("app.models.carrier_bill_import_batch", "CarrierBillImportBatch"),
     ("app.models.carrier_bill_item", "CarrierBillItem"),
+    ("app.models.shipping_record_reconciliation", "ShippingRecordReconciliation"),
     # ------------------------------------------------------------------
     # 运价（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge_config）
     # ------------------------------------------------------------------
@@ -165,10 +167,12 @@ __all__ = [
     # ---- Internal Outbound ----
     "InternalOutboundDoc",
     "InternalOutboundLine",
-    # ---- Shipment / Ledger ----
+    # ---- Shipment / Ledger / Billing ----
     "TransportShipment",
     "ShippingRecord",
+    "CarrierBillImportBatch",
     "CarrierBillItem",
+    "ShippingRecordReconciliation",
     # ---- Pricing ----
     "ShippingProviderPricingScheme",
     "ShippingProviderPricingSchemeModuleRange",
