@@ -2,8 +2,8 @@
 #
 # 分拆说明：
 # - 本文件承载 TMS / Records（物流台帐）只读合同；
-# - 仅暴露 shipping_records 当前“发货事实台帐”语义下的字段；
-# - 不暴露物流状态、不暴露对账结果字段。
+# - shipping_records 的来源是发货执行流程写入的运输事实；
+# - Records 域仅提供台帐列表与导出，不提供详情写入、不提供状态维护。
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,11 +11,9 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class ShippingRecordOut(BaseModel):
+class ShippingLedgerRow(BaseModel):
     id: int
     order_ref: str
-    platform: str
-    shop_id: str
 
     warehouse_id: int | None = Field(default=None)
     shipping_provider_id: int | None = Field(default=None)
@@ -31,3 +29,9 @@ class ShippingRecordOut(BaseModel):
     dest_city: str | None = None
 
     created_at: datetime
+
+
+class ShippingLedgerListResponse(BaseModel):
+    ok: bool = True
+    rows: list[ShippingLedgerRow]
+    total: int

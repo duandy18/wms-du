@@ -12,7 +12,6 @@ from app.tms.shipment import (
     ShipmentApplicationError,
     ShipWithWaybillCommand,
     TransportShipmentService,
-    UpdateShipmentStatusCommand,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -86,50 +85,6 @@ async def _load_shipping_record(
 
     assert record_row is not None, "shipping_records row not found"
     return dict(record_row)
-
-
-async def _create_waybill_record(
-    session: AsyncSession,
-    *,
-    suffix: str,
-) -> tuple[TransportShipmentService, str, str, str, int]:
-    svc = TransportShipmentService(session)
-    uniq = uuid4().hex[:10]
-    platform = "PDD"
-    shop_id = "1"
-    ext_order_no = f"{suffix}-{uniq}"
-    order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
-
-    await svc.ship_with_waybill(
-        ShipWithWaybillCommand(
-            order_ref=order_ref,
-            trace_id=f"TRACE-{uniq}",
-            platform=platform,
-            shop_id=shop_id,
-            ext_order_no=ext_order_no,
-            warehouse_id=1,
-            shipping_provider_id=1,
-            carrier_code=None,
-            carrier_name=None,
-            weight_kg=2.0,
-            receiver_name="测试用户",
-            receiver_phone="13600000000",
-            province="北京市",
-            city="北京市",
-            district="西城区",
-            address_detail="测试地址 9 号",
-            quote_snapshot=_build_quote_snapshot(provider_id=1, total_amount=18.8),
-            meta={"source": "state-machine-test"},
-        )
-    )
-
-    record = await _load_shipping_record(
-        session,
-        order_ref=order_ref,
-        platform=platform,
-        shop_id=shop_id,
-    )
-    return svc, order_ref, platform, shop_id, int(record["id"])
 
 
 async def test_ship_with_waybill_writes_shipping_record_ledger(session: AsyncSession) -> None:
@@ -207,7 +162,7 @@ async def test_ship_with_waybill_rejects_provider_not_bound_to_warehouse(session
                 shop_id=shop_id,
                 ext_order_no=ext_order_no,
                 warehouse_id=1,
-                shipping_provider_id=2,  # base_seed 中 provider=2 未绑定 warehouse=1
+                shipping_provider_id=2,
                 carrier_code=None,
                 carrier_name=None,
                 weight_kg=1.0,
@@ -262,29 +217,6 @@ async def test_ship_with_waybill_rejects_quote_snapshot_provider_mismatch(sessio
     err = exc_info.value
     assert err.status_code == 422
     assert err.code == "SHIP_WITH_WAYBILL_QUOTE_PROVIDER_MISMATCH"
-
-
-async def test_update_shipment_status_is_removed(session: AsyncSession) -> None:
-    svc, _, _, _, record_id = await _create_waybill_record(
-        session,
-        suffix="EXT-STATUS-REMOVED",
-    )
-
-    with pytest.raises(ShipmentApplicationError) as exc_info:
-        await svc.update_shipment_status(
-            UpdateShipmentStatusCommand(
-                record_id=record_id,
-                status="DELIVERED",
-                delivery_time=None,
-                error_code=None,
-                error_message=None,
-                meta={"sync_case": "removed"},
-            )
-        )
-
-    err = exc_info.value
-    assert err.status_code == 410
-    assert err.code == "SHIPMENT_STATUS_WRITE_REMOVED"
 
 
 async def test_shipping_record_accepts_current_terminal_columns(session: AsyncSession) -> None:

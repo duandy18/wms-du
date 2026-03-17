@@ -153,7 +153,7 @@ FROZEN_OWNERSHIP: dict[str, FrozenOwnership] = {
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
         collaborators=(DomainOwner.WMS, DomainOwner.OMS),
-        description="shipping_record 是 Shipment 的账本事实投影，由 TMS/TransportLedger 主拥有。",
+        description="shipping_record 是运输事实台帐，由 TMS/TransportLedger 主拥有。",
     ),
     "shipping_report": FrozenOwnership(
         code="shipping_report",
@@ -343,12 +343,6 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="运输账本事实模型。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/shipping_records_routes_status.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="历史 shipping_records 状态路由；冻结归属仍属于 TransportLedger。",
-    ),
-    FileOwnershipRule(
         path_prefix="app/tms/records/router.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
@@ -371,18 +365,6 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
         note="Records 账本读取路由。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/jobs/shipping_delivery_sync_apply.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="平台状态回写账本。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/jobs/shipping_delivery_sync_runner.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_LEDGER,
-        note="平台状态同步 runner。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/shipping_reports_routes_",

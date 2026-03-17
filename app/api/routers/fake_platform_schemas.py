@@ -20,7 +20,7 @@ class FakeOrderStatusIn(BaseModel):
     )
     delivered_at: Optional[datetime] = Field(
         None,
-        description="（可选）平台侧签收时间；提供时会用于 shipping_records.delivery_time",
+        description="（可选）平台侧签收时间；仅作为平台事件载荷的一部分保存，不回写运输台帐",
     )
 
     extras: Dict[str, Any] = Field(
