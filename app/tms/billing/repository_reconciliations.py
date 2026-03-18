@@ -12,7 +12,6 @@ async def upsert_shipping_record_reconciliation(
     *,
     status: str,
     carrier_code: str,
-    import_batch_no: str,
     tracking_no: str,
     shipping_record_id: int | None,
     carrier_bill_item_id: int | None,
@@ -53,8 +52,7 @@ async def upsert_shipping_record_reconciliation(
                 cost_diff,
                 adjust_amount,
                 status,
-                carrier_code,
-                import_batch_no
+                carrier_code
             )
             VALUES (
                 :shipping_record_id,
@@ -64,8 +62,7 @@ async def upsert_shipping_record_reconciliation(
                 :cost_diff,
                 :adjust_amount,
                 :status,
-                :carrier_code,
-                :import_batch_no
+                :carrier_code
             )
             """
         ),
@@ -78,7 +75,6 @@ async def upsert_shipping_record_reconciliation(
             "adjust_amount": adjust_amount,
             "status": status,
             "carrier_code": carrier_code,
-            "import_batch_no": import_batch_no,
         },
     )
 
@@ -86,7 +82,6 @@ async def upsert_shipping_record_reconciliation(
 async def list_shipping_bill_reconciliations(
     session: AsyncSession,
     *,
-    import_batch_no: str | None,
     carrier_code: str | None,
     tracking_no: str | None,
     status: str | None,
@@ -95,10 +90,6 @@ async def list_shipping_bill_reconciliations(
 ) -> tuple[int, list[dict[str, Any]]]:
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
-
-    if import_batch_no:
-        where_parts.append("r.import_batch_no = :import_batch_no")
-        params["import_batch_no"] = import_batch_no
 
     if carrier_code:
         where_parts.append("upper(r.carrier_code) = upper(:carrier_code)")
@@ -135,7 +126,6 @@ async def list_shipping_bill_reconciliations(
             r.id AS reconciliation_id,
             r.status,
             r.carrier_code,
-            r.import_batch_no,
             r.tracking_no,
             r.shipping_record_id,
             r.carrier_bill_item_id,
@@ -181,7 +171,6 @@ async def get_shipping_bill_reconciliation_detail(
             r.id AS reconciliation_id,
             r.status,
             r.carrier_code,
-            r.import_batch_no,
             r.tracking_no,
             r.shipping_record_id,
             r.carrier_bill_item_id,
@@ -191,7 +180,6 @@ async def get_shipping_bill_reconciliation_detail(
             r.created_at AS reconciliation_created_at,
 
             b.id AS bill_id,
-            b.import_batch_no AS bill_import_batch_no,
             b.carrier_code AS bill_carrier_code,
             b.bill_month,
             b.tracking_no AS bill_tracking_no,

@@ -6,6 +6,7 @@
 设计原则：
 - carrier_code + tracking_no 为业务唯一键（幂等导入核心）
 - 不再依赖 import_batch_id
+- 不再保留 import_batch_no
 - 导入采用 UPSERT（ON CONFLICT），实现幂等增量补录
 """
 
@@ -27,13 +28,11 @@ async def insert_carrier_bill_items(
     *,
     rows: list[dict[str, object]],
     carrier_code: str,
-    import_batch_no: str,
     bill_month: str | None,
 ) -> int:
     sql = text(
         """
         INSERT INTO carrier_bill_items (
-            import_batch_no,
             carrier_code,
             bill_month,
             tracking_no,
@@ -53,7 +52,6 @@ async def insert_carrier_bill_items(
             raw_payload
         )
         VALUES (
-            :import_batch_no,
             :carrier_code,
             :bill_month,
             :tracking_no,
@@ -74,7 +72,6 @@ async def insert_carrier_bill_items(
         )
         ON CONFLICT (carrier_code, tracking_no)
         DO UPDATE SET
-            import_batch_no = EXCLUDED.import_batch_no,
             bill_month = EXCLUDED.bill_month,
 
             business_time = COALESCE(EXCLUDED.business_time, carrier_bill_items.business_time),
@@ -97,13 +94,21 @@ async def insert_carrier_bill_items(
             created_at = now()
 
         WHERE
-            carrier_bill_items.billing_weight_kg IS DISTINCT FROM EXCLUDED.billing_weight_kg
+            carrier_bill_items.bill_month IS DISTINCT FROM EXCLUDED.bill_month
+         OR carrier_bill_items.raw_payload IS DISTINCT FROM EXCLUDED.raw_payload
+         OR carrier_bill_items.billing_weight_kg IS DISTINCT FROM EXCLUDED.billing_weight_kg
          OR carrier_bill_items.freight_amount IS DISTINCT FROM EXCLUDED.freight_amount
          OR carrier_bill_items.surcharge_amount IS DISTINCT FROM EXCLUDED.surcharge_amount
          OR carrier_bill_items.total_amount IS DISTINCT FROM EXCLUDED.total_amount
          OR carrier_bill_items.destination_province IS DISTINCT FROM EXCLUDED.destination_province
          OR carrier_bill_items.destination_city IS DISTINCT FROM EXCLUDED.destination_city
-         OR carrier_bill_items.business_time IS DISTINCT FROM EXCLUDED.business_time;
+         OR carrier_bill_items.business_time IS DISTINCT FROM EXCLUDED.business_time
+         OR carrier_bill_items.settlement_object IS DISTINCT FROM EXCLUDED.settlement_object
+         OR carrier_bill_items.order_customer IS DISTINCT FROM EXCLUDED.order_customer
+         OR carrier_bill_items.sender_name IS DISTINCT FROM EXCLUDED.sender_name
+         OR carrier_bill_items.network_name IS DISTINCT FROM EXCLUDED.network_name
+         OR carrier_bill_items.size_text IS DISTINCT FROM EXCLUDED.size_text
+         OR carrier_bill_items.parent_customer IS DISTINCT FROM EXCLUDED.parent_customer;
         """
     )
 
@@ -113,7 +118,6 @@ async def insert_carrier_bill_items(
         await session.execute(
             sql,
             {
-                "import_batch_no": import_batch_no,
                 "carrier_code": carrier_code,
                 "bill_month": bill_month,
                 "tracking_no": row.get("tracking_no"),
@@ -141,7 +145,6 @@ async def insert_carrier_bill_items(
 async def list_carrier_bill_items(
     session: AsyncSession,
     *,
-    import_batch_no: str | None,
     carrier_code: str | None,
     tracking_no: str | None,
     limit: int,
@@ -149,10 +152,6 @@ async def list_carrier_bill_items(
 ) -> tuple[int, list[dict[str, Any]]]:
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
-
-    if import_batch_no:
-        where_parts.append("cbi.import_batch_no = :import_batch_no")
-        params["import_batch_no"] = import_batch_no
 
     if carrier_code:
         where_parts.append("upper(cbi.carrier_code) = upper(:carrier_code)")
@@ -178,7 +177,6 @@ async def list_carrier_bill_items(
         f"""
         SELECT
             cbi.id,
-            cbi.import_batch_no,
             cbi.carrier_code,
             cbi.bill_month,
             cbi.tracking_no,

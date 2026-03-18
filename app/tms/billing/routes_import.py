@@ -25,7 +25,6 @@ def register(router: APIRouter) -> None:
     )
     async def import_shipping_bill(
         carrier_code: str = Form(...),
-        import_batch_no: str = Form(...),
         bill_month: str | None = Form(None),
         file: UploadFile = File(...),
         session: AsyncSession = Depends(get_session),
@@ -36,7 +35,6 @@ def register(router: APIRouter) -> None:
             raise HTTPException(status_code=422, detail="当前仅支持 .xlsx 对账单导入")
 
         carrier_code_clean = carrier_code.strip()
-        import_batch_no_clean = import_batch_no.strip()
         bill_month_clean = (
             bill_month.strip()
             if isinstance(bill_month, str) and bill_month.strip()
@@ -52,7 +50,6 @@ def register(router: APIRouter) -> None:
 
         _ = ImportCarrierBillCommand(
             carrier_code=carrier_code_clean,
-            import_batch_no=import_batch_no_clean,
             bill_month=bill_month_clean,
             filename=filename,
             file_bytes=file_bytes,
@@ -69,7 +66,6 @@ def register(router: APIRouter) -> None:
                 session,
                 rows=valid_rows,
                 carrier_code=carrier_code_clean,
-                import_batch_no=import_batch_no_clean,
                 bill_month=bill_month_clean,
             )
 
@@ -83,7 +79,6 @@ def register(router: APIRouter) -> None:
         return CarrierBillImportResult(
             ok=True,
             carrier_code=carrier_code_clean,
-            import_batch_no=import_batch_no_clean,
             imported_count=imported_count,
             skipped_count=skipped_count,
             error_count=len(errors),

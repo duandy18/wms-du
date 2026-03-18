@@ -33,7 +33,7 @@ class ShippingRecordReconciliation(Base):
       * record_only = 台帐存在，但账单不存在
     - 原始来源是 shipping_records（物流台帐）与 carrier_bill_items（快递账单）；
     - 当前系统已取消 batch 作为主链，不再依赖 import_batch_id；
-    - import_batch_no 仅保留为展示/来源备注字段；
+    - 不再保留 import_batch_no；
     - adjust_amount 为人工处理结果：
       * NULL = 尚未处理
       * 0 = 接受账单，不调整
@@ -52,12 +52,6 @@ class ShippingRecordReconciliation(Base):
     carrier_code: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-    )
-
-    import_batch_no: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        server_default="",
     )
 
     shipping_record_id: Mapped[int | None] = mapped_column(
@@ -144,7 +138,6 @@ class ShippingRecordReconciliation(Base):
             f"<ShippingRecordReconciliation id={self.id} "
             f"status={self.status} "
             f"carrier_code={self.carrier_code} "
-            f"import_batch_no={self.import_batch_no} "
             f"shipping_record_id={self.shipping_record_id} "
             f"bill_item_id={self.carrier_bill_item_id} "
             f"tracking_no={self.tracking_no}>"
