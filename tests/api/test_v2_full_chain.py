@@ -122,6 +122,10 @@ def _build_quote_snapshot(
     district: str,
     weight_kg: float,
 ) -> dict[str, object]:
+    total_amount = 12.34
+    base_amount = 10.84
+    surcharge_amount = 1.50
+
     return {
         "version": "v1",
         "source": "unit-test",
@@ -145,7 +149,7 @@ def _build_quote_snapshot(
             "carrier_code": carrier_code,
             "carrier_name": carrier_name,
             "currency": "CNY",
-            "total_amount": 12.34,
+            "total_amount": total_amount,
             "weight": {
                 "real_weight_kg": weight_kg,
                 "billable_weight_kg": weight_kg,
@@ -159,7 +163,24 @@ def _build_quote_snapshot(
                 "hit": True,
             },
             "breakdown": {
-                "base_fee": 12.34,
+                "base": {
+                    "amount": base_amount,
+                },
+                "surcharges": [
+                    {
+                        "id": 1,
+                        "name": "UT-SURCHARGE",
+                        "scope": "city",
+                        "amount": surcharge_amount,
+                        "detail": {"kind": "unit-test"},
+                    }
+                ],
+                "summary": {
+                    "base_amount": base_amount,
+                    "surcharge_amount": surcharge_amount,
+                    "extra_amount": surcharge_amount,
+                    "total_amount": total_amount,
+                },
             },
             "reasons": ["unit-test-selected-quote"],
         },

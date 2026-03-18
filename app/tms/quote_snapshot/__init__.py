@@ -12,6 +12,8 @@ TMS / QuoteSnapshot module.
 - validate_quote_snapshot: 校验 snapshot 基本合同
 - extract_selected_quote: 从 snapshot 中提取 selected_quote
 - extract_cost_estimated: 从 snapshot 中提取 total_amount
+- extract_freight_estimated: 从 snapshot.breakdown.summary 中提取 base_amount
+- extract_surcharge_estimated: 从 snapshot.breakdown.summary 中提取 surcharge_amount
 - QuoteSnapshotData / QuoteSnapshotSelectedQuote: TMS 内部合同类型
 """
 
@@ -25,8 +27,10 @@ from .contracts import (
 )
 from .validator import (
     extract_cost_estimated,
+    extract_freight_estimated,
     extract_quote_snapshot,
     extract_selected_quote,
+    extract_surcharge_estimated,
     validate_quote_snapshot,
 )
 
@@ -38,7 +42,9 @@ __all__ = [
     "QuoteSnapshotSelectedQuotePayload",
     "build_quote_snapshot",
     "extract_cost_estimated",
+    "extract_freight_estimated",
     "extract_quote_snapshot",
     "extract_selected_quote",
+    "extract_surcharge_estimated",
     "validate_quote_snapshot",
 ]

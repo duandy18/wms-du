@@ -46,6 +46,10 @@ class ShipWithWaybillCommand:
     carrier_name: str | None
 
     weight_kg: float
+    length_cm: float | None
+    width_cm: float | None
+    height_cm: float | None
+    sender: str | None
 
     receiver_name: str | None
     receiver_phone: str | None
