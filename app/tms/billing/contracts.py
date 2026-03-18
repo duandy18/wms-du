@@ -170,3 +170,27 @@ class ShippingBillReconciliationDetailResponse(BaseModel):
     reconciliation: ShippingBillReconciliationOut
     bill_item: CarrierBillItemOut | None = None
     shipping_record: ShippingBillReconciliationShippingRecordOut | None = None
+
+
+class BillingCostAnalysisSummaryOut(BaseModel):
+    ticket_count: int
+    total_cost: float
+
+
+class BillingCostAnalysisByCarrierRowOut(BaseModel):
+    carrier_code: str | None = None
+    ticket_count: int
+    total_cost: float
+
+
+class BillingCostAnalysisByTimeRowOut(BaseModel):
+    bucket: str
+    ticket_count: int
+    total_cost: float
+
+
+class BillingCostAnalysisResponse(BaseModel):
+    ok: bool = True
+    summary: BillingCostAnalysisSummaryOut
+    by_carrier: list[BillingCostAnalysisByCarrierRowOut]
+    by_time: list[BillingCostAnalysisByTimeRowOut]

@@ -35,7 +35,7 @@ def _format_csv_value(value: object | None) -> str:
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/tms/records",
+        "",
         response_model=ShippingLedgerListResponse,
         summary="物流台帐列表",
     )
@@ -76,7 +76,7 @@ def register(router: APIRouter) -> None:
         )
 
     @router.get(
-        "/tms/records/export",
+        "/export",
         summary="导出物流台帐",
     )
     async def export_shipping_ledger(

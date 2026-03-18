@@ -1,0 +1,111 @@
+# app/tms/records/repository_cost_analysis.py
+#
+# 职责：
+# - 承载 TMS / Records（物流台帐）成本分析只读聚合查询
+# - 口径仅基于 shipping_records
+# - 时间维度固定按天（created_at::date）
+from __future__ import annotations
+
+from datetime import date
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _clean_opt_str(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
+def _build_where_clause(
+    *,
+    carrier_code: str | None,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[str, dict[str, Any]]:
+    conditions: list[str] = ["sr.cost_estimated IS NOT NULL"]
+    params: dict[str, Any] = {}
+
+    carrier_code_clean = _clean_opt_str(carrier_code)
+    if carrier_code_clean:
+        conditions.append("upper(sr.carrier_code) = upper(:carrier_code)")
+        params["carrier_code"] = carrier_code_clean
+
+    if start_date is not None:
+        conditions.append("sr.created_at::date >= :start_date")
+        params["start_date"] = start_date
+
+    if end_date is not None:
+        conditions.append("sr.created_at::date <= :end_date")
+        params["end_date"] = end_date
+
+    return " AND ".join(conditions), params
+
+
+async def get_records_cost_analysis(
+    session: AsyncSession,
+    *,
+    carrier_code: str | None,
+    start_date: date | None,
+    end_date: date | None,
+) -> dict[str, object]:
+    where_sql, params = _build_where_clause(
+        carrier_code=carrier_code,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    by_carrier_sql = text(
+        f"""
+        SELECT
+          sr.carrier_code,
+          COUNT(*) AS ticket_count,
+          COALESCE(SUM(sr.cost_estimated), 0)::float AS total_cost
+        FROM shipping_records sr
+        WHERE {where_sql}
+        GROUP BY sr.carrier_code
+        ORDER BY total_cost DESC, sr.carrier_code NULLS LAST
+        """
+    )
+
+    by_time_sql = text(
+        f"""
+        SELECT
+          to_char(sr.created_at::date, 'YYYY-MM-DD') AS bucket,
+          COUNT(*) AS ticket_count,
+          COALESCE(SUM(sr.cost_estimated), 0)::float AS total_cost
+        FROM shipping_records sr
+        WHERE {where_sql}
+        GROUP BY bucket
+        ORDER BY bucket ASC
+        """
+    )
+
+    by_carrier_rows = [
+        {
+            "carrier_code": row.get("carrier_code"),
+            "ticket_count": int(row["ticket_count"] or 0),
+            "total_cost": float(row["total_cost"] or 0.0),
+        }
+        for row in (await session.execute(by_carrier_sql, params)).mappings().all()
+    ]
+
+    by_time_rows = [
+        {
+            "bucket": str(row["bucket"]),
+            "ticket_count": int(row["ticket_count"] or 0),
+            "total_cost": float(row["total_cost"] or 0.0),
+        }
+        for row in (await session.execute(by_time_sql, params)).mappings().all()
+    ]
+
+    summary = {
+        "ticket_count": sum(int(row["ticket_count"]) for row in by_carrier_rows),
+        "total_cost": float(sum(float(row["total_cost"]) for row in by_carrier_rows)),
+    }
+
+    return {
+        "summary": summary,
+        "by_carrier": by_carrier_rows,
+        "by_time": by_time_rows,
+    }
