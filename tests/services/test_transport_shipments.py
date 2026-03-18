@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.tms.quote_snapshot import extract_cost_estimated
+from app.tms.quote_snapshot import (
+    extract_cost_estimated,
+    extract_freight_estimated,
+    extract_surcharge_estimated,
+)
 from app.tms.shipment import (
     ShipmentApplicationError,
     ShipWithWaybillCommand,
@@ -18,6 +22,8 @@ pytestmark = pytest.mark.asyncio
 
 
 def _build_quote_snapshot(*, provider_id: int, total_amount: float = 12.5) -> dict[str, object]:
+    base_amount = round(float(total_amount) - 1.5, 2)
+    surcharge_amount = round(float(total_amount) - base_amount, 2)
     return {
         "version": "v1",
         "source": "shipping_quote.calc",
@@ -37,7 +43,26 @@ def _build_quote_snapshot(*, provider_id: int, total_amount: float = 12.5) -> di
             "weight": {"billable_weight_kg": 1.2},
             "destination_group": {"name": "华北测试组"},
             "pricing_matrix": {"range_id": 1},
-            "breakdown": {"base": total_amount},
+            "breakdown": {
+                "base": {
+                    "amount": base_amount,
+                },
+                "surcharges": [
+                    {
+                        "id": 1,
+                        "name": "测试附加费",
+                        "scope": "city",
+                        "amount": surcharge_amount,
+                        "detail": {"kind": "unit-test"},
+                    }
+                ],
+                "summary": {
+                    "base_amount": base_amount,
+                    "surcharge_amount": surcharge_amount,
+                    "extra_amount": surcharge_amount,
+                    "total_amount": total_amount,
+                },
+            },
             "reasons": ["matrix_match:ut", f"total={total_amount:.2f} CNY"],
         },
     }
@@ -64,8 +89,14 @@ async def _load_shipping_record(
                   tracking_no,
                   carrier_code,
                   carrier_name,
+                  freight_estimated,
+                  surcharge_estimated,
                   cost_estimated,
                   gross_weight_kg,
+                  length_cm,
+                  width_cm,
+                  height_cm,
+                  sender,
                   dest_province,
                   dest_city
                 FROM shipping_records
@@ -108,6 +139,10 @@ async def test_ship_with_waybill_writes_shipping_record_ledger(session: AsyncSes
             carrier_code=None,
             carrier_name=None,
             weight_kg=1.25,
+            length_cm=73.03,
+            width_cm=44.55,
+            height_cm=8.40,
+            sender="张三",
             receiver_name="张三",
             receiver_phone="13800000000",
             province="北京市",
@@ -138,10 +173,16 @@ async def test_ship_with_waybill_writes_shipping_record_ledger(session: AsyncSes
     assert str(record["carrier_code"]) == "UT-CAR-1"
     assert str(record["carrier_name"]) == "UT-CARRIER-1"
     assert float(record["gross_weight_kg"]) == pytest.approx(1.25)
+    assert float(record["length_cm"]) == pytest.approx(73.03)
+    assert float(record["width_cm"]) == pytest.approx(44.55)
+    assert float(record["height_cm"]) == pytest.approx(8.40)
+    assert str(record["sender"]) == "张三"
     assert str(record["dest_province"]) == "北京市"
     assert str(record["dest_city"]) == "北京市"
 
     quote_snapshot = _build_quote_snapshot(provider_id=1, total_amount=12.5)
+    assert extract_freight_estimated(quote_snapshot) == float(record["freight_estimated"])
+    assert extract_surcharge_estimated(quote_snapshot) == float(record["surcharge_estimated"])
     assert extract_cost_estimated(quote_snapshot) == float(record["cost_estimated"])
 
 
@@ -166,6 +207,10 @@ async def test_ship_with_waybill_rejects_provider_not_bound_to_warehouse(session
                 carrier_code=None,
                 carrier_name=None,
                 weight_kg=1.0,
+                length_cm=None,
+                width_cm=None,
+                height_cm=None,
+                sender=None,
                 receiver_name="李四",
                 receiver_phone="13900000000",
                 province="北京市",
@@ -203,6 +248,10 @@ async def test_ship_with_waybill_rejects_quote_snapshot_provider_mismatch(sessio
                 carrier_code=None,
                 carrier_name=None,
                 weight_kg=1.0,
+                length_cm=None,
+                width_cm=None,
+                height_cm=None,
+                sender=None,
                 receiver_name="王五",
                 receiver_phone="13700000000",
                 province="北京市",
@@ -236,7 +285,13 @@ async def test_shipping_record_accepts_current_terminal_columns(session: AsyncSe
                 carrier_name,
                 tracking_no,
                 gross_weight_kg,
+                freight_estimated,
+                surcharge_estimated,
                 cost_estimated,
+                length_cm,
+                width_cm,
+                height_cm,
+                sender,
                 dest_province,
                 dest_city
             )
@@ -250,7 +305,13 @@ async def test_shipping_record_accepts_current_terminal_columns(session: AsyncSe
                 '申通快递',
                 :tracking_no,
                 1.230,
+                10.00,
+                2.50,
                 12.50,
+                73.03,
+                44.55,
+                8.40,
+                '张三',
                 '北京市',
                 '北京市'
             )
@@ -273,7 +334,14 @@ async def test_shipping_record_accepts_current_terminal_columns(session: AsyncSe
                   shop_id,
                   warehouse_id,
                   shipping_provider_id,
-                  tracking_no
+                  tracking_no,
+                  freight_estimated,
+                  surcharge_estimated,
+                  cost_estimated,
+                  length_cm,
+                  width_cm,
+                  height_cm,
+                  sender
                 FROM shipping_records
                 WHERE order_ref = :order_ref
                 LIMIT 1
@@ -289,5 +357,12 @@ async def test_shipping_record_accepts_current_terminal_columns(session: AsyncSe
     assert row["shop_id"] == "1"
     assert int(row["warehouse_id"]) == 1
     assert int(row["shipping_provider_id"]) == 1
+    assert float(row["freight_estimated"]) == pytest.approx(10.00)
+    assert float(row["surcharge_estimated"]) == pytest.approx(2.50)
+    assert float(row["cost_estimated"]) == pytest.approx(12.50)
+    assert float(row["length_cm"]) == pytest.approx(73.03)
+    assert float(row["width_cm"]) == pytest.approx(44.55)
+    assert float(row["height_cm"]) == pytest.approx(8.40)
+    assert str(row["sender"]) == "张三"
 
     await session.rollback()

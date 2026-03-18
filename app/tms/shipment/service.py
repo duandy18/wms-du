@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.tms.quote_snapshot import extract_cost_estimated, validate_quote_snapshot
+from app.tms.quote_snapshot import (
+    extract_cost_estimated,
+    extract_freight_estimated,
+    extract_surcharge_estimated,
+    validate_quote_snapshot,
+)
 
 from .audit import write_ship_commit_audit
 from .contracts import (
@@ -64,6 +69,8 @@ class TransportShipmentService:
             quote_snapshot,
             shipping_provider_id=command.shipping_provider_id,
         )
+        freight_estimated = extract_freight_estimated(quote_snapshot)
+        surcharge_estimated = extract_surcharge_estimated(quote_snapshot)
         cost_estimated = extract_cost_estimated(quote_snapshot)
 
         provider = await load_active_provider(self.session, command.shipping_provider_id)
@@ -105,6 +112,13 @@ class TransportShipmentService:
                 "carrier_name": provider_name,
                 "shipping_provider_id": int(command.shipping_provider_id),
                 "gross_weight_kg": float(command.weight_kg),
+                "freight_estimated": freight_estimated,
+                "surcharge_estimated": surcharge_estimated,
+                "cost_estimated": cost_estimated,
+                "length_cm": float(command.length_cm) if command.length_cm is not None else None,
+                "width_cm": float(command.width_cm) if command.width_cm is not None else None,
+                "height_cm": float(command.height_cm) if command.height_cm is not None else None,
+                "sender": command.sender,
                 "dest_province": command.province,
                 "dest_city": command.city,
                 "receiver": {
@@ -116,7 +130,6 @@ class TransportShipmentService:
                     "detail": command.address_detail,
                 },
                 "waybill_source": "PLATFORM_FAKE",
-                "cost_estimated": cost_estimated,
                 "quote_snapshot": quote_snapshot,
             }
         )
@@ -141,7 +154,13 @@ class TransportShipmentService:
             carrier_name=provider_name or None,
             tracking_no=tracking_no,
             gross_weight_kg=float(command.weight_kg),
+            freight_estimated=freight_estimated,
+            surcharge_estimated=surcharge_estimated,
             cost_estimated=cost_estimated,
+            length_cm=float(command.length_cm) if command.length_cm is not None else None,
+            width_cm=float(command.width_cm) if command.width_cm is not None else None,
+            height_cm=float(command.height_cm) if command.height_cm is not None else None,
+            sender=command.sender,
             dest_province=command.province,
             dest_city=command.city,
         )

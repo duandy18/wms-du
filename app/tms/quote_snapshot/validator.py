@@ -1,7 +1,7 @@
 # app/tms/quote_snapshot/validator.py
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from .contracts import QUOTE_SNAPSHOT_VERSION, QuoteSnapshotData, QuoteSnapshotSelectedQuote
 
@@ -25,6 +25,20 @@ def extract_quote_snapshot(meta: dict[str, object] | None) -> QuoteSnapshotData 
     return {}
 
 
+def _ensure_number(
+    value: object,
+    *,
+    code: str,
+    message: str,
+) -> None:
+    if not isinstance(value, (int, float)):
+        _raise_shipment_error(
+            status_code=422,
+            code=code,
+            message=message,
+        )
+
+
 def validate_quote_snapshot(quote_snapshot: QuoteSnapshotData | dict[str, object]) -> None:
     version = quote_snapshot.get("version")
     if version is not None and str(version) != QUOTE_SNAPSHOT_VERSION:
@@ -43,12 +57,11 @@ def validate_quote_snapshot(quote_snapshot: QuoteSnapshotData | dict[str, object
         )
 
     total_amount = selected_quote_raw.get("total_amount")
-    if not isinstance(total_amount, (int, float)):
-        _raise_shipment_error(
-            status_code=422,
-            code="SHIP_WITH_WAYBILL_TOTAL_AMOUNT_INVALID",
-            message="meta.quote_snapshot.selected_quote.total_amount must be number",
-        )
+    _ensure_number(
+        total_amount,
+        code="SHIP_WITH_WAYBILL_TOTAL_AMOUNT_INVALID",
+        message="meta.quote_snapshot.selected_quote.total_amount must be number",
+    )
 
     reasons = selected_quote_raw.get("reasons")
     if not isinstance(reasons, list) or len(reasons) == 0:
@@ -57,6 +70,38 @@ def validate_quote_snapshot(quote_snapshot: QuoteSnapshotData | dict[str, object
             code="SHIP_WITH_WAYBILL_REASONS_REQUIRED",
             message="meta.quote_snapshot.selected_quote.reasons must be non-empty list",
         )
+
+    breakdown_raw = selected_quote_raw.get("breakdown")
+    if not isinstance(breakdown_raw, dict):
+        _raise_shipment_error(
+            status_code=422,
+            code="SHIP_WITH_WAYBILL_BREAKDOWN_REQUIRED",
+            message="meta.quote_snapshot.selected_quote.breakdown must be object",
+        )
+
+    summary_raw = breakdown_raw.get("summary")
+    if not isinstance(summary_raw, dict):
+        _raise_shipment_error(
+            status_code=422,
+            code="SHIP_WITH_WAYBILL_BREAKDOWN_SUMMARY_REQUIRED",
+            message="meta.quote_snapshot.selected_quote.breakdown.summary must be object",
+        )
+
+    _ensure_number(
+        summary_raw.get("base_amount"),
+        code="SHIP_WITH_WAYBILL_BASE_AMOUNT_INVALID",
+        message="meta.quote_snapshot.selected_quote.breakdown.summary.base_amount must be number",
+    )
+    _ensure_number(
+        summary_raw.get("surcharge_amount"),
+        code="SHIP_WITH_WAYBILL_SURCHARGE_AMOUNT_INVALID",
+        message="meta.quote_snapshot.selected_quote.breakdown.summary.surcharge_amount must be number",
+    )
+    _ensure_number(
+        summary_raw.get("total_amount"),
+        code="SHIP_WITH_WAYBILL_BREAKDOWN_TOTAL_AMOUNT_INVALID",
+        message="meta.quote_snapshot.selected_quote.breakdown.summary.total_amount must be number",
+    )
 
 
 def extract_selected_quote(
@@ -72,6 +117,27 @@ def extract_selected_quote(
     return cast(QuoteSnapshotSelectedQuote, selected_quote)
 
 
+def _extract_breakdown_summary(
+    quote_snapshot: QuoteSnapshotData | dict[str, object],
+) -> dict[str, object]:
+    selected_quote = extract_selected_quote(quote_snapshot)
+    breakdown = selected_quote.get("breakdown")
+    if not isinstance(breakdown, dict):
+        return {}
+
+    summary = breakdown.get("summary")
+    if not isinstance(summary, dict):
+        return {}
+
+    return cast(dict[str, object], summary)
+
+
+def _to_optional_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def extract_cost_estimated(quote_snapshot: QuoteSnapshotData | dict[str, object]) -> float:
     selected_quote = extract_selected_quote(quote_snapshot)
     total_amount = selected_quote.get("total_amount")
@@ -83,3 +149,17 @@ def extract_cost_estimated(quote_snapshot: QuoteSnapshotData | dict[str, object]
         )
 
     return float(total_amount)
+
+
+def extract_freight_estimated(
+    quote_snapshot: QuoteSnapshotData | dict[str, object],
+) -> float | None:
+    summary = _extract_breakdown_summary(quote_snapshot)
+    return _to_optional_float(summary.get("base_amount"))
+
+
+def extract_surcharge_estimated(
+    quote_snapshot: QuoteSnapshotData | dict[str, object],
+) -> float | None:
+    summary = _extract_breakdown_summary(quote_snapshot)
+    return _to_optional_float(summary.get("surcharge_amount"))

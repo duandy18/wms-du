@@ -22,8 +22,16 @@ class ShippingLedgerRow(BaseModel):
     carrier_name: str | None = None
     tracking_no: str | None = None
 
-    gross_weight_kg: float | None = None
+    freight_estimated: float | None = None
+    surcharge_estimated: float | None = None
     cost_estimated: float | None = None
+
+    gross_weight_kg: float | None = None
+    length_cm: float | None = None
+    width_cm: float | None = None
+    height_cm: float | None = None
+
+    sender: str | None = None
 
     dest_province: str | None = None
     dest_city: str | None = None

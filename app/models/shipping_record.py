@@ -60,9 +60,39 @@ class ShippingRecord(Base):
         nullable=True,
     )
 
-    # 系统估算运费
+    # 费用拆分
+    freight_estimated: Mapped[float | None] = mapped_column(
+        Numeric(12, 2),
+        nullable=True,
+    )
+    surcharge_estimated: Mapped[float | None] = mapped_column(
+        Numeric(12, 2),
+        nullable=True,
+    )
+
+    # 系统预估总费用（总额）
     cost_estimated: Mapped[float | None] = mapped_column(
         Numeric(12, 2),
+        nullable=True,
+    )
+
+    # 包裹尺寸（厘米）
+    length_cm: Mapped[float | None] = mapped_column(
+        Numeric(10, 2),
+        nullable=True,
+    )
+    width_cm: Mapped[float | None] = mapped_column(
+        Numeric(10, 2),
+        nullable=True,
+    )
+    height_cm: Mapped[float | None] = mapped_column(
+        Numeric(10, 2),
+        nullable=True,
+    )
+
+    # 寄件人
+    sender: Mapped[str | None] = mapped_column(
+        String(128),
         nullable=True,
     )
 

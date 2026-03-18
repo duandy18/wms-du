@@ -11,6 +11,30 @@ from app.tms.quote_snapshot import (
 )
 
 
+def _build_breakdown(*, base_amount: float, surcharge_amount: float) -> dict[str, object]:
+    total_amount = float(base_amount) + float(surcharge_amount)
+    return {
+        "base": {
+            "amount": float(base_amount),
+        },
+        "surcharges": [
+            {
+                "id": 1,
+                "name": "UT-SURCHARGE",
+                "scope": "city",
+                "amount": float(surcharge_amount),
+                "detail": {"kind": "unit-test"},
+            }
+        ],
+        "summary": {
+            "base_amount": float(base_amount),
+            "surcharge_amount": float(surcharge_amount),
+            "extra_amount": float(surcharge_amount),
+            "total_amount": float(total_amount),
+        },
+    }
+
+
 def test_build_quote_snapshot_has_v1_contract() -> None:
     snapshot = build_quote_snapshot(
         source="shipping_quote.calc",
@@ -21,7 +45,7 @@ def test_build_quote_snapshot_has_v1_contract() -> None:
             "currency": "CNY",
             "total_amount": 12.5,
             "weight": {"billable_weight_kg": 1.2},
-            "breakdown": {"base": 10.0},
+            "breakdown": _build_breakdown(base_amount=10.0, surcharge_amount=2.5),
             "reasons": ["group_match:x", "total=12.50 CNY"],
         },
     )
@@ -42,6 +66,7 @@ def test_extract_quote_snapshot_from_meta() -> None:
             "version": "v1",
             "selected_quote": {
                 "total_amount": 9.9,
+                "breakdown": _build_breakdown(base_amount=8.9, surcharge_amount=1.0),
                 "reasons": ["ok"],
             },
         },
@@ -56,6 +81,7 @@ def test_validate_quote_snapshot_and_extract_cost() -> None:
         "version": "v1",
         "selected_quote": {
             "total_amount": 19.8,
+            "breakdown": _build_breakdown(base_amount=18.0, surcharge_amount=1.8),
             "reasons": ["matrix_match:x"],
         },
     }
@@ -69,6 +95,7 @@ def test_validate_quote_snapshot_rejects_missing_reasons() -> None:
         "version": "v1",
         "selected_quote": {
             "total_amount": 19.8,
+            "breakdown": _build_breakdown(base_amount=18.0, surcharge_amount=1.8),
             "reasons": [],
         },
     }

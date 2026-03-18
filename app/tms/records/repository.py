@@ -22,8 +22,14 @@ SELECT
   carrier_code,
   carrier_name,
   tracking_no,
-  gross_weight_kg,
+  freight_estimated,
+  surcharge_estimated,
   cost_estimated,
+  gross_weight_kg,
+  length_cm,
+  width_cm,
+  height_cm,
+  sender,
   dest_province,
   dest_city,
   created_at
@@ -42,6 +48,7 @@ def _build_where_clause(
     order_ref: str | None,
     tracking_no: str | None,
     carrier_code: str | None,
+    shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
     warehouse_id: int | None,
@@ -71,6 +78,10 @@ def _build_where_clause(
         conditions.append("carrier_code = :carrier_code")
         params["carrier_code"] = carrier_code_clean
 
+    if shipping_provider_id is not None:
+        conditions.append("shipping_provider_id = :shipping_provider_id")
+        params["shipping_provider_id"] = int(shipping_provider_id)
+
     province_clean = _clean_opt_str(province)
     if province_clean:
         conditions.append("dest_province = :province")
@@ -96,6 +107,7 @@ async def list_shipping_ledger(
     order_ref: str | None,
     tracking_no: str | None,
     carrier_code: str | None,
+    shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
     warehouse_id: int | None,
@@ -108,6 +120,7 @@ async def list_shipping_ledger(
         order_ref=order_ref,
         tracking_no=tracking_no,
         carrier_code=carrier_code,
+        shipping_provider_id=shipping_provider_id,
         province=province,
         city=city,
         warehouse_id=warehouse_id,
@@ -147,6 +160,7 @@ async def export_shipping_ledger_rows(
     order_ref: str | None,
     tracking_no: str | None,
     carrier_code: str | None,
+    shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
     warehouse_id: int | None,
@@ -157,6 +171,7 @@ async def export_shipping_ledger_rows(
         order_ref=order_ref,
         tracking_no=tracking_no,
         carrier_code=carrier_code,
+        shipping_provider_id=shipping_provider_id,
         province=province,
         city=city,
         warehouse_id=warehouse_id,
