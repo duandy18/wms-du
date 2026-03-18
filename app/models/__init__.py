@@ -96,7 +96,6 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     ("app.models.transport_shipment", "TransportShipment"),
     ("app.models.shipping_record", "ShippingRecord"),
-    ("app.models.carrier_bill_import_batch", "CarrierBillImportBatch"),
     ("app.models.carrier_bill_item", "CarrierBillItem"),
     ("app.models.shipping_record_reconciliation", "ShippingRecordReconciliation"),
     # ------------------------------------------------------------------
@@ -170,7 +169,6 @@ __all__ = [
     # ---- Shipment / Ledger / Billing ----
     "TransportShipment",
     "ShippingRecord",
-    "CarrierBillImportBatch",
     "CarrierBillItem",
     "ShippingRecordReconciliation",
     # ---- Pricing ----

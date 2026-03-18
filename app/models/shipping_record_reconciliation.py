@@ -32,7 +32,8 @@ class ShippingRecordReconciliation(Base):
       * bill_only   = 账单存在，但台帐不存在
       * record_only = 台帐存在，但账单不存在
     - 原始来源是 shipping_records（物流台帐）与 carrier_bill_items（快递账单）；
-    - import_batch_id 是账单导入批次头表主关联；
+    - 当前系统已取消 batch 作为主链，不再依赖 import_batch_id；
+    - import_batch_no 仅保留为展示/来源备注字段；
     - adjust_amount 为人工处理结果：
       * NULL = 尚未处理
       * 0 = 接受账单，不调整
@@ -42,12 +43,6 @@ class ShippingRecordReconciliation(Base):
     __tablename__ = "shipping_record_reconciliations"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-
-    import_batch_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("carrier_bill_import_batches.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
 
     status: Mapped[ReconciliationStatus] = mapped_column(
         String(16),
@@ -62,6 +57,7 @@ class ShippingRecordReconciliation(Base):
     import_batch_no: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
+        server_default="",
     )
 
     shipping_record_id: Mapped[int | None] = mapped_column(
@@ -125,8 +121,9 @@ class ShippingRecordReconciliation(Base):
             "carrier_bill_item_id",
         ),
         Index(
-            "ix_shipping_record_reconciliations_import_batch_id",
-            "import_batch_id",
+            "ix_shipping_record_reconciliations_carrier_status",
+            "carrier_code",
+            "status",
         ),
         Index(
             "uq_shipping_record_reconciliations_shipping_record_id_notnull",
@@ -140,17 +137,11 @@ class ShippingRecordReconciliation(Base):
             unique=True,
             postgresql_where=text("carrier_bill_item_id IS NOT NULL"),
         ),
-        Index(
-            "ix_shipping_record_reconciliations_batch_status",
-            "import_batch_id",
-            "status",
-        ),
     )
 
     def __repr__(self) -> str:
         return (
             f"<ShippingRecordReconciliation id={self.id} "
-            f"import_batch_id={self.import_batch_id} "
             f"status={self.status} "
             f"carrier_code={self.carrier_code} "
             f"import_batch_no={self.import_batch_no} "

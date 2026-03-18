@@ -1,4 +1,5 @@
 # app/tms/billing/service.py
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -12,18 +13,12 @@ from .contracts import (
     ReconcileCarrierBillResult,
 )
 
-# ✅ 新 repository 引用
-from .repository_batches import (
-    get_carrier_bill_import_batch_by_id,
-    update_carrier_bill_import_batch_status,
-)
 from .repository_items import list_carrier_bill_items_for_reconcile
 from .repository_records import (
     list_shipping_records_for_reconcile,
     list_shipping_records_for_record_only,
 )
 from .repository_reconciliations import (
-    delete_shipping_record_reconciliations_by_batch,
     upsert_shipping_record_reconciliation,
 )
 
@@ -65,21 +60,11 @@ class CarrierBillReconcileService:
         self,
         command: ReconcileCarrierBillCommand,
     ) -> ReconcileCarrierBillResult:
-        import_batch_id = int(command.import_batch_id)
-
-        batch_row = await get_carrier_bill_import_batch_by_id(
-            self.session,
-            import_batch_id=import_batch_id,
-        )
-        if batch_row is None:
-            raise ValueError(f"未找到账单导入批次: import_batch_id={import_batch_id}")
-
-        carrier_code = str(batch_row["carrier_code"]).strip()
-        import_batch_no = str(batch_row["import_batch_no"]).strip()
+        carrier_code = command.carrier_code.strip()
 
         bill_rows = await list_carrier_bill_items_for_reconcile(
             self.session,
-            import_batch_id=import_batch_id,
+            carrier_code=carrier_code,
         )
         bill_item_count = len(bill_rows)
 
@@ -107,16 +92,12 @@ class CarrierBillReconcileService:
             carrier_code=carrier_code,
             tracking_nos=unique_tracking_nos,
         )
-        record_map: dict[str, dict[str, Any]] = {
+
+        record_map = {
             str(r.get("tracking_no") or "").strip(): r
             for r in record_rows
             if str(r.get("tracking_no") or "").strip()
         }
-
-        await delete_shipping_record_reconciliations_by_batch(
-            self.session,
-            import_batch_id=import_batch_id,
-        )
 
         diff_count = 0
         bill_only_count = 0
@@ -129,10 +110,9 @@ class CarrierBillReconcileService:
             if record_row is None:
                 await upsert_shipping_record_reconciliation(
                     self.session,
-                    import_batch_id=import_batch_id,
                     status="bill_only",
                     carrier_code=carrier_code,
-                    import_batch_no=import_batch_no,
+                    import_batch_no="",
                     tracking_no=tracking_no,
                     shipping_record_id=None,
                     carrier_bill_item_id=int(bill_row["id"]),
@@ -150,29 +130,32 @@ class CarrierBillReconcileService:
             gross_weight_kg = _to_decimal(record_row.get("gross_weight_kg"))
             cost_estimated = _to_decimal(record_row.get("cost_estimated"))
 
-            bill_cost_real: Decimal | None = None
-            if freight_amount is not None or surcharge_amount is not None:
-                bill_cost_real = (freight_amount or Decimal("0")) + (
-                    surcharge_amount or Decimal("0")
-                )
+            bill_cost_real = (
+                (freight_amount or Decimal("0")) + (surcharge_amount or Decimal("0"))
+                if freight_amount is not None or surcharge_amount is not None
+                else None
+            )
 
-            weight_diff_kg: Decimal | None = None
-            if billing_weight_kg is not None and gross_weight_kg is not None:
-                weight_diff_kg = billing_weight_kg - gross_weight_kg
+            weight_diff_kg = (
+                billing_weight_kg - gross_weight_kg
+                if billing_weight_kg is not None and gross_weight_kg is not None
+                else None
+            )
 
-            cost_diff: Decimal | None = None
-            if bill_cost_real is not None and cost_estimated is not None:
-                cost_diff = bill_cost_real - cost_estimated
+            cost_diff = (
+                bill_cost_real - cost_estimated
+                if bill_cost_real is not None and cost_estimated is not None
+                else None
+            )
 
             has_diff = _has_weight_diff(weight_diff_kg) or _has_cost_diff(cost_diff)
 
             if has_diff:
                 await upsert_shipping_record_reconciliation(
                     self.session,
-                    import_batch_id=import_batch_id,
                     status="diff",
                     carrier_code=carrier_code,
-                    import_batch_no=import_batch_no,
+                    import_batch_no="",
                     tracking_no=tracking_no,
                     shipping_record_id=int(record_row["id"]),
                     carrier_bill_item_id=int(bill_row["id"]),
@@ -200,10 +183,9 @@ class CarrierBillReconcileService:
 
             await upsert_shipping_record_reconciliation(
                 self.session,
-                import_batch_id=import_batch_id,
                 status="record_only",
                 carrier_code=carrier_code,
-                import_batch_no=import_batch_no,
+                import_batch_no="",
                 tracking_no=tracking_no,
                 shipping_record_id=int(record_row["id"]),
                 carrier_bill_item_id=None,
@@ -214,19 +196,11 @@ class CarrierBillReconcileService:
             record_only_count += 1
             updated_count += 1
 
-        await update_carrier_bill_import_batch_status(
-            self.session,
-            import_batch_id=import_batch_id,
-            status="reconciled",
-        )
-
         await self.session.commit()
 
         return ReconcileCarrierBillResult(
             ok=True,
-            import_batch_id=import_batch_id,
             carrier_code=carrier_code,
-            import_batch_no=import_batch_no,
             bill_item_count=bill_item_count,
             diff_count=diff_count,
             bill_only_count=bill_only_count,

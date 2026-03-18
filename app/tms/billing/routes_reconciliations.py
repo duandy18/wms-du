@@ -18,7 +18,6 @@ from .contracts import (
     ShippingBillReconciliationShippingRecordOut,
 )
 
-# ✅ 已拆分 repository
 from .repository_reconciliations import (
     get_shipping_bill_reconciliation_detail,
     list_shipping_bill_reconciliations,
@@ -43,7 +42,6 @@ def register(router: APIRouter) -> None:
         response_model=ShippingBillReconciliationsResponse,
     )
     async def get_shipping_bill_reconciliations(
-        import_batch_id: int | None = Query(None, ge=1),
         import_batch_no: str | None = Query(None),
         carrier_code: str | None = Query(None),
         tracking_no: str | None = Query(None),
@@ -55,7 +53,6 @@ def register(router: APIRouter) -> None:
     ) -> ShippingBillReconciliationsResponse:
         total, rows = await list_shipping_bill_reconciliations(
             session,
-            import_batch_id=import_batch_id,
             import_batch_no=(
                 import_batch_no.strip()
                 if isinstance(import_batch_no, str) and import_batch_no.strip()
@@ -82,7 +79,6 @@ def register(router: APIRouter) -> None:
                 ShippingBillReconciliationRowOut(
                     reconciliation_id=int(r["reconciliation_id"]),
                     status=str(r["status"]),
-                    import_batch_id=int(r["import_batch_id"]),  # ✅ 修复：必须返回
                     carrier_code=str(r["carrier_code"]),
                     import_batch_no=str(r["import_batch_no"]),
                     tracking_no=str(r["tracking_no"]),
@@ -136,7 +132,6 @@ def register(router: APIRouter) -> None:
         if row.get("bill_id") is not None:
             bill_item = CarrierBillItemOut(
                 id=int(row["bill_id"]),
-                import_batch_id=int(row["bill_import_batch_id"]),  # ✅ 修复
                 import_batch_no=str(row["bill_import_batch_no"]),
                 carrier_code=str(row["bill_carrier_code"]),
                 bill_month=row.get("bill_month"),
@@ -186,7 +181,6 @@ def register(router: APIRouter) -> None:
             reconciliation=ShippingBillReconciliationOut(
                 id=int(row["reconciliation_id"]),
                 status=str(row["status"]),
-                import_batch_id=int(row["import_batch_id"]),  # ✅ 修复
                 carrier_code=str(row["carrier_code"]),
                 import_batch_no=str(row["import_batch_no"]),
                 tracking_no=str(row["tracking_no"]),
