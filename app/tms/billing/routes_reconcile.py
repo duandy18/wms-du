@@ -1,4 +1,5 @@
 # app/tms/billing/routes_reconcile.py
+
 from __future__ import annotations
 
 from typing import Any
@@ -27,8 +28,9 @@ def register(router: APIRouter) -> None:
         _current_user: Any = Depends(get_current_user),
     ) -> ReconcileCarrierBillResult:
         service = CarrierBillReconcileService(session)
+
         return await service.reconcile(
             ReconcileCarrierBillCommand(
-                import_batch_id=payload.import_batch_id,
+                carrier_code=payload.carrier_code,
             )
         )

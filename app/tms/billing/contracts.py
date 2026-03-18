@@ -32,7 +32,6 @@ class CarrierBillImportRowError(BaseModel):
 
 class CarrierBillImportResult(BaseModel):
     ok: bool = True
-    import_batch_id: int
     carrier_code: str
     import_batch_no: str
     imported_count: int
@@ -43,7 +42,6 @@ class CarrierBillImportResult(BaseModel):
 
 class CarrierBillItemOut(BaseModel):
     id: int
-    import_batch_id: int
     import_batch_no: str
     carrier_code: str
     bill_month: str | None = None
@@ -78,18 +76,16 @@ class CarrierBillItemsResponse(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class ReconcileCarrierBillCommand:
-    import_batch_id: int
+    carrier_code: str
 
 
 class ReconcileCarrierBillIn(BaseModel):
-    import_batch_id: int = Field(..., ge=1, description="账单导入批次ID")
+    carrier_code: str = Field(..., description="承运商代码")
 
 
 class ReconcileCarrierBillResult(BaseModel):
     ok: bool = True
-    import_batch_id: int
     carrier_code: str
-    import_batch_no: str
 
     bill_item_count: int
     diff_count: int
@@ -104,7 +100,6 @@ class ShippingBillReconciliationRowOut(BaseModel):
     reconciliation_id: int
     status: ReconciliationStatus
 
-    import_batch_id: int
     carrier_code: str
     import_batch_no: str
     tracking_no: str
@@ -141,7 +136,6 @@ class ShippingBillReconciliationOut(BaseModel):
     id: int
     status: ReconciliationStatus
 
-    import_batch_id: int
     carrier_code: str
     import_batch_no: str
     tracking_no: str
