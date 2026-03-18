@@ -20,7 +20,7 @@ from .repository_items import insert_carrier_bill_items
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-bills/import",
+        "/import",
         response_model=CarrierBillImportResult,
     )
     async def import_shipping_bill(

@@ -38,7 +38,7 @@ def _to_float(v: object) -> float | None:
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-bills/reconciliations",
+        "/reconciliations",
         response_model=ShippingBillReconciliationsResponse,
     )
     async def get_shipping_bill_reconciliations(
@@ -106,7 +106,7 @@ def register(router: APIRouter) -> None:
         )
 
     @router.get(
-        "/shipping-bills/reconciliations/{reconciliation_id}",
+        "/reconciliations/{reconciliation_id}",
         response_model=ShippingBillReconciliationDetailResponse,
     )
     async def get_shipping_bill_reconciliation(

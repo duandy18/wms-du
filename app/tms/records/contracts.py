@@ -35,3 +35,27 @@ class ShippingLedgerListResponse(BaseModel):
     ok: bool = True
     rows: list[ShippingLedgerRow]
     total: int
+
+
+class RecordsCostAnalysisSummaryOut(BaseModel):
+    ticket_count: int
+    total_cost: float
+
+
+class RecordsCostAnalysisByCarrierRowOut(BaseModel):
+    carrier_code: str | None = None
+    ticket_count: int
+    total_cost: float
+
+
+class RecordsCostAnalysisByTimeRowOut(BaseModel):
+    bucket: str
+    ticket_count: int
+    total_cost: float
+
+
+class RecordsCostAnalysisResponse(BaseModel):
+    ok: bool = True
+    summary: RecordsCostAnalysisSummaryOut
+    by_carrier: list[RecordsCostAnalysisByCarrierRowOut]
+    by_time: list[RecordsCostAnalysisByTimeRowOut]

@@ -14,7 +14,7 @@ from .repository_items import list_carrier_bill_items
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-bills/items",
+        "/items",
         response_model=CarrierBillItemsResponse,
     )
     async def get_shipping_bill_items(

@@ -19,7 +19,7 @@ from .service import CarrierBillReconcileService
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-bills/reconcile",
+        "/reconcile",
         response_model=ReconcileCarrierBillResult,
     )
     async def reconcile_shipping_bill(
