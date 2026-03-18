@@ -13,7 +13,6 @@ ReconciliationStatus = Literal["diff", "bill_only", "record_only"]
 @dataclass(frozen=True, slots=True)
 class ImportCarrierBillCommand:
     carrier_code: str
-    import_batch_no: str
     bill_month: str | None
     filename: str
     file_bytes: bytes
@@ -33,7 +32,6 @@ class CarrierBillImportRowError(BaseModel):
 class CarrierBillImportResult(BaseModel):
     ok: bool = True
     carrier_code: str
-    import_batch_no: str
     imported_count: int
     skipped_count: int
     error_count: int
@@ -42,7 +40,6 @@ class CarrierBillImportResult(BaseModel):
 
 class CarrierBillItemOut(BaseModel):
     id: int
-    import_batch_no: str
     carrier_code: str
     bill_month: str | None = None
 
@@ -101,7 +98,6 @@ class ShippingBillReconciliationRowOut(BaseModel):
     status: ReconciliationStatus
 
     carrier_code: str
-    import_batch_no: str
     tracking_no: str
 
     shipping_record_id: int | None = None
@@ -137,7 +133,6 @@ class ShippingBillReconciliationOut(BaseModel):
     status: ReconciliationStatus
 
     carrier_code: str
-    import_batch_no: str
     tracking_no: str
 
     shipping_record_id: int | None = None

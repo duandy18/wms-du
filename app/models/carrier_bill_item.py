@@ -18,7 +18,7 @@ class CarrierBillItem(Base):
     - 承载快递公司发来的账单行原始证据；
     - 当前阶段负责“幂等导入 + 查询”；
     - 不承担自动对账结果，不回写 shipping_records；
-    - import_batch_no 保留为业务展示/来源备注字段；
+    - 不再保留 import_batch_no；
     - 业务唯一键为 carrier_code + tracking_no。
     """
 
@@ -26,7 +26,6 @@ class CarrierBillItem(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
-    import_batch_no: Mapped[str] = mapped_column(String(64), nullable=False)
     carrier_code: Mapped[str] = mapped_column(String(32), nullable=False)
     bill_month: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
@@ -77,7 +76,6 @@ class CarrierBillItem(Base):
             "tracking_no",
             name="uq_carrier_bill_items_carrier_tracking",
         ),
-        Index("ix_carrier_bill_items_batch_no", "import_batch_no"),
         Index("ix_carrier_bill_items_tracking_no", "tracking_no"),
         Index("ix_carrier_bill_items_carrier_tracking", "carrier_code", "tracking_no"),
         Index("ix_carrier_bill_items_business_time", "business_time"),
@@ -86,7 +84,6 @@ class CarrierBillItem(Base):
     def __repr__(self) -> str:
         return (
             f"<CarrierBillItem id={self.id} "
-            f"import_batch_no={self.import_batch_no} "
             f"carrier_code={self.carrier_code} "
             f"tracking_no={self.tracking_no}>"
         )

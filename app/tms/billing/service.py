@@ -112,7 +112,6 @@ class CarrierBillReconcileService:
                     self.session,
                     status="bill_only",
                     carrier_code=carrier_code,
-                    import_batch_no="",
                     tracking_no=tracking_no,
                     shipping_record_id=None,
                     carrier_bill_item_id=int(bill_row["id"]),
@@ -155,7 +154,6 @@ class CarrierBillReconcileService:
                     self.session,
                     status="diff",
                     carrier_code=carrier_code,
-                    import_batch_no="",
                     tracking_no=tracking_no,
                     shipping_record_id=int(record_row["id"]),
                     carrier_bill_item_id=int(bill_row["id"]),
@@ -181,11 +179,12 @@ class CarrierBillReconcileService:
             if not tracking_no:
                 continue
 
+                # no-op
+
             await upsert_shipping_record_reconciliation(
                 self.session,
                 status="record_only",
                 carrier_code=carrier_code,
-                import_batch_no="",
                 tracking_no=tracking_no,
                 shipping_record_id=int(record_row["id"]),
                 carrier_bill_item_id=None,

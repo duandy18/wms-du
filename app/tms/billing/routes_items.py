@@ -18,7 +18,6 @@ def register(router: APIRouter) -> None:
         response_model=CarrierBillItemsResponse,
     )
     async def get_shipping_bill_items(
-        import_batch_no: str | None = Query(None),
         carrier_code: str | None = Query(None),
         tracking_no: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -28,7 +27,6 @@ def register(router: APIRouter) -> None:
     ) -> CarrierBillItemsResponse:
         total, rows = await list_carrier_bill_items(
             session,
-            import_batch_no=import_batch_no,
             carrier_code=carrier_code,
             tracking_no=tracking_no,
             limit=limit,
