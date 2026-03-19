@@ -1,7 +1,4 @@
-# app/tms/config/permissions.py
-# 分拆说明：
-# - 本文件统一承载 TMS / TransportConfig 子域权限校验；
-# - providers 与 warehouse_provider_bindings 统一从此处导入，避免继续依赖旧 routers helper。
+# app/tms/permissions.py
 from __future__ import annotations
 
 from fastapi import HTTPException

@@ -1,4 +1,4 @@
-# app/tms/config/warehouse_provider_bindings/contracts.py
+# app/tms/pricing/contracts_bindings.py
 from __future__ import annotations
 
 from typing import List, Optional

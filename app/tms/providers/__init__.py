@@ -1,2 +1,2 @@
-# app/tms/config/__init__.py
+# app/tms/providers/__init__.py
 from __future__ import annotations

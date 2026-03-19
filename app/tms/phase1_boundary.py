@@ -241,22 +241,16 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="附加费城市子模型。",
     ),
     FileOwnershipRule(
-        path_prefix="app/tms/config/router.py",
+        path_prefix="app/tms/providers/",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
-        note="TransportConfig 总路由壳。",
+        note="TMS / providers 子域。",
     ),
     FileOwnershipRule(
-        path_prefix="app/tms/config/providers/",
+        path_prefix="app/tms/pricing/",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
-        note="TransportConfig / providers 子域。",
-    ),
-    FileOwnershipRule(
-        path_prefix="app/tms/config/warehouse_provider_bindings/",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_CONFIG,
-        note="TransportConfig / warehouse-provider-bindings 子域。",
+        note="TMS / pricing 子域。",
     ),
     FileOwnershipRule(
         path_prefix="app/services/shipping_quote/",
