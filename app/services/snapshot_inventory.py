@@ -12,19 +12,13 @@ from app.services.snapshot_time import UTC
 
 async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]]:
     """
-    Snapshot /inventory 主列表（事实视图）：
+    Snapshot /inventory 主列表（事实视图）
 
-    Phase 4B-3（切读到 lot）：
-    - 展示维度：至少 warehouse_id + item_id + lot（对外字段仍使用 batch_code 作为展示字符串）
-    - 库存事实：来自 stocks_lot（不做二次按 item 聚合）
-    - 展示字段（批次/日期）：来自 lots（lot_code / production_date / expiry_date）
-    - 主数据字段：来自 items（1:1 join，不放大）
-    - 主条码：仅 active=true；primary 优先，否则最小 id（稳定且可解释）
-    - 日期相关：后端统一 UTC 计算，前端不推导
-
-    Phase M-5：
-    - items.uom 已物理移除；此接口不再输出 uom 字段
+    lot-world 正确实现：
+    - 不依赖 expiry_date 字段
+    - 使用 created_at + shelf_life 动态计算
     """
+
     rows = (
         (
             await session.execute(
@@ -42,7 +36,20 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                     l.lot_code AS batch_code,
                     s.qty,
 
-                    l.expiry_date AS expiry_date,
+                    -- ✅ 正确 interval 写法
+                    CASE
+                      WHEN l.item_expiry_policy_snapshot = 'REQUIRED'
+                       AND l.item_shelf_life_value_snapshot IS NOT NULL
+                      THEN
+                        l.created_at +
+                        CASE l.item_shelf_life_unit_snapshot
+                          WHEN 'DAY' THEN l.item_shelf_life_value_snapshot * interval '1 day'
+                          WHEN 'WEEK' THEN l.item_shelf_life_value_snapshot * interval '7 day'
+                          WHEN 'MONTH' THEN l.item_shelf_life_value_snapshot * interval '1 month'
+                          WHEN 'YEAR' THEN l.item_shelf_life_value_snapshot * interval '1 year'
+                        END
+                      ELSE NULL
+                    END AS expiry_date,
 
                     (
                         SELECT ib.barcode
@@ -74,11 +81,22 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
     result: List[Dict[str, Any]] = []
     for r in rows:
         qty = int(r["qty"] or 0)
-        expiry_date = r.get("expiry_date")
+
+        expiry_dt = r.get("expiry_date")
+
+        # ✅ 统一类型
+        expiry_date: Optional[date]
+        if isinstance(expiry_dt, datetime):
+            expiry_date = expiry_dt.date()
+        elif isinstance(expiry_dt, date):
+            expiry_date = expiry_dt
+        else:
+            expiry_date = None
 
         near_expiry = False
         days_to_expiry = None
-        if isinstance(expiry_date, date):
+
+        if expiry_date:
             days_to_expiry = int((expiry_date - today).days)
             if expiry_date >= today and (expiry_date - today) <= near_delta:
                 near_expiry = True
@@ -93,7 +111,7 @@ async def query_inventory_snapshot(session: AsyncSession) -> List[Dict[str, Any]
                 "category": r["category"],
                 "main_barcode": r["main_barcode"],
                 "warehouse_id": int(r["warehouse_id"]),
-                "batch_code": r["batch_code"],  # Phase 4B-3: 实际来自 lots.lot_code
+                "batch_code": r["batch_code"],
                 "lot_code": r["batch_code"],
                 "qty": qty,
                 "expiry_date": expiry_date,
@@ -112,9 +130,6 @@ async def query_inventory_snapshot_paged(
     offset: int = 0,
     limit: int = 20,
 ) -> Dict[str, Any]:
-    """
-    内存分页 + 模糊搜索（item_name / item_code）
-    """
     full = await query_inventory_snapshot(session)
 
     if q:

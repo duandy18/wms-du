@@ -34,19 +34,19 @@ def pick_warehouse_id(client: TestClient, token: str) -> int:
 
 def clear_warehouse_bindings(client: TestClient, token: str, warehouse_id: int) -> None:
     h = auth_headers(token)
-    r = client.get(f"/warehouses/{warehouse_id}/shipping-providers", headers=h)
+    r = client.get(f"/tms/pricing/warehouses/{warehouse_id}/bindings", headers=h)
     assert r.status_code == 200, r.text
     data = r.json()["data"] or []
     for it in data:
         pid = int(it["shipping_provider_id"])
-        dr = client.delete(f"/warehouses/{warehouse_id}/shipping-providers/{pid}", headers=h)
+        dr = client.delete(f"/tms/pricing/warehouses/{warehouse_id}/bindings/{pid}", headers=h)
         assert dr.status_code in (200, 404), dr.text
 
 
 def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int, provider_id: int) -> None:
     h = auth_headers(token)
     r = client.post(
-        f"/warehouses/{warehouse_id}/shipping-providers/bind",
+        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
         headers=h,
         json={
             "shipping_provider_id": int(provider_id),
@@ -59,7 +59,7 @@ def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int
     assert r.status_code in (201, 409), r.text
     if r.status_code == 409:
         pr = client.patch(
-            f"/warehouses/{warehouse_id}/shipping-providers/{provider_id}",
+            f"/tms/pricing/warehouses/{warehouse_id}/bindings/{provider_id}",
             headers=h,
             json={"active": True, "priority": 0},
         )
