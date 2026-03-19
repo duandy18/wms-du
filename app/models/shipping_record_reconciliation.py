@@ -12,32 +12,31 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-ReconciliationStatus = Literal["diff", "bill_only", "record_only"]
+ReconciliationStatus = Literal["diff", "bill_only"]
+ApprovedReasonCode = Literal["matched", "approved_bill_only", "resolved"]
 
 
 class ShippingRecordReconciliation(Base):
     """
-    发货对账异常表 shipping_record_reconciliations
+    发货对账差异表 shipping_record_reconciliations
 
     语义定位：
-    - 本表只记录“异常态”，不记录 matched；
-    - 异常态包括：
-      * diff        = 账单与台帐均存在，但存在差异
-      * bill_only   = 账单存在，但台帐不存在
-      * record_only = 台帐存在，但账单不存在
-    - 原始来源是 shipping_records（物流台帐）与 carrier_bill_items（快递账单）；
-    - 当前系统已取消 batch 作为主链，不再依赖 import_batch_id；
-    - 不再保留 import_batch_no；
-    - adjust_amount 为人工处理结果：
-      * NULL = 尚未处理
-      * 0 = 接受账单，不调整
-      * 负数 = 向快递公司追回金额
+    - 本表只记录“当前待处理差异”；
+    - 当前正式对账主链只保留：
+      * diff      = 账单与台账均存在，但存在差异
+      * bill_only = 账单存在、我方缺记录，需人工确认后才能归档
+    - 本表是当前待处理区，不是历史归档表；
+    - 唯一锚点是快递网点账单 carrier_bill_items；
+    - approved_reason_code 为最终确认结果 code；
+    - approved_reason_text 为备注说明。
     """
 
     __tablename__ = "shipping_record_reconciliations"
@@ -60,10 +59,10 @@ class ShippingRecordReconciliation(Base):
         nullable=True,
     )
 
-    carrier_bill_item_id: Mapped[int | None] = mapped_column(
+    carrier_bill_item_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("carrier_bill_items.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
     )
 
     tracking_no: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -83,6 +82,21 @@ class ShippingRecordReconciliation(Base):
         nullable=True,
     )
 
+    approved_reason_code: Mapped[ApprovedReasonCode | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+
+    approved_reason_text: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -91,7 +105,7 @@ class ShippingRecordReconciliation(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('diff', 'bill_only', 'record_only')",
+            "status IN ('diff', 'bill_only')",
             name="ck_shipping_record_reconciliations_status",
         ),
         CheckConstraint(
@@ -100,11 +114,27 @@ class ShippingRecordReconciliation(Base):
               (status = 'diff' AND shipping_record_id IS NOT NULL AND carrier_bill_item_id IS NOT NULL)
               OR
               (status = 'bill_only' AND shipping_record_id IS NULL AND carrier_bill_item_id IS NOT NULL)
-              OR
-              (status = 'record_only' AND shipping_record_id IS NOT NULL AND carrier_bill_item_id IS NULL)
             )
             """,
             name="ck_shipping_record_reconciliations_status_shape",
+        ),
+        CheckConstraint(
+            """
+            (
+              approved_reason_code IS NULL
+              OR approved_reason_code IN ('matched', 'approved_bill_only', 'resolved')
+            )
+            """,
+            name="ck_shipping_record_reconciliations_approved_reason_code",
+        ),
+        CheckConstraint(
+            """
+            (
+              approved_at IS NULL
+              OR approved_reason_code IS NOT NULL
+            )
+            """,
+            name="ck_shipping_record_reconciliations_approved_requires_code",
         ),
         Index(
             "ix_shipping_record_reconciliations_tracking_no",
@@ -125,11 +155,9 @@ class ShippingRecordReconciliation(Base):
             unique=True,
             postgresql_where=text("shipping_record_id IS NOT NULL"),
         ),
-        Index(
-            "uq_shipping_record_reconciliations_bill_item_id_notnull",
+        UniqueConstraint(
             "carrier_bill_item_id",
-            unique=True,
-            postgresql_where=text("carrier_bill_item_id IS NOT NULL"),
+            name="uq_shipping_record_reconciliations_bill_item_id",
         ),
     )
 

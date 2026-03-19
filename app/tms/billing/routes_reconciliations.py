@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,20 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_session
 
 from .contracts import (
-    CarrierBillItemOut,
-    ShippingBillReconciliationDetailResponse,
-    ShippingBillReconciliationOut,
+    ApproveShippingBillReconciliationIn,
+    ApproveShippingBillReconciliationOut,
+    ShippingBillReconciliationHistoriesResponse,
+    ShippingBillReconciliationHistoryRowOut,
     ShippingBillReconciliationsResponse,
     ShippingBillReconciliationRowOut,
-    ShippingBillReconciliationShippingRecordOut,
 )
-
+from .repository_reconciliation_history import (
+    insert_shipping_bill_reconciliation_history,
+    list_shipping_bill_reconciliation_histories,
+)
 from .repository_reconciliations import (
-    get_shipping_bill_reconciliation_detail,
+    approve_shipping_record_reconciliation,
+    delete_shipping_record_reconciliation_by_id,
+    get_shipping_record_reconciliation_by_id,
     list_shipping_bill_reconciliations,
 )
-
-ReconciliationStatus = Literal["diff", "bill_only", "record_only"]
 
 
 def _to_float(v: object) -> float | None:
@@ -44,12 +47,18 @@ def register(router: APIRouter) -> None:
     async def get_shipping_bill_reconciliations(
         carrier_code: str | None = Query(None),
         tracking_no: str | None = Query(None),
-        status: ReconciliationStatus | None = Query(None),
+        status: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
         session: AsyncSession = Depends(get_session),
         _current_user: Any = Depends(get_current_user),
     ) -> ShippingBillReconciliationsResponse:
+        normalized_status = None
+        if isinstance(status, str) and status.strip():
+            if status.strip() not in {"diff", "bill_only"}:
+                raise HTTPException(status_code=422, detail="status 仅支持 diff 或 bill_only。")
+            normalized_status = status.strip()
+
         total, rows = await list_shipping_bill_reconciliations(
             session,
             carrier_code=(
@@ -62,7 +71,7 @@ def register(router: APIRouter) -> None:
                 if isinstance(tracking_no, str) and tracking_no.strip()
                 else None
             ),
-            status=status,
+            status=normalized_status,
             limit=limit,
             offset=offset,
         )
@@ -80,24 +89,13 @@ def register(router: APIRouter) -> None:
                         if r.get("shipping_record_id") is not None
                         else None
                     ),
-                    carrier_bill_item_id=(
-                        int(r["carrier_bill_item_id"])
-                        if r.get("carrier_bill_item_id") is not None
-                        else None
-                    ),
-                    business_time=r.get("business_time"),
-                    destination_province=r.get("destination_province"),
-                    destination_city=r.get("destination_city"),
-                    billing_weight_kg=_to_float(r.get("billing_weight_kg")),
-                    gross_weight_kg=_to_float(r.get("gross_weight_kg")),
+                    carrier_bill_item_id=int(r["carrier_bill_item_id"]),
                     weight_diff_kg=_to_float(r.get("weight_diff_kg")),
-                    freight_amount=_to_float(r.get("freight_amount")),
-                    surcharge_amount=_to_float(r.get("surcharge_amount")),
-                    bill_cost_real=_to_float(r.get("bill_cost_real")),
-                    total_amount=_to_float(r.get("total_amount")),
-                    cost_estimated=_to_float(r.get("cost_estimated")),
                     cost_diff=_to_float(r.get("cost_diff")),
                     adjust_amount=_to_float(r.get("adjust_amount")),
+                    approved_reason_code=r.get("approved_reason_code"),
+                    approved_reason_text=r.get("approved_reason_text"),
+                    approved_at=r.get("approved_at"),
                     created_at=r["created_at"],
                 )
                 for r in rows
@@ -106,90 +104,145 @@ def register(router: APIRouter) -> None:
         )
 
     @router.get(
-        "/reconciliations/{reconciliation_id}",
-        response_model=ShippingBillReconciliationDetailResponse,
+        "/reconciliation-histories",
+        response_model=ShippingBillReconciliationHistoriesResponse,
     )
-    async def get_shipping_bill_reconciliation(
-        reconciliation_id: int,
+    async def get_shipping_bill_reconciliation_histories(
+        carrier_code: str | None = Query(None),
+        tracking_no: str | None = Query(None),
+        result_status: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
         session: AsyncSession = Depends(get_session),
         _current_user: Any = Depends(get_current_user),
-    ) -> ShippingBillReconciliationDetailResponse:
-        row = await get_shipping_bill_reconciliation_detail(
+    ) -> ShippingBillReconciliationHistoriesResponse:
+        normalized_result_status = None
+        if isinstance(result_status, str) and result_status.strip():
+            if result_status.strip() not in {"matched", "approved_bill_only", "resolved"}:
+                raise HTTPException(
+                    status_code=422,
+                    detail="result_status 仅支持 matched、approved_bill_only 或 resolved。",
+                )
+            normalized_result_status = result_status.strip()
+
+        total, rows = await list_shipping_bill_reconciliation_histories(
+            session,
+            carrier_code=(
+                carrier_code.strip()
+                if isinstance(carrier_code, str) and carrier_code.strip()
+                else None
+            ),
+            tracking_no=(
+                tracking_no.strip()
+                if isinstance(tracking_no, str) and tracking_no.strip()
+                else None
+            ),
+            result_status=normalized_result_status,
+            limit=limit,
+            offset=offset,
+        )
+
+        return ShippingBillReconciliationHistoriesResponse(
+            ok=True,
+            rows=[
+                ShippingBillReconciliationHistoryRowOut(
+                    id=int(r["id"]),
+                    carrier_bill_item_id=int(r["carrier_bill_item_id"]),
+                    shipping_record_id=(
+                        int(r["shipping_record_id"])
+                        if r.get("shipping_record_id") is not None
+                        else None
+                    ),
+                    carrier_code=str(r["carrier_code"]),
+                    tracking_no=str(r["tracking_no"]),
+                    result_status=str(r["result_status"]),
+                    approved_reason_code=str(r["approved_reason_code"]),
+                    weight_diff_kg=_to_float(r.get("weight_diff_kg")),
+                    cost_diff=_to_float(r.get("cost_diff")),
+                    adjust_amount=_to_float(r.get("adjust_amount")),
+                    approved_reason_text=r.get("approved_reason_text"),
+                    archived_at=r["archived_at"],
+                )
+                for r in rows
+            ],
+            total=total,
+        )
+
+    @router.post(
+        "/reconciliations/{reconciliation_id}/approve",
+        response_model=ApproveShippingBillReconciliationOut,
+    )
+    async def approve_reconciliation(
+        reconciliation_id: int,
+        payload: ApproveShippingBillReconciliationIn,
+        session: AsyncSession = Depends(get_session),
+        _current_user: Any = Depends(get_current_user),
+    ) -> ApproveShippingBillReconciliationOut:
+        approved_reason_text = (
+            payload.approved_reason_text.strip()
+            if isinstance(payload.approved_reason_text, str) and payload.approved_reason_text.strip()
+            else None
+        )
+        adjust_amount = payload.adjust_amount if payload.adjust_amount is not None else 0
+
+        reconciliation_row = await get_shipping_record_reconciliation_by_id(
             session,
             reconciliation_id=reconciliation_id,
         )
+        if reconciliation_row is None:
+            raise HTTPException(status_code=404, detail="对账差异记录不存在。")
+
+        current_status = str(reconciliation_row["status"])
+        expected_reason_code = (
+            "approved_bill_only"
+            if current_status == "bill_only"
+            else "resolved"
+        )
+
+        if payload.approved_reason_code != expected_reason_code:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"当前状态 {current_status} 只能确认为 {expected_reason_code}，"
+                    f"不能写为 {payload.approved_reason_code}。"
+                ),
+            )
+
+        row = await approve_shipping_record_reconciliation(
+            session,
+            reconciliation_id=reconciliation_id,
+            approved_reason_code=payload.approved_reason_code,
+            adjust_amount=adjust_amount,
+            approved_reason_text=approved_reason_text,
+        )
         if row is None:
-            raise HTTPException(status_code=404, detail="对账异常记录不存在。")
+            raise HTTPException(status_code=404, detail="对账差异记录不存在。")
 
-        bill_item = None
-        if row.get("bill_id") is not None:
-            bill_item = CarrierBillItemOut(
-                id=int(row["bill_id"]),
-                carrier_code=str(row["bill_carrier_code"]),
-                bill_month=row.get("bill_month"),
-                tracking_no=str(row["bill_tracking_no"]),
-                business_time=row.get("business_time"),
-                destination_province=row.get("destination_province"),
-                destination_city=row.get("destination_city"),
-                billing_weight_kg=_to_float(row.get("billing_weight_kg")),
-                freight_amount=_to_float(row.get("freight_amount")),
-                surcharge_amount=_to_float(row.get("surcharge_amount")),
-                total_amount=_to_float(row.get("total_amount")),
-                settlement_object=row.get("settlement_object"),
-                order_customer=row.get("order_customer"),
-                sender_name=row.get("sender_name"),
-                network_name=row.get("network_name"),
-                size_text=row.get("size_text"),
-                parent_customer=row.get("parent_customer"),
-                raw_payload=dict(row.get("raw_payload") or {}),
-                created_at=row["bill_created_at"],
-            )
-
-        shipping_record = None
-        if row.get("record_id") is not None:
-            shipping_record = ShippingBillReconciliationShippingRecordOut(
-                id=int(row["record_id"]),
-                order_ref=str(row["order_ref"]),
-                platform=str(row["platform"]),
-                shop_id=str(row["shop_id"]),
-                carrier_code=row.get("record_carrier_code"),
-                carrier_name=row.get("carrier_name"),
-                tracking_no=(
-                    str(row["record_tracking_no"])
-                    if row.get("record_tracking_no") is not None
-                    else None
-                ),
-                gross_weight_kg=_to_float(row.get("gross_weight_kg")),
-                cost_estimated=_to_float(row.get("cost_estimated")),
-                warehouse_id=int(row["warehouse_id"]),
-                shipping_provider_id=int(row["shipping_provider_id"]),
-                dest_province=row.get("dest_province"),
-                dest_city=row.get("dest_city"),
-                created_at=row["record_created_at"],
-            )
-
-        return ShippingBillReconciliationDetailResponse(
-            ok=True,
-            reconciliation=ShippingBillReconciliationOut(
-                id=int(row["reconciliation_id"]),
-                status=str(row["status"]),
-                carrier_code=str(row["carrier_code"]),
-                tracking_no=str(row["tracking_no"]),
-                shipping_record_id=(
-                    int(row["shipping_record_id"])
-                    if row.get("shipping_record_id") is not None
-                    else None
-                ),
-                carrier_bill_item_id=(
-                    int(row["carrier_bill_item_id"])
-                    if row.get("carrier_bill_item_id") is not None
-                    else None
-                ),
-                weight_diff_kg=_to_float(row.get("weight_diff_kg")),
-                cost_diff=_to_float(row.get("cost_diff")),
-                adjust_amount=_to_float(row.get("adjust_amount")),
-                created_at=row["reconciliation_created_at"],
+        await insert_shipping_bill_reconciliation_history(
+            session,
+            carrier_bill_item_id=int(row["carrier_bill_item_id"]),
+            shipping_record_id=(
+                int(row["shipping_record_id"])
+                if row.get("shipping_record_id") is not None
+                else None
             ),
-            bill_item=bill_item,
-            shipping_record=shipping_record,
+            carrier_code=str(row["carrier_code"]),
+            tracking_no=str(row["tracking_no"]),
+            result_status=str(row["approved_reason_code"]),
+            weight_diff_kg=row.get("weight_diff_kg"),
+            cost_diff=row.get("cost_diff"),
+            adjust_amount=row.get("adjust_amount"),
+            approved_reason_code=str(row["approved_reason_code"]),
+            approved_reason_text=row.get("approved_reason_text"),
+        )
+        await delete_shipping_record_reconciliation_by_id(
+            session,
+            reconciliation_id=reconciliation_id,
+        )
+        await session.commit()
+
+        return ApproveShippingBillReconciliationOut(
+            ok=True,
+            reconciliation_id=reconciliation_id,
+            history_result_status=str(row["approved_reason_code"]),
         )
