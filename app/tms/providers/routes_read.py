@@ -1,4 +1,4 @@
-# app/tms/config/providers/routes_read.py
+# app/tms/providers/routes_read.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
 from app.db.deps import get_db
+from app.tms.permissions import check_config_perm
 
 from .contracts import (
     ShippingProviderContactOut,
@@ -18,7 +19,6 @@ from .contracts import (
     ShippingProviderOut,
 )
 from .mappers import row_to_contact, row_to_provider
-from .permissions import check_perm
 
 
 def register(router: APIRouter) -> None:
@@ -35,7 +35,7 @@ def register(router: APIRouter) -> None:
 
         权限：config.store.read
         """
-        check_perm(db, current_user, ["config.store.read"])
+        check_config_perm(db, current_user, ["config.store.read"])
 
         where_clauses: List[str] = []
         params: Dict[str, Any] = {}
@@ -127,7 +127,7 @@ def register(router: APIRouter) -> None:
 
         权限：config.store.read
         """
-        check_perm(db, current_user, ["config.store.read"])
+        check_config_perm(db, current_user, ["config.store.read"])
 
         sql = text(
             """

@@ -1,4 +1,4 @@
-# app/tms/config/providers/contracts.py
+# app/tms/providers/contracts.py
 from __future__ import annotations
 
 from typing import List, Optional

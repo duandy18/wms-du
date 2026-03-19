@@ -1,4 +1,4 @@
-# app/tms/config/providers/routes_write.py
+# app/tms/providers/routes_write.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
 from app.db.deps import get_db
+from app.tms.permissions import check_config_perm
 
 from .contracts import (
     ShippingProviderCreateIn,
@@ -18,7 +19,6 @@ from .contracts import (
     ShippingProviderUpdateOut,
 )
 from .mappers import row_to_contact, row_to_provider
-from .permissions import check_perm
 
 
 def _norm_code(raw: Optional[str]) -> Optional[str]:
@@ -79,7 +79,7 @@ def register(router: APIRouter) -> None:
         - code 全局唯一（strip + upper 后比较）
         - 与仓库的绑定通过 warehouse_shipping_providers 另行配置（M:N）
         """
-        check_perm(db, current_user, ["config.store.write"])
+        check_config_perm(db, current_user, ["config.store.write"])
 
         code = _norm_code(payload.code)
         if code is None:
@@ -145,7 +145,7 @@ def register(router: APIRouter) -> None:
         - code 不允许更新（DB 级不可变）
         - 与仓库的绑定不在此接口更新（走 warehouse_shipping_providers）
         """
-        check_perm(db, current_user, ["config.store.write"])
+        check_config_perm(db, current_user, ["config.store.write"])
 
         fields: Dict[str, Any] = {}
 

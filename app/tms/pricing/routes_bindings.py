@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
 from app.db.deps import get_db
-from app.tms.config.permissions import check_config_perm
-from app.tms.config.warehouse_provider_bindings.contracts import (
+from app.tms.permissions import check_config_perm
+from app.tms.pricing.contracts_bindings import (
     WarehouseShippingProviderBindIn,
     WarehouseShippingProviderBindOut,
     WarehouseShippingProviderBulkUpsertIn,
@@ -21,7 +21,7 @@ from app.tms.config.warehouse_provider_bindings.contracts import (
     WarehouseShippingProviderUpdateIn,
     WarehouseShippingProviderUpdateOut,
 )
-from app.tms.config.warehouse_provider_bindings.helpers import LIST_SQL, row_to_out
+from app.tms.pricing.helpers_bindings import LIST_SQL, row_to_out
 
 
 router = APIRouter()

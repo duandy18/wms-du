@@ -1,8 +1,8 @@
-# app/tms/config/providers/routes_contacts.py
+# app/tms/providers/routes_contacts.py
 # 分拆说明：
-# - 本文件承载 TransportConfig / providers 子域下的联系人子资源写接口；
-# - 当前已统一为 async + AsyncSession 风格，与 TMS / config 子域其余路由对齐；
-# - 权限校验统一消费 app.tms.config.permissions。
+# - 本文件承载 TMS / providers 子域下的联系人子资源写接口；
+# - 当前已统一为 async + AsyncSession 风格，与 providers 子域其余路由对齐；
+# - 权限校验统一消费 app.tms.permissions。
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_session
 from app.db.deps import get_db
-from app.tms.config.permissions import check_config_perm
+from app.tms.permissions import check_config_perm
 
 from .contracts import (
     ShippingProviderContactCreateIn,

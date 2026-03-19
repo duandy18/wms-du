@@ -1,11 +1,11 @@
-# app/tms/config/warehouse_provider_bindings/helpers.py
+# app/tms/pricing/helpers_bindings.py
 from __future__ import annotations
 
 from typing import Any, Dict
 
 from sqlalchemy import text
 
-from app.tms.config.warehouse_provider_bindings.contracts import (
+from app.tms.pricing.contracts_bindings import (
     ShippingProviderLiteOut,
     WarehouseShippingProviderOut,
 )

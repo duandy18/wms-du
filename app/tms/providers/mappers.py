@@ -1,4 +1,4 @@
-# app/tms/config/providers/mappers.py
+# app/tms/providers/mappers.py
 from __future__ import annotations
 
 from typing import Any

@@ -162,7 +162,7 @@ def test_bulk_upsert_contract_smoke():
     assert r2.json().get("ok") is True
 
     # warehouse not found -> 404
-    r3 = client.put("/warehouses/999999/shipping-providers", json=payload_2, headers=headers)
+    r3 = client.put("/tms/pricing/warehouses/999999/bindings", json=payload_2, headers=headers)
     assert r3.status_code == 404
 
     # provider not found -> 404
