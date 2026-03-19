@@ -77,7 +77,7 @@ async def _pick_warehouse_id(async_client, headers: Dict[str, str]) -> int:
 
 async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], warehouse_id: int, provider_id: int) -> None:
     r = await async_client.post(
-        f"/warehouses/{int(warehouse_id)}/shipping-providers/bind",
+        f"/tms/pricing/warehouses/{int(warehouse_id)}/bindings",
         headers=headers,
         json={
             "shipping_provider_id": int(provider_id),
@@ -90,7 +90,7 @@ async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], war
     assert r.status_code in (200, 201, 409), r.text
     if r.status_code == 409:
         pr = await async_client.patch(
-            f"/warehouses/{int(warehouse_id)}/shipping-providers/{int(provider_id)}",
+            f"/tms/pricing/warehouses/{int(warehouse_id)}/bindings/{int(provider_id)}",
             headers=headers,
             json={"active": True, "priority": 0},
         )

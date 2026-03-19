@@ -32,7 +32,7 @@ def test_shipping_provider_create_then_bind_to_warehouse_contract():
     """
     最新合同（Phase 6+）：
     - /shipping-providers 创建网点实体不再要求 warehouse_id（M:N 绑定关系在 warehouse_shipping_providers）
-    - 绑定关系通过 /warehouses/{warehouse_id}/shipping-providers/bind 建立
+    - 绑定关系通过 /tms/pricing/warehouses/{warehouse_id}/bindings 建立
     """
     dsn = _dsn()
     if not dsn:
@@ -70,7 +70,7 @@ def test_shipping_provider_create_then_bind_to_warehouse_contract():
 
     # 2) 绑定到仓库（M:N）
     r2 = c.post(
-        f"/warehouses/{wid}/shipping-providers/bind",
+        f"/tms/pricing/warehouses/{wid}/bindings",
         json={"shipping_provider_id": provider_id, "active": True, "priority": 100},
         headers=headers,
     )
@@ -81,7 +81,7 @@ def test_shipping_provider_create_then_bind_to_warehouse_contract():
     assert int(body2["data"]["shipping_provider_id"]) == provider_id
 
     # 3) 从仓库绑定列表中可见
-    r3 = c.get(f"/warehouses/{wid}/shipping-providers", headers=headers)
+    r3 = c.get(f"/tms/pricing/warehouses/{wid}/bindings", headers=headers)
     assert r3.status_code == 200, r3.text
     rows = r3.json()["data"]
     assert any(int(x["shipping_provider_id"]) == provider_id for x in rows)

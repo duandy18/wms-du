@@ -75,6 +75,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.tms.records.router import router as tms_records_router
     from app.tms.reports.router import router as tms_reports_router
     from app.tms.shipment.orders_v2_router import router as tms_orders_shipment_v2_router
+    from app.tms.pricing.router import router as tms_pricing_router  # ✅ 新增
 
     # ---------------------------------------------------------------------------
     # scan routes
@@ -145,7 +146,10 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(shipping_provider_pricing_schemes_router)
     app.include_router(geo_router)
     app.include_router(pricing_integrity_ops_router)
+
     app.include_router(tms_quote_router)
+    app.include_router(tms_pricing_router)  # ✅ 新增（核心）
+
     app.include_router(tms_reports_router)
     app.include_router(tms_records_router)
     app.include_router(tms_billing_router)
