@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -12,13 +11,14 @@ from .contracts import (
     ReconcileCarrierBillCommand,
     ReconcileCarrierBillResult,
 )
-
 from .repository_items import list_carrier_bill_items_for_reconcile
-from .repository_records import (
-    list_shipping_records_for_reconcile,
-    list_shipping_records_for_record_only,
+from .repository_records import list_shipping_records_for_reconcile
+from .repository_reconciliation_history import (
+    insert_shipping_bill_reconciliation_history,
 )
 from .repository_reconciliations import (
+    delete_archived_shipping_record_reconciliations_by_carrier,
+    delete_shipping_record_reconciliation,
     upsert_shipping_record_reconciliation,
 )
 
@@ -39,19 +39,6 @@ def _has_cost_diff(cost_diff: Decimal | None) -> bool:
     return cost_diff is not None and cost_diff != Decimal("0")
 
 
-def _derive_business_date_window(
-    bill_rows: list[dict[str, Any]],
-) -> tuple[date | None, date | None]:
-    dates: list[date] = []
-    for row in bill_rows:
-        v = row.get("business_time")
-        if isinstance(v, datetime):
-            dates.append(v.date())
-    if not dates:
-        return None, None
-    return min(dates), max(dates)
-
-
 class CarrierBillReconcileService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -62,6 +49,11 @@ class CarrierBillReconcileService:
     ) -> ReconcileCarrierBillResult:
         carrier_code = command.carrier_code.strip()
 
+        await delete_archived_shipping_record_reconciliations_by_carrier(
+            self.session,
+            carrier_code=carrier_code,
+        )
+
         bill_rows = await list_carrier_bill_items_for_reconcile(
             self.session,
             carrier_code=carrier_code,
@@ -70,13 +62,11 @@ class CarrierBillReconcileService:
 
         bill_map: dict[str, dict[str, Any]] = {}
         duplicate_tracking_nos: set[str] = set()
-        all_bill_tracking_nos: set[str] = set()
 
         for row in bill_rows:
             tracking_no = str(row.get("tracking_no") or "").strip()
             if not tracking_no:
                 continue
-            all_bill_tracking_nos.add(tracking_no)
             if tracking_no in bill_map:
                 duplicate_tracking_nos.add(tracking_no)
                 continue
@@ -99,12 +89,13 @@ class CarrierBillReconcileService:
             if str(r.get("tracking_no") or "").strip()
         }
 
-        diff_count = 0
+        matched_count = 0
         bill_only_count = 0
-        record_only_count = 0
+        diff_count = 0
         updated_count = 0
 
         for tracking_no, bill_row in bill_map.items():
+            bill_item_id = int(bill_row["id"])
             record_row = record_map.get(tracking_no)
 
             if record_row is None:
@@ -114,14 +105,15 @@ class CarrierBillReconcileService:
                     carrier_code=carrier_code,
                     tracking_no=tracking_no,
                     shipping_record_id=None,
-                    carrier_bill_item_id=int(bill_row["id"]),
+                    carrier_bill_item_id=bill_item_id,
                     weight_diff_kg=None,
                     cost_diff=None,
-                    adjust_amount=None,
                 )
                 bill_only_count += 1
                 updated_count += 1
                 continue
+
+            shipping_record_id = int(record_row["id"])
 
             billing_weight_kg = _to_decimal(bill_row.get("billing_weight_kg"))
             freight_amount = _to_decimal(bill_row.get("freight_amount"))
@@ -155,44 +147,34 @@ class CarrierBillReconcileService:
                     status="diff",
                     carrier_code=carrier_code,
                     tracking_no=tracking_no,
-                    shipping_record_id=int(record_row["id"]),
-                    carrier_bill_item_id=int(bill_row["id"]),
+                    shipping_record_id=shipping_record_id,
+                    carrier_bill_item_id=bill_item_id,
                     weight_diff_kg=weight_diff_kg,
                     cost_diff=cost_diff,
-                    adjust_amount=None,
                 )
                 diff_count += 1
                 updated_count += 1
-
-        from_date, to_date = _derive_business_date_window(bill_rows)
-
-        record_only_rows = await list_shipping_records_for_record_only(
-            self.session,
-            carrier_code=carrier_code,
-            bill_tracking_nos=sorted(all_bill_tracking_nos),
-            from_date=from_date,
-            to_date=to_date,
-        )
-
-        for record_row in record_only_rows:
-            tracking_no = str(record_row.get("tracking_no") or "").strip()
-            if not tracking_no:
                 continue
 
-                # no-op
-
-            await upsert_shipping_record_reconciliation(
+            await delete_shipping_record_reconciliation(
                 self.session,
-                status="record_only",
+                shipping_record_id=shipping_record_id,
+                carrier_bill_item_id=bill_item_id,
+            )
+            await insert_shipping_bill_reconciliation_history(
+                self.session,
+                carrier_bill_item_id=bill_item_id,
+                shipping_record_id=shipping_record_id,
                 carrier_code=carrier_code,
                 tracking_no=tracking_no,
-                shipping_record_id=int(record_row["id"]),
-                carrier_bill_item_id=None,
+                result_status="matched",
                 weight_diff_kg=None,
                 cost_diff=None,
                 adjust_amount=None,
+                approved_reason_code="matched",
+                approved_reason_text=None,
             )
-            record_only_count += 1
+            matched_count += 1
             updated_count += 1
 
         await self.session.commit()
@@ -201,9 +183,9 @@ class CarrierBillReconcileService:
             ok=True,
             carrier_code=carrier_code,
             bill_item_count=bill_item_count,
-            diff_count=diff_count,
+            matched_count=matched_count,
             bill_only_count=bill_only_count,
-            record_only_count=record_only_count,
+            diff_count=diff_count,
             updated_count=updated_count,
             duplicate_bill_tracking_count=len(duplicate_tracking_nos),
         )

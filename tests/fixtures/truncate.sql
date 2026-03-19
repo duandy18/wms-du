@@ -43,6 +43,9 @@ TRUNCATE TABLE
   shipping_provider_surcharge_configs,
   shipping_provider_pricing_schemes,
   shipping_provider_contacts,
+  shipping_bill_reconciliation_histories,
+  shipping_record_reconciliations,
+  carrier_bill_items,
   shipping_records,
   shipping_providers,
 

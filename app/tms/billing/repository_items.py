@@ -9,7 +9,6 @@
 - 不再保留 import_batch_no
 - 导入采用 UPSERT（ON CONFLICT），实现幂等增量补录
 """
-
 from __future__ import annotations
 
 import json
@@ -214,14 +213,19 @@ async def list_carrier_bill_items_for_reconcile(
     sql = text(
         """
         SELECT
-            id,
-            tracking_no,
-            business_time,
-            billing_weight_kg,
-            freight_amount,
-            surcharge_amount
-        FROM carrier_bill_items
-        WHERE upper(carrier_code) = upper(:carrier_code)
+            b.id,
+            b.tracking_no,
+            b.business_time,
+            b.billing_weight_kg,
+            b.freight_amount,
+            b.surcharge_amount
+        FROM carrier_bill_items b
+        WHERE upper(b.carrier_code) = upper(:carrier_code)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM shipping_bill_reconciliation_histories h
+              WHERE h.carrier_bill_item_id = b.id
+          )
         """
     )
 
