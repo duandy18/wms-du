@@ -38,10 +38,11 @@ def _build_breakdown(*, base_amount: float, surcharge_amount: float) -> dict[str
 def test_build_quote_snapshot_has_v1_contract() -> None:
     snapshot = build_quote_snapshot(
         source="shipping_quote.calc",
-        input_payload={"warehouse_id": 1, "scheme_id": 2},
+        input_payload={"warehouse_id": 1, "template_id": 2},
         selected_quote={
             "quote_status": "OK",
-            "scheme_id": 2,
+            "template_id": 2,
+            "template_name": "UT-TEMPLATE-2",
             "currency": "CNY",
             "total_amount": 12.5,
             "weight": {"billable_weight_kg": 1.2},
@@ -55,6 +56,8 @@ def test_build_quote_snapshot_has_v1_contract() -> None:
 
     selected = snapshot["selected_quote"]
     assert isinstance(selected, dict)
+    assert selected["template_id"] == 2
+    assert selected["template_name"] == "UT-TEMPLATE-2"
     assert selected["total_amount"] == 12.5
     assert selected["reasons"] == ["group_match:x", "total=12.50 CNY"]
 

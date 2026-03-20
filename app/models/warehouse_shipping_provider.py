@@ -20,11 +20,12 @@ from app.db.base import Base
 
 class WarehouseShippingProvider(Base):
     """
-    仓库 × 快递公司（ShippingProvider）能力集合：事实绑定（Phase 1）
+    仓库 × 快递公司（ShippingProvider）运行态绑定
 
     语义：
     - 一行表示：某仓库「事实层面可用」某快递公司
     - active 是事实开关（可用/禁用）
+    - active_template_id 是运行态单锚点：当前正式挂载的运价模板
     - priority 仅用于仓库侧展示排序（不是推荐/算价策略）
     - pickup_cutoff_time / remark 为可选运维字段（不进入算价）
     """
@@ -50,6 +51,12 @@ class WarehouseShippingProvider(Base):
         Integer,
         ForeignKey("shipping_providers.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+
+    active_template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_templates.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     active: Mapped[bool] = mapped_column(
@@ -94,10 +101,15 @@ class WarehouseShippingProvider(Base):
         back_populates="warehouse_shipping_providers",
         lazy="selectin",
     )
+    active_template = relationship(
+        "ShippingProviderPricingTemplate",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return (
             f"<WarehouseShippingProvider id={self.id} "
             f"warehouse_id={self.warehouse_id} provider_id={self.shipping_provider_id} "
+            f"active_template_id={self.active_template_id} "
             f"active={self.active}>"
         )

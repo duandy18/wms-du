@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import get_current_user
-from app.api.routers.shipping_provider_pricing_schemes_utils import check_perm
 from app.db.deps import get_db
 from app.geo.cn_registry import list_cities, list_provinces
+from app.tms.permissions import check_config_perm
 
 router = APIRouter(prefix="/geo", tags=["geo"])
 
@@ -26,7 +26,7 @@ def geo_list_provinces(
     user=Depends(get_current_user),
 ):
     # ✅ 这里沿用配置写权限：因为这是配置页面的输入源
-    check_perm(db, user, "config.store.write")
+    check_config_perm(db, user, ["config.store.write"])
     return [GeoItemOut(code=x.code, name=x.name) for x in list_provinces(q=q)]
 
 
@@ -37,5 +37,5 @@ def geo_list_cities(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
-    check_perm(db, user, "config.store.write")
+    check_config_perm(db, user, ["config.store.write"])
     return [GeoItemOut(code=x.code, name=x.name) for x in list_cities(province_code=province_code, q=q)]

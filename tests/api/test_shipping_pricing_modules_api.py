@@ -22,26 +22,26 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _create_scheme(client: AsyncClient, token: str) -> int:
+async def _create_template(client: AsyncClient, token: str) -> int:
     h = auth_headers(token)
 
     r = await client.post(
-        "/shipping-providers/1/pricing-schemes",
+        "/tms/pricing/templates",
         headers=h,
         json={
-            "warehouse_id": 1,
-            "name": "test-scheme",
+            "shipping_provider_id": 1,
+            "name": "test-template",
         },
     )
 
-    assert r.status_code == 201
+    assert r.status_code == 201, r.text
 
     body = r.json()
 
     return int(body["data"]["id"])
 
 
-async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> None:
+async def _build_template_resources(client: AsyncClient, h, template_id: int) -> None:
     ranges = [
         {
             "min_kg": 0,
@@ -52,7 +52,7 @@ async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> Non
     ]
 
     r = await client.put(
-        f"/pricing-schemes/{scheme_id}/ranges",
+        f"/tms/pricing/templates/{template_id}/ranges",
         headers=h,
         json={"ranges": ranges},
     )
@@ -62,7 +62,7 @@ async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> Non
     range_id = int(r.json()["ranges"][0]["id"])
 
     r = await client.post(
-        f"/pricing-schemes/{scheme_id}/groups",
+        f"/tms/pricing/templates/{template_id}/groups",
         headers=h,
         json={
             "sort_order": 0,
@@ -86,7 +86,7 @@ async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> Non
     ]
 
     r = await client.put(
-        f"/pricing-schemes/{scheme_id}/matrix-cells",
+        f"/tms/pricing/templates/{template_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
@@ -94,7 +94,7 @@ async def _build_scheme_resources(client: AsyncClient, h, scheme_id: int) -> Non
     assert r.status_code == 200, r.text
 
     r = await client.get(
-        f"/pricing-schemes/{scheme_id}/matrix-cells",
+        f"/tms/pricing/templates/{template_id}/matrix-cells",
         headers=h,
     )
 
@@ -108,13 +108,17 @@ async def test_ranges_groups_cells_replace_and_publish(client: AsyncClient):
 
     h = auth_headers(token)
 
-    scheme_id = await _create_scheme(client, token)
+    template_id = await _create_template(client, token)
 
-    await _build_scheme_resources(client, h, scheme_id)
+    await _build_template_resources(client, h, template_id)
 
     r = await client.post(
-        f"/pricing-schemes/{scheme_id}/publish",
+        f"/tms/pricing/templates/{template_id}/publish",
         headers=h,
     )
 
     assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"]["id"] == template_id
+    assert body["data"]["status"] == "active"

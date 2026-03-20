@@ -22,7 +22,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.inbound_receipts import router as inbound_receipts_router
     from app.api.routers.intelligence import router as intelligence_router
     from app.api.routers.item_barcodes import router as item_barcodes_router
-    from app.api.routers.item_uoms import router as item_uoms_router  # ✅ NEW
+    from app.api.routers.item_uoms import router as item_uoms_router
     from app.api.routers.items import router as items_router
     from app.api.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
     from app.api.routers.ledger_timeline import router as ledger_timeline_router
@@ -38,22 +38,17 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.orders_stats import router as orders_stats_router
     from app.api.routers.outbound import router as outbound_router
     from app.api.routers.outbound_ops import router as outbound_ops_router
-    from app.api.routers.outbound_ship import router as outbound_ship_router
     from app.api.routers.pdd_auth import router as pdd_auth_router
     from app.api.routers.permissions import router as permissions_router
     from app.api.routers.pick import router as pick_router
     from app.api.routers.pick_tasks import router as pick_tasks_router
     from app.api.routers.platform_orders_ingest import router as platform_orders_ingest_router
     from app.api.routers.platform_shops import router as platform_shops_router
-    from app.api.routers.pricing_integrity_ops import router as pricing_integrity_ops_router
     from app.api.routers.print_jobs import router as print_jobs_router
     from app.api.routers.purchase_orders import router as purchase_orders_router
     from app.api.routers.purchase_reports import router as purchase_reports_router
     from app.api.routers.return_tasks import router as return_tasks_router
     from app.api.routers.roles import router as roles_router
-    from app.api.routers.shipping_provider_pricing_schemes.router import (
-        router as shipping_provider_pricing_schemes_router,
-    )
     from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
     from app.api.routers.snapshot import router as snapshot_router
     from app.api.routers.snapshot_v3 import router as snapshot_v3_router
@@ -70,12 +65,13 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.internal_outbound import router as internal_outbound_router
 
     from app.tms.billing.router import router as tms_billing_router
+    from app.tms.pricing.router import router as tms_pricing_router
     from app.tms.providers.router import router as tms_providers_router
     from app.tms.quote.router import router as tms_quote_router
     from app.tms.records.router import router as tms_records_router
     from app.tms.reports.router import router as tms_reports_router
     from app.tms.shipment.orders_v2_router import router as tms_orders_shipment_v2_router
-    from app.tms.pricing.router import router as tms_pricing_router  # ✅ 新增
+    from app.tms.shipment.router import router as tms_shipment_router
 
     # ---------------------------------------------------------------------------
     # scan routes
@@ -114,7 +110,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(orders_fulfillment_debug_router)
 
     app.include_router(outbound_router)
-    app.include_router(outbound_ship_router)
+    app.include_router(tms_shipment_router)
     app.include_router(internal_outbound_router)
     app.include_router(outbound_ops_router)
 
@@ -137,18 +133,16 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # 商品相关
     app.include_router(items_router)
     app.include_router(item_barcodes_router)
-    app.include_router(item_uoms_router)  # ✅ NEW
+    app.include_router(item_uoms_router)
 
     app.include_router(suppliers_router)
     app.include_router(supplier_contacts_router)
 
     app.include_router(tms_providers_router)
-    app.include_router(shipping_provider_pricing_schemes_router)
     app.include_router(geo_router)
-    app.include_router(pricing_integrity_ops_router)
 
     app.include_router(tms_quote_router)
-    app.include_router(tms_pricing_router)  # ✅ 新增（核心）
+    app.include_router(tms_pricing_router)
 
     app.include_router(tms_reports_router)
     app.include_router(tms_records_router)

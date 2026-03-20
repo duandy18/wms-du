@@ -54,26 +54,10 @@ VALUES
   (2, 'Fake Express', 'FAKE', true, 100, 'UT-ADDR-FAKE')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO warehouse_shipping_providers (
-  warehouse_id,
-  shipping_provider_id,
-  active,
-  priority,
-  pickup_cutoff_time,
-  remark
-)
-VALUES (1, 1, true, 0, NULL, 'seed bind')
-ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
-  active = EXCLUDED.active,
-  priority = EXCLUDED.priority,
-  pickup_cutoff_time = EXCLUDED.pickup_cutoff_time,
-  remark = EXCLUDED.remark;
-
--- ===== shipping pricing scheme baseline =====
--- Route A：scheme 作用域 = warehouse × provider（硬仓库边界）
-INSERT INTO shipping_provider_pricing_schemes (
+-- ===== shipping pricing template baseline =====
+-- template 主线：provider -> template -> ranges/groups -> matrix + surcharge_config
+INSERT INTO shipping_provider_pricing_templates (
   id,
-  warehouse_id,
   shipping_provider_id,
   name,
   currency,
@@ -91,8 +75,7 @@ INSERT INTO shipping_provider_pricing_schemes (
 VALUES (
   1,
   1,
-  1,
-  'UT-SCHEME-1',
+  'UT-TEMPLATE-1',
   'CNY',
   NULL,
   NULL,
@@ -106,7 +89,6 @@ VALUES (
   NULL
 )
 ON CONFLICT (id) DO UPDATE SET
-  warehouse_id = EXCLUDED.warehouse_id,
   shipping_provider_id = EXCLUDED.shipping_provider_id,
   name = EXCLUDED.name,
   currency = EXCLUDED.currency,
@@ -121,10 +103,10 @@ ON CONFLICT (id) DO UPDATE SET
   rounding_step_kg = EXCLUDED.rounding_step_kg,
   min_billable_weight_kg = EXCLUDED.min_billable_weight_kg;
 
--- ranges：单方案直挂
-INSERT INTO shipping_provider_pricing_scheme_module_ranges (
+-- ranges：单模板直挂
+INSERT INTO shipping_provider_pricing_template_module_ranges (
   id,
-  scheme_id,
+  template_id,
   min_kg,
   max_kg,
   sort_order,
@@ -135,16 +117,16 @@ VALUES
   (2, 1, 1.000, 2.000, 1, 'flat'),
   (3, 1, 2.000, NULL, 2, 'linear_total')
 ON CONFLICT (id) DO UPDATE SET
-  scheme_id = EXCLUDED.scheme_id,
+  template_id = EXCLUDED.template_id,
   min_kg = EXCLUDED.min_kg,
   max_kg = EXCLUDED.max_kg,
   sort_order = EXCLUDED.sort_order,
   default_pricing_mode = EXCLUDED.default_pricing_mode;
 
--- destination groups：单方案直挂
-INSERT INTO shipping_provider_destination_groups (
+-- destination groups：单模板直挂
+INSERT INTO shipping_provider_pricing_template_destination_groups (
   id,
-  scheme_id,
+  template_id,
   name,
   active,
   sort_order
@@ -152,12 +134,12 @@ INSERT INTO shipping_provider_destination_groups (
 VALUES
   (1, 1, '华北测试组', true, 0)
 ON CONFLICT (id) DO UPDATE SET
-  scheme_id = EXCLUDED.scheme_id,
+  template_id = EXCLUDED.template_id,
   name = EXCLUDED.name,
   active = EXCLUDED.active,
   sort_order = EXCLUDED.sort_order;
 
-INSERT INTO shipping_provider_destination_group_members (
+INSERT INTO shipping_provider_pricing_template_destination_group_members (
   id,
   group_id,
   province_code,
@@ -172,8 +154,8 @@ ON CONFLICT (id) DO UPDATE SET
   province_code = EXCLUDED.province_code,
   province_name = EXCLUDED.province_name;
 
--- pricing matrix：单方案 cell 结构
-INSERT INTO shipping_provider_pricing_matrix (
+-- pricing matrix：单模板 cell 结构
+INSERT INTO shipping_provider_pricing_template_matrix (
   id,
   group_id,
   pricing_mode,
@@ -198,25 +180,22 @@ ON CONFLICT (id) DO UPDATE SET
   active = EXCLUDED.active,
   module_range_id = EXCLUDED.module_range_id;
 
--- surcharge_config：最小一条省级附加费（新架构）
-INSERT INTO shipping_provider_surcharge_configs (
-  id,
-  scheme_id,
-  province_code,
-  province_name,
-  province_mode,
-  fixed_amount,
-  active
+INSERT INTO warehouse_shipping_providers (
+  warehouse_id,
+  shipping_provider_id,
+  active_template_id,
+  active,
+  priority,
+  pickup_cutoff_time,
+  remark
 )
-VALUES
-  (1, 1, '110000', '北京市', 'province', 1.50, true)
-ON CONFLICT (id) DO UPDATE SET
-  scheme_id = EXCLUDED.scheme_id,
-  province_code = EXCLUDED.province_code,
-  province_name = EXCLUDED.province_name,
-  province_mode = EXCLUDED.province_mode,
-  fixed_amount = EXCLUDED.fixed_amount,
-  active = EXCLUDED.active;
+VALUES (1, 1, 1, true, 0, NULL, 'seed bind')
+ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
+  active_template_id = EXCLUDED.active_template_id,
+  active = EXCLUDED.active,
+  priority = EXCLUDED.priority,
+  pickup_cutoff_time = EXCLUDED.pickup_cutoff_time,
+  remark = EXCLUDED.remark;
 
 -- ===== items =====
 INSERT INTO items (
@@ -312,40 +291,35 @@ SELECT setval(
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_pricing_schemes','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_schemes), 0),
+  pg_get_serial_sequence('shipping_provider_pricing_templates','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_templates), 0),
   true
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_pricing_scheme_module_ranges','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_scheme_module_ranges), 0),
+  pg_get_serial_sequence('shipping_provider_pricing_template_module_ranges','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_template_module_ranges), 0),
   true
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_destination_groups','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_destination_groups), 0),
+  pg_get_serial_sequence('shipping_provider_pricing_template_destination_groups','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_template_destination_groups), 0),
   true
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_destination_group_members','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_destination_group_members), 0),
+  pg_get_serial_sequence('shipping_provider_pricing_template_destination_group_members','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_template_destination_group_members), 0),
   true
 );
 
 SELECT setval(
-  pg_get_serial_sequence('shipping_provider_pricing_matrix','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_matrix), 0),
+  pg_get_serial_sequence('shipping_provider_pricing_template_matrix','id'),
+  COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_template_matrix), 0),
   true
 );
 
-SELECT setval(
-  pg_get_serial_sequence('shipping_provider_surcharge_configs','id'),
-  COALESCE((SELECT MAX(id) FROM shipping_provider_surcharge_configs), 0),
-  true
-);
 
 SELECT setval(
   pg_get_serial_sequence('items','id'),

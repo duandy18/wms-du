@@ -1,24 +1,28 @@
 # tests/unit/test_surcharge_city_wins_selection.py
 from __future__ import annotations
 
-from app.models.shipping_provider_surcharge_config import ShippingProviderSurchargeConfig
-from app.models.shipping_provider_surcharge_config_city import ShippingProviderSurchargeConfigCity
-from app.services.shipping_quote.calc_quote_level3 import _select_surcharge_from_configs
-from app.services.shipping_quote.types import Dest
+from app.models.shipping_provider_pricing_template_surcharge_config import (
+    ShippingProviderPricingTemplateSurchargeConfig,
+)
+from app.models.shipping_provider_pricing_template_surcharge_config_city import (
+    ShippingProviderPricingTemplateSurchargeConfigCity,
+)
+from app.tms.quote.calc_quote_level3 import _select_surcharge_from_configs
+from app.tms.quote.types import Dest
 
 
 def _cfg_province(
     *,
     id: int,
-    scheme_id: int,
+    template_id: int,
     province_code: str,
     province_name: str,
     amount: float,
     active: bool = True,
-) -> ShippingProviderSurchargeConfig:
-    cfg = ShippingProviderSurchargeConfig(
+) -> ShippingProviderPricingTemplateSurchargeConfig:
+    cfg = ShippingProviderPricingTemplateSurchargeConfig(
         id=id,
-        scheme_id=scheme_id,
+        template_id=template_id,
         province_code=province_code,
         province_name=province_name,
         province_mode="province",
@@ -32,15 +36,15 @@ def _cfg_province(
 def _cfg_cities(
     *,
     id: int,
-    scheme_id: int,
+    template_id: int,
     province_code: str,
     province_name: str,
-    cities: list[ShippingProviderSurchargeConfigCity],
+    cities: list[ShippingProviderPricingTemplateSurchargeConfigCity],
     active: bool = True,
-) -> ShippingProviderSurchargeConfig:
-    cfg = ShippingProviderSurchargeConfig(
+) -> ShippingProviderPricingTemplateSurchargeConfig:
+    cfg = ShippingProviderPricingTemplateSurchargeConfig(
         id=id,
-        scheme_id=scheme_id,
+        template_id=template_id,
         province_code=province_code,
         province_name=province_name,
         province_mode="cities",
@@ -59,8 +63,8 @@ def _city_row(
     city_name: str,
     amount: float,
     active: bool = True,
-) -> ShippingProviderSurchargeConfigCity:
-    return ShippingProviderSurchargeConfigCity(
+) -> ShippingProviderPricingTemplateSurchargeConfigCity:
+    return ShippingProviderPricingTemplateSurchargeConfigCity(
         id=id,
         config_id=config_id,
         city_code=city_code,
@@ -82,7 +86,7 @@ def test_select_surcharge_from_configs_hits_province_mode() -> None:
 
     cfg = _cfg_province(
         id=10,
-        scheme_id=1,
+        template_id=1,
         province_code="110000",
         province_name="北京市",
         amount=1.5,
@@ -128,7 +132,7 @@ def test_select_surcharge_from_configs_hits_city_mode() -> None:
     )
     cfg = _cfg_cities(
         id=20,
-        scheme_id=1,
+        template_id=1,
         province_code="440000",
         province_name="广东省",
         cities=[city_sz, city_gz],
@@ -168,7 +172,7 @@ def test_select_surcharge_from_configs_city_mode_miss_returns_zero() -> None:
     )
     cfg = _cfg_cities(
         id=30,
-        scheme_id=1,
+        template_id=1,
         province_code="440000",
         province_name="广东省",
         cities=[city_sz],
@@ -200,7 +204,7 @@ def test_select_surcharge_from_configs_no_matching_province_returns_zero() -> No
 
     cfg = _cfg_province(
         id=40,
-        scheme_id=1,
+        template_id=1,
         province_code="110000",
         province_name="北京市",
         amount=1.5,
@@ -239,7 +243,7 @@ def test_select_surcharge_from_configs_skips_inactive_config_and_city() -> None:
     )
     inactive_cfg = _cfg_cities(
         id=50,
-        scheme_id=1,
+        template_id=1,
         province_code="440000",
         province_name="广东省",
         cities=[inactive_city],
@@ -247,7 +251,7 @@ def test_select_surcharge_from_configs_skips_inactive_config_and_city() -> None:
     )
     disabled_cfg = _cfg_province(
         id=51,
-        scheme_id=1,
+        template_id=1,
         province_code="440000",
         province_name="广东省",
         amount=8.0,

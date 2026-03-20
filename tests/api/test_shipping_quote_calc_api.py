@@ -8,7 +8,7 @@ from app.main import app
 from tests._problem import as_problem
 from tests.api._helpers_shipping_quote import (
     auth_headers,
-    create_scheme_bundle,
+    create_template_bundle,
     login,
     pick_warehouse_id,
     require_env,
@@ -46,7 +46,7 @@ def _assert_quote_snapshot_shape(snapshot: object, *, expected_total: float | No
 
 def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
     token = login(client)
-    ids = create_scheme_bundle(client, token)
+    ids = create_template_bundle(client, token)
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
@@ -54,7 +54,7 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": ids["scheme_id"],
+            "template_id": ids["template_id"],
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -87,7 +87,7 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
 
 def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
     token = login(client)
-    ids = create_scheme_bundle(client, token)
+    ids = create_template_bundle(client, token)
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
@@ -95,7 +95,7 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": ids["scheme_id"],
+            "template_id": ids["template_id"],
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -128,7 +128,7 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
 
 def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: TestClient) -> None:
     token = login(client)
-    ids = create_scheme_bundle(client, token)
+    ids = create_template_bundle(client, token)
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
@@ -136,7 +136,7 @@ def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: T
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": ids["scheme_id"],
+            "template_id": ids["template_id"],
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -168,7 +168,7 @@ def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: T
 
 def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(client: TestClient) -> None:
     token = login(client)
-    ids = create_scheme_bundle(client, token)
+    ids = create_template_bundle(client, token)
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
@@ -176,7 +176,7 @@ def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(clie
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": ids["scheme_id"],
+            "template_id": ids["template_id"],
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -208,7 +208,7 @@ def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(clie
 
 def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -> None:
     token = login(client)
-    ids = create_scheme_bundle(client, token)
+    ids = create_template_bundle(client, token)
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
@@ -216,7 +216,7 @@ def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": ids["scheme_id"],
+            "template_id": ids["template_id"],
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -262,11 +262,11 @@ def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -
 
     assert snapshot["source"] == "shipping_quote.calc"
     selected_quote = snapshot["selected_quote"]
-    assert selected_quote["scheme_id"] == ids["scheme_id"]
+    assert selected_quote["template_id"] == ids["template_id"]
     assert abs(float(selected_quote["total_amount"]) - float(body["total_amount"])) < 1e-9
 
 
-def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> None:
+def test_shipping_quote_calc_error_code_template_not_found(client: TestClient) -> None:
     token = login(client)
     wid = pick_warehouse_id(client, token)
 
@@ -275,7 +275,7 @@ def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> 
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
-            "scheme_id": 999999,
+            "template_id": 999999,
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -289,4 +289,4 @@ def test_shipping_quote_calc_error_code_scheme_not_found(client: TestClient) -> 
     )
     assert r.status_code == 422, r.text
     p = as_problem(r.json())
-    assert p["error_code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
+    assert p["error_code"] == "QUOTE_CALC_TEMPLATE_NOT_FOUND"

@@ -19,9 +19,9 @@ from app.schemas.metrics_outbound_v2 import (
     OutboundWarehouseMetricsResponse,
 )
 from app.schemas.metrics_shipping_quote import ShippingQuoteFailuresMetricsResponse
-from app.services.metrics_alerts import load_alerts
 from app.services.outbound_metrics_v2 import OutboundMetricsV2Service
-from app.services.shipping_quote_metrics_failures import load_shipping_quote_failures
+from app.tms.alerts.service import load_alerts
+from app.tms.quote.metrics.failures import load_shipping_quote_failures
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 

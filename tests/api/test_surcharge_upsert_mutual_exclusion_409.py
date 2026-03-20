@@ -75,7 +75,12 @@ async def _pick_warehouse_id(async_client, headers: Dict[str, str]) -> int:
     return int(first["id"])
 
 
-async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], warehouse_id: int, provider_id: int) -> None:
+async def _bind_provider_to_warehouse(
+    async_client,
+    headers: Dict[str, str],
+    warehouse_id: int,
+    provider_id: int,
+) -> None:
     r = await async_client.post(
         f"/tms/pricing/warehouses/{int(warehouse_id)}/bindings",
         headers=headers,
@@ -97,7 +102,7 @@ async def _bind_provider_to_warehouse(async_client, headers: Dict[str, str], war
         assert pr.status_code == 200, pr.text
 
 
-async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
+async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
     wid = await _pick_warehouse_id(async_client, headers)
 
     pr = await async_client.get("/shipping-providers", headers=headers)
@@ -142,21 +147,32 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
 
     await _bind_provider_to_warehouse(async_client, headers, int(wid), int(provider_id))
 
-    sr = await async_client.get(f"/shipping-providers/{provider_id}/pricing-schemes", headers=headers)
-    assert sr.status_code == 200, sr.text
-    schemes_body = sr.json()
-    schemes = schemes_body.get("data") if isinstance(schemes_body, dict) else schemes_body
+    tr = await async_client.get(
+        f"/tms/pricing/shipping-providers/{int(provider_id)}/templates",
+        headers=headers,
+    )
+    assert tr.status_code == 200, tr.text
+    templates_body = tr.json()
+    templates = templates_body.get("data") if isinstance(templates_body, dict) else templates_body
 
-    scheme_id: Optional[int] = None
-    if isinstance(schemes, list) and schemes:
-        for item in schemes:
-            if isinstance(item, dict) and int(item.get("warehouse_id") or 0) == int(wid):
-                sid = item.get("id")
-                if isinstance(sid, int) and sid > 0:
-                    scheme_id = sid
+    template_id: Optional[int] = None
+    if isinstance(templates, list) and templates:
+        for item in templates:
+            if isinstance(item, dict):
+                tid = item.get("id")
+                status = str(item.get("status") or "").strip().lower()
+                if isinstance(tid, int) and tid > 0 and status == "draft":
+                    template_id = tid
                     break
-    if scheme_id is not None:
-        return scheme_id
+        if template_id is None:
+            for item in templates:
+                if isinstance(item, dict):
+                    tid = item.get("id")
+                    if isinstance(tid, int) and tid > 0:
+                        template_id = tid
+                        break
+    if template_id is not None:
+        return template_id
 
     o = await async_client.get("/openapi.json")
     assert o.status_code == 200, o.text
@@ -164,7 +180,7 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
 
     post_schema = (
         spec.get("paths", {})
-        .get("/shipping-providers/{provider_id}/pricing-schemes", {})
+        .get("/tms/pricing/templates", {})
         .get("post", {})
         .get("requestBody", {})
         .get("content", {})
@@ -174,25 +190,28 @@ async def _ensure_scheme_id(async_client, headers: Dict[str, str]) -> int:
 
     seed = uuid4().hex[:8]
     payload = _build_min_payload_from_schema(spec, post_schema, seed=seed)
-    payload.setdefault("name", f"UT_SCHEME_{seed}")
+    payload.setdefault("shipping_provider_id", int(provider_id))
+    payload.setdefault("name", f"UT_TEMPLATE_{seed}")
     payload.setdefault("currency", "CNY")
-    payload.setdefault("warehouse_id", int(wid))
+    payload.setdefault("default_pricing_mode", "linear_total")
+    payload.setdefault("billable_weight_strategy", "actual_only")
+    payload.setdefault("rounding_mode", "none")
 
-    cr = await async_client.post(f"/shipping-providers/{provider_id}/pricing-schemes", headers=headers, json=payload)
+    cr = await async_client.post("/tms/pricing/templates", headers=headers, json=payload)
     assert cr.status_code in (200, 201), cr.text
     data = cr.json()
-    sid = (data.get("data", {}) or {}).get("id") if isinstance(data, dict) else None
-    if not isinstance(sid, int):
-        sid = data.get("id") if isinstance(data, dict) else None
-    assert isinstance(sid, int) and sid > 0, data
-    return sid
+    tid = (data.get("data", {}) or {}).get("id") if isinstance(data, dict) else None
+    if not isinstance(tid, int):
+        tid = data.get("id") if isinstance(data, dict) else None
+    assert isinstance(tid, int) and tid > 0, data
+    return tid
 
 
 async def _create_surcharge_config(
     async_client,
     headers: Dict[str, str],
     *,
-    scheme_id: int,
+    template_id: int,
     province_code: str,
     province_name: str,
     province_mode: str,
@@ -200,7 +219,7 @@ async def _create_surcharge_config(
     cities: list[dict[str, object]],
 ) -> dict:
     r = await async_client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs",
         headers=headers,
         json={
             "province_code": province_code,
@@ -221,7 +240,7 @@ async def _create_surcharge_config(
 async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
+    template_id = await _ensure_template_id(client, h)
 
     province_code = "440000"
     province_name = "广东省"
@@ -231,7 +250,7 @@ async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(cli
     body1 = await _create_surcharge_config(
         client,
         h,
-        scheme_id=scheme_id,
+        template_id=template_id,
         province_code=province_code,
         province_name=province_name,
         province_mode="cities",
@@ -257,7 +276,7 @@ async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(cli
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/surcharge-configs/{config_id}",
+        f"/tms/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "province_code": province_code,
@@ -282,7 +301,7 @@ async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(cli
 async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
+    template_id = await _ensure_template_id(client, h)
 
     province_code = "450000"
     province_name = "广西壮族自治区"
@@ -292,7 +311,7 @@ async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(c
     body1 = await _create_surcharge_config(
         client,
         h,
-        scheme_id=scheme_id,
+        template_id=template_id,
         province_code=province_code,
         province_name=province_name,
         province_mode="province",
@@ -308,7 +327,7 @@ async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(c
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/surcharge-configs/{config_id}",
+        f"/tms/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "province_code": province_code,
@@ -343,12 +362,12 @@ async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(c
 async def test_surcharge_config_batch_province_create_skips_existing_and_payload_duplicates(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
+    template_id = await _ensure_template_id(client, h)
 
     existing = await _create_surcharge_config(
         client,
         h,
-        scheme_id=scheme_id,
+        template_id=template_id,
         province_code="110000",
         province_name="北京市",
         province_mode="province",
@@ -358,7 +377,7 @@ async def test_surcharge_config_batch_province_create_skips_existing_and_payload
     assert existing["province_code"] == "110000"
 
     r = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/batch-province",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs/batch-province",
         headers=h,
         json={
             "items": [
@@ -422,10 +441,10 @@ async def test_surcharge_config_batch_province_create_skips_existing_and_payload
 async def test_surcharge_config_city_container_create_then_patch_add_cities(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
+    template_id = await _ensure_template_id(client, h)
 
     r1 = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "320000",
@@ -444,7 +463,7 @@ async def test_surcharge_config_city_container_create_then_patch_add_cities(clie
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/surcharge-configs/{config_id}",
+        f"/tms/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "cities": [
@@ -475,10 +494,10 @@ async def test_surcharge_config_city_container_create_then_patch_add_cities(clie
 async def test_surcharge_config_city_container_create_rejects_duplicate_province(client) -> None:
     token = await _login(client)
     h = _auth_headers(token)
-    scheme_id = await _ensure_scheme_id(client, h)
+    template_id = await _ensure_template_id(client, h)
 
     r1 = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "330000",
@@ -489,7 +508,7 @@ async def test_surcharge_config_city_container_create_rejects_duplicate_province
     assert r1.status_code == 201, r1.text
 
     r2 = await client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs/city-container",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "330000",

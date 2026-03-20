@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, conint
 
-from app.api.routers.shipping_quote_schemas import QuoteSnapshot
+from app.tms.quote.contracts import QuoteSnapshot
 
 
 # ---------------------------------------------------------------------------
