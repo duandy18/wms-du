@@ -143,8 +143,8 @@ def _build_quote_snapshot(
         },
         "selected_quote": {
             "quote_status": "OK",
-            "scheme_id": 999001,
-            "scheme_name": "UT-SCHEME",
+            "template_id": 999001,
+            "template_name": "UT-TEMPLATE",
             "provider_id": provider_id,
             "carrier_code": carrier_code,
             "carrier_name": carrier_name,

@@ -33,8 +33,8 @@ def _build_quote_snapshot(*, provider_id: int, total_amount: float = 12.5) -> di
         },
         "selected_quote": {
             "quote_status": "OK",
-            "scheme_id": 1,
-            "scheme_name": "UT-SCHEME-1",
+            "template_id": 1,
+            "template_name": "UT-TEMPLATE-1",
             "provider_id": provider_id,
             "carrier_code": "UT-CAR-1",
             "carrier_name": "UT-CARRIER-1",

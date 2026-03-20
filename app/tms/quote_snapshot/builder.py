@@ -42,8 +42,8 @@ def build_quote_snapshot(
 
     snapshot_selected_quote: QuoteSnapshotSelectedQuote = {
         "quote_status": str(selected.get("quote_status") or "OK"),
-        "scheme_id": selected.get("scheme_id"),
-        "scheme_name": selected.get("scheme_name"),
+        "template_id": selected.get("template_id"),
+        "template_name": selected.get("template_name"),
         "provider_id": selected.get("provider_id"),
         "carrier_code": selected.get("carrier_code"),
         "carrier_name": selected.get("carrier_name"),

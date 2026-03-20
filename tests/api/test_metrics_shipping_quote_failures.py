@@ -21,13 +21,13 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
 
     wid = pick_warehouse_id(client, token)
 
-    # 触发一次 QUOTE_CALC_REJECT（scheme 不存在）
+    # 触发一次 QUOTE_CALC_REJECT（template 不存在）
     r = client.post(
         "/shipping-quote/calc",
         headers=h,
         json={
             "warehouse_id": wid,
-            "scheme_id": 999999,
+            "template_id": 999999,
             "dest": {
                 "province": "北京市",
                 "city": "北京市",
@@ -42,7 +42,7 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
     assert r.status_code == 422, r.text
 
     p = as_problem(r.json())
-    assert p["error_code"] == "QUOTE_CALC_SCHEME_NOT_FOUND"
+    assert p["error_code"] == "QUOTE_CALC_TEMPLATE_NOT_FOUND"
 
     # 查询当日 failures（UTC day 由服务端取 created_at 统计；这里用固定 day 可能受时区影响）
     # 为保证稳定，这里用 /metrics/shipping-quote/failures 的 day=今天（UTC）：
@@ -55,4 +55,4 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
     body = m.json()
 
     assert int(body["calc_failed_total"]) >= 1
-    assert int(body["calc_failures_by_code"].get("QUOTE_CALC_SCHEME_NOT_FOUND", 0)) >= 1
+    assert int(body["calc_failures_by_code"].get("QUOTE_CALC_TEMPLATE_NOT_FOUND", 0)) >= 1

@@ -8,8 +8,8 @@ QUOTE_SNAPSHOT_VERSION = "v1"
 
 class QuoteSnapshotSelectedQuote(TypedDict):
     quote_status: str
-    scheme_id: int | None
-    scheme_name: str | None
+    template_id: int | None
+    template_name: str | None
     provider_id: int | None
     carrier_code: str | None
     carrier_name: str | None

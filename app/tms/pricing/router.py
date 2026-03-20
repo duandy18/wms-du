@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 
-from .contracts import PricingListResponse
-from .repository import list_pricing_view
-from .routes_bindings import router as bindings_router
-from .routes_summary import router as summary_router
+from .bindings.routes import router as bindings_router
+from .summary.contracts import PricingListResponse
+from .summary.repository import list_pricing_view
+from .templates.router import router as templates_router
 
 router = APIRouter(prefix="/tms/pricing", tags=["tms-pricing"])
 
@@ -22,4 +22,4 @@ async def get_pricing_list(
 
 
 router.include_router(bindings_router)
-router.include_router(summary_router)
+router.include_router(templates_router)

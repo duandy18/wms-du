@@ -45,12 +45,36 @@ def test_tms_quote_router_is_frozen_as_transport_quote() -> None:
     assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_QUOTE
 
 
-def test_outbound_ship_calc_is_frozen_as_transport_quote() -> None:
-    rule = find_file_ownership("app/api/routers/outbound_ship_routes_calc.py")
+def test_tms_alerts_service_is_frozen_as_transport_quote() -> None:
+    rule = find_file_ownership("app/tms/alerts/service.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
     assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_QUOTE
+
+
+def test_tms_waybill_service_is_frozen_as_transport_shipment() -> None:
+    rule = find_file_ownership("app/tms/shipment/waybill_service.py")
+
+    assert rule is not None
+    assert rule.owner_domain == DomainOwner.TMS
+    assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_SHIPMENT
+
+
+def test_tms_shipment_calc_route_is_frozen_as_transport_shipment() -> None:
+    rule = find_file_ownership("app/tms/shipment/routes_calc.py")
+
+    assert rule is not None
+    assert rule.owner_domain == DomainOwner.TMS
+    assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_SHIPMENT
+
+
+def test_tms_shipment_prepare_route_is_frozen_as_transport_shipment() -> None:
+    rule = find_file_ownership("app/tms/shipment/routes_prepare.py")
+
+    assert rule is not None
+    assert rule.owner_domain == DomainOwner.TMS
+    assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_SHIPMENT
 
 
 def test_tms_shipment_router_is_frozen_as_transport_shipment() -> None:
@@ -75,14 +99,6 @@ def test_ship_with_waybill_is_frozen_as_transport_shipment() -> None:
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
     assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_SHIPMENT
-
-
-def test_shipping_quote_service_cluster_is_frozen_as_transport_quote() -> None:
-    rule = find_file_ownership("app/services/shipping_quote/recommend.py")
-
-    assert rule is not None
-    assert rule.owner_domain == DomainOwner.TMS
-    assert rule.owner_subdomain == TmsSubdomain.TRANSPORT_QUOTE
 
 
 def test_tms_records_router_is_frozen_as_transport_ledger() -> None:
@@ -111,6 +127,11 @@ def test_shipping_reports_routes_are_frozen_as_transport_reports() -> None:
 
 def test_deleted_legacy_shipping_quote_router_returns_none() -> None:
     rule = find_file_ownership("app/api/routers/shipping_quote.py")
+    assert rule is None
+
+
+def test_deleted_legacy_shipping_quote_recommend_route_returns_none() -> None:
+    rule = find_file_ownership("app/api/routers/shipping_quote_routes_recommend.py")
     assert rule is None
 
 

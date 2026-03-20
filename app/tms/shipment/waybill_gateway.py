@@ -5,7 +5,7 @@
 #   便于后续从 fake 实现切换到真实平台 SDK。
 from __future__ import annotations
 
-from app.services.waybill_service import WaybillRequest, WaybillService
+from app.tms.shipment.waybill_service import WaybillRequest, WaybillService
 
 from .contracts import ShipmentApplicationError
 

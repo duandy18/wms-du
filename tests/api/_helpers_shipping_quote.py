@@ -43,7 +43,14 @@ def clear_warehouse_bindings(client: TestClient, token: str, warehouse_id: int) 
         assert dr.status_code in (200, 404), dr.text
 
 
-def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int, provider_id: int) -> None:
+def bind_provider_to_warehouse(
+    client: TestClient,
+    token: str,
+    warehouse_id: int,
+    provider_id: int,
+    *,
+    active_template_id: int | None = None,
+) -> None:
     h = auth_headers(token)
     r = client.post(
         f"/tms/pricing/warehouses/{warehouse_id}/bindings",
@@ -54,14 +61,18 @@ def bind_provider_to_warehouse(client: TestClient, token: str, warehouse_id: int
             "priority": 0,
             "pickup_cutoff_time": "18:00",
             "remark": "test bind",
+            "active_template_id": active_template_id,
         },
     )
     assert r.status_code in (201, 409), r.text
     if r.status_code == 409:
+        patch_payload: Dict[str, object] = {"active": True, "priority": 0}
+        if active_template_id is not None:
+            patch_payload["active_template_id"] = active_template_id
         pr = client.patch(
             f"/tms/pricing/warehouses/{warehouse_id}/bindings/{provider_id}",
             headers=h,
-            json={"active": True, "priority": 0},
+            json=patch_payload,
         )
         assert pr.status_code == 200, pr.text
 
@@ -74,8 +85,6 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
     if len(pdata) >= 2:
         return int(pdata[1]["id"])
 
-    wid = pick_warehouse_id(client, token)
-
     cr = client.post(
         "/shipping-providers",
         headers=h,
@@ -84,7 +93,6 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
             "code": "TP2",
             "active": True,
             "priority": 100,
-            "warehouse_id": int(wid),
             "pricing_model": None,
             "region_rules": None,
         },
@@ -94,13 +102,13 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
 
 
 # ---------------------------------------------------------
-# scheme-scoped CRUD helper
+# template-scoped CRUD helper
 # ---------------------------------------------------------
-def _put_scheme_groups(
+def _put_template_groups(
     client: TestClient,
     token: str,
     *,
-    scheme_id: int,
+    template_id: int,
     groups: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
@@ -109,9 +117,10 @@ def _put_scheme_groups(
 
     for g in groups:
         r = client.post(
-            f"/pricing-schemes/{scheme_id}/groups",
+            f"/tms/pricing/templates/{template_id}/groups",
             headers=h,
             json={
+                "name": g["name"],
                 "sort_order": g.get("sort_order", 0),
                 "active": g.get("active", True),
                 "provinces": g["provinces"],
@@ -128,17 +137,17 @@ def _put_scheme_groups(
     return created
 
 
-def _put_scheme_ranges(
+def _put_template_ranges(
     client: TestClient,
     token: str,
     *,
-    scheme_id: int,
+    template_id: int,
     ranges: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
 
     r = client.put(
-        f"/pricing-schemes/{scheme_id}/ranges",
+        f"/tms/pricing/templates/{template_id}/ranges",
         headers=h,
         json={"ranges": ranges},
     )
@@ -149,17 +158,17 @@ def _put_scheme_ranges(
     return body["ranges"]
 
 
-def _put_scheme_matrix_cells(
+def _put_template_matrix_cells(
     client: TestClient,
     token: str,
     *,
-    scheme_id: int,
+    template_id: int,
     cells: List[dict],
 ) -> List[dict]:
     h = auth_headers(token)
 
     r = client.put(
-        f"/pricing-schemes/{scheme_id}/matrix-cells",
+        f"/tms/pricing/templates/{template_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
@@ -170,10 +179,14 @@ def _put_scheme_matrix_cells(
     return body["cells"]
 
 
-def _publish_scheme(client: TestClient, token: str, *, scheme_id: int) -> None:
+def _publish_template(client: TestClient, token: str, *, template_id: int) -> None:
     h = auth_headers(token)
 
-    r = client.post(f"/pricing-schemes/{scheme_id}/publish", headers=h)
+    r = client.patch(
+        f"/tms/pricing/templates/{template_id}",
+        headers=h,
+        json={"status": "active"},
+    )
     assert r.status_code == 200, r.text
 
     body = r.json()
@@ -185,25 +198,25 @@ def _create_level3_bundle_via_api(
     client: TestClient,
     token: str,
     *,
-    scheme_id: int,
+    template_id: int,
     group_name: str,
     provinces: List[str],
     matrix_rows: List[dict],
 ) -> int:
     """
-    通过新三阶段接口构造最小 Level-3 bundle：
+    通过 template 子资源接口构造最小 Level-3 bundle：
 
-      scheme
+      template
         -> destination_group
         -> destination_group_members
         -> ranges
         -> matrix_cells
     """
 
-    groups_out = _put_scheme_groups(
+    groups_out = _put_template_groups(
         client,
         token,
-        scheme_id=scheme_id,
+        template_id=template_id,
         groups=[
             {
                 "name": group_name,
@@ -216,10 +229,10 @@ def _create_level3_bundle_via_api(
     assert len(groups_out) == 1, groups_out
     group_id = int(groups_out[0]["id"])
 
-    ranges_out = _put_scheme_ranges(
+    ranges_out = _put_template_ranges(
         client,
         token,
-        scheme_id=scheme_id,
+        template_id=template_id,
         ranges=[
             {
                 "min_kg": row["min_kg"],
@@ -247,10 +260,10 @@ def _create_level3_bundle_via_api(
             }
         )
 
-    cells_out = _put_scheme_matrix_cells(
+    cells_out = _put_template_matrix_cells(
         client,
         token,
-        scheme_id=scheme_id,
+        template_id=template_id,
         cells=cells_payload,
     )
     assert len(cells_out) == len(matrix_rows), cells_out
@@ -258,18 +271,19 @@ def _create_level3_bundle_via_api(
     return group_id
 
 
-def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
+def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
     """
-    创建一套最小可算的 Level-3 单轨 scheme：
+    创建一套最小可算的 Level-3 单轨 template：
 
     provider
-      -> scheme(warehouse scoped)
+      -> template
       -> destination_group
       -> destination_group_members
       -> ranges
       -> pricing_matrix_cells
       -> surcharge_config
       -> publish(active)
+      -> bind to warehouse(active_template_id)
     """
     h = auth_headers(token)
 
@@ -281,14 +295,12 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     assert pdata, "no shipping providers"
     provider_id = int(pdata[0]["id"])
 
-    bind_provider_to_warehouse(client, token, wid, provider_id)
-
-    sr = client.post(
-        f"/shipping-providers/{provider_id}/pricing-schemes",
+    tr = client.post(
+        "/tms/pricing/templates",
         headers=h,
         json={
-            "warehouse_id": int(wid),
-            "name": "TEST-PRICING-SCHEME",
+            "shipping_provider_id": int(provider_id),
+            "name": "TEST-PRICING-TEMPLATE",
             "currency": "CNY",
             "default_pricing_mode": "linear_total",
             "billable_weight_strategy": "actual_only",
@@ -296,8 +308,8 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
             "rounding_step_kg": 1.0,
         },
     )
-    assert sr.status_code == 201, sr.text
-    scheme_id = int(sr.json()["data"]["id"])
+    assert tr.status_code == 201, tr.text
+    template_id = int(tr.json()["data"]["id"])
 
     provinces = ["北京市", "天津市", "河北省"]
     group_name = "北京市、天津市、河北省"
@@ -327,14 +339,14 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     group_id = _create_level3_bundle_via_api(
         client,
         token,
-        scheme_id=scheme_id,
+        template_id=template_id,
         group_name=group_name,
         provinces=provinces,
         matrix_rows=matrix_rows,
     )
 
     sur = client.post(
-        f"/pricing-schemes/{scheme_id}/surcharge-configs",
+        f"/tms/pricing/templates/{template_id}/surcharge-configs",
         headers=h,
         json={
             "province_code": "110000",
@@ -347,16 +359,23 @@ def create_scheme_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
-    _publish_scheme(client, token, scheme_id=scheme_id)
+    _publish_template(client, token, template_id=template_id)
+    bind_provider_to_warehouse(
+        client,
+        token,
+        wid,
+        provider_id,
+        active_template_id=template_id,
+    )
 
     return {
         "provider_id": provider_id,
-        "scheme_id": scheme_id,
+        "template_id": template_id,
         "group_id": group_id,
     }
 
 
-def create_scheme_bundle_for_provider(
+def create_template_bundle_for_provider(
     client: TestClient,
     token: str,
     provider_id: int,
@@ -364,19 +383,17 @@ def create_scheme_bundle_for_provider(
     name_suffix: str,
 ) -> Dict[str, int]:
     """
-    为指定 provider 创建一套最小可算的 Level-3 单轨 scheme（用于推荐/候选集测试）。
+    为指定 provider 创建一套最小可算的 Level-3 单轨 template（用于推荐/候选集测试）。
     """
     h = auth_headers(token)
     wid = pick_warehouse_id(client, token)
 
-    bind_provider_to_warehouse(client, token, wid, provider_id)
-
-    sr = client.post(
-        f"/shipping-providers/{provider_id}/pricing-schemes",
+    tr = client.post(
+        "/tms/pricing/templates",
         headers=h,
         json={
-            "warehouse_id": int(wid),
-            "name": f"TEST-PRICING-SCHEME-{name_suffix}",
+            "shipping_provider_id": int(provider_id),
+            "name": f"TEST-PRICING-TEMPLATE-{name_suffix}",
             "currency": "CNY",
             "default_pricing_mode": "linear_total",
             "billable_weight_strategy": "actual_only",
@@ -384,8 +401,8 @@ def create_scheme_bundle_for_provider(
             "rounding_step_kg": 1.0,
         },
     )
-    assert sr.status_code == 201, sr.text
-    scheme_id = int(sr.json()["data"]["id"])
+    assert tr.status_code == 201, tr.text
+    template_id = int(tr.json()["data"]["id"])
 
     provinces = ["河北省"]
     group_name = f"河北省-TEST-{name_suffix}"
@@ -404,16 +421,23 @@ def create_scheme_bundle_for_provider(
     group_id = _create_level3_bundle_via_api(
         client,
         token,
-        scheme_id=scheme_id,
+        template_id=template_id,
         group_name=group_name,
         provinces=provinces,
         matrix_rows=matrix_rows,
     )
 
-    _publish_scheme(client, token, scheme_id=scheme_id)
+    _publish_template(client, token, template_id=template_id)
+    bind_provider_to_warehouse(
+        client,
+        token,
+        wid,
+        provider_id,
+        active_template_id=template_id,
+    )
 
     return {
         "provider_id": provider_id,
-        "scheme_id": scheme_id,
+        "template_id": template_id,
         "group_id": group_id,
     }
