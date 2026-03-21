@@ -22,7 +22,6 @@ class WarehouseShippingProviderOut(BaseModel):
     remark: Optional[str] = None
     active_template_id: Optional[int] = None
     active_template_name: Optional[str] = None
-    active_template_status: Optional[str] = None
     provider: ShippingProviderLiteOut
 
 

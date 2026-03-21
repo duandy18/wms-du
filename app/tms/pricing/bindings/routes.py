@@ -23,7 +23,8 @@ from app.tms.pricing.bindings.contracts import (
 )
 from app.tms.pricing.bindings.helpers import LIST_SQL, row_to_out
 from app.tms.pricing.bindings.summary_routes import router as bindings_summary_router
-from app.tms.pricing.runtime_policy import compute_is_template_active
+from app.tms.pricing.templates.module_resources_shared import validate_template_ready_for_binding
+from app.tms.pricing.templates.repository import load_template_or_404
 
 
 router = APIRouter()
@@ -31,6 +32,7 @@ router = APIRouter()
 
 async def _ensure_runtime_template_allowed(
     session: AsyncSession,
+    db: Session,
     *,
     shipping_provider_id: int,
     active_template_id: int | None,
@@ -38,40 +40,24 @@ async def _ensure_runtime_template_allowed(
     if active_template_id is None:
         return
 
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT
-                  id,
-                  shipping_provider_id,
-                  name,
-                  status,
-                  archived_at
-                FROM shipping_provider_pricing_templates
-                WHERE id = :tid
-                """
-            ),
-            {"tid": int(active_template_id)},
-        )
-    ).mappings().first()
+    template = load_template_or_404(db, template_id=int(active_template_id))
 
-    if not row:
-        raise HTTPException(status_code=404, detail="pricing_template not found")
-
-    if int(row["shipping_provider_id"]) != int(shipping_provider_id):
+    if int(template.shipping_provider_id) != int(shipping_provider_id):
         raise HTTPException(
             status_code=409,
             detail="pricing_template does not belong to shipping_provider",
         )
 
-    is_template_active = compute_is_template_active(
-        active_template_id=int(row["id"]),
-        template_status=row.get("status"),
-        template_archived=row.get("archived_at") is not None,
-    )
-    if not is_template_active:
-        raise HTTPException(status_code=409, detail="pricing_template not active")
+    if template.archived_at is not None:
+        raise HTTPException(status_code=409, detail="pricing_template archived")
+
+    if str(template.validation_status) != "passed":
+        raise HTTPException(status_code=409, detail="pricing_template not validated")
+
+    try:
+        validate_template_ready_for_binding(db, template_id=int(active_template_id))
+    except HTTPException as e:
+        raise HTTPException(status_code=409, detail=f"pricing_template invalid: {e.detail}") from e
 
 
 async def _load_binding_row_or_404(
@@ -149,6 +135,7 @@ async def pricing_bind_provider_to_warehouse(
 
     await _ensure_runtime_template_allowed(
         session,
+        db,
         shipping_provider_id=int(payload.shipping_provider_id),
         active_template_id=payload.active_template_id,
     )
@@ -245,6 +232,7 @@ async def pricing_update_warehouse_binding(
     if payload.active_template_id is not None:
         await _ensure_runtime_template_allowed(
             session,
+            db,
             shipping_provider_id=shipping_provider_id,
             active_template_id=payload.active_template_id,
         )
@@ -332,6 +320,7 @@ async def pricing_bulk_upsert_warehouse_bindings(
     for it in items:
         await _ensure_runtime_template_allowed(
             session,
+            db,
             shipping_provider_id=int(it.shipping_provider_id),
             active_template_id=it.active_template_id,
         )
@@ -453,5 +442,6 @@ async def pricing_unbind_provider_from_warehouse(
             "shipping_provider_id": int(row["shipping_provider_id"]),
         },
     )
+
 
 router.include_router(bindings_summary_router)

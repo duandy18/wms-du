@@ -5,10 +5,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-_ALLOWED_TEMPLATE_STATUS = {"draft", "active", "archived"}
-_ALLOWED_BILLABLE_STRATEGY = {"actual_only", "max_actual_volume"}
-_ALLOWED_ROUNDING_MODE = {"none", "ceil"}
-_ALLOWED_DEFAULT_PRICING_MODE = {"flat", "linear_total", "step_over", "manual_quote"}
+_ALLOWED_TEMPLATE_STATUS = {"draft", "archived"}
+_ALLOWED_TEMPLATE_VALIDATION_STATUS = {"not_validated", "passed", "failed"}
+_ALLOWED_TEMPLATE_CONFIG_STATUS = {"empty", "incomplete", "ready"}
 
 
 class TemplateOut(BaseModel):
@@ -21,21 +20,32 @@ class TemplateOut(BaseModel):
     name: str
     status: str
     archived_at: Optional[datetime] = None
+    validation_status: str
 
-    currency: str
-    effective_from: Optional[datetime] = None
-    effective_to: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
 
-    default_pricing_mode: str
-
-    billable_weight_strategy: str
-    volume_divisor: Optional[int] = None
-    rounding_mode: str
-    rounding_step_kg: Optional[float] = None
-    min_billable_weight_kg: Optional[float] = None
+    used_binding_count: int
+    config_status: str
+    ranges_count: int
+    groups_count: int
+    matrix_cells_count: int
 
     destination_groups: list[dict[str, Any]] = Field(default_factory=list)
     surcharge_configs: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_shape(self):
+        if self.status not in _ALLOWED_TEMPLATE_STATUS:
+            raise ValueError("status must be one of: draft / archived")
+
+        if self.validation_status not in _ALLOWED_TEMPLATE_VALIDATION_STATUS:
+            raise ValueError("validation_status must be one of: not_validated / passed / failed")
+
+        if self.config_status not in _ALLOWED_TEMPLATE_CONFIG_STATUS:
+            raise ValueError("config_status must be one of: empty / incomplete / ready")
+
+        return self
 
 
 class TemplateListOut(BaseModel):
@@ -57,54 +67,6 @@ class TemplateCreateIn(BaseModel):
 
     shipping_provider_id: int = Field(..., ge=1)
     name: str = Field(..., min_length=1, max_length=128)
-    currency: str = Field(default="CNY", min_length=1, max_length=8)
-
-    default_pricing_mode: str = Field(default="linear_total", min_length=1, max_length=32)
-
-    billable_weight_strategy: str = Field(default="actual_only", min_length=1, max_length=32)
-    volume_divisor: Optional[int] = Field(default=None, ge=1)
-    rounding_mode: str = Field(default="none", min_length=1, max_length=16)
-    rounding_step_kg: Optional[float] = Field(default=None, gt=0)
-    min_billable_weight_kg: Optional[float] = Field(default=None, gt=0)
-
-    effective_from: Optional[datetime] = None
-    effective_to: Optional[datetime] = None
-
-    @model_validator(mode="after")
-    def _validate_shape(self):
-        if self.default_pricing_mode not in _ALLOWED_DEFAULT_PRICING_MODE:
-            raise ValueError(
-                "default_pricing_mode must be one of: flat / linear_total / step_over / manual_quote"
-            )
-
-        if self.billable_weight_strategy not in _ALLOWED_BILLABLE_STRATEGY:
-            raise ValueError(
-                "billable_weight_strategy must be one of: actual_only / max_actual_volume"
-            )
-
-        if self.rounding_mode not in _ALLOWED_ROUNDING_MODE:
-            raise ValueError("rounding_mode must be one of: none / ceil")
-
-        if self.billable_weight_strategy == "actual_only" and self.volume_divisor is not None:
-            raise ValueError(
-                "volume_divisor must be empty when billable_weight_strategy=actual_only"
-            )
-
-        if self.billable_weight_strategy == "max_actual_volume" and self.volume_divisor is None:
-            raise ValueError(
-                "volume_divisor is required when billable_weight_strategy=max_actual_volume"
-            )
-
-        if self.rounding_mode == "none" and self.rounding_step_kg is not None:
-            raise ValueError("rounding_step_kg must be empty when rounding_mode=none")
-
-        if self.rounding_mode == "ceil" and self.rounding_step_kg is None:
-            raise ValueError("rounding_step_kg is required when rounding_mode=ceil")
-
-        if self.effective_from and self.effective_to and self.effective_from > self.effective_to:
-            raise ValueError("effective_from cannot be greater than effective_to")
-
-        return self
 
 
 class TemplateUpdateIn(BaseModel):
@@ -112,45 +74,18 @@ class TemplateUpdateIn(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     status: Optional[str] = Field(None, min_length=1, max_length=16)
-
-    currency: Optional[str] = Field(None, min_length=1, max_length=8)
-    default_pricing_mode: Optional[str] = Field(None, min_length=1, max_length=32)
-
-    billable_weight_strategy: Optional[str] = Field(None, min_length=1, max_length=32)
-    volume_divisor: Optional[int] = Field(default=None, ge=1)
-    rounding_mode: Optional[str] = Field(None, min_length=1, max_length=16)
-    rounding_step_kg: Optional[float] = Field(default=None, gt=0)
-    min_billable_weight_kg: Optional[float] = Field(default=None, gt=0)
-
-    effective_from: Optional[datetime] = None
-    effective_to: Optional[datetime] = None
+    validation_status: Optional[str] = Field(None, min_length=1, max_length=16)
 
     @model_validator(mode="after")
     def _validate_shape(self):
         if self.status is not None and self.status not in _ALLOWED_TEMPLATE_STATUS:
-            raise ValueError("status must be one of: draft / active / archived")
+            raise ValueError("status must be one of: draft / archived")
 
         if (
-            self.default_pricing_mode is not None
-            and self.default_pricing_mode not in _ALLOWED_DEFAULT_PRICING_MODE
+            self.validation_status is not None
+            and self.validation_status not in _ALLOWED_TEMPLATE_VALIDATION_STATUS
         ):
-            raise ValueError(
-                "default_pricing_mode must be one of: flat / linear_total / step_over / manual_quote"
-            )
-
-        if (
-            self.billable_weight_strategy is not None
-            and self.billable_weight_strategy not in _ALLOWED_BILLABLE_STRATEGY
-        ):
-            raise ValueError(
-                "billable_weight_strategy must be one of: actual_only / max_actual_volume"
-            )
-
-        if self.rounding_mode is not None and self.rounding_mode not in _ALLOWED_ROUNDING_MODE:
-            raise ValueError("rounding_mode must be one of: none / ceil")
-
-        if self.effective_from and self.effective_to and self.effective_from > self.effective_to:
-            raise ValueError("effective_from cannot be greater than effective_to")
+            raise ValueError("validation_status must be one of: not_validated / passed / failed")
 
         return self
 

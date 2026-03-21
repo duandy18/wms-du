@@ -103,7 +103,7 @@ async def _build_template_resources(client: AsyncClient, h, template_id: int) ->
 
 
 @pytest.mark.asyncio
-async def test_ranges_groups_cells_replace_and_publish(client: AsyncClient):
+async def test_ranges_groups_cells_replace_and_detail_readable(client: AsyncClient):
     token = await login(client)
 
     h = auth_headers(token)
@@ -112,13 +112,26 @@ async def test_ranges_groups_cells_replace_and_publish(client: AsyncClient):
 
     await _build_template_resources(client, h, template_id)
 
-    r = await client.post(
-        f"/tms/pricing/templates/{template_id}/publish",
+    detail = await client.get(
+        f"/tms/pricing/templates/{template_id}",
         headers=h,
     )
 
-    assert r.status_code == 200, r.text
-    body = r.json()
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+
     assert body["ok"] is True
     assert body["data"]["id"] == template_id
-    assert body["data"]["status"] == "active"
+    assert body["data"]["status"] == "draft"
+    assert isinstance(body["data"]["destination_groups"], list)
+    assert len(body["data"]["destination_groups"]) == 1
+    assert isinstance(body["data"]["surcharge_configs"], list)
+
+    matrix = await client.get(
+        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        headers=h,
+    )
+    assert matrix.status_code == 200, matrix.text
+    matrix_body = matrix.json()
+    assert matrix_body["ok"] is True
+    assert len(matrix_body["cells"]) == 1

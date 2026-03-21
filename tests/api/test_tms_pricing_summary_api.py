@@ -21,7 +21,9 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_pricing_list_returns_template_not_active_row_from_seed(client: AsyncClient) -> None:
+async def test_pricing_list_returns_ready_row_from_seed_bound_draft_template(
+    client: AsyncClient,
+) -> None:
     token = await _login(client)
     h = _auth_headers(token)
 
@@ -45,9 +47,7 @@ async def test_pricing_list_returns_template_not_active_row_from_seed(client: As
     assert seed_row["binding_active"] is True
     assert int(seed_row["active_template_id"]) == 1
     assert seed_row["active_template_name"] == "UT-TEMPLATE-1"
-    assert seed_row["active_template_status"] == "draft"
-    assert seed_row["is_template_active"] is False
-    assert seed_row["pricing_status"] == "template_not_active"
+    assert seed_row["pricing_status"] == "ready"
 
 
 @pytest.mark.asyncio
@@ -118,6 +118,4 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
     assert target["binding_active"] is True
     assert target["active_template_id"] is None
     assert target["active_template_name"] is None
-    assert target["active_template_status"] is None
-    assert target["is_template_active"] is False
     assert target["pricing_status"] == "no_active_template"

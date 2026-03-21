@@ -65,10 +65,10 @@ class QuoteCalcContext:
 
     status: str
     archived_at: Optional[datetime]
-    currency: Optional[str]
-    effective_from: Optional[datetime]
-    effective_to: Optional[datetime]
 
+    # 当前终态合同下，模板主表不再保存旧平铺计费规则；
+    # quote 侧使用运行期默认值。
+    currency: str
     billable_weight_strategy: str
     volume_divisor: Optional[int]
     rounding_mode: str

@@ -12,7 +12,6 @@ def test_compute_pricing_status_provider_disabled() -> None:
             provider_active=False,
             binding_active=True,
             active_template_id=1,
-            template_status="active",
             template_archived=False,
         )
         == "provider_disabled"
@@ -25,7 +24,6 @@ def test_compute_pricing_status_binding_disabled() -> None:
             provider_active=True,
             binding_active=False,
             active_template_id=1,
-            template_status="active",
             template_archived=False,
         )
         == "binding_disabled"
@@ -38,79 +36,60 @@ def test_compute_pricing_status_no_active_template() -> None:
             provider_active=True,
             binding_active=True,
             active_template_id=None,
-            template_status=None,
             template_archived=False,
         )
         == "no_active_template"
     )
 
 
-def test_compute_pricing_status_template_not_active_when_draft() -> None:
+def test_compute_pricing_status_template_archived() -> None:
     assert (
         compute_pricing_status(
             provider_active=True,
             binding_active=True,
             active_template_id=1,
-            template_status="draft",
-            template_archived=False,
-        )
-        == "template_not_active"
-    )
-
-
-def test_compute_pricing_status_template_not_active_when_archived() -> None:
-    assert (
-        compute_pricing_status(
-            provider_active=True,
-            binding_active=True,
-            active_template_id=1,
-            template_status="active",
             template_archived=True,
         )
-        == "template_not_active"
+        == "template_archived"
     )
 
 
-def test_compute_pricing_status_ready() -> None:
+def test_compute_pricing_status_ready_when_draft_unarchived() -> None:
     assert (
         compute_pricing_status(
             provider_active=True,
             binding_active=True,
             active_template_id=1,
-            template_status="active",
             template_archived=False,
         )
         == "ready"
     )
 
 
-def test_compute_is_template_active_false_for_draft() -> None:
+def test_compute_is_template_active_false_when_missing() -> None:
     assert (
         compute_is_template_active(
-            active_template_id=1,
-            template_status="draft",
+            active_template_id=None,
             template_archived=False,
         )
         is False
     )
 
 
-def test_compute_is_template_active_false_for_archived_active() -> None:
+def test_compute_is_template_active_false_when_archived() -> None:
     assert (
         compute_is_template_active(
             active_template_id=1,
-            template_status="active",
             template_archived=True,
         )
         is False
     )
 
 
-def test_compute_is_template_active_true_for_active_unarchived() -> None:
+def test_compute_is_template_active_true_for_draft_unarchived() -> None:
     assert (
         compute_is_template_active(
             active_template_id=1,
-            template_status="active",
             template_archived=False,
         )
         is True

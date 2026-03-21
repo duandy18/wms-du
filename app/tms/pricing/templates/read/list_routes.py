@@ -1,58 +1,29 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.deps import get_db
-from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
 from app.tms.permissions import check_config_perm
+from app.tms.pricing.templates.repository import list_templates as repo_list_templates
+from app.tms.pricing.templates.schemas.template import TemplateListOut
 
-from app.tms.pricing.templates.schemas.template import (
-    TemplateListOut,
-    TemplateOut,
-)
-
-
-def _to_template_out(template: ShippingProviderPricingTemplate) -> TemplateOut:
-    provider_name = ""
-    if getattr(template, "shipping_provider", None) is not None:
-        provider_name = getattr(template.shipping_provider, "name", "") or ""
-
-    return TemplateOut(
-        id=int(template.id),
-        shipping_provider_id=int(template.shipping_provider_id),
-        shipping_provider_name=provider_name,
-        name=template.name,
-        status=template.status,
-        archived_at=template.archived_at,
-        currency=template.currency,
-        effective_from=template.effective_from,
-        effective_to=template.effective_to,
-        default_pricing_mode=template.default_pricing_mode,
-        billable_weight_strategy=template.billable_weight_strategy,
-        volume_divisor=template.volume_divisor,
-        rounding_mode=template.rounding_mode,
-        rounding_step_kg=(
-            float(template.rounding_step_kg)
-            if template.rounding_step_kg is not None
-            else None
-        ),
-        min_billable_weight_kg=(
-            float(template.min_billable_weight_kg)
-            if template.min_billable_weight_kg is not None
-            else None
-        ),
-        destination_groups=[],
-        surcharge_configs=[],
-    )
+_ALLOWED_TEMPLATE_STATUS_FILTERS = {"draft", "archived"}
 
 
-def _build_template_list(db: Session, query):
-    templates = query.order_by(
-        ShippingProviderPricingTemplate.id.desc(),
-    ).all()
-    return [_to_template_out(row) for row in templates]
+def _normalize_template_status_filter(status: str | None) -> str | None:
+    if status is None:
+        return None
+
+    normalized = str(status).strip()
+    if not normalized:
+        return None
+
+    if normalized not in _ALLOWED_TEMPLATE_STATUS_FILTERS:
+        raise HTTPException(status_code=422, detail="status must be one of: draft / archived")
+
+    return normalized
 
 
 def register_list_routes(router: APIRouter) -> None:
@@ -70,20 +41,13 @@ def register_list_routes(router: APIRouter) -> None:
     ):
         check_config_perm(db, user, ["config.store.read"])
 
-        q = db.query(ShippingProviderPricingTemplate)
-
-        if shipping_provider_id is not None:
-            q = q.filter(
-                ShippingProviderPricingTemplate.shipping_provider_id == shipping_provider_id
-            )
-
-        if status is not None:
-            q = q.filter(ShippingProviderPricingTemplate.status == status)
-
-        if not include_archived:
-            q = q.filter(ShippingProviderPricingTemplate.archived_at.is_(None))
-
-        result = _build_template_list(db, q)
+        normalized_status = _normalize_template_status_filter(status)
+        result = repo_list_templates(
+            db,
+            shipping_provider_id=shipping_provider_id,
+            status=normalized_status,
+            include_archived=include_archived,
+        )
 
         return TemplateListOut(
             ok=True,
@@ -104,17 +68,13 @@ def register_list_routes(router: APIRouter) -> None:
     ):
         check_config_perm(db, user, ["config.store.read"])
 
-        q = db.query(ShippingProviderPricingTemplate).filter(
-            ShippingProviderPricingTemplate.shipping_provider_id == provider_id
+        normalized_status = _normalize_template_status_filter(status)
+        result = repo_list_templates(
+            db,
+            shipping_provider_id=int(provider_id),
+            status=normalized_status,
+            include_archived=include_archived,
         )
-
-        if status is not None:
-            q = q.filter(ShippingProviderPricingTemplate.status == status)
-
-        if not include_archived:
-            q = q.filter(ShippingProviderPricingTemplate.archived_at.is_(None))
-
-        result = _build_template_list(db, q)
 
         return TemplateListOut(
             ok=True,

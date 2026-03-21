@@ -100,7 +100,7 @@ def _context_billable_weight_rule(ctx: QuoteCalcContext) -> JsonObject | None:
     if strategy == "max_actual_volume":
         if volume_divisor is None:
             raise ValueError(
-                "template billable_weight_strategy=max_actual_volume requires volume_divisor"
+                "quote context billable_weight_strategy=max_actual_volume requires volume_divisor"
             )
         rule["volume_divisor"] = int(volume_divisor)
 
@@ -266,7 +266,7 @@ def calc_quote_level3(
 
     template_rounding = _context_rounding_rule(ctx)
     weight_info["rounding"] = template_rounding
-    weight_info["rounding_source"] = "template.rounding_mode/rounding_step_kg"
+    weight_info["rounding_source"] = "quote.context.defaults"
 
     group, hit_member = _match_destination_group(ctx.groups, dest)
     if not group:

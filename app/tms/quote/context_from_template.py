@@ -1,8 +1,6 @@
 # app/tms/quote/context_from_template.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
@@ -24,10 +22,6 @@ from .context import (
     QuoteSurchargeCityContext,
     QuoteSurchargeConfigContext,
 )
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _to_float_or_none(value) -> float | None:
@@ -65,23 +59,15 @@ def _load_template_or_404(
 def ensure_template_quotable(row: ShippingProviderPricingTemplate) -> None:
     status = str(getattr(row, "status", "") or "").strip().lower()
 
-    # 当前阶段允许 draft / active 参与试算：
-    # - draft：支撑 workbench 编辑态 Explain
-    # - active：支撑已启用模板试算
-    if status not in {"draft", "active"}:
-        raise ValueError("template not effective (status not quotable)")
+    # 当前终态：
+    # - 模板生命周期只有 draft / archived
+    # - archived 不可试算
+    # - draft 可用于 workbench explain / runtime calc
+    if status != "draft":
+        raise ValueError("template not quotable (status not draft)")
 
     if getattr(row, "archived_at", None) is not None:
         raise ValueError("template archived")
-
-    now = _utcnow()
-    effective_from = getattr(row, "effective_from", None)
-    effective_to = getattr(row, "effective_to", None)
-
-    if effective_from is not None and effective_from > now:
-        raise ValueError("template not effective (out of date range)")
-    if effective_to is not None and effective_to < now:
-        raise ValueError("template not effective (out of date range)")
 
 
 def load_template_quote_context(
@@ -196,14 +182,12 @@ def load_template_quote_context(
         template_name=str(row.name),
         status=str(row.status),
         archived_at=getattr(row, "archived_at", None),
-        currency=getattr(row, "currency", None),
-        effective_from=getattr(row, "effective_from", None),
-        effective_to=getattr(row, "effective_to", None),
-        billable_weight_strategy=str(row.billable_weight_strategy),
-        volume_divisor=getattr(row, "volume_divisor", None),
-        rounding_mode=str(row.rounding_mode),
-        rounding_step_kg=_to_float_or_none(getattr(row, "rounding_step_kg", None)),
-        min_billable_weight_kg=_to_float_or_none(getattr(row, "min_billable_weight_kg", None)),
+        currency="CNY",
+        billable_weight_strategy="actual_only",
+        volume_divisor=None,
+        rounding_mode="ceil",
+        rounding_step_kg=1.0,
+        min_billable_weight_kg=None,
         groups=group_contexts,
         matrix_rows=matrix_contexts,
         surcharge_configs=surcharge_contexts,

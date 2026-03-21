@@ -111,7 +111,7 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     body = rr.json()
     assert body["ok"] is True
     quotes = body["quotes"]
-    assert quotes, "expected non-empty quotes when warehouse has enabled provider and active template binding"
+    assert quotes, "expected non-empty quotes when warehouse has enabled provider and bound template"
     assert all(int(q["provider_id"]) == provider_a for q in quotes)
     assert body["recommended_template_id"] is not None
     assert any(int(q["template_id"]) == ids_a["template_id"] for q in quotes)
@@ -122,7 +122,6 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
         assert quote["template_name"] is not None
         assert abs(float(quote["total_amount"])) >= 0
 
-    # recommend 当前实现未构造 quote_snapshot；这里只校验推荐主合同
     first = quotes[0]
     assert int(first["template_id"]) == ids_a["template_id"]
 

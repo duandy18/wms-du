@@ -6,16 +6,15 @@ from typing import Literal
 
 TemplateRuntimeStatus = Literal[
     "missing",
-    "not_active",
     "archived",
-    "active",
+    "ready",
 ]
 
 PricingStatus = Literal[
     "provider_disabled",
     "binding_disabled",
     "no_active_template",
-    "template_not_active",
+    "template_archived",
     "ready",
 ]
 
@@ -23,35 +22,28 @@ PricingStatus = Literal[
 def compute_template_runtime_status(
     *,
     active_template_id: int | None,
-    template_status: str | None,
     template_archived: bool,
 ) -> TemplateRuntimeStatus:
     if active_template_id is None:
         return "missing"
 
-    status = str(template_status or "").strip().lower()
-    if status != "active":
-        return "not_active"
-
     if template_archived:
         return "archived"
 
-    return "active"
+    return "ready"
 
 
 def compute_is_template_active(
     *,
     active_template_id: int | None,
-    template_status: str | None,
     template_archived: bool,
 ) -> bool:
     return (
         compute_template_runtime_status(
             active_template_id=active_template_id,
-            template_status=template_status,
             template_archived=template_archived,
         )
-        == "active"
+        == "ready"
     )
 
 
@@ -60,7 +52,6 @@ def compute_pricing_status(
     provider_active: bool,
     binding_active: bool,
     active_template_id: int | None,
-    template_status: str | None,
     template_archived: bool,
 ) -> PricingStatus:
     if not provider_active:
@@ -71,14 +62,13 @@ def compute_pricing_status(
 
     runtime_status = compute_template_runtime_status(
         active_template_id=active_template_id,
-        template_status=template_status,
         template_archived=template_archived,
     )
 
     if runtime_status == "missing":
         return "no_active_template"
 
-    if runtime_status != "active":
-        return "template_not_active"
+    if runtime_status == "archived":
+        return "template_archived"
 
     return "ready"
