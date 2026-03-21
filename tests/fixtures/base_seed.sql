@@ -17,9 +17,9 @@
 --   - tests/helpers/inventory.py: seed_batch_slot 等
 --
 -- Pricing Phase-3：
--- - scheme 生命周期改为 draft / active / archived
+-- - template 生命周期改为 draft / archived
 -- - 计费重量规则改为结构化字段
--- - 运价主线改为 scheme + ranges + destination_groups + pricing_matrix
+-- - 运价主线改为 template + ranges + destination_groups + pricing_matrix
 --
 -- Pricing Phase-surcharge-config：
 -- - surcharge 主线已切到 config + cities 子表
@@ -60,48 +60,24 @@ INSERT INTO shipping_provider_pricing_templates (
   id,
   shipping_provider_id,
   name,
-  currency,
-  effective_from,
-  effective_to,
-  default_pricing_mode,
-  archived_at,
   status,
-  billable_weight_strategy,
-  volume_divisor,
-  rounding_mode,
-  rounding_step_kg,
-  min_billable_weight_kg
+  archived_at,
+  validation_status
 )
 VALUES (
   1,
   1,
   'UT-TEMPLATE-1',
-  'CNY',
-  NULL,
-  NULL,
-  'linear_total',
-  NULL,
   'draft',
-  'actual_only',
   NULL,
-  'none',
-  NULL,
-  NULL
+  'passed'
 )
 ON CONFLICT (id) DO UPDATE SET
   shipping_provider_id = EXCLUDED.shipping_provider_id,
   name = EXCLUDED.name,
-  currency = EXCLUDED.currency,
-  effective_from = EXCLUDED.effective_from,
-  effective_to = EXCLUDED.effective_to,
-  default_pricing_mode = EXCLUDED.default_pricing_mode,
-  archived_at = EXCLUDED.archived_at,
   status = EXCLUDED.status,
-  billable_weight_strategy = EXCLUDED.billable_weight_strategy,
-  volume_divisor = EXCLUDED.volume_divisor,
-  rounding_mode = EXCLUDED.rounding_mode,
-  rounding_step_kg = EXCLUDED.rounding_step_kg,
-  min_billable_weight_kg = EXCLUDED.min_billable_weight_kg;
+  archived_at = EXCLUDED.archived_at,
+  validation_status = EXCLUDED.validation_status;
 
 -- ranges：单模板直挂
 INSERT INTO shipping_provider_pricing_template_module_ranges (

@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .service import compute_is_template_active, compute_pricing_status
+from .service import compute_pricing_status
 
 
 _SQL_PRICING_LIST = """
@@ -22,7 +22,6 @@ SELECT
 
   wsp.active_template_id AS active_template_id,
   tpl.name AS active_template_name,
-  tpl.status AS active_template_status,
   CASE
     WHEN tpl.archived_at IS NOT NULL THEN TRUE
     ELSE FALSE
@@ -58,19 +57,12 @@ async def list_pricing_view(session: AsyncSession) -> list[dict[str, object]]:
         provider_active = bool(row["provider_active"])
         binding_active = bool(row["binding_active"])
         active_template_id = row.get("active_template_id")
-        active_template_status = row.get("active_template_status")
         template_archived = bool(row.get("template_archived") or False)
 
-        row["is_template_active"] = compute_is_template_active(
-            active_template_id=active_template_id,
-            template_status=active_template_status,
-            template_archived=template_archived,
-        )
         row["pricing_status"] = compute_pricing_status(
             provider_active=provider_active,
             binding_active=binding_active,
             active_template_id=active_template_id,
-            template_status=active_template_status,
             template_archived=template_archived,
         )
 

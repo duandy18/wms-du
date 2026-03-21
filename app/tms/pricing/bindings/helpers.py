@@ -21,7 +21,6 @@ LIST_SQL = text(
       wsp.remark,
       wsp.active_template_id,
       tpl.name AS active_template_name,
-      tpl.status AS active_template_status,
       sp.id AS provider_id,
       sp.name AS provider_name,
       sp.code AS provider_code,
@@ -47,7 +46,6 @@ def row_to_out(row: Dict[str, Any]) -> WarehouseShippingProviderOut:
         remark=row.get("remark"),
         active_template_id=row.get("active_template_id"),
         active_template_name=row.get("active_template_name"),
-        active_template_status=row.get("active_template_status"),
         provider=ShippingProviderLiteOut(
             id=int(row["provider_id"]),
             name=str(row["provider_name"]),

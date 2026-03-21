@@ -11,7 +11,7 @@ PricingStatus = Literal[
     "provider_disabled",
     "binding_disabled",
     "no_active_template",
-    "template_not_active",
+    "template_archived",
     "ready",
 ]
 
@@ -29,8 +29,6 @@ class PricingListRow(BaseModel):
 
     active_template_id: int | None = None
     active_template_name: str | None = None
-    active_template_status: str | None = None
-    is_template_active: bool = False
 
     pricing_status: PricingStatus
 

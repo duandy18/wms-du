@@ -28,7 +28,8 @@ def recommend_quotes(
 
     核心原则：
     - 运行态推荐只认 binding.active_template_id
-    - recommend 查询阶段直接过滤掉非 active / 已 archived 模板
+    - recommend 查询阶段不再要求模板 status='active'
+    - 只过滤已 archived 模板；模板完整性在 binding 阶段保障
     """
     if warehouse_id is None:
         raise ValueError("warehouse_id required for recommend")
@@ -56,7 +57,6 @@ def recommend_quotes(
               AND wsp.active = true
               AND sp.active = true
               AND wsp.active_template_id IS NOT NULL
-              AND tpl.status = 'active'
               AND tpl.archived_at IS NULL
               AND sp.id = ANY(:pids)
             ORDER BY wsp.priority ASC, sp.priority ASC, sp.id ASC
@@ -84,7 +84,6 @@ def recommend_quotes(
               AND wsp.active = true
               AND sp.active = true
               AND wsp.active_template_id IS NOT NULL
-              AND tpl.status = 'active'
               AND tpl.archived_at IS NULL
             ORDER BY wsp.priority ASC, sp.priority ASC, sp.id ASC
             """

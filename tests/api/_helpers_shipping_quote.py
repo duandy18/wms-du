@@ -179,19 +179,26 @@ def _put_template_matrix_cells(
     return body["cells"]
 
 
-def _publish_template(client: TestClient, token: str, *, template_id: int) -> None:
+def _set_template_validation_status(
+    client: TestClient,
+    token: str,
+    *,
+    template_id: int,
+    validation_status: str,
+) -> dict:
     h = auth_headers(token)
 
     r = client.patch(
         f"/tms/pricing/templates/{template_id}",
         headers=h,
-        json={"status": "active"},
+        json={"validation_status": validation_status},
     )
     assert r.status_code == 200, r.text
 
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["status"] == "active"
+    assert body["data"]["validation_status"] == validation_status
+    return body["data"]
 
 
 def _create_level3_bundle_via_api(
@@ -282,7 +289,6 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
       -> ranges
       -> pricing_matrix_cells
       -> surcharge_config
-      -> publish(active)
       -> bind to warehouse(active_template_id)
     """
     h = auth_headers(token)
@@ -359,7 +365,13 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
-    _publish_template(client, token, template_id=template_id)
+    _set_template_validation_status(
+        client,
+        token,
+        template_id=template_id,
+        validation_status="passed",
+    )
+
     bind_provider_to_warehouse(
         client,
         token,
@@ -427,7 +439,13 @@ def create_template_bundle_for_provider(
         matrix_rows=matrix_rows,
     )
 
-    _publish_template(client, token, template_id=template_id)
+    _set_template_validation_status(
+        client,
+        token,
+        template_id=template_id,
+        validation_status="passed",
+    )
+
     bind_provider_to_warehouse(
         client,
         token,

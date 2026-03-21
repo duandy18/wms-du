@@ -267,7 +267,7 @@ def list_template_matrix_cells(
     )
 
 
-def validate_template_publishable(
+def validate_template_ready_for_binding(
     db: Session,
     *,
     template_id: int,

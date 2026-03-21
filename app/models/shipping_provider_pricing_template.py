@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -14,20 +14,20 @@ class ShippingProviderPricingTemplate(Base):
     __tablename__ = "shipping_provider_pricing_templates"
     __table_args__ = (
         CheckConstraint(
-            "status in ('draft','active','archived')",
+            "status in ('draft','archived')",
             name="ck_sppt_status_valid",
         ),
         CheckConstraint(
-            "billable_weight_strategy in ('actual_only','max_actual_volume')",
-            name="ck_sppt_billable_strategy",
+            "validation_status in ('not_validated','passed','failed')",
+            name="ck_sppt_validation_status",
         ),
         CheckConstraint(
-            "rounding_mode in ('none','ceil')",
-            name="ck_sppt_rounding_mode",
-        ),
-        CheckConstraint(
-            "default_pricing_mode in ('flat','linear_total','step_over','manual_quote')",
-            name="ck_sppt_default_pricing_mode",
+            """
+            (status = 'draft' AND archived_at IS NULL)
+            OR
+            (status = 'archived' AND archived_at IS NOT NULL)
+            """,
+            name="ck_sppt_archived_state_consistent",
         ),
     )
 
@@ -37,6 +37,7 @@ class ShippingProviderPricingTemplate(Base):
         Integer,
         ForeignKey("shipping_providers.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -46,6 +47,7 @@ class ShippingProviderPricingTemplate(Base):
         nullable=False,
         default="draft",
         server_default="draft",
+        index=True,
     )
 
     archived_at: Mapped[Optional[datetime]] = mapped_column(
@@ -53,44 +55,13 @@ class ShippingProviderPricingTemplate(Base):
         nullable=True,
     )
 
-    currency: Mapped[str] = mapped_column(
-        String(8),
-        nullable=False,
-        default="CNY",
-        server_default="CNY",
-    )
-
-    effective_from: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    effective_to: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    default_pricing_mode: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="linear_total",
-        server_default="linear_total",
-    )
-
-    billable_weight_strategy: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="actual_only",
-        server_default="actual_only",
-    )
-    volume_divisor: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    rounding_mode: Mapped[str] = mapped_column(
+    validation_status: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
-        default="none",
-        server_default="none",
+        default="not_validated",
+        server_default="not_validated",
+        index=True,
     )
-    rounding_step_kg: Mapped[Optional[float]] = mapped_column(Numeric(10, 3), nullable=True)
-    min_billable_weight_kg: Mapped[Optional[float]] = mapped_column(Numeric(10, 3), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -130,5 +101,6 @@ class ShippingProviderPricingTemplate(Base):
             f"<ShippingProviderPricingTemplate id={self.id} "
             f"provider_id={self.shipping_provider_id} "
             f"status={self.status} "
+            f"validation_status={self.validation_status} "
             f"name={self.name!r}>"
         )

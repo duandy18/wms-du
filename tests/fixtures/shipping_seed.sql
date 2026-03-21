@@ -6,7 +6,8 @@
 --
 -- 最新合同：
 -- - template 作用域 = provider；warehouse 通过 active_template_id 挂载
--- - template 生命周期：status = draft / active / archived
+-- - template 生命周期：status = draft / archived
+-- - validation_status：not_validated / passed / failed
 -- - 主线计价：ranges + destination_group + pricing_matrix
 -- - destination_group_members 为 province-only
 -- - pricing_matrix 引用 module_range_id（当前表名未改），但不再有 module / range_module_id
@@ -71,26 +72,16 @@ tpl AS (
   INSERT INTO shipping_provider_pricing_templates (
     shipping_provider_id,
     name,
-    currency,
-    default_pricing_mode,
     status,
-    billable_weight_strategy,
-    volume_divisor,
-    rounding_mode,
-    rounding_step_kg,
-    min_billable_weight_kg
+    archived_at,
+    validation_status
   )
   SELECT
     sp2.id,
     'UT-TEMPLATE-1',
-    'CNY',
-    'linear_total',
     'draft',
-    'actual_only',
     NULL,
-    'none',
-    NULL,
-    NULL
+    'passed'
   FROM sp2
   LIMIT 1
   ON CONFLICT DO NOTHING

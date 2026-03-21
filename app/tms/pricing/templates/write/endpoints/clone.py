@@ -26,10 +26,10 @@ from app.models.shipping_provider_pricing_template_surcharge_config_city import 
 )
 from app.tms.permissions import check_config_perm
 
+from app.tms.pricing.templates.repository import build_template_stats, serialize_template_out
 from app.tms.pricing.templates.schemas.template import (
     TemplateCloneIn,
     TemplateDetailOut,
-    TemplateOut,
 )
 
 
@@ -183,144 +183,6 @@ def _clone_template_tree(
     db.flush()
 
 
-def _serialize_range(
-    row: ShippingProviderPricingTemplateModuleRange,
-) -> dict[str, object]:
-    return {
-        "id": int(row.id),
-        "template_id": int(row.template_id),
-        "min_kg": float(row.min_kg),
-        "max_kg": float(row.max_kg) if row.max_kg is not None else None,
-        "sort_order": int(row.sort_order),
-        "default_pricing_mode": str(row.default_pricing_mode),
-    }
-
-
-def _serialize_matrix_row(
-    row: ShippingProviderPricingTemplateMatrix,
-) -> dict[str, object]:
-    return {
-        "id": int(row.id),
-        "group_id": int(row.group_id),
-        "module_range_id": int(row.module_range_id),
-        "pricing_mode": str(row.pricing_mode),
-        "flat_amount": float(row.flat_amount) if row.flat_amount is not None else None,
-        "base_amount": float(row.base_amount) if row.base_amount is not None else None,
-        "rate_per_kg": float(row.rate_per_kg) if row.rate_per_kg is not None else None,
-        "base_kg": float(row.base_kg) if row.base_kg is not None else None,
-        "active": bool(row.active),
-        "module_range": _serialize_range(row.module_range) if row.module_range is not None else None,
-    }
-
-
-def _serialize_group(
-    row: ShippingProviderPricingTemplateDestinationGroup,
-) -> dict[str, object]:
-    members = sorted(
-        list(getattr(row, "members", []) or []),
-        key=lambda x: (str(x.province_code or ""), str(x.province_name or ""), int(x.id)),
-    )
-    matrix_rows = sorted(
-        list(getattr(row, "matrix_rows", []) or []),
-        key=lambda x: (
-            int(x.module_range.sort_order) if getattr(x, "module_range", None) is not None else 0,
-            int(x.module_range_id),
-            int(x.id),
-        ),
-    )
-
-    return {
-        "id": int(row.id),
-        "template_id": int(row.template_id),
-        "name": str(row.name),
-        "sort_order": int(row.sort_order),
-        "active": bool(row.active),
-        "members": [
-            {
-                "id": int(m.id),
-                "group_id": int(m.group_id),
-                "province_code": m.province_code,
-                "province_name": m.province_name,
-            }
-            for m in members
-        ],
-        "matrix_rows": [_serialize_matrix_row(m) for m in matrix_rows],
-    }
-
-
-def _serialize_surcharge_config(
-    row: ShippingProviderPricingTemplateSurchargeConfig,
-) -> dict[str, object]:
-    cities = sorted(
-        list(getattr(row, "cities", []) or []),
-        key=lambda x: (str(x.city_code), int(x.id)),
-    )
-
-    return {
-        "id": int(row.id),
-        "template_id": int(row.template_id),
-        "province_code": str(row.province_code),
-        "province_name": row.province_name,
-        "province_mode": str(row.province_mode),
-        "fixed_amount": float(row.fixed_amount),
-        "active": bool(row.active),
-        "cities": [
-            {
-                "id": int(city.id),
-                "config_id": int(city.config_id),
-                "city_code": str(city.city_code),
-                "city_name": city.city_name,
-                "fixed_amount": float(city.fixed_amount),
-                "active": bool(city.active),
-            }
-            for city in cities
-        ],
-    }
-
-
-def _to_template_out(template: ShippingProviderPricingTemplate) -> TemplateOut:
-    provider_name = ""
-    if getattr(template, "shipping_provider", None) is not None:
-        provider_name = getattr(template.shipping_provider, "name", "") or ""
-
-    destination_groups = sorted(
-        list(getattr(template, "destination_groups", []) or []),
-        key=lambda x: (int(x.sort_order), int(x.id)),
-    )
-    surcharge_configs = sorted(
-        list(getattr(template, "surcharge_configs", []) or []),
-        key=lambda x: (str(x.province_code), int(x.id)),
-    )
-
-    return TemplateOut(
-        id=int(template.id),
-        shipping_provider_id=int(template.shipping_provider_id),
-        shipping_provider_name=provider_name,
-        name=template.name,
-        status=template.status,
-        archived_at=template.archived_at,
-        currency=template.currency,
-        effective_from=template.effective_from,
-        effective_to=template.effective_to,
-        default_pricing_mode=template.default_pricing_mode,
-        billable_weight_strategy=template.billable_weight_strategy,
-        volume_divisor=template.volume_divisor,
-        rounding_mode=template.rounding_mode,
-        rounding_step_kg=(
-            float(template.rounding_step_kg)
-            if template.rounding_step_kg is not None
-            else None
-        ),
-        min_billable_weight_kg=(
-            float(template.min_billable_weight_kg)
-            if template.min_billable_weight_kg is not None
-            else None
-        ),
-        destination_groups=[_serialize_group(g) for g in destination_groups],
-        surcharge_configs=[_serialize_surcharge_config(c) for c in surcharge_configs],
-    )
-
-
 def register_clone_routes(router: APIRouter) -> None:
     @router.post(
         "/templates/{template_id}/clone",
@@ -343,15 +205,7 @@ def register_clone_routes(router: APIRouter) -> None:
             name=_norm_nonempty(payload.name, "name") if payload.name else f"{source.name}-副本",
             status="draft",
             archived_at=None,
-            currency=str(source.currency),
-            default_pricing_mode=str(source.default_pricing_mode),
-            billable_weight_strategy=str(source.billable_weight_strategy),
-            volume_divisor=source.volume_divisor,
-            rounding_mode=str(source.rounding_mode),
-            rounding_step_kg=source.rounding_step_kg,
-            min_billable_weight_kg=source.min_billable_weight_kg,
-            effective_from=source.effective_from,
-            effective_to=source.effective_to,
+            validation_status="not_validated",
         )
         db.add(cloned)
         db.flush()
@@ -368,7 +222,9 @@ def register_clone_routes(router: APIRouter) -> None:
         if getattr(cloned_reloaded, "shipping_provider", None) is None:
             cloned_reloaded.shipping_provider = source.shipping_provider
 
+        stats = build_template_stats(db, template_id=int(cloned.id))
+
         return TemplateDetailOut(
             ok=True,
-            data=_to_template_out(cloned_reloaded),
+            data=serialize_template_out(cloned_reloaded, include_detail=True, stats=stats),
         )
