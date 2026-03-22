@@ -67,6 +67,37 @@ def _load_template_for_clone_or_404(
     return row
 
 
+def _derive_clone_expected_counts(
+    source: ShippingProviderPricingTemplate,
+) -> tuple[int, int]:
+    actual_ranges_count = len(list(getattr(source, "ranges", []) or []))
+    actual_groups_count = len(list(getattr(source, "destination_groups", []) or []))
+
+    expected_ranges_count = (
+        actual_ranges_count
+        if actual_ranges_count > 0
+        else int(source.expected_ranges_count)
+    )
+    expected_groups_count = (
+        actual_groups_count
+        if actual_groups_count > 0
+        else int(source.expected_groups_count)
+    )
+
+    if expected_ranges_count <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Source template has invalid expected_ranges_count for clone",
+        )
+    if expected_groups_count <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Source template has invalid expected_groups_count for clone",
+        )
+
+    return expected_ranges_count, expected_groups_count
+
+
 def _clone_template_tree(
     db: Session,
     *,
@@ -199,10 +230,14 @@ def register_clone_routes(router: APIRouter) -> None:
         check_config_perm(db, user, ["config.store.write"])
 
         source = _load_template_for_clone_or_404(db, int(template_id))
+        expected_ranges_count, expected_groups_count = _derive_clone_expected_counts(source)
 
         cloned = ShippingProviderPricingTemplate(
             shipping_provider_id=int(source.shipping_provider_id),
+            source_template_id=int(source.id),
             name=_norm_nonempty(payload.name, "name") if payload.name else f"{source.name}-副本",
+            expected_ranges_count=int(expected_ranges_count),
+            expected_groups_count=int(expected_groups_count),
             status="draft",
             archived_at=None,
             validation_status="not_validated",

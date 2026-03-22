@@ -44,6 +44,8 @@ def register_create_routes(router: APIRouter) -> None:
         row = ShippingProviderPricingTemplate(
             shipping_provider_id=int(payload.shipping_provider_id),
             name=_norm_nonempty(payload.name, "name"),
+            expected_ranges_count=int(payload.expected_ranges_count),
+            expected_groups_count=int(payload.expected_groups_count),
             status="draft",
             archived_at=None,
             validation_status="not_validated",

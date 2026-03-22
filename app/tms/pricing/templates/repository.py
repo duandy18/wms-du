@@ -32,6 +32,16 @@ class TemplateStats:
     config_status: str
 
 
+@dataclass(frozen=True)
+class TemplateCapabilities:
+    can_edit_structure: bool
+    can_submit_validation: bool
+    can_clone: bool
+    can_archive: bool
+    can_bind: bool
+    readonly_reason: str | None
+
+
 def _serialize_range(
     row: ShippingProviderPricingTemplateModuleRange,
 ) -> dict[str, object]:
@@ -133,8 +143,18 @@ def _base_query(db: Session):
     )
 
 
+def _compute_expected_matrix_cells_count(
+    *,
+    expected_ranges_count: int,
+    expected_groups_count: int,
+) -> int:
+    return int(expected_ranges_count) * int(expected_groups_count)
+
+
 def _compute_config_status(
     *,
+    expected_ranges_count: int,
+    expected_groups_count: int,
     ranges_count: int,
     groups_count: int,
     matrix_cells_count: int,
@@ -142,10 +162,80 @@ def _compute_config_status(
     if ranges_count == 0 and groups_count == 0 and matrix_cells_count == 0:
         return "empty"
 
-    if ranges_count > 0 and groups_count > 0 and matrix_cells_count == ranges_count * groups_count:
+    expected_matrix_cells_count = _compute_expected_matrix_cells_count(
+        expected_ranges_count=expected_ranges_count,
+        expected_groups_count=expected_groups_count,
+    )
+
+    if (
+        ranges_count == expected_ranges_count
+        and groups_count == expected_groups_count
+        and matrix_cells_count == expected_matrix_cells_count
+    ):
         return "ready"
 
     return "incomplete"
+
+
+def build_template_capabilities(
+    *,
+    template: ShippingProviderPricingTemplate,
+    stats: TemplateStats,
+) -> TemplateCapabilities:
+    status = str(template.status or "")
+    validation_status = str(template.validation_status or "")
+    source_template_id = getattr(template, "source_template_id", None)
+
+    is_draft = status == "draft"
+    is_archived = status == "archived"
+    is_validated = validation_status == "passed"
+    is_cloned_template = source_template_id is not None
+
+    readonly_reason: str | None = None
+    if is_archived:
+        readonly_reason = "archived_template"
+    elif is_validated:
+        readonly_reason = "validated_template"
+    elif is_cloned_template:
+        readonly_reason = "cloned_template_structure_locked"
+
+    can_edit_structure = is_draft and not is_validated and not is_cloned_template
+    can_submit_validation = (
+        is_draft
+        and not is_validated
+        and str(stats.config_status) == "ready"
+        and int(stats.used_binding_count) == 0
+    )
+    can_clone = True
+    can_archive = is_draft and int(stats.used_binding_count) == 0
+    can_bind = (
+        is_draft
+        and is_validated
+        and str(stats.config_status) == "ready"
+        and int(stats.used_binding_count) == 0
+    )
+
+    return TemplateCapabilities(
+        can_edit_structure=can_edit_structure,
+        can_submit_validation=can_submit_validation,
+        can_clone=can_clone,
+        can_archive=can_archive,
+        can_bind=can_bind,
+        readonly_reason=readonly_reason,
+    )
+
+
+def _serialize_template_capabilities(
+    caps: TemplateCapabilities,
+) -> dict[str, object]:
+    return {
+        "can_edit_structure": bool(caps.can_edit_structure),
+        "can_submit_validation": bool(caps.can_submit_validation),
+        "can_clone": bool(caps.can_clone),
+        "can_archive": bool(caps.can_archive),
+        "can_bind": bool(caps.can_bind),
+        "readonly_reason": caps.readonly_reason,
+    }
 
 
 def _build_template_stats_map(
@@ -205,13 +295,36 @@ def _build_template_stats_map(
     )
     bindings_map = {int(template_id): int(count or 0) for template_id, count in binding_rows}
 
+    templates = (
+        db.query(
+            ShippingProviderPricingTemplate.id,
+            ShippingProviderPricingTemplate.expected_ranges_count,
+            ShippingProviderPricingTemplate.expected_groups_count,
+        )
+        .filter(ShippingProviderPricingTemplate.id.in_(template_ids))
+        .all()
+    )
+    expected_map = {
+        int(row.id): (
+            int(row.expected_ranges_count),
+            int(row.expected_groups_count),
+        )
+        for row in templates
+    }
+
     out: dict[int, TemplateStats] = {}
     for template_id in template_ids:
         ranges_count = int(ranges_map.get(template_id, 0))
         groups_count = int(groups_map.get(template_id, 0))
         matrix_cells_count = int(matrix_map.get(template_id, 0))
         used_binding_count = int(bindings_map.get(template_id, 0))
+        expected_ranges_count, expected_groups_count = expected_map.get(
+            int(template_id),
+            (0, 0),
+        )
         config_status = _compute_config_status(
+            expected_ranges_count=expected_ranges_count,
+            expected_groups_count=expected_groups_count,
             ranges_count=ranges_count,
             groups_count=groups_count,
             matrix_cells_count=matrix_cells_count,
@@ -309,6 +422,13 @@ def serialize_template_out(
             key=lambda x: (str(x.province_code), int(x.id)),
         )
 
+    expected_ranges_count = int(template.expected_ranges_count)
+    expected_groups_count = int(template.expected_groups_count)
+    expected_matrix_cells_count = _compute_expected_matrix_cells_count(
+        expected_ranges_count=expected_ranges_count,
+        expected_groups_count=expected_groups_count,
+    )
+
     if stats is None:
         if include_detail:
             ranges_count = len(list(getattr(template, "ranges", []) or []))
@@ -320,6 +440,8 @@ def serialize_template_out(
                 groups_count=groups_count,
                 matrix_cells_count=matrix_cells_count,
                 config_status=_compute_config_status(
+                    expected_ranges_count=expected_ranges_count,
+                    expected_groups_count=expected_groups_count,
                     ranges_count=ranges_count,
                     groups_count=groups_count,
                     matrix_cells_count=matrix_cells_count,
@@ -334,11 +456,24 @@ def serialize_template_out(
                 config_status="empty",
             )
 
+    capabilities = build_template_capabilities(
+        template=template,
+        stats=stats,
+    )
+
     return TemplateOut(
         id=int(template.id),
         shipping_provider_id=int(template.shipping_provider_id),
         shipping_provider_name=provider_name,
+        source_template_id=(
+            int(template.source_template_id)
+            if getattr(template, "source_template_id", None) is not None
+            else None
+        ),
         name=template.name,
+        expected_ranges_count=expected_ranges_count,
+        expected_groups_count=expected_groups_count,
+        expected_matrix_cells_count=expected_matrix_cells_count,
         status=template.status,
         archived_at=template.archived_at,
         validation_status=template.validation_status,
@@ -349,6 +484,7 @@ def serialize_template_out(
         ranges_count=int(stats.ranges_count),
         groups_count=int(stats.groups_count),
         matrix_cells_count=int(stats.matrix_cells_count),
+        capabilities=_serialize_template_capabilities(capabilities),
         destination_groups=[_serialize_group(g) for g in destination_groups],
         surcharge_configs=[_serialize_surcharge_config(c) for c in surcharge_configs],
     )

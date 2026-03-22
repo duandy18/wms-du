@@ -161,16 +161,15 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
             if isinstance(item, dict):
                 tid = item.get("id")
                 status = str(item.get("status") or "").strip().lower()
-                if isinstance(tid, int) and tid > 0 and status == "draft":
+                validation_status = str(item.get("validation_status") or "").strip().lower()
+                if (
+                    isinstance(tid, int)
+                    and tid > 0
+                    and status == "draft"
+                    and validation_status == "not_validated"
+                ):
                     template_id = tid
                     break
-        if template_id is None:
-            for item in templates:
-                if isinstance(item, dict):
-                    tid = item.get("id")
-                    if isinstance(tid, int) and tid > 0:
-                        template_id = tid
-                        break
     if template_id is not None:
         return template_id
 

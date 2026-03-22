@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
 from app.models.shipping_provider_pricing_template_destination_group import (
@@ -18,6 +18,10 @@ from app.models.shipping_provider_pricing_template_matrix import (
 )
 from app.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
+)
+from app.tms.pricing.templates.repository import (
+    build_template_capabilities,
+    build_template_stats,
 )
 
 
@@ -33,8 +37,38 @@ def load_template_or_404(db: Session, template_id: int) -> ShippingProviderPrici
 
 
 def ensure_template_draft(row: ShippingProviderPricingTemplate) -> None:
-    if str(row.status) != "draft":
-        raise HTTPException(status_code=400, detail="Only draft template can be modified")
+    session = object_session(row)
+    if session is None:
+        raise RuntimeError("template row is detached; cannot evaluate template capabilities")
+
+    stats = build_template_stats(session, template_id=int(row.id))
+    caps = build_template_capabilities(template=row, stats=stats)
+
+    if caps.can_edit_structure:
+        return
+
+    if caps.readonly_reason == "validated_template":
+        raise HTTPException(
+            status_code=400,
+            detail="Validated template cannot be modified; clone a new draft to edit",
+        )
+
+    if caps.readonly_reason == "archived_template":
+        raise HTTPException(
+            status_code=400,
+            detail="Archived template cannot be modified; clone a new draft to edit",
+        )
+
+    if caps.readonly_reason == "cloned_template_structure_locked":
+        raise HTTPException(
+            status_code=400,
+            detail="Cloned template cannot modify weight ranges or destination groups; create a new template if you need a different structure",
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail="Template cannot be modified in current state",
+    )
 
 
 def load_group_or_404(

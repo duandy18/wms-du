@@ -179,25 +179,24 @@ def _put_template_matrix_cells(
     return body["cells"]
 
 
-def _set_template_validation_status(
+def _submit_template_validation(
     client: TestClient,
     token: str,
     *,
     template_id: int,
-    validation_status: str,
 ) -> dict:
     h = auth_headers(token)
 
-    r = client.patch(
-        f"/tms/pricing/templates/{template_id}",
+    r = client.post(
+        f"/tms/pricing/templates/{template_id}/submit-validation",
         headers=h,
-        json={"validation_status": validation_status},
+        json={"confirm_validated": True},
     )
     assert r.status_code == 200, r.text
 
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["validation_status"] == validation_status
+    assert body["data"]["validation_status"] == "passed"
     return body["data"]
 
 
@@ -307,11 +306,8 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
         json={
             "shipping_provider_id": int(provider_id),
             "name": "TEST-PRICING-TEMPLATE",
-            "currency": "CNY",
-            "default_pricing_mode": "linear_total",
-            "billable_weight_strategy": "actual_only",
-            "rounding_mode": "ceil",
-            "rounding_step_kg": 1.0,
+            "expected_ranges_count": 5,
+            "expected_groups_count": 1,
         },
     )
     assert tr.status_code == 201, tr.text
@@ -365,11 +361,10 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
     assert sur.status_code == 201, sur.text
 
-    _set_template_validation_status(
+    _submit_template_validation(
         client,
         token,
         template_id=template_id,
-        validation_status="passed",
     )
 
     bind_provider_to_warehouse(
@@ -406,11 +401,8 @@ def create_template_bundle_for_provider(
         json={
             "shipping_provider_id": int(provider_id),
             "name": f"TEST-PRICING-TEMPLATE-{name_suffix}",
-            "currency": "CNY",
-            "default_pricing_mode": "linear_total",
-            "billable_weight_strategy": "actual_only",
-            "rounding_mode": "ceil",
-            "rounding_step_kg": 1.0,
+            "expected_ranges_count": 1,
+            "expected_groups_count": 1,
         },
     )
     assert tr.status_code == 201, tr.text
@@ -439,11 +431,10 @@ def create_template_bundle_for_provider(
         matrix_rows=matrix_rows,
     )
 
-    _set_template_validation_status(
+    _submit_template_validation(
         client,
         token,
         template_id=template_id,
-        validation_status="passed",
     )
 
     bind_provider_to_warehouse(

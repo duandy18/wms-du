@@ -113,6 +113,8 @@ async def _create_template(
     *,
     shipping_provider_id: int,
     name: str,
+    expected_ranges_count: int = 1,
+    expected_groups_count: int = 1,
 ) -> int:
     r = await client.post(
         "/tms/pricing/templates",
@@ -120,6 +122,8 @@ async def _create_template(
         json={
             "shipping_provider_id": int(shipping_provider_id),
             "name": name,
+            "expected_ranges_count": int(expected_ranges_count),
+            "expected_groups_count": int(expected_groups_count),
         },
     )
     assert r.status_code == 201, r.text
@@ -127,6 +131,8 @@ async def _create_template(
     assert body["ok"] is True
     assert body["data"]["status"] == "draft"
     assert body["data"]["validation_status"] == "not_validated"
+    assert body["data"]["expected_ranges_count"] == int(expected_ranges_count)
+    assert body["data"]["expected_groups_count"] == int(expected_groups_count)
     return int(body["data"]["id"])
 
 
@@ -206,22 +212,21 @@ async def _put_single_matrix_cell(
     assert len(body["cells"]) == 1
 
 
-async def _set_validation_status(
+async def _submit_validation(
     client: AsyncClient,
     headers: dict[str, str],
     *,
     template_id: int,
-    validation_status: str,
 ) -> None:
-    r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+    r = await client.post(
+        f"/tms/pricing/templates/{template_id}/submit-validation",
         headers=headers,
-        json={"validation_status": validation_status},
+        json={"confirm_validated": True},
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["validation_status"] == validation_status
+    assert body["data"]["validation_status"] == "passed"
 
 
 async def _bind_template(
@@ -251,10 +256,12 @@ async def _create_template_with_stage(
     headers: dict[str, str],
     *,
     name: str,
-    validation_status: str,
+    submit_validation: bool,
     with_ranges: bool,
     with_groups: bool,
     with_matrix: bool,
+    expected_ranges_count: int = 1,
+    expected_groups_count: int = 1,
 ) -> tuple[int, int, int]:
     warehouse_id = await _pick_first_warehouse_id(client, headers)
     shipping_provider_id = await _pick_unbound_provider_id(
@@ -267,6 +274,8 @@ async def _create_template_with_stage(
         headers,
         shipping_provider_id=shipping_provider_id,
         name=name,
+        expected_ranges_count=expected_ranges_count,
+        expected_groups_count=expected_groups_count,
     )
 
     range_id: int | None = None
@@ -297,12 +306,12 @@ async def _create_template_with_stage(
             range_id=range_id,
         )
 
-    await _set_validation_status(
-        client,
-        headers,
-        template_id=template_id,
-        validation_status=validation_status,
-    )
+    if submit_validation:
+        await _submit_validation(
+            client,
+            headers,
+            template_id=template_id,
+        )
 
     return warehouse_id, shipping_provider_id, template_id
 
@@ -318,7 +327,7 @@ async def test_unvalidated_template_cannot_bind_even_if_structure_complete(
         client,
         headers,
         name="bind-guard-not-validated",
-        validation_status="not_validated",
+        submit_validation=False,
         with_ranges=True,
         with_groups=True,
         with_matrix=True,
@@ -339,12 +348,12 @@ async def test_unvalidated_template_cannot_bind_even_if_structure_complete(
 @pytest.mark.parametrize(
     ("with_ranges", "with_groups", "with_matrix", "expected_detail"),
     [
-        (False, False, False, "pricing_template invalid: template has no weight ranges"),
-        (True, False, False, "pricing_template invalid: template has no destination groups"),
-        (True, True, False, "pricing_template invalid: template pricing matrix incomplete"),
+        (False, False, False, "pricing_template not validated"),
+        (True, False, False, "Template cannot submit validation in current state"),
+        (True, True, False, "Template cannot submit validation in current state"),
     ],
 )
-async def test_passed_template_with_incomplete_structure_cannot_bind(
+async def test_incomplete_structure_cannot_enter_bindable_state(
     client: AsyncClient,
     with_ranges: bool,
     with_groups: bool,
@@ -358,11 +367,20 @@ async def test_passed_template_with_incomplete_structure_cannot_bind(
         client,
         headers,
         name=f"bind-guard-incomplete-{int(with_ranges)}-{int(with_groups)}-{int(with_matrix)}",
-        validation_status="passed",
+        submit_validation=False,
         with_ranges=with_ranges,
         with_groups=with_groups,
         with_matrix=with_matrix,
     )
+
+    if with_ranges or with_groups or with_matrix:
+        submit_resp = await client.post(
+            f"/tms/pricing/templates/{template_id}/submit-validation",
+            headers=headers,
+            json={"confirm_validated": True},
+        )
+        assert submit_resp.status_code == 400, submit_resp.text
+        assert expected_detail in submit_resp.text
 
     r = await _bind_template(
         client,
@@ -372,7 +390,45 @@ async def test_passed_template_with_incomplete_structure_cannot_bind(
         template_id=template_id,
     )
     assert r.status_code == 409, r.text
-    assert expected_detail in r.text
+    assert "pricing_template not validated" in r.text
+
+
+@pytest.mark.asyncio
+async def test_validation_rejects_when_expected_counts_not_met(
+    client: AsyncClient,
+) -> None:
+    token = await login(client)
+    headers = auth_headers(token)
+
+    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
+        client,
+        headers,
+        name="bind-guard-expected-counts-not-met",
+        submit_validation=False,
+        with_ranges=True,
+        with_groups=True,
+        with_matrix=True,
+        expected_ranges_count=2,
+        expected_groups_count=1,
+    )
+
+    r_submit = await client.post(
+        f"/tms/pricing/templates/{template_id}/submit-validation",
+        headers=headers,
+        json={"confirm_validated": True},
+    )
+    assert r_submit.status_code == 400, r_submit.text
+    assert "Template cannot submit validation in current state" in r_submit.text
+
+    r_bind = await _bind_template(
+        client,
+        headers,
+        warehouse_id=warehouse_id,
+        shipping_provider_id=shipping_provider_id,
+        template_id=template_id,
+    )
+    assert r_bind.status_code == 409, r_bind.text
+    assert "pricing_template not validated" in r_bind.text
 
 
 @pytest.mark.asyncio
@@ -386,7 +442,7 @@ async def test_passed_template_with_complete_structure_can_bind(
         client,
         headers,
         name="bind-guard-ready-can-bind",
-        validation_status="passed",
+        submit_validation=True,
         with_ranges=True,
         with_groups=True,
         with_matrix=True,

@@ -24,7 +24,11 @@ from app.tms.pricing.bindings.contracts import (
 from app.tms.pricing.bindings.helpers import LIST_SQL, row_to_out
 from app.tms.pricing.bindings.summary_routes import router as bindings_summary_router
 from app.tms.pricing.templates.module_resources_shared import validate_template_ready_for_binding
-from app.tms.pricing.templates.repository import load_template_or_404
+from app.tms.pricing.templates.repository import (
+    build_template_capabilities,
+    build_template_stats,
+    load_template_or_404,
+)
 
 
 router = APIRouter()
@@ -48,11 +52,23 @@ async def _ensure_runtime_template_allowed(
             detail="pricing_template does not belong to shipping_provider",
         )
 
-    if template.archived_at is not None:
-        raise HTTPException(status_code=409, detail="pricing_template archived")
+    stats = build_template_stats(db, template_id=int(active_template_id))
+    caps = build_template_capabilities(template=template, stats=stats)
 
-    if str(template.validation_status) != "passed":
-        raise HTTPException(status_code=409, detail="pricing_template not validated")
+    if not caps.can_bind:
+        if caps.readonly_reason == "archived_template":
+            raise HTTPException(status_code=409, detail="pricing_template archived")
+
+        if str(template.validation_status) != "passed":
+            raise HTTPException(status_code=409, detail="pricing_template not validated")
+
+        if str(stats.config_status) != "ready":
+            raise HTTPException(status_code=409, detail="pricing_template not ready")
+
+        raise HTTPException(
+            status_code=409,
+            detail="pricing_template cannot be bound in current state",
+        )
 
     try:
         validate_template_ready_for_binding(db, template_id=int(active_template_id))
