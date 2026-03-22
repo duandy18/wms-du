@@ -29,6 +29,14 @@ class ShippingProviderPricingTemplate(Base):
             """,
             name="ck_sppt_archived_state_consistent",
         ),
+        CheckConstraint(
+            "expected_ranges_count > 0",
+            name="ck_sppt_expected_ranges_count_positive",
+        ),
+        CheckConstraint(
+            "expected_groups_count > 0",
+            name="ck_sppt_expected_groups_count_positive",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -40,7 +48,24 @@ class ShippingProviderPricingTemplate(Base):
         index=True,
     )
 
+    source_template_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("shipping_provider_pricing_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    expected_ranges_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    expected_groups_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
 
     status: Mapped[str] = mapped_column(
         String(16),
@@ -77,6 +102,12 @@ class ShippingProviderPricingTemplate(Base):
 
     shipping_provider = relationship("ShippingProvider", lazy="selectin")
 
+    source_template = relationship(
+        "ShippingProviderPricingTemplate",
+        remote_side="ShippingProviderPricingTemplate.id",
+        lazy="selectin",
+    )
+
     ranges = relationship(
         "ShippingProviderPricingTemplateModuleRange",
         back_populates="template",
@@ -100,7 +131,10 @@ class ShippingProviderPricingTemplate(Base):
         return (
             f"<ShippingProviderPricingTemplate id={self.id} "
             f"provider_id={self.shipping_provider_id} "
+            f"source_template_id={self.source_template_id} "
             f"status={self.status} "
             f"validation_status={self.validation_status} "
+            f"expected_ranges_count={self.expected_ranges_count} "
+            f"expected_groups_count={self.expected_groups_count} "
             f"name={self.name!r}>"
         )

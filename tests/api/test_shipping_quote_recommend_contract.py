@@ -56,14 +56,6 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     provider_a = int(pdata[0]["id"])
 
     ids_a = create_template_bundle_for_provider(client, token, provider_a, name_suffix="A")
-    bind_provider_to_warehouse(
-        client,
-        token,
-        wid,
-        provider_a,
-        active_template_id=ids_a["template_id"],
-    )
-
     cr = client.post(
         "/shipping-quote/calc",
         headers=h,
@@ -141,14 +133,6 @@ def test_shipping_quote_recommend_provider_ids_intersect_warehouse_phase3(client
 
     ids_a2 = create_template_bundle_for_provider(client, token, provider_a, name_suffix="A2")
     assert ids_a2["template_id"] > 0
-
-    bind_provider_to_warehouse(
-        client,
-        token,
-        wid,
-        provider_a,
-        active_template_id=ids_a2["template_id"],
-    )
 
     provider_b = ensure_second_provider(client, token)
 

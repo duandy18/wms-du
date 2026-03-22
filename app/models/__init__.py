@@ -104,6 +104,7 @@ MODEL_SPECS = [
     ("app.models.shipping_provider_pricing_template_surcharge_config_city", "ShippingProviderPricingTemplateSurchargeConfigCity"),
     ("app.models.shipping_provider_pricing_template_surcharge_config", "ShippingProviderPricingTemplateSurchargeConfig"),
     ("app.models.shipping_provider_pricing_template", "ShippingProviderPricingTemplate"),
+    ("app.models.shipping_provider_pricing_template_validation_record", "ShippingProviderPricingTemplateValidationRecord"),
     ("app.models.shipping_provider_pricing_template_module_range", "ShippingProviderPricingTemplateModuleRange"),
     ("app.models.shipping_provider_pricing_template_destination_group", "ShippingProviderPricingTemplateDestinationGroup"),
     ("app.models.shipping_provider_pricing_template_destination_group_member", "ShippingProviderPricingTemplateDestinationGroupMember"),
@@ -176,6 +177,7 @@ __all__ = [
     "ShippingRecordReconciliation",
     # ---- Pricing Templates ----
     "ShippingProviderPricingTemplate",
+    "ShippingProviderPricingTemplateValidationRecord",
     "ShippingProviderPricingTemplateModuleRange",
     "ShippingProviderPricingTemplateDestinationGroup",
     "ShippingProviderPricingTemplateDestinationGroupMember",

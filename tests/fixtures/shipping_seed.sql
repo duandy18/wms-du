@@ -74,14 +74,18 @@ tpl AS (
     name,
     status,
     archived_at,
-    validation_status
+    validation_status,
+    expected_ranges_count,
+    expected_groups_count
   )
   SELECT
     sp2.id,
     'UT-TEMPLATE-1',
     'draft',
     NULL,
-    'passed'
+    'passed',
+    2,
+    1
   FROM sp2
   LIMIT 1
   ON CONFLICT DO NOTHING

@@ -28,6 +28,8 @@ async def _create_template(
     *,
     shipping_provider_id: int = 1,
     name: str = "template-update-contract",
+    expected_ranges_count: int = 1,
+    expected_groups_count: int = 1,
 ) -> dict:
     r = await client.post(
         "/tms/pricing/templates",
@@ -35,12 +37,19 @@ async def _create_template(
         json={
             "shipping_provider_id": int(shipping_provider_id),
             "name": name,
+            "expected_ranges_count": int(expected_ranges_count),
+            "expected_groups_count": int(expected_groups_count),
         },
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["ok"] is True
     assert body["data"]["status"] == "draft"
+    assert body["data"]["expected_ranges_count"] == int(expected_ranges_count)
+    assert body["data"]["expected_groups_count"] == int(expected_groups_count)
+    assert body["data"]["expected_matrix_cells_count"] == int(expected_ranges_count) * int(
+        expected_groups_count
+    )
     return body["data"]
 
 
@@ -183,22 +192,21 @@ async def _build_template_resources(
     assert r3.status_code == 200, r3.text
 
 
-async def _set_template_validation_status(
+async def _submit_template_validation(
     client: AsyncClient,
     headers: dict[str, str],
     *,
     template_id: int,
-    validation_status: str,
 ) -> dict:
-    r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+    r = await client.post(
+        f"/tms/pricing/templates/{template_id}/submit-validation",
         headers=headers,
-        json={"validation_status": validation_status},
+        json={"confirm_validated": True},
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["validation_status"] == validation_status
+    assert body["data"]["validation_status"] == "passed"
     return body["data"]
 
 
@@ -247,6 +255,8 @@ async def _create_bindable_template(
         headers,
         shipping_provider_id=shipping_provider_id,
         name=name,
+        expected_ranges_count=1,
+        expected_groups_count=1,
     )
     template_id = int(created["id"])
 
@@ -255,14 +265,29 @@ async def _create_bindable_template(
         headers,
         template_id=template_id,
     )
-    await _set_template_validation_status(
+    await _submit_template_validation(
         client,
         headers,
         template_id=template_id,
-        validation_status="passed",
     )
 
     return warehouse_id, shipping_provider_id, template_id
+
+
+@pytest.mark.asyncio
+async def test_template_create_requires_expected_counts(client: AsyncClient) -> None:
+    token = await login(client)
+    headers = auth_headers(token)
+
+    r = await client.post(
+        "/tms/pricing/templates",
+        headers=headers,
+        json={
+            "shipping_provider_id": 1,
+            "name": "missing-expected-counts",
+        },
+    )
+    assert r.status_code == 422, r.text
 
 
 @pytest.mark.asyncio
@@ -374,23 +399,34 @@ async def test_restored_template_can_modify_assets_again(client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
-async def test_unbound_draft_template_can_update_validation_status(client: AsyncClient) -> None:
+async def test_unbound_draft_template_can_update_expected_counts(client: AsyncClient) -> None:
     token = await login(client)
     headers = auth_headers(token)
 
-    created = await _create_template(client, headers, name="unbound-validation-status")
+    created = await _create_template(
+        client,
+        headers,
+        name="update-expected-counts",
+        expected_ranges_count=1,
+        expected_groups_count=1,
+    )
     template_id = int(created["id"])
 
     r = await client.patch(
         f"/tms/pricing/templates/{template_id}",
         headers=headers,
-        json={"validation_status": "passed"},
+        json={
+            "expected_ranges_count": 5,
+            "expected_groups_count": 8,
+        },
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["status"] == "draft"
-    assert body["data"]["validation_status"] == "passed"
+    assert body["data"]["expected_ranges_count"] == 5
+    assert body["data"]["expected_groups_count"] == 8
+    assert body["data"]["expected_matrix_cells_count"] == 40
+    assert body["data"]["validation_status"] == "not_validated"
 
 
 @pytest.mark.asyncio
@@ -416,19 +452,19 @@ async def test_bound_template_cannot_rename(client: AsyncClient) -> None:
         headers=headers,
         json={"name": "bound-template-renamed"},
     )
-    assert r.status_code == 409, r.text
-    assert "pricing_template is bound; unbind it before editing" in r.text
+    assert r.status_code == 400, r.text
+    assert "Validated template cannot be modified" in r.text
 
 
 @pytest.mark.asyncio
-async def test_bound_template_cannot_update_validation_status(client: AsyncClient) -> None:
+async def test_bound_template_cannot_update_expected_counts(client: AsyncClient) -> None:
     token = await login(client)
     headers = auth_headers(token)
 
     warehouse_id, shipping_provider_id, template_id = await _create_bindable_template(
         client,
         headers,
-        name="bound-cannot-update-validation",
+        name="bound-cannot-update-expected-counts",
     )
     await _bind_template_to_warehouse(
         client,
@@ -441,10 +477,10 @@ async def test_bound_template_cannot_update_validation_status(client: AsyncClien
     r = await client.patch(
         f"/tms/pricing/templates/{template_id}",
         headers=headers,
-        json={"validation_status": "failed"},
+        json={"expected_ranges_count": 2},
     )
-    assert r.status_code == 409, r.text
-    assert "pricing_template is bound; unbind it before updating validation_status" in r.text
+    assert r.status_code == 400, r.text
+    assert "Validated template cannot be modified" in r.text
 
 
 @pytest.mark.asyncio

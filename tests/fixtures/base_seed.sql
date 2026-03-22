@@ -62,7 +62,9 @@ INSERT INTO shipping_provider_pricing_templates (
   name,
   status,
   archived_at,
-  validation_status
+  validation_status,
+  expected_ranges_count,
+  expected_groups_count
 )
 VALUES (
   1,
@@ -70,14 +72,18 @@ VALUES (
   'UT-TEMPLATE-1',
   'draft',
   NULL,
-  'passed'
+  'passed',
+  3,
+  1
 )
 ON CONFLICT (id) DO UPDATE SET
   shipping_provider_id = EXCLUDED.shipping_provider_id,
   name = EXCLUDED.name,
   status = EXCLUDED.status,
   archived_at = EXCLUDED.archived_at,
-  validation_status = EXCLUDED.validation_status;
+  validation_status = EXCLUDED.validation_status,
+  expected_ranges_count = EXCLUDED.expected_ranges_count,
+  expected_groups_count = EXCLUDED.expected_groups_count;
 
 -- ranges：单模板直挂
 INSERT INTO shipping_provider_pricing_template_module_ranges (

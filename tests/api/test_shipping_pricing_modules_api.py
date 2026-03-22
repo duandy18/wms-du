@@ -31,6 +31,8 @@ async def _create_template(client: AsyncClient, token: str) -> int:
         json={
             "shipping_provider_id": 1,
             "name": "test-template",
+            "expected_ranges_count": 1,
+            "expected_groups_count": 1,
         },
     )
 
