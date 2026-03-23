@@ -2,49 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-TemplateRuntimeStatus = Literal[
-    "missing",
-    "archived",
-    "ready",
-]
 
 PricingStatus = Literal[
     "provider_disabled",
-    "binding_disabled",
     "no_active_template",
-    "template_archived",
-    "ready",
+    "binding_disabled",
+    "scheduled",
+    "active",
 ]
-
-
-def compute_template_runtime_status(
-    *,
-    active_template_id: int | None,
-    template_archived: bool,
-) -> TemplateRuntimeStatus:
-    if active_template_id is None:
-        return "missing"
-
-    if template_archived:
-        return "archived"
-
-    return "ready"
-
-
-def compute_is_template_active(
-    *,
-    active_template_id: int | None,
-    template_archived: bool,
-) -> bool:
-    return (
-        compute_template_runtime_status(
-            active_template_id=active_template_id,
-            template_archived=template_archived,
-        )
-        == "ready"
-    )
 
 
 def compute_pricing_status(
@@ -52,23 +20,36 @@ def compute_pricing_status(
     provider_active: bool,
     binding_active: bool,
     active_template_id: int | None,
-    template_archived: bool,
+    effective_from: datetime | None,
+    now: datetime,
 ) -> PricingStatus:
+    """
+    运行态状态机（唯一事实源）
+
+    判定优先级（非常重要）：
+
+    1. provider_disabled
+    2. no_active_template
+    3. binding_disabled
+    4. scheduled
+    5. active
+    """
+
+    # 1️⃣ 承运商已停用
     if not provider_active:
         return "provider_disabled"
 
+    # 2️⃣ 未挂收费表
+    if active_template_id is None:
+        return "no_active_template"
+
+    # 3️⃣ binding 已停用
     if not binding_active:
         return "binding_disabled"
 
-    runtime_status = compute_template_runtime_status(
-        active_template_id=active_template_id,
-        template_archived=template_archived,
-    )
+    # 4️⃣ 待生效（时间未到）
+    if effective_from is not None and effective_from > now:
+        return "scheduled"
 
-    if runtime_status == "missing":
-        return "no_active_template"
-
-    if runtime_status == "archived":
-        return "template_archived"
-
-    return "ready"
+    # 5️⃣ 已生效
+    return "active"

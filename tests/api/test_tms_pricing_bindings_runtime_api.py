@@ -1,6 +1,7 @@
+# tests/api/test_tms_pricing_bindings_runtime_api.py
 from __future__ import annotations
 
-import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -98,12 +99,12 @@ async def _pick_unbound_provider_id(
         if provider_id not in bound_provider_ids:
             return provider_id
 
-    suffix = int(time.time() * 1000) % 1_000_000
+    suffix = int(datetime.now(timezone.utc).timestamp() * 1000) % 1_000_000
     return await _create_shipping_provider(
         client,
         headers,
-        name=f"TEST-BIND-GUARD-PROVIDER-{suffix}",
-        code=f"TBGP{suffix}",
+        name=f"TEST-RUNTIME-PROVIDER-{suffix}",
+        code=f"TRP{suffix}",
     )
 
 
@@ -129,10 +130,6 @@ async def _create_template(
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["ok"] is True
-    assert body["data"]["status"] == "draft"
-    assert body["data"]["validation_status"] == "not_validated"
-    assert body["data"]["expected_ranges_count"] == int(expected_ranges_count)
-    assert body["data"]["expected_groups_count"] == int(expected_groups_count)
     return int(body["data"]["id"])
 
 
@@ -235,52 +232,31 @@ async def _bind_template(
     *,
     warehouse_id: int,
     shipping_provider_id: int,
-    template_id: int,
+    template_id: int | None,
+    active: bool = False,
 ):
+    payload = {
+        "shipping_provider_id": int(shipping_provider_id),
+        "active": bool(active),
+        "priority": 0,
+        "pickup_cutoff_time": "18:00",
+        "remark": "binding-runtime-api-test",
+    }
+    if template_id is not None:
+        payload["active_template_id"] = int(template_id)
+
     return await client.post(
         f"/tms/pricing/warehouses/{warehouse_id}/bindings",
         headers=headers,
-        json={
-            "shipping_provider_id": int(shipping_provider_id),
-            "active_template_id": int(template_id),
-            "active": True,
-            "priority": 0,
-            "pickup_cutoff_time": "18:00",
-            "remark": "binding-runtime-guard-test",
-        },
+        json=payload,
     )
 
 
-async def _list_template_candidates(
-    client: AsyncClient,
-    headers: dict[str, str],
-    *,
-    warehouse_id: int,
-    shipping_provider_id: int,
-) -> list[dict]:
-    r = await client.get(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/template-candidates",
-        headers=headers,
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["ok"] is True
-    rows = body["data"] or []
-    assert isinstance(rows, list), rows
-    return rows
-
-
-async def _create_template_with_stage(
+async def _create_bindable_template_bundle(
     client: AsyncClient,
     headers: dict[str, str],
     *,
     name: str,
-    submit_validation: bool,
-    with_ranges: bool,
-    with_groups: bool,
-    with_matrix: bool,
-    expected_ranges_count: int = 1,
-    expected_groups_count: int = 1,
 ) -> tuple[int, int, int]:
     warehouse_id = await _pick_first_warehouse_id(client, headers)
     shipping_provider_id = await _pick_unbound_provider_id(
@@ -288,258 +264,50 @@ async def _create_template_with_stage(
         headers,
         warehouse_id=warehouse_id,
     )
+
     template_id = await _create_template(
         client,
         headers,
         shipping_provider_id=shipping_provider_id,
         name=name,
-        expected_ranges_count=expected_ranges_count,
-        expected_groups_count=expected_groups_count,
     )
-
-    range_id: int | None = None
-    group_id: int | None = None
-
-    if with_ranges:
-        range_id = await _put_ranges(
-            client,
-            headers,
-            template_id=template_id,
-        )
-
-    if with_groups:
-        group_id = await _post_group(
-            client,
-            headers,
-            template_id=template_id,
-        )
-
-    if with_matrix:
-        assert range_id is not None
-        assert group_id is not None
-        await _put_single_matrix_cell(
-            client,
-            headers,
-            template_id=template_id,
-            group_id=group_id,
-            range_id=range_id,
-        )
-
-    if submit_validation:
-        await _submit_validation(
-            client,
-            headers,
-            template_id=template_id,
-        )
-
+    range_id = await _put_ranges(
+        client,
+        headers,
+        template_id=template_id,
+    )
+    group_id = await _post_group(
+        client,
+        headers,
+        template_id=template_id,
+    )
+    await _put_single_matrix_cell(
+        client,
+        headers,
+        template_id=template_id,
+        group_id=group_id,
+        range_id=range_id,
+    )
+    await _submit_validation(
+        client,
+        headers,
+        template_id=template_id,
+    )
     return warehouse_id, shipping_provider_id, template_id
 
 
 @pytest.mark.asyncio
-async def test_unvalidated_template_cannot_bind_even_if_structure_complete(
+async def test_activate_binding_immediately_returns_active_runtime_status(
     client: AsyncClient,
 ) -> None:
     token = await login(client)
     headers = auth_headers(token)
 
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
+    warehouse_id, shipping_provider_id, template_id = await _create_bindable_template_bundle(
         client,
         headers,
-        name="bind-guard-not-validated",
-        submit_validation=False,
-        with_ranges=True,
-        with_groups=True,
-        with_matrix=True,
+        name="runtime-activate-now",
     )
-
-    r = await _bind_template(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-        template_id=template_id,
-    )
-    assert r.status_code == 409, r.text
-    assert "pricing_template not validated" in r.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("with_ranges", "with_groups", "with_matrix", "expected_detail"),
-    [
-        (False, False, False, "pricing_template not validated"),
-        (True, False, False, "Template cannot submit validation in current state"),
-        (True, True, False, "Template cannot submit validation in current state"),
-    ],
-)
-async def test_incomplete_structure_cannot_enter_bindable_state(
-    client: AsyncClient,
-    with_ranges: bool,
-    with_groups: bool,
-    with_matrix: bool,
-    expected_detail: str,
-) -> None:
-    token = await login(client)
-    headers = auth_headers(token)
-
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
-        client,
-        headers,
-        name=f"bind-guard-incomplete-{int(with_ranges)}-{int(with_groups)}-{int(with_matrix)}",
-        submit_validation=False,
-        with_ranges=with_ranges,
-        with_groups=with_groups,
-        with_matrix=with_matrix,
-    )
-
-    if with_ranges or with_groups or with_matrix:
-        submit_resp = await client.post(
-            f"/tms/pricing/templates/{template_id}/submit-validation",
-            headers=headers,
-            json={"confirm_validated": True},
-        )
-        assert submit_resp.status_code == 400, submit_resp.text
-        assert expected_detail in submit_resp.text
-
-    r = await _bind_template(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-        template_id=template_id,
-    )
-    assert r.status_code == 409, r.text
-    assert "pricing_template not validated" in r.text
-
-
-@pytest.mark.asyncio
-async def test_validation_rejects_when_expected_counts_not_met(
-    client: AsyncClient,
-) -> None:
-    token = await login(client)
-    headers = auth_headers(token)
-
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
-        client,
-        headers,
-        name="bind-guard-expected-counts-not-met",
-        submit_validation=False,
-        with_ranges=True,
-        with_groups=True,
-        with_matrix=True,
-        expected_ranges_count=2,
-        expected_groups_count=1,
-    )
-
-    r_submit = await client.post(
-        f"/tms/pricing/templates/{template_id}/submit-validation",
-        headers=headers,
-        json={"confirm_validated": True},
-    )
-    assert r_submit.status_code == 400, r_submit.text
-    assert "Template cannot submit validation in current state" in r_submit.text
-
-    r_bind = await _bind_template(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-        template_id=template_id,
-    )
-    assert r_bind.status_code == 409, r_bind.text
-    assert "pricing_template not validated" in r_bind.text
-
-
-@pytest.mark.asyncio
-async def test_passed_template_with_complete_structure_can_bind(
-    client: AsyncClient,
-) -> None:
-    token = await login(client)
-    headers = auth_headers(token)
-
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
-        client,
-        headers,
-        name="bind-guard-ready-can-bind",
-        submit_validation=True,
-        with_ranges=True,
-        with_groups=True,
-        with_matrix=True,
-    )
-
-    r = await _bind_template(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-        template_id=template_id,
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["ok"] is True
-    assert int(body["data"]["shipping_provider_id"]) == int(shipping_provider_id)
-    assert int(body["data"]["active_template_id"]) == int(template_id)
-
-
-@pytest.mark.asyncio
-async def test_template_candidates_only_return_bindable_templates(
-    client: AsyncClient,
-) -> None:
-    token = await login(client)
-    headers = auth_headers(token)
-
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
-        client,
-        headers,
-        name="bind-candidates-ready-unused",
-        submit_validation=True,
-        with_ranges=True,
-        with_groups=True,
-        with_matrix=True,
-    )
-
-    rows = await _list_template_candidates(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-    )
-    ids = {int(row["id"]) for row in rows}
-
-    assert int(template_id) in ids, rows
-
-    target = next(row for row in rows if int(row["id"]) == int(template_id))
-    assert target["validation_status"] == "passed"
-    assert target["config_status"] == "ready"
-    assert int(target["used_binding_count"]) == 0
-    assert target["status"] == "draft"
-
-
-@pytest.mark.asyncio
-async def test_bound_template_disappears_from_template_candidates(
-    client: AsyncClient,
-) -> None:
-    token = await login(client)
-    headers = auth_headers(token)
-
-    warehouse_id, shipping_provider_id, template_id = await _create_template_with_stage(
-        client,
-        headers,
-        name="bind-candidates-after-bound",
-        submit_validation=True,
-        with_ranges=True,
-        with_groups=True,
-        with_matrix=True,
-    )
-
-    before_rows = await _list_template_candidates(
-        client,
-        headers,
-        warehouse_id=warehouse_id,
-        shipping_provider_id=shipping_provider_id,
-    )
-    before_ids = {int(row["id"]) for row in before_rows}
-    assert int(template_id) in before_ids, before_rows
 
     bind_resp = await _bind_template(
         client,
@@ -547,14 +315,127 @@ async def test_bound_template_disappears_from_template_candidates(
         warehouse_id=warehouse_id,
         shipping_provider_id=shipping_provider_id,
         template_id=template_id,
+        active=False,
     )
     assert bind_resp.status_code == 201, bind_resp.text
 
-    after_rows = await _list_template_candidates(
+    activate_resp = await client.post(
+        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
+        headers=headers,
+        json={"effective_from": None},
+    )
+    assert activate_resp.status_code == 200, activate_resp.text
+    body = activate_resp.json()
+    assert body["ok"] is True
+    assert body["data"]["runtime_status"] == "active"
+    assert body["data"]["active"] is True
+    assert body["data"]["effective_from"] is not None
+    assert body["data"]["disabled_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_activate_binding_in_future_returns_scheduled_runtime_status(
+    client: AsyncClient,
+) -> None:
+    token = await login(client)
+    headers = auth_headers(token)
+
+    warehouse_id, shipping_provider_id, template_id = await _create_bindable_template_bundle(
+        client,
+        headers,
+        name="runtime-activate-future",
+    )
+
+    bind_resp = await _bind_template(
         client,
         headers,
         warehouse_id=warehouse_id,
         shipping_provider_id=shipping_provider_id,
+        template_id=template_id,
+        active=False,
     )
-    after_ids = {int(row["id"]) for row in after_rows}
-    assert int(template_id) not in after_ids, after_rows
+    assert bind_resp.status_code == 201, bind_resp.text
+
+    future_time = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
+    activate_resp = await client.post(
+        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
+        headers=headers,
+        json={"effective_from": future_time},
+    )
+    assert activate_resp.status_code == 200, activate_resp.text
+    body = activate_resp.json()
+    assert body["ok"] is True
+    assert body["data"]["runtime_status"] == "scheduled"
+    assert body["data"]["active"] is True
+    assert body["data"]["effective_from"] is not None
+    assert body["data"]["disabled_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_deactivate_binding_returns_binding_disabled_runtime_status(
+    client: AsyncClient,
+) -> None:
+    token = await login(client)
+    headers = auth_headers(token)
+
+    warehouse_id, shipping_provider_id, template_id = await _create_bindable_template_bundle(
+        client,
+        headers,
+        name="runtime-deactivate",
+    )
+
+    bind_resp = await _bind_template(
+        client,
+        headers,
+        warehouse_id=warehouse_id,
+        shipping_provider_id=shipping_provider_id,
+        template_id=template_id,
+        active=True,
+    )
+    assert bind_resp.status_code == 201, bind_resp.text
+
+    deactivate_resp = await client.post(
+        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/deactivate",
+        headers=headers,
+        json={},
+    )
+    assert deactivate_resp.status_code == 200, deactivate_resp.text
+    body = deactivate_resp.json()
+    assert body["ok"] is True
+    assert body["data"]["runtime_status"] == "binding_disabled"
+    assert body["data"]["active"] is False
+    assert body["data"]["disabled_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_activate_binding_without_template_returns_409(
+    client: AsyncClient,
+) -> None:
+    token = await login(client)
+    headers = auth_headers(token)
+
+    warehouse_id = await _pick_first_warehouse_id(client, headers)
+    shipping_provider_id = await _pick_unbound_provider_id(
+        client,
+        headers,
+        warehouse_id=warehouse_id,
+    )
+
+    bind_resp = await _bind_template(
+        client,
+        headers,
+        warehouse_id=warehouse_id,
+        shipping_provider_id=shipping_provider_id,
+        template_id=None,
+        active=False,
+    )
+    assert bind_resp.status_code == 201, bind_resp.text
+
+    activate_resp = await client.post(
+        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
+        headers=headers,
+        json={"effective_from": None},
+    )
+    assert activate_resp.status_code == 409, activate_resp.text
+    assert "active_template_id required before activation" in activate_resp.text

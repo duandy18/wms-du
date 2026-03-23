@@ -23,9 +23,14 @@ class WarehouseShippingProvider(Base):
     仓库 × 快递公司（ShippingProvider）运行态绑定
 
     语义：
-    - 一行表示：某仓库「事实层面可用」某快递公司
-    - active 是事实开关（可用/禁用）
-    - active_template_id 是运行态单锚点：当前正式挂载的运价模板
+    - 一行表示：某仓库当前配置了一家快递公司
+    - active 是运行开关（启用 / 停用）
+    - active_template_id 是运行态单锚点：当前挂载的运价模板
+    - effective_from 是启用生效时间：
+      1) NULL 表示立即生效 / 历史已生效数据
+      2) > now 表示待生效
+      3) <= now 表示已生效
+    - disabled_at 记录最近一次停用时间（仅用于运行展示 / 审计，不参与算价）
     - priority 仅用于仓库侧展示排序（不是推荐/算价策略）
     - pickup_cutoff_time / remark 为可选运维字段（不进入算价）
     """
@@ -64,6 +69,16 @@ class WarehouseShippingProvider(Base):
         nullable=False,
         default=True,
         server_default="true",
+    )
+
+    effective_from: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    disabled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     # 仅用于仓库侧展示排序（不用于 quote/ranking）
@@ -111,5 +126,5 @@ class WarehouseShippingProvider(Base):
             f"<WarehouseShippingProvider id={self.id} "
             f"warehouse_id={self.warehouse_id} provider_id={self.shipping_provider_id} "
             f"active_template_id={self.active_template_id} "
-            f"active={self.active}>"
+            f"active={self.active} effective_from={self.effective_from!r}>"
         )

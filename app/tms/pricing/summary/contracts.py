@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
 
 from pydantic import BaseModel
 
-
-PricingStatus = Literal[
-    "provider_disabled",
-    "binding_disabled",
-    "no_active_template",
-    "template_archived",
-    "ready",
-]
+from app.tms.pricing.runtime_policy import PricingStatus
 
 
 class PricingListRow(BaseModel):
@@ -29,6 +22,9 @@ class PricingListRow(BaseModel):
 
     active_template_id: int | None = None
     active_template_name: str | None = None
+
+    effective_from: datetime | None = None
+    disabled_at: datetime | None = None
 
     pricing_status: PricingStatus
 

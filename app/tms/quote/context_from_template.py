@@ -57,16 +57,7 @@ def _load_template_or_404(
 
 
 def ensure_template_quotable(row: ShippingProviderPricingTemplate) -> None:
-    status = str(getattr(row, "status", "") or "").strip().lower()
-
-    # 当前终态：
-    # - 模板生命周期只有 draft / archived
-    # - archived 不可试算
-    # - draft 可用于 workbench explain / runtime calc
-    if status != "draft":
-        raise ValueError("template not quotable (status not draft)")
-
-    if getattr(row, "archived_at", None) is not None:
+    if getattr(row, "archived_at", None) is not None or str(getattr(row, "status", "") or "") == "archived":
         raise ValueError("template archived")
 
 

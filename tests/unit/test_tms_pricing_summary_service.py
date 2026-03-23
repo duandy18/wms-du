@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from app.tms.pricing.summary.service import (
-    compute_is_template_active,
-    compute_pricing_status,
-)
+from datetime import datetime, timedelta, timezone
+
+from app.tms.pricing.summary.service import compute_pricing_status
 
 
 def test_compute_pricing_status_provider_disabled() -> None:
@@ -12,7 +11,8 @@ def test_compute_pricing_status_provider_disabled() -> None:
             provider_active=False,
             binding_active=True,
             active_template_id=1,
-            template_archived=False,
+            effective_from=None,
+            now=datetime.now(timezone.utc),
         )
         == "provider_disabled"
     )
@@ -24,7 +24,8 @@ def test_compute_pricing_status_binding_disabled() -> None:
             provider_active=True,
             binding_active=False,
             active_template_id=1,
-            template_archived=False,
+            effective_from=None,
+            now=datetime.now(timezone.utc),
         )
         == "binding_disabled"
     )
@@ -36,61 +37,37 @@ def test_compute_pricing_status_no_active_template() -> None:
             provider_active=True,
             binding_active=True,
             active_template_id=None,
-            template_archived=False,
+            effective_from=None,
+            now=datetime.now(timezone.utc),
         )
         == "no_active_template"
     )
 
 
-def test_compute_pricing_status_template_archived() -> None:
+def test_compute_pricing_status_active() -> None:
     assert (
         compute_pricing_status(
             provider_active=True,
             binding_active=True,
             active_template_id=1,
-            template_archived=True,
+            effective_from=None,
+            now=datetime.now(timezone.utc),
         )
-        == "template_archived"
+        == "active"
     )
 
 
-def test_compute_pricing_status_ready_when_draft_unarchived() -> None:
+def test_compute_pricing_status_scheduled() -> None:
+    now = datetime.now(timezone.utc)
+    future_time = now + timedelta(hours=1)
+
     assert (
         compute_pricing_status(
             provider_active=True,
             binding_active=True,
             active_template_id=1,
-            template_archived=False,
+            effective_from=future_time,
+            now=now,
         )
-        == "ready"
-    )
-
-
-def test_compute_is_template_active_false_when_missing() -> None:
-    assert (
-        compute_is_template_active(
-            active_template_id=None,
-            template_archived=False,
-        )
-        is False
-    )
-
-
-def test_compute_is_template_active_false_when_archived() -> None:
-    assert (
-        compute_is_template_active(
-            active_template_id=1,
-            template_archived=True,
-        )
-        is False
-    )
-
-
-def test_compute_is_template_active_true_for_draft_unarchived() -> None:
-    assert (
-        compute_is_template_active(
-            active_template_id=1,
-            template_archived=False,
-        )
-        is True
+        == "scheduled"
     )

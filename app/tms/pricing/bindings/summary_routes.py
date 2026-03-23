@@ -34,7 +34,11 @@ async def list_warehouses_active_carriers_summary(
     bindings 辅助汇总接口（消除 N+1）
 
     刚性契约口径：
-    - 只返回正在服务的快递公司：wsp.active = true AND sp.active = true
+    - 只返回当前真正正在服务的快递公司：
+      1) wsp.active = true
+      2) sp.active = true
+      3) wsp.active_template_id IS NOT NULL
+      4) effective_from 为空或已到生效时间
     - 不做推荐策略，不做 fallback
     - 排序仅用于展示稳定：
       warehouse_id ASC, wsp.priority ASC, sp.priority ASC, sp.id ASC
@@ -55,6 +59,8 @@ async def list_warehouses_active_carriers_summary(
           ON sp.id = wsp.shipping_provider_id
         WHERE wsp.active = true
           AND sp.active = true
+          AND wsp.active_template_id IS NOT NULL
+          AND (wsp.effective_from IS NULL OR wsp.effective_from <= now())
         ORDER BY wsp.warehouse_id ASC, wsp.priority ASC, sp.priority ASC, sp.id ASC
         """
     )

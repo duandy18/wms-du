@@ -72,6 +72,13 @@ audit-three-books: venv audit-all upgrade-dev-test-db
 	  $(PY) scripts/audit_three_books_test.py
 
 # ---------------------------------
+# TMS 运价 runtime 语义防回潮检查
+# ---------------------------------
+.PHONY: test-tms-runtime-semantics
+test-tms-runtime-semantics:
+	@bash scripts/check_tms_runtime_semantics.sh
+
+# ---------------------------------
 # 通用 pytest 入口（支持 TESTS=...）
 # ---------------------------------
 .PHONY: test
