@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,10 +24,9 @@ SELECT
 
   wsp.active_template_id AS active_template_id,
   tpl.name AS active_template_name,
-  CASE
-    WHEN tpl.archived_at IS NOT NULL THEN TRUE
-    ELSE FALSE
-  END AS template_archived
+
+  wsp.effective_from AS effective_from,
+  wsp.disabled_at AS disabled_at
 
 FROM shipping_providers sp
 
@@ -50,6 +51,8 @@ async def list_pricing_view(session: AsyncSession) -> list[dict[str, object]]:
     result = await session.execute(text(_SQL_PRICING_LIST))
     rows = result.mappings().all()
 
+    now = datetime.now(timezone.utc)
+
     out: list[dict[str, object]] = []
     for r in rows:
         row = dict(r)
@@ -57,16 +60,16 @@ async def list_pricing_view(session: AsyncSession) -> list[dict[str, object]]:
         provider_active = bool(row["provider_active"])
         binding_active = bool(row["binding_active"])
         active_template_id = row.get("active_template_id")
-        template_archived = bool(row.get("template_archived") or False)
+        effective_from = row.get("effective_from")
 
         row["pricing_status"] = compute_pricing_status(
             provider_active=provider_active,
             binding_active=binding_active,
             active_template_id=active_template_id,
-            template_archived=template_archived,
+            effective_from=effective_from,
+            now=now,
         )
 
-        row.pop("template_archived", None)
         out.append(row)
 
     return out

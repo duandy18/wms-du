@@ -1,9 +1,12 @@
 # app/tms/pricing/bindings/contracts.py
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+from app.tms.pricing.runtime_policy import PricingStatus
 
 
 class ShippingProviderLiteOut(BaseModel):
@@ -22,6 +25,9 @@ class WarehouseShippingProviderOut(BaseModel):
     remark: Optional[str] = None
     active_template_id: Optional[int] = None
     active_template_name: Optional[str] = None
+    effective_from: Optional[datetime] = None
+    disabled_at: Optional[datetime] = None
+    runtime_status: PricingStatus
     provider: ShippingProviderLiteOut
 
 
@@ -57,6 +63,23 @@ class WarehouseShippingProviderUpdateIn(BaseModel):
 
 
 class WarehouseShippingProviderUpdateOut(BaseModel):
+    ok: bool = True
+    data: WarehouseShippingProviderOut
+
+
+class WarehouseShippingProviderActivateIn(BaseModel):
+    effective_from: Optional[datetime] = Field(
+        default=None,
+        description="为空表示立即启用；传未来时间表示定时启用。",
+    )
+
+
+class WarehouseShippingProviderActivateOut(BaseModel):
+    ok: bool = True
+    data: WarehouseShippingProviderOut
+
+
+class WarehouseShippingProviderDeactivateOut(BaseModel):
     ok: bool = True
     data: WarehouseShippingProviderOut
 

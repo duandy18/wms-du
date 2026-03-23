@@ -22,7 +22,6 @@ class TemplateCapabilitiesOut(BaseModel):
     can_submit_validation: bool
     can_clone: bool
     can_archive: bool
-    can_bind: bool
     readonly_reason: Optional[str] = None
 
     @model_validator(mode="after")

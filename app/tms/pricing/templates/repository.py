@@ -38,7 +38,6 @@ class TemplateCapabilities:
     can_submit_validation: bool
     can_clone: bool
     can_archive: bool
-    can_bind: bool
     readonly_reason: str | None
 
 
@@ -208,19 +207,12 @@ def build_template_capabilities(
     )
     can_clone = True
     can_archive = is_draft and int(stats.used_binding_count) == 0
-    can_bind = (
-        is_draft
-        and is_validated
-        and str(stats.config_status) == "ready"
-        and int(stats.used_binding_count) == 0
-    )
 
     return TemplateCapabilities(
         can_edit_structure=can_edit_structure,
         can_submit_validation=can_submit_validation,
         can_clone=can_clone,
         can_archive=can_archive,
-        can_bind=can_bind,
         readonly_reason=readonly_reason,
     )
 
@@ -233,7 +225,6 @@ def _serialize_template_capabilities(
         "can_submit_validation": bool(caps.can_submit_validation),
         "can_clone": bool(caps.can_clone),
         "can_archive": bool(caps.can_archive),
-        "can_bind": bool(caps.can_bind),
         "readonly_reason": caps.readonly_reason,
     }
 
@@ -528,6 +519,28 @@ def list_templates(
             ),
         )
         for row in rows
+    ]
+
+
+def list_bindable_templates(
+    db: Session,
+    *,
+    shipping_provider_id: int,
+) -> list[TemplateOut]:
+    rows = list_templates(
+        db,
+        shipping_provider_id=int(shipping_provider_id),
+        include_archived=False,
+    )
+
+    return [
+        row
+        for row in rows
+        if row.archived_at is None
+        and str(row.status) == "draft"
+        and str(row.validation_status) == "passed"
+        and str(row.config_status) == "ready"
+        and int(row.used_binding_count) == 0
     ]
 
 
