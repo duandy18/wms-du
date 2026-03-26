@@ -22,12 +22,6 @@ from .mappers import row_to_contact, row_to_provider
 
 
 def _norm_code(raw: Optional[str]) -> Optional[str]:
-    """
-    code 口径护栏
-    - None -> None
-    - 空白/全空格 -> None
-    - 其它 -> strip + upper
-    """
     if raw is None:
         return None
     s = raw.strip()
@@ -36,16 +30,19 @@ def _norm_code(raw: Optional[str]) -> Optional[str]:
     return s.upper()
 
 
+def _norm_nullable_text(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    s = raw.strip()
+    return s if s else None
+
+
 async def _assert_code_unique_or_409(
     session: AsyncSession,
     code: str,
     *,
     exclude_provider_id: Optional[int] = None,
 ) -> None:
-    """
-    刚性合同：shipping_providers.code 全局唯一（strip + upper 后比较）。
-    - exclude_provider_id：更新时排除自身
-    """
     if exclude_provider_id is None:
         sql = text("SELECT 1 FROM shipping_providers WHERE code = :code LIMIT 1")
         exists = (await session.execute(sql, {"code": code})).first()
@@ -69,16 +66,6 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ) -> ShippingProviderCreateOut:
-        """
-        新建运输网点（主体事实）。
-
-        权限：config.store.write
-
-        刚性合同：
-        - code 必填（不允许 None / 空白）
-        - code 全局唯一（strip + upper 后比较）
-        - 与仓库的绑定通过 warehouse_shipping_providers 另行配置（M:N）
-        """
         check_config_perm(db, current_user, ["config.store.write"])
 
         code = _norm_code(payload.code)
@@ -91,17 +78,18 @@ def register(router: APIRouter) -> None:
         if not name:
             raise HTTPException(status_code=422, detail="name is required")
 
-        addr = payload.address.strip() if payload.address is not None else None
-        addr = addr if addr else None
+        company_code = _norm_nullable_text(payload.company_code)
+        resource_code = _norm_nullable_text(payload.resource_code)
+        addr = _norm_nullable_text(payload.address)
 
         sql = text(
             """
             INSERT INTO shipping_providers
-              (name, code, address, active, priority)
+              (name, code, company_code, resource_code, address, active, priority)
             VALUES
-              (:name, :code, :address, :active, :priority)
+              (:name, :code, :company_code, :resource_code, :address, :active, :priority)
             RETURNING
-              id, name, code, address, active, priority
+              id, name, code, company_code, resource_code, address, active, priority
             """
         )
 
@@ -112,6 +100,8 @@ def register(router: APIRouter) -> None:
                     {
                         "name": name,
                         "code": code,
+                        "company_code": company_code,
+                        "resource_code": resource_code,
                         "address": addr,
                         "active": payload.active,
                         "priority": payload.priority if payload.priority is not None else 100,
@@ -136,15 +126,6 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ) -> ShippingProviderUpdateOut:
-        """
-        更新运输网点（主体事实）。
-
-        权限：config.store.write
-
-        刚性合同：
-        - code 不允许更新（DB 级不可变）
-        - 与仓库的绑定不在此接口更新（走 warehouse_shipping_providers）
-        """
         check_config_perm(db, current_user, ["config.store.write"])
 
         fields: Dict[str, Any] = {}
@@ -153,9 +134,21 @@ def register(router: APIRouter) -> None:
             name = payload.name.strip()
             fields["name"] = name if name else None
 
+        if payload.code is not None:
+            code = _norm_code(payload.code)
+            if code is None:
+                raise HTTPException(status_code=422, detail="code is required")
+            await _assert_code_unique_or_409(session, code, exclude_provider_id=provider_id)
+            fields["code"] = code
+
+        if payload.company_code is not None:
+            fields["company_code"] = _norm_nullable_text(payload.company_code)
+
+        if payload.resource_code is not None:
+            fields["resource_code"] = _norm_nullable_text(payload.resource_code)
+
         if payload.address is not None:
-            addr = payload.address.strip()
-            fields["address"] = addr if addr else None
+            fields["address"] = _norm_nullable_text(payload.address)
 
         if payload.active is not None:
             fields["active"] = payload.active
@@ -170,6 +163,8 @@ def register(router: APIRouter) -> None:
                   s.id,
                   s.name,
                   s.code,
+                  s.company_code,
+                  s.resource_code,
                   s.address,
                   s.active,
                   s.priority
@@ -217,7 +212,7 @@ def register(router: APIRouter) -> None:
                    updated_at = now()
              WHERE id = :sid
             RETURNING
-              id, name, code, address, active, priority
+              id, name, code, company_code, resource_code, address, active, priority
             """
         )
 

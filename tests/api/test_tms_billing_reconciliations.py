@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict
+from typing import Dict
 
 import pytest
 from sqlalchemy import text
@@ -117,6 +117,7 @@ async def _insert_shipping_record(
                 order_ref,
                 platform,
                 shop_id,
+                package_no,
                 carrier_code,
                 cost_estimated,
                 carrier_name,
@@ -137,6 +138,7 @@ async def _insert_shipping_record(
                 :order_ref,
                 'PDD',
                 '1',
+                1,
                 :carrier_code,
                 :cost_estimated,
                 'UT-CARRIER',

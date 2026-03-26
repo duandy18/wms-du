@@ -11,9 +11,11 @@ from fastapi import APIRouter
 
 from .routes_calc import register as register_calc_routes
 from .routes_prepare import register as register_prepare_routes
+from .routes_waybill_config import register as register_waybill_config_routes
 
 router = APIRouter(tags=["ship"])
 
 
 register_calc_routes(router)
 register_prepare_routes(router)
+register_waybill_config_routes(router)

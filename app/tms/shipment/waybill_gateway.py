@@ -1,22 +1,26 @@
 # app/tms/shipment/waybill_gateway.py
 # 分拆说明：
 # - 本文件从 service.py 中拆出 Shipment 面单请求边界；
-# - 目标是把外部协作（WaybillService）与应用编排隔离，
-#   便于后续从 fake 实现切换到真实平台 SDK。
+# - 目标是把外部协作（Waybill provider）与应用编排隔离，
+#   便于后续从 fake 实现切换到真实平台 OpenAPI。
 from __future__ import annotations
 
-from app.tms.shipment.waybill_service import WaybillRequest, WaybillService
-
 from .contracts import ShipmentApplicationError
+from .waybill_gateway_factory import get_waybill_provider
+from .waybill_service import WaybillRequest, WaybillResult
 
 
 async def request_waybill(
     *,
     shipping_provider_id: int,
     provider_code: str | None,
+    company_code: str | None,
+    customer_code: str | None,
     platform: str,
     shop_id: str,
     ext_order_no: str,
+    package_no: int,
+    sender: dict | None,
     receiver_name: str | None,
     receiver_phone: str | None,
     province: str | None,
@@ -24,14 +28,18 @@ async def request_waybill(
     district: str | None,
     address_detail: str | None,
     weight_kg: float,
-) -> str:
-    waybill_svc = WaybillService()
+) -> WaybillResult:
+    provider = get_waybill_provider()
+
     req = WaybillRequest(
         shipping_provider_id=shipping_provider_id,
         provider_code=provider_code,
+        company_code=company_code,
+        customer_code=customer_code,
         platform=platform.upper(),
         shop_id=shop_id,
         ext_order_no=ext_order_no,
+        sender=sender,
         receiver={
             "name": receiver_name,
             "phone": receiver_phone,
@@ -41,9 +49,10 @@ async def request_waybill(
             "detail": address_detail,
         },
         cargo={"weight_kg": float(weight_kg)},
-        extras={},
+        extras={"package_no": int(package_no)},
     )
-    result = await waybill_svc.request_waybill(req)
+
+    result = await provider.request_waybill(req)
     if not result.ok or not result.tracking_no:
         raise ShipmentApplicationError(
             status_code=502,
@@ -53,4 +62,4 @@ async def request_waybill(
                 f"{result.error_code or ''} {result.error_message or ''}"
             ).strip(),
         )
-    return str(result.tracking_no)
+    return result

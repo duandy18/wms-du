@@ -23,7 +23,13 @@ async def load_active_provider(session: AsyncSession, shipping_provider_id: int)
         await session.execute(
             text(
                 """
-                SELECT id, code, name, active
+                SELECT
+                  id,
+                  code,
+                  name,
+                  company_code,
+                  resource_code,
+                  active
                 FROM shipping_providers
                 WHERE id = :pid
                 LIMIT 1

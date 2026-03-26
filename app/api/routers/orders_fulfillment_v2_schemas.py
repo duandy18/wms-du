@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, conint
-
-from app.tms.quote.contracts import QuoteSnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -38,50 +36,3 @@ class PickResponse(BaseModel):
     stock_after: Optional[int] = None
     ref: str
     status: str
-
-
-# ---------------------------------------------------------------------------
-# 2) ship-with-waybill（模式 2：强制固化“可解释证据包”）
-# ---------------------------------------------------------------------------
-
-
-class ShipWithWaybillMeta(BaseModel):
-    quote_snapshot: QuoteSnapshot
-    extra: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ShipWithWaybillRequest(BaseModel):
-    warehouse_id: conint(gt=0) = Field(..., description="发货仓库 ID")
-    shipping_provider_id: conint(gt=0) = Field(..., description="承运商/网点 ID（强身份，必填）")
-
-    # 冗余展示字段（可选；不参与裁决）
-    carrier_code: Optional[str] = Field(None, description="快递公司编码（冗余展示字段）")
-    carrier_name: Optional[str] = Field(None, description="快递公司名称（冗余字段）")
-
-    weight_kg: float = Field(..., gt=0, description="包裹毛重（kg）")
-
-    receiver_name: Optional[str] = None
-    receiver_phone: Optional[str] = None
-    province: Optional[str] = None
-    city: Optional[str] = None
-    district: Optional[str] = None
-    address_detail: Optional[str] = None
-
-    meta: Optional[ShipWithWaybillMeta] = Field(
-        default=None,
-        description="必须包含 quote_snapshot（input + selected_quote）",
-    )
-
-
-class ShipWithWaybillResponse(BaseModel):
-    ok: bool
-    ref: str
-    tracking_no: str
-
-    shipping_provider_id: int
-    carrier_code: Optional[str] = None
-    carrier_name: Optional[str] = None
-
-    status: str = "IN_TRANSIT"
-    label_base64: Optional[str] = None
-    label_format: Optional[str] = None

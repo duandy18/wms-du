@@ -29,6 +29,19 @@ class AppSettings(BaseSettings):
     # 出库策略（Phase 5：PICK 是进入执行链路的起点）
     ALLOW_SHIP_WITHOUT_PICK: bool = Field(default=True)
 
+    # 电子面单 / TOP OpenAPI（全局级配置；业务映射仍留在 tms/shipment 内部）
+    WAYBILL_PROVIDER: str = Field(default="fake")
+    WAYBILL_TOP_API_BASE_URL: str = Field(
+        default="https://eco.taobao.com/router/rest"
+    )
+    WAYBILL_TOP_APP_KEY: str = Field(default="")
+    WAYBILL_TOP_APP_SECRET: str = Field(default="")
+    WAYBILL_TOP_SESSION: str = Field(default="")
+    WAYBILL_TOP_TIMEOUT_SECONDS: float = Field(default=10.0)
+    WAYBILL_TOP_SIGN_METHOD: str = Field(default="md5")
+    WAYBILL_TOP_FORMAT: str = Field(default="json")
+    WAYBILL_TOP_VERSION: str = Field(default="2.0")
+
     # 允许从 .env 文件读取配置
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

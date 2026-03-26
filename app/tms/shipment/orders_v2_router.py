@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routers import orders_fulfillment_v2_routes_4_ship_with_waybill
+from app.tms.shipment import routes_ship_with_waybill
 
 router = APIRouter(prefix="/orders", tags=["orders-fulfillment-v2"])
 
 
 def _register_all_routes() -> None:
-    orders_fulfillment_v2_routes_4_ship_with_waybill.register(router)
+    routes_ship_with_waybill.register(router)
 
 
 _register_all_routes()

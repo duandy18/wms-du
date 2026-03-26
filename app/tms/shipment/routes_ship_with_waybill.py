@@ -1,18 +1,18 @@
-# app/api/routers/orders_fulfillment_v2_routes_4_ship_with_waybill.py
+# app/tms/shipment/routes_ship_with_waybill.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
-from app.api.routers.orders_fulfillment_v2_schemas import (
-    ShipWithWaybillRequest,
-    ShipWithWaybillResponse,
-)
 from app.tms.shipment import (
     ShipmentApplicationError,
     ShipWithWaybillCommand,
     TransportShipmentService,
+)
+from app.tms.shipment.api_schemas import (
+    ShipWithWaybillRequest,
+    ShipWithWaybillResponse,
 )
 from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
 
@@ -44,22 +44,13 @@ def register(router: APIRouter) -> None:
             platform=platform_norm,
             shop_id=shop_id,
             ext_order_no=ext_order_no,
-            warehouse_id=int(body.warehouse_id),
-            shipping_provider_id=int(body.shipping_provider_id),
-            carrier_code=body.carrier_code,
-            carrier_name=body.carrier_name,
-            weight_kg=float(body.weight_kg),
-            length_cm=None,
-            width_cm=None,
-            height_cm=None,
-            sender=None,
+            package_no=int(body.package_no),
             receiver_name=body.receiver_name,
             receiver_phone=body.receiver_phone,
             province=body.province,
             city=body.city,
             district=body.district,
             address_detail=body.address_detail,
-            quote_snapshot=body.meta.quote_snapshot.model_dump() if body.meta else {},
             meta=dict(body.meta.extra) if body.meta else {},
         )
 
@@ -71,11 +62,12 @@ def register(router: APIRouter) -> None:
         return ShipWithWaybillResponse(
             ok=result.ok,
             ref=result.ref,
+            package_no=result.package_no,
             tracking_no=result.tracking_no,
             shipping_provider_id=result.shipping_provider_id,
             carrier_code=result.carrier_code,
             carrier_name=result.carrier_name,
             status=result.status,
-            label_base64=result.label_base64,
-            label_format=result.label_format,
+            print_data=result.print_data,
+            template_url=result.template_url,
         )

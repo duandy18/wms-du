@@ -49,6 +49,8 @@ def register(router: APIRouter) -> None:
                 """(
                   s.name ILIKE :q
                   OR s.code ILIKE :q
+                  OR s.company_code ILIKE :q
+                  OR s.resource_code ILIKE :q
                   OR EXISTS (
                     SELECT 1
                       FROM shipping_provider_contacts c
@@ -67,6 +69,8 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.company_code,
+              s.resource_code,
               s.address,
               s.active,
               s.priority
@@ -135,6 +139,8 @@ def register(router: APIRouter) -> None:
               s.id,
               s.name,
               s.code,
+              s.company_code,
+              s.resource_code,
               s.address,
               s.active,
               s.priority

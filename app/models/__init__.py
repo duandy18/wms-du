@@ -27,6 +27,7 @@ MODEL_SPECS = [
     ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
     ("app.models.shipping_provider", "ShippingProvider"),
     ("app.models.shipping_provider_contact", "ShippingProviderContact"),
+    ("app.models.electronic_waybill_config", "ElectronicWaybillConfig"),
     # ------------------------------------------------------------------
     # 仓库 / 基础库存模型
     # ------------------------------------------------------------------
@@ -50,6 +51,8 @@ MODEL_SPECS = [
     ("app.models.order_line", "OrderLine"),
     ("app.models.order_logistics", "OrderLogistics"),
     ("app.models.order_state_snapshot", "OrderStateSnapshot"),
+    ("app.models.order_shipment_prepare", "OrderShipmentPrepare"),
+    ("app.models.order_shipment_prepare_package", "OrderShipmentPreparePackage"),
     # ✅ Phase 5：执行域 authority（order_fulfillment）
     ("app.models.order_fulfillment", "OrderFulfillment"),
     # 拣货任务
@@ -101,13 +104,31 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 运价模板（新主线：template -> ranges/groups -> matrix + surcharge_config）
     # ------------------------------------------------------------------
-    ("app.models.shipping_provider_pricing_template_surcharge_config_city", "ShippingProviderPricingTemplateSurchargeConfigCity"),
-    ("app.models.shipping_provider_pricing_template_surcharge_config", "ShippingProviderPricingTemplateSurchargeConfig"),
+    (
+        "app.models.shipping_provider_pricing_template_surcharge_config_city",
+        "ShippingProviderPricingTemplateSurchargeConfigCity",
+    ),
+    (
+        "app.models.shipping_provider_pricing_template_surcharge_config",
+        "ShippingProviderPricingTemplateSurchargeConfig",
+    ),
     ("app.models.shipping_provider_pricing_template", "ShippingProviderPricingTemplate"),
-    ("app.models.shipping_provider_pricing_template_validation_record", "ShippingProviderPricingTemplateValidationRecord"),
-    ("app.models.shipping_provider_pricing_template_module_range", "ShippingProviderPricingTemplateModuleRange"),
-    ("app.models.shipping_provider_pricing_template_destination_group", "ShippingProviderPricingTemplateDestinationGroup"),
-    ("app.models.shipping_provider_pricing_template_destination_group_member", "ShippingProviderPricingTemplateDestinationGroupMember"),
+    (
+        "app.models.shipping_provider_pricing_template_validation_record",
+        "ShippingProviderPricingTemplateValidationRecord",
+    ),
+    (
+        "app.models.shipping_provider_pricing_template_module_range",
+        "ShippingProviderPricingTemplateModuleRange",
+    ),
+    (
+        "app.models.shipping_provider_pricing_template_destination_group",
+        "ShippingProviderPricingTemplateDestinationGroup",
+    ),
+    (
+        "app.models.shipping_provider_pricing_template_destination_group_member",
+        "ShippingProviderPricingTemplateDestinationGroupMember",
+    ),
     ("app.models.shipping_provider_pricing_template_matrix", "ShippingProviderPricingTemplateMatrix"),
     # ------------------------------------------------------------------
     # 运价实例（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge_config）
@@ -126,6 +147,7 @@ __all__ = [
     "WarehouseShippingProvider",
     "ShippingProvider",
     "ShippingProviderContact",
+    "ElectronicWaybillConfig",
     # ---- Inventory ----
     "Warehouse",
     "Item",
@@ -142,6 +164,8 @@ __all__ = [
     "OrderLine",
     "OrderLogistics",
     "OrderStateSnapshot",
+    "OrderShipmentPrepare",
+    "OrderShipmentPreparePackage",
     "OrderFulfillment",
     # ---- Pick Tasks ----
     "PickTask",
