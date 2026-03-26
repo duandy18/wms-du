@@ -3,7 +3,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, BigInteger, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,6 +26,7 @@ class ShippingRecord(Base):
     语义定位：
 
     - 一条记录代表一次“仓库交付物流”的发货台帐
+    - 当前终态粒度为“订单下某个包裹的一次发货事实”
     - 只记录发货事实，不承担物流状态、不承担对账结果
     - 对账结果存储在 shipping_record_reconciliations 表
     """
@@ -32,6 +43,13 @@ class ShippingRecord(Base):
     order_ref: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
     shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # 包裹定位
+    package_no: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="包裹序号，从 1 开始，对应 order_shipment_prepare_packages.package_no",
+    )
 
     # 发货仓库
     warehouse_id: Mapped[int] = mapped_column(
@@ -107,15 +125,30 @@ class ShippingRecord(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "platform",
+            "shop_id",
+            "order_ref",
+            "package_no",
+            name="uq_shipping_records_platform_shop_ref_package",
+        ),
         Index("ix_shipping_records_ref_time", "order_ref", "created_at"),
         Index("ix_shipping_records_tracking_no", "tracking_no"),
         Index("ix_shipping_records_provider_id", "shipping_provider_id"),
+        Index(
+            "uq_shipping_records_provider_tracking_notnull",
+            "shipping_provider_id",
+            "tracking_no",
+            unique=True,
+            postgresql_where=text("tracking_no IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
         return (
             f"<ShippingRecord id={self.id} "
             f"ref={self.order_ref} "
+            f"package_no={self.package_no} "
             f"tracking_no={self.tracking_no} "
             f"warehouse_id={self.warehouse_id} "
             f"provider_id={self.shipping_provider_id}>"

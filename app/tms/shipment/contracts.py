@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.tms.quote_snapshot.contracts import QuoteSnapshotData
-
 
 class ShipmentApplicationError(Exception):
     def __init__(self, *, status_code: int, code: str, message: str) -> None:
@@ -38,18 +36,7 @@ class ShipWithWaybillCommand:
     platform: str
     shop_id: str
     ext_order_no: str
-
-    warehouse_id: int
-    shipping_provider_id: int
-
-    carrier_code: str | None
-    carrier_name: str | None
-
-    weight_kg: float
-    length_cm: float | None
-    width_cm: float | None
-    height_cm: float | None
-    sender: str | None
+    package_no: int
 
     receiver_name: str | None
     receiver_phone: str | None
@@ -58,7 +45,6 @@ class ShipWithWaybillCommand:
     district: str | None
     address_detail: str | None
 
-    quote_snapshot: QuoteSnapshotData | dict[str, object]
     meta: dict[str, object] | None
 
 
@@ -66,10 +52,15 @@ class ShipWithWaybillCommand:
 class ShipWithWaybillResult:
     ok: bool
     ref: str
+    package_no: int
     tracking_no: str
+
     shipping_provider_id: int
     carrier_code: str | None
     carrier_name: str | None
+
     status: str
-    label_base64: str | None
-    label_format: str | None
+
+    # ✅ 替换掉 label_base64
+    print_data: dict | None
+    template_url: str | None

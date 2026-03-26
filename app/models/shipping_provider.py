@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint, func
-from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
@@ -17,7 +16,8 @@ class ShippingProvider(Base):
     语义说明：
     - 本表一行 = 实际合作的运输网点（非快递公司总部）
     - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
-    - code 为内部业务键（不可变、规范化）
+    - code 为内部业务键（可修改，但仍需规范化且全局唯一）
+    - company_code / resource_code 为电子面单固定接入参数，不承载店铺维度配置
     """
 
     __tablename__ = "shipping_providers"
@@ -31,8 +31,12 @@ class ShippingProvider(Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    # 内部业务键（已在 DB 侧强约束：NOT NULL + UNIQUE + upper/trim + 不可变 trigger）
+    # 内部业务键（DB 侧仍保持：NOT NULL + UNIQUE + upper/trim）
     code: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # 电子面单固定接入参数（非店铺维度）
+    company_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -84,12 +88,6 @@ class ShippingProvider(Base):
         v = value.strip().upper()
         if v == "":
             raise ValueError("shipping_provider.code 不能为空白")
-
-        state = sa_inspect(self)
-        if state.persistent:
-            old = getattr(self, "code", None)
-            if old is not None and v != old:
-                raise ValueError("shipping_provider.code 不允许修改（创建后不可变）")
         return v
 
     @validates("name")

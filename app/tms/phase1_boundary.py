@@ -277,22 +277,28 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="Shipment /ship/prepare-from-order 路由实现。",
     ),
     FileOwnershipRule(
+        path_prefix="app/tms/shipment/routes_ship_with_waybill.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="Shipment /orders/.../ship-with-waybill 路由实现。",
+    ),
+    FileOwnershipRule(
+        path_prefix="app/tms/shipment/api_schemas.py",
+        owner_domain=DomainOwner.TMS,
+        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
+        note="Shipment API 合同定义（含 ShipWithWaybill 请求/响应）。",
+    ),
+    FileOwnershipRule(
         path_prefix="app/tms/shipment/",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
         note="Shipment 主模块。",
     ),
     FileOwnershipRule(
-        path_prefix="app/api/routers/orders_fulfillment_v2_routes_4_ship_with_waybill.py",
-        owner_domain=DomainOwner.TMS,
-        owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="当前挂在 Fulfillment，但语义属于 Shipment。",
-    ),
-    FileOwnershipRule(
         path_prefix="app/api/routers/orders_fulfillment_v2_schemas.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
-        note="其中 ShipWithWaybill 合同语义属于 Shipment。",
+        note="历史共享 schema 文件；当前仅保留 Pick 合同。",
     ),
     FileOwnershipRule(
         path_prefix="app/api/routers/outbound_ship_routes_confirm.py",

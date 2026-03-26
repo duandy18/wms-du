@@ -94,7 +94,7 @@ def test_tms_orders_v2_shipment_router_is_frozen_as_transport_shipment() -> None
 
 
 def test_ship_with_waybill_is_frozen_as_transport_shipment() -> None:
-    rule = find_file_ownership("app/api/routers/orders_fulfillment_v2_routes_4_ship_with_waybill.py")
+    rule = find_file_ownership("app/tms/shipment/routes_ship_with_waybill.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS

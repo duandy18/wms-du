@@ -187,6 +187,174 @@ def _build_quote_snapshot(
     }
 
 
+async def _upsert_active_waybill_config(
+    session: AsyncSession,
+    *,
+    platform: str,
+    shop_id: str,
+    provider_id: int,
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO electronic_waybill_configs (
+                platform,
+                shop_id,
+                shipping_provider_id,
+                customer_code,
+                sender_name,
+                sender_mobile,
+                sender_phone,
+                sender_province,
+                sender_city,
+                sender_district,
+                sender_address,
+                active,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :platform,
+                :shop_id,
+                :provider_id,
+                'UT-CUSTOMER-CODE',
+                'UT-SENDER',
+                '13800000000',
+                NULL,
+                '北京市',
+                '北京市',
+                '朝阳区',
+                '测试发件地址 FULL-CHAIN',
+                TRUE,
+                now(),
+                now()
+            )
+            ON CONFLICT (platform, shop_id, shipping_provider_id) DO UPDATE
+               SET customer_code = EXCLUDED.customer_code,
+                   sender_name = EXCLUDED.sender_name,
+                   sender_mobile = EXCLUDED.sender_mobile,
+                   sender_phone = EXCLUDED.sender_phone,
+                   sender_province = EXCLUDED.sender_province,
+                   sender_city = EXCLUDED.sender_city,
+                   sender_district = EXCLUDED.sender_district,
+                   sender_address = EXCLUDED.sender_address,
+                   active = TRUE,
+                   updated_at = now()
+            """
+        ),
+        {
+            "platform": str(platform).upper(),
+            "shop_id": str(shop_id),
+            "provider_id": int(provider_id),
+        },
+    )
+
+
+async def _load_order_id(
+    session: AsyncSession,
+    *,
+    plat: str,
+    shop_id: str,
+    ext_order_no: str,
+) -> int:
+    row = await session.execute(
+        text(
+            """
+            SELECT id
+            FROM orders
+            WHERE platform = :platform
+              AND shop_id = :shop_id
+              AND ext_order_no = :ext_order_no
+            LIMIT 1
+            """
+        ),
+        {
+            "platform": str(plat).upper(),
+            "shop_id": str(shop_id),
+            "ext_order_no": str(ext_order_no),
+        },
+    )
+    order_id = row.scalar_one_or_none()
+    assert order_id is not None, "order row not found after ingest"
+    return int(order_id)
+
+
+async def _upsert_prepare_package_for_ship(
+    session: AsyncSession,
+    *,
+    order_id: int,
+    warehouse_id: int,
+    provider_id: int,
+    weight_kg: float,
+    quote_snapshot: dict[str, object],
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_shipment_prepare (
+                order_id,
+                address_ready_status,
+                package_status,
+                pricing_status,
+                provider_status
+            )
+            VALUES (
+                :order_id,
+                'ready',
+                'planned',
+                'calculated',
+                'selected'
+            )
+            ON CONFLICT (order_id) DO UPDATE SET
+                address_ready_status = EXCLUDED.address_ready_status,
+                package_status = EXCLUDED.package_status,
+                pricing_status = EXCLUDED.pricing_status,
+                provider_status = EXCLUDED.provider_status
+            """
+        ),
+        {"order_id": int(order_id)},
+    )
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_shipment_prepare_packages (
+                order_id,
+                package_no,
+                weight_kg,
+                warehouse_id,
+                pricing_status,
+                selected_provider_id,
+                selected_quote_snapshot
+            )
+            VALUES (
+                :order_id,
+                1,
+                :weight_kg,
+                :warehouse_id,
+                'calculated',
+                :provider_id,
+                CAST(:quote_snapshot AS jsonb)
+            )
+            ON CONFLICT (order_id, package_no) DO UPDATE SET
+                weight_kg = EXCLUDED.weight_kg,
+                warehouse_id = EXCLUDED.warehouse_id,
+                pricing_status = EXCLUDED.pricing_status,
+                selected_provider_id = EXCLUDED.selected_provider_id,
+                selected_quote_snapshot = EXCLUDED.selected_quote_snapshot,
+                updated_at = now()
+            """
+        ),
+        {
+            "order_id": int(order_id),
+            "weight_kg": float(weight_kg),
+            "warehouse_id": int(warehouse_id),
+            "provider_id": int(provider_id),
+            "quote_snapshot": json.dumps(quote_snapshot, ensure_ascii=False),
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: AsyncSession):
     """
@@ -241,6 +409,13 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     await db_session_like_pg.commit()
     print(f"[TEST] ingest 返回: {r}")
     assert r["ref"] == order_ref
+
+    order_id = await _load_order_id(
+        db_session_like_pg,
+        plat=plat,
+        shop_id=shop_id,
+        ext_order_no=ext,
+    )
 
     # 2) manual-assign（需要登录；测试环境一般用 admin/admin123）
     login = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
@@ -317,15 +492,27 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         weight_kg=weight_kg,
     )
 
+    await _upsert_prepare_package_for_ship(
+        db_session_like_pg,
+        order_id=order_id,
+        warehouse_id=1,
+        provider_id=shipping_provider_id,
+        weight_kg=weight_kg,
+        quote_snapshot=quote_snapshot,
+    )
+    await _upsert_active_waybill_config(
+        db_session_like_pg,
+        platform=plat,
+        shop_id=shop_id,
+        provider_id=shipping_provider_id,
+    )
+    await db_session_like_pg.commit()
+
     # 5) ship-with-waybill（Shipment Execution 唯一主入口）
     resp = await client.post(
         f"/orders/{plat}/{shop_id}/{ext}/ship-with-waybill",
         json={
-            "warehouse_id": 1,
-            "shipping_provider_id": shipping_provider_id,
-            "carrier_code": carrier_code,
-            "carrier_name": carrier_name,
-            "weight_kg": weight_kg,
+            "package_no": 1,
             "receiver_name": "X",
             "receiver_phone": "000",
             "province": province,
@@ -333,7 +520,6 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
             "district": district,
             "address_detail": "UT-ADDR-001",
             "meta": {
-                "quote_snapshot": quote_snapshot,
                 "extra": {
                     "source": "tests.api.test_v2_full_chain",
                 },
@@ -346,6 +532,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     ship_data = resp.json()
     assert ship_data["ok"] is True
     assert ship_data["ref"] == order_ref
+    assert int(ship_data["package_no"]) == 1
     assert int(ship_data["shipping_provider_id"]) == shipping_provider_id
     assert str(ship_data["tracking_no"]).strip() != ""
     assert ship_data["status"] == "IN_TRANSIT"
