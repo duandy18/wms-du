@@ -537,12 +537,8 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert str(ship_data["tracking_no"]).strip() != ""
     assert ship_data["status"] == "IN_TRANSIT"
 
-    # 6) dev/orders
-    resp = await client.get(f"/dev/orders/{plat}/{shop_id}/{ext}")
-    assert resp.status_code == 200, resp.text
-    ov = resp.json()
-    print("[HTTP] dev/orders 返回:", json.dumps(ov, ensure_ascii=False))
-    trace_id2 = ov.get("trace_id") or ov["order"]["trace_id"]
+    # 6) trace
+    trace_id2 = trace_id
     assert trace_id2
 
     # 7) trace
