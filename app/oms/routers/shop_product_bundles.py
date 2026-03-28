@@ -1,4 +1,4 @@
-# app/api/routers/shop_product_bundles.py
+# app/oms/routers/shop_product_bundles.py
 from __future__ import annotations
 
 from fastapi import APIRouter

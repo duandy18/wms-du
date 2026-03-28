@@ -164,7 +164,7 @@ async def resolve_platform_lines_to_items(
                         {
                             "action": "bind_merchant_code",
                             "label": "人工绑定填写码到 FSKU（一次绑定，后续自动解析）",
-                            "endpoint": "/platform-orders/manual-decisions/bind-merchant-code",
+                            "endpoint": "/oms/platform-orders/manual-decisions/bind-merchant-code",
                             "payload": {
                                 "platform": plat,
                                 "store_id": sid,

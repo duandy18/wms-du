@@ -51,7 +51,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
             {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但未绑定", "spec": "颜色:黑"},
         ],
     }
-    r1 = await client.post("/platform-orders/ingest", json=ingest_payload, headers=headers)
+    r1 = await client.post("/oms/platform-orders/ingest", json=ingest_payload, headers=headers)
     assert r1.status_code == 200, r1.text
     j1 = r1.json()
     assert j1.get("status") == "UNRESOLVED", j1
@@ -72,7 +72,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
             {"locator_kind": "FILLED_CODE", "locator_value": "psku:RAW-ONLY", "item_id": 1, "qty": 1, "note": "填写码未绑定：先救急"},
         ],
     }
-    r2 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
+    r2 = await client.post("/oms/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
     assert r2.status_code == 200, r2.text
     j2 = r2.json()
 
@@ -95,7 +95,7 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     first_id = int(j2["id"])
 
     # 3) 幂等：重复 confirm-and-create，id 不应变化
-    r3 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
+    r3 = await client.post("/oms/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
     assert r3.status_code == 200, r3.text
     j3 = r3.json()
     assert isinstance(j3.get("id"), int) and int(j3["id"]) == first_id, j3

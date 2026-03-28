@@ -48,7 +48,7 @@ async def test_platform_orders_ingest_code_not_bound_returns_next_actions(client
         "lines": [{"filled_code": filled_code, "qty": 1}],
     }
 
-    r = await client.post("/platform-orders/ingest", json=ingest_payload)
+    r = await client.post("/oms/platform-orders/ingest", json=ingest_payload)
     assert r.status_code == 200, r.text
     body = r.json()
 
@@ -69,7 +69,7 @@ async def test_platform_orders_ingest_code_not_bound_returns_next_actions(client
     # ✅ 1) 既有契约：第一条仍然是 bind_merchant_code（不破坏历史）
     a0 = next_actions[0]
     assert a0.get("action") == "bind_merchant_code"
-    assert a0.get("endpoint") == "/platform-orders/manual-decisions/bind-merchant-code"
+    assert a0.get("endpoint") == "/oms/platform-orders/manual-decisions/bind-merchant-code"
 
     payload = a0.get("payload") or {}
     assert payload.get("platform") == "DEMO"
@@ -104,7 +104,7 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
         "detail": "测试路 1 号",
         "lines": [{"filled_code": filled_code, "qty": 1}],
     }
-    r0 = await client.post("/platform-orders/ingest", json=ingest_seed)
+    r0 = await client.post("/oms/platform-orders/ingest", json=ingest_seed)
     assert r0.status_code == 200, r0.text
     b0 = r0.json()
     store_id = int(b0.get("store_id") or 0)
@@ -124,7 +124,7 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
         "reason": "ut bind",
     }
 
-    r1 = await client.post("/platform-orders/manual-decisions/bind-merchant-code", json=bind_payload)
+    r1 = await client.post("/oms/platform-orders/manual-decisions/bind-merchant-code", json=bind_payload)
     assert r1.status_code == 200, r1.text
     b1 = r1.json()
     assert b1.get("ok") is True
@@ -181,7 +181,7 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
         "lines": [{"filled_code": filled_code, "qty": 1}],
     }
 
-    r2 = await client.post("/platform-orders/ingest", json=ingest_payload)
+    r2 = await client.post("/oms/platform-orders/ingest", json=ingest_payload)
     assert r2.status_code == 200, r2.text
     body = r2.json()
 

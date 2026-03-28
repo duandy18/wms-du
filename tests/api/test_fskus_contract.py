@@ -38,14 +38,14 @@ async def _create_draft_fsku(
     name: str = "FSKU-TEST",
     shape: str = "bundle",
 ) -> Dict[str, Any]:
-    r = await client.post("/fskus", json={"name": name, "shape": shape}, headers=headers)
+    r = await client.post("/oms/fskus", json={"name": name, "shape": shape}, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 async def _replace_components(client, headers: Dict[str, str], fsku_id: int, components: List[dict]):
     r = await client.post(
-        f"/fskus/{fsku_id}/components",
+        f"/oms/fskus/{fsku_id}/components",
         json={"components": components},
         headers=headers,
     )
@@ -61,7 +61,7 @@ async def test_fsku_list_contract_with_archive_fields(client):
     """
     headers = await _auth_headers(client)
 
-    r = await client.get("/fskus", headers=headers)
+    r = await client.get("/oms/fskus", headers=headers)
     assert r.status_code == 200, r.text
     data = r.json()
 
@@ -121,10 +121,10 @@ async def test_fsku_archive_lifecycle(client):
         components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
     )
 
-    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    r_pub = await client.post(f"/oms/fskus/{f['id']}/publish", headers=headers)
     assert r_pub.status_code == 200
 
-    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    r_ret = await client.post(f"/oms/fskus/{f['id']}/retire", headers=headers)
     assert r_ret.status_code == 200
     body = r_ret.json()
 
@@ -132,7 +132,7 @@ async def test_fsku_archive_lifecycle(client):
     assert body["retired_at"] is not None
 
     # 列表中必须能看到
-    r_list = await client.get("/fskus", headers=headers)
+    r_list = await client.get("/oms/fskus", headers=headers)
     items = r_list.json()["items"]
     hit = next(x for x in items if x["id"] == f["id"])
     assert hit["status"] == "retired"
@@ -157,20 +157,20 @@ async def test_fsku_unretire_lifecycle(client):
         components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
     )
 
-    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    r_pub = await client.post(f"/oms/fskus/{f['id']}/publish", headers=headers)
     assert r_pub.status_code == 200, r_pub.text
     pub = r_pub.json()
     assert pub["status"] == "published"
     assert pub["published_at"] is not None
 
-    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    r_ret = await client.post(f"/oms/fskus/{f['id']}/retire", headers=headers)
     assert r_ret.status_code == 200, r_ret.text
     ret = r_ret.json()
     assert ret["status"] == "retired"
     assert ret["retired_at"] is not None
     assert ret["published_at"] is not None
 
-    r_un = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    r_un = await client.post(f"/oms/fskus/{f['id']}/unretire", headers=headers)
     assert r_un.status_code == 409, r_un.text
     body = r_un.json()
     _assert_problem_shape(body)
@@ -192,7 +192,7 @@ async def test_fsku_unretire_guard_requires_retired(client):
 
     f = await _create_draft_fsku(client, headers, name="FSKU-UNRETIRE-GUARD")
 
-    r_un_draft = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    r_un_draft = await client.post(f"/oms/fskus/{f['id']}/unretire", headers=headers)
     assert r_un_draft.status_code == 409, r_un_draft.text
     _assert_problem_shape(r_un_draft.json())
 
@@ -203,16 +203,16 @@ async def test_fsku_unretire_guard_requires_retired(client):
         components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
     )
 
-    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    r_pub = await client.post(f"/oms/fskus/{f['id']}/publish", headers=headers)
     assert r_pub.status_code == 200, r_pub.text
 
-    r_un_pub = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    r_un_pub = await client.post(f"/oms/fskus/{f['id']}/unretire", headers=headers)
     assert r_un_pub.status_code == 409, r_un_pub.text
     _assert_problem_shape(r_un_pub.json())
 
-    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    r_ret = await client.post(f"/oms/fskus/{f['id']}/retire", headers=headers)
     assert r_ret.status_code == 200, r_ret.text
 
-    r_un_ret = await client.post(f"/fskus/{f['id']}/unretire", headers=headers)
+    r_un_ret = await client.post(f"/oms/fskus/{f['id']}/unretire", headers=headers)
     assert r_un_ret.status_code == 409, r_un_ret.text
     _assert_problem_shape(r_un_ret.json())

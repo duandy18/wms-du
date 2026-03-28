@@ -75,6 +75,12 @@ MODEL_SPECS = [
     ("app.models.role", "Role"),
     ("app.models.permission", "Permission"),
     # ------------------------------------------------------------------
+    # 店铺 × 平台接入（OMS 淘宝最小闭环）
+    # ------------------------------------------------------------------
+    ("app.models.taobao_app_config", "TaobaoAppConfig"),
+    ("app.models.store_platform_credential", "StorePlatformCredential"),
+    ("app.models.store_platform_connection", "StorePlatformConnection"),
+    # ------------------------------------------------------------------
     # 采购系统
     # ------------------------------------------------------------------
     ("app.models.purchase_order", "PurchaseOrder"),
@@ -182,6 +188,10 @@ __all__ = [
     "User",
     "Role",
     "Permission",
+    # ---- Store Platform Access ----
+    "TaobaoAppConfig",
+    "StorePlatformCredential",
+    "StorePlatformConnection",
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",

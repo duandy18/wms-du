@@ -9,7 +9,7 @@ try:
     import httpx
 
     from app.api.deps import get_current_user
-    from app.api.routers import stores as stores_router
+    from app.oms.routers import stores as stores_router
     from app.main import app
 except Exception:
     httpx = None
@@ -73,7 +73,7 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
                 "shop_id": "UT-SHOP-STORES-01",
                 "name": "拼多多自营-合同测试",
             }
-            r = await client.post("/stores", json=payload)
+            r = await client.post("/oms/stores", json=payload)
             assert r.status_code == 200
             resp = r.json()
             assert resp["ok"] is True
@@ -83,25 +83,25 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
 
             # 2) 绑定两个仓：/stores/{id}/warehouses/bind
             r2 = await client.post(
-                f"/stores/{store_id}/warehouses/bind",
+                f"/oms/stores/{store_id}/warehouses/bind",
                 json={"warehouse_id": 1, "is_default": True, "priority": 10},
             )
             assert r2.status_code == 200 and r2.json()["ok"] is True
 
             r3 = await client.post(
-                f"/stores/{store_id}/warehouses/bind",
+                f"/oms/stores/{store_id}/warehouses/bind",
                 json={"warehouse_id": 2, "is_default": False, "priority": 50},
             )
             assert r3.status_code == 200 and r3.json()["ok"] is True
 
             # 3) 读取默认仓：/stores/{id}/default-warehouse
-            r4 = await client.get(f"/stores/{store_id}/default-warehouse")
+            r4 = await client.get(f"/oms/stores/{store_id}/default-warehouse")
             assert r4.status_code == 200
             wid = r4.json()["data"]["warehouse_id"]
             assert wid == 1
 
             # 4) 再读详情（JSON 聚合）：/stores/{id}
-            r5 = await client.get(f"/stores/{store_id}")
+            r5 = await client.get(f"/oms/stores/{store_id}")
             assert r5.status_code == 200
             detail = r5.json()["data"]
             assert detail["platform"] == "PDD"

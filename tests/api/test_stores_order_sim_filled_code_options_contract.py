@@ -30,7 +30,7 @@ def _auth_headers(token: str) -> Dict[str, str]:
 
 def _try_get_options(client: TestClient, *, token: str, store_id: int) -> Tuple[int, Dict[str, Any]]:
     resp = client.get(
-        f"/stores/{store_id}/order-sim/filled-code-options",
+        f"/oms/stores/{store_id}/order-sim/filled-code-options",
         headers=_auth_headers(token),
     )
     try:
@@ -48,7 +48,7 @@ def _list_stores(client: TestClient, *, token: str) -> List[Dict[str, Any]]:
       - { ok: true, data: { items: [...] } }
       - 其它：尽量容错，返回空
     """
-    resp = client.get("/stores", headers=_auth_headers(token))
+    resp = client.get("/oms/stores", headers=_auth_headers(token))
     if resp.status_code != 200:
         return []
     try:
