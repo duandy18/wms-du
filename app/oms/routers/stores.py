@@ -5,7 +5,6 @@ from fastapi import APIRouter
 
 from app.oms.routers import stores_bindings
 from app.oms.routers import stores_crud
-from app.oms.routers import stores_fskus
 from app.oms.routers import stores_order_sim
 from app.oms.routers import stores_platform_auth
 from app.oms.routers import stores_routing
@@ -48,7 +47,6 @@ def _register_all_routes() -> None:
     stores_platform_auth.register(router)
     stores_routing.register(router)
     stores_order_sim.register(router)
-    stores_fskus.register(router)
 
 
 _register_all_routes()

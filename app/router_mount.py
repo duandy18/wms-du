@@ -28,7 +28,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.lifecycle import router as lifecycle_router
     from app.api.routers.meta import router as meta_router
     from app.api.routers.metrics import router as metrics_router
-    from app.api.routers.merchant_code_bindings import router as merchant_code_bindings_router
     from app.api.routers.orders import router as orders_router
     from app.api.routers.orders_fulfillment_debug_routes import (
         router as orders_fulfillment_debug_router,
@@ -41,20 +40,16 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.permissions import router as permissions_router
     from app.api.routers.pick import router as pick_router
     from app.api.routers.pick_tasks import router as pick_tasks_router
-    from app.api.routers.platform_orders_ingest import router as platform_orders_ingest_router
-    from app.api.routers.platform_shops import router as platform_shops_router
     from app.api.routers.print_jobs import router as print_jobs_router
     from app.api.routers.purchase_orders import router as purchase_orders_router
     from app.api.routers.purchase_reports import router as purchase_reports_router
     from app.api.routers.return_tasks import router as return_tasks_router
     from app.api.routers.roles import router as roles_router
-    from app.api.routers.shop_product_bundles import router as shop_product_bundles_router
     from app.api.routers.snapshot import router as snapshot_router
     from app.api.routers.snapshot_v3 import router as snapshot_v3_router
     from app.api.routers.stock_batch import router as stock_batch_router
     from app.api.routers.stock_ledger import router as stock_ledger_router
     from app.api.routers.stock_lot import router as stock_lot_router
-    from app.api.routers.stores import router as stores_router
     from app.api.routers.supplier_contacts import router as supplier_contacts_router
     from app.api.routers.suppliers import router as suppliers_router
     from app.api.routers.user import router as user_router
@@ -62,6 +57,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
     from app.api.routers.internal_outbound import router as internal_outbound_router
+
+    from app.oms.router import router as oms_router
 
     from app.tms.billing.router import router as tms_billing_router
     from app.tms.pricing.router import router as tms_pricing_router
@@ -100,8 +97,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(count_router)
     app.include_router(pick_router)
 
-    app.include_router(platform_orders_ingest_router)
-    app.include_router(merchant_code_bindings_router)
 
     app.include_router(orders_router)
     app.include_router(orders_fulfillment_v2_router)
@@ -122,11 +117,9 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(print_jobs_router)
 
     app.include_router(meta_router)
-    app.include_router(stores_router)
-    app.include_router(shop_product_bundles_router)
+    app.include_router(oms_router)
 
     app.include_router(warehouses_router)
-    app.include_router(platform_shops_router)
     app.include_router(pdd_auth_router)
 
     # 商品相关
@@ -173,7 +166,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(finance_overview_router)
 
     if enable_dev_routes:
-
         app.include_router(dev_seed_ledger_router)
         app.include_router(dev_stock_adjust_router)
         app.include_router(fake_platform_router)

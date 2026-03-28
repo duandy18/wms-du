@@ -58,14 +58,14 @@ async def _create_draft_fsku(
     name: str = "FSKU-TEST",
     shape: str = "bundle",
 ) -> Dict[str, Any]:
-    r = await client.post("/fskus", json={"name": name, "shape": shape}, headers=headers)
+    r = await client.post("/oms/fskus", json={"name": name, "shape": shape}, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 async def _replace_components(client, headers: Dict[str, str], fsku_id: int, components: List[dict]) -> Dict[str, Any]:
     r = await client.post(
-        f"/fskus/{fsku_id}/components",
+        f"/oms/fskus/{fsku_id}/components",
         json={"components": components},
         headers=headers,
     )
@@ -75,7 +75,7 @@ async def _replace_components(client, headers: Dict[str, str], fsku_id: int, com
 
 @pytest.mark.anyio
 async def test_list_contract_envelope_and_row_shape(client):
-    resp = await client.get("/merchant-code-bindings?current_only=true&limit=50&offset=0")
+    resp = await client.get("/oms/merchant-code-bindings?current_only=true&limit=50&offset=0")
     assert resp.status_code == 200
     j = resp.json()
 
@@ -94,7 +94,7 @@ async def test_list_contract_envelope_and_row_shape(client):
 @pytest.mark.anyio
 async def test_list_filters_are_accepted(client):
     resp = await client.get(
-        "/merchant-code-bindings"
+        "/oms/merchant-code-bindings"
         "?platform=DEMO"
         "&shop_id=1"
         "&merchant_code=ABC"
@@ -124,7 +124,7 @@ async def test_bind_contract_success_or_problem(client):
         "fsku_id": 1,
         "reason": "UT contract",
     }
-    resp = await client.post("/merchant-code-bindings/bind", json=payload)
+    resp = await client.post("/oms/merchant-code-bindings/bind", json=payload)
 
     if resp.status_code != 200:
         _assert_problem_shape(resp.json())
@@ -153,7 +153,7 @@ async def test_retire_is_blocked_when_fsku_is_referenced_by_merchant_code_bindin
         components=[{"item_id": item_id, "qty": 1, "role": "primary"}],
     )
 
-    r_pub = await client.post(f"/fskus/{f['id']}/publish", headers=headers)
+    r_pub = await client.post(f"/oms/fskus/{f['id']}/publish", headers=headers)
     assert r_pub.status_code == 200, r_pub.text
     pub = r_pub.json()
     assert pub["status"] == "published"
@@ -167,7 +167,7 @@ async def test_retire_is_blocked_when_fsku_is_referenced_by_merchant_code_bindin
         "fsku_id": int(f["id"]),
         "reason": "UT: lock retire when referenced",
     }
-    r_bind = await client.post("/merchant-code-bindings/bind", json=payload, headers=headers)
+    r_bind = await client.post("/oms/merchant-code-bindings/bind", json=payload, headers=headers)
     assert r_bind.status_code == 200, r_bind.text
     j = r_bind.json()
     assert j.get("ok") is True
@@ -176,7 +176,7 @@ async def test_retire_is_blocked_when_fsku_is_referenced_by_merchant_code_bindin
     assert str(j["data"]["merchant_code"]) == mc
 
     # 3) retire 必须被阻断
-    r_ret = await client.post(f"/fskus/{f['id']}/retire", headers=headers)
+    r_ret = await client.post(f"/oms/fskus/{f['id']}/retire", headers=headers)
     assert r_ret.status_code == 409, r_ret.text
     p = r_ret.json()
     _assert_problem_shape(p)

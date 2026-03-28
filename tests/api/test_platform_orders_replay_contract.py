@@ -221,7 +221,7 @@ async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create
     n0 = await _orders_count(db_session, platform=platform, shop_id=shop_id, ext_order_no=ext)
 
     resp = await async_client.post(
-        "/platform-orders/replay",
+        "/oms/platform-orders/replay",
         json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp.status_code == 200, resp.text
@@ -275,7 +275,7 @@ async def test_replay_with_published_fsku_code_is_idempotent(
 
     # replay #1
     resp1 = await async_client.post(
-        "/platform-orders/replay",
+        "/oms/platform-orders/replay",
         json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp1.status_code == 200, resp1.text
@@ -291,7 +291,7 @@ async def test_replay_with_published_fsku_code_is_idempotent(
 
     # replay #2 (must be idempotent)
     resp2 = await async_client.post(
-        "/platform-orders/replay",
+        "/oms/platform-orders/replay",
         json={"platform": platform, "store_id": store_id, "ext_order_no": ext},
     )
     assert resp2.status_code == 200, resp2.text

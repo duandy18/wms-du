@@ -46,7 +46,7 @@ async def test_confirm_and_create_rejects_external_line_key_input(client) -> Non
             {"filled_code": "psku:RAW-ONLY", "qty": 1, "title": "有填写码但找不到FSKU", "spec": "颜色:黑"},
         ],
     }
-    r1 = await client.post("/platform-orders/ingest", json=ingest_payload, headers=headers)
+    r1 = await client.post("/oms/platform-orders/ingest", json=ingest_payload, headers=headers)
     assert r1.status_code == 200, r1.text
     j1 = r1.json()
     store_id = j1.get("store_id")
@@ -69,7 +69,7 @@ async def test_confirm_and_create_rejects_external_line_key_input(client) -> Non
             }
         ],
     }
-    r2 = await client.post("/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
+    r2 = await client.post("/oms/platform-orders/confirm-and-create", json=confirm_payload, headers=headers)
     assert r2.status_code == 422, r2.text
     j2 = r2.json()
     # problem payload shape is owned by make_problem; just check message contains the key hint
