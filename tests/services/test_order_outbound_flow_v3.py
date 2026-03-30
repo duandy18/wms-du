@@ -110,9 +110,10 @@ async def _ingest_order(session: AsyncSession, ext_order_no: str):
 
 async def _ship_once(session: AsyncSession, qty: int):
     svc = OutboundService()
+    order_ref = f"ORD:PDD:S-01:{ORDER_NO}"
     return await svc.commit(
         session=session,
-        order_id=ORDER_NO,
+        order_id=order_ref,
         lines=[
             {
                 "item_id": ITEM_ID,

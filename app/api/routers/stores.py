@@ -6,7 +6,6 @@ from fastapi import APIRouter
 # 路由注册（拆分后的实现）
 from app.api.routers import stores_routes_bindings
 from app.api.routers import stores_routes_crud
-from app.api.routers import stores_routes_platform_auth
 from app.api.routers import stores_routes_routing  # ✅ 新增：省级路由表 + health
 from app.api.routers import stores_routes_order_sim  # ✅ 新增：order-sim（merchant_lines/cart/generate-order）
 from app.api.routers import stores_routes_fskus  # ✅ 新增：store-scoped fskus view
@@ -46,7 +45,6 @@ router = APIRouter(tags=["stores"])
 def _register_all_routes() -> None:
     stores_routes_crud.register(router)
     stores_routes_bindings.register(router)
-    stores_routes_platform_auth.register(router)
     stores_routes_routing.register(router)  # ✅
     stores_routes_order_sim.register(router)  # ✅
     stores_routes_fskus.register(router)  # ✅

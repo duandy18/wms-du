@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.helpers.inventory import ensure_wh_loc_item
+from tests.services._helpers import ensure_store
 
 from app.services.order_service import OrderService
 from app.services.pick_task_commit_ship import commit_ship
@@ -36,12 +37,20 @@ async def _ensure_order_row(
     plat = platform.upper()
     now = datetime.now(UTC)
 
+    store_id = await ensure_store(
+        session,
+        platform=plat,
+        shop_id=shop_id,
+        name=f"UT-{plat}-{shop_id}",
+    )
+
     row = await session.execute(
         text(
             """
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 trace_id,
@@ -51,6 +60,7 @@ async def _ensure_order_row(
             VALUES (
                 :p,
                 :s,
+                :store_id,
                 :o,
                 'CREATED',
                 :tid,
@@ -58,7 +68,8 @@ async def _ensure_order_row(
                 :created_at
             )
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
+              SET store_id = EXCLUDED.store_id,
+                  trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
                   updated_at = EXCLUDED.updated_at
             RETURNING id
             """
@@ -66,6 +77,7 @@ async def _ensure_order_row(
         {
             "p": plat,
             "s": shop_id,
+            "store_id": int(store_id),
             "o": ext_order_no,
             "tid": trace_id,
             "created_at": now,

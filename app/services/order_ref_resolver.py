@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem import raise_problem
+from app.services.platform_order_resolve_store import resolve_store_id
 
 
 @dataclass(frozen=True)
@@ -104,17 +105,29 @@ async def resolve_order_id(session: AsyncSession, *, order_ref: str) -> int:
 
         # ✅ TEST-ONLY：补齐 orders 事实（不允许“没有订单事实就出库”）
         if os.getenv("WMS_ENV") == "test":
+            store_id = await resolve_store_id(
+                session,
+                platform=key.platform,
+                shop_id=key.shop_id,
+                store_name=str(key.shop_id),
+            )
+
             ins = (
                 await session.execute(
                     text(
                         """
-                        INSERT INTO orders(platform, shop_id, ext_order_no)
-                        VALUES (:p, :sid, :ext)
+                        INSERT INTO orders(platform, shop_id, store_id, ext_order_no)
+                        VALUES (:p, :sid, :store_id, :ext)
                         ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
                         RETURNING id
                         """
                     ),
-                    {"p": key.platform, "sid": key.shop_id, "ext": key.ext_order_no},
+                    {
+                        "p": key.platform,
+                        "sid": key.shop_id,
+                        "store_id": int(store_id),
+                        "ext": key.ext_order_no,
+                    },
                 )
             ).first()
 

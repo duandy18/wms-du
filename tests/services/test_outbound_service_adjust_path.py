@@ -4,10 +4,42 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.services._helpers import ensure_store
+
 from app.services.outbound_service import OutboundService
 from app.services.stock.lots import ensure_lot_full
 
 UTC = timezone.utc
+
+
+async def _ensure_order_ref_exists(session: AsyncSession, *, order_ref: str) -> None:
+    parts = str(order_ref).split(":", 2)
+    assert len(parts) == 3, f"invalid test order_ref: {order_ref}"
+    platform, shop_id, ext_order_no = parts
+    store_id = await ensure_store(
+        session,
+        platform=str(platform).upper(),
+        shop_id=str(shop_id),
+        name=f"UT-{str(platform).upper()}-{shop_id}",
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO orders(platform, shop_id, store_id, ext_order_no, status, created_at, updated_at)
+            VALUES (:p, :sid, :store_id, :ext, 'CREATED', now(), now())
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET store_id = EXCLUDED.store_id,
+                  updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "p": str(platform).upper(),
+            "sid": str(shop_id),
+            "store_id": int(store_id),
+            "ext": str(ext_order_no),
+        },
+    )
+    await session.commit()
 
 
 async def _ensure_seed_stock_slot(
@@ -88,6 +120,7 @@ async def test_outbound_commit_merges_lines_and_writes_ledger(session: AsyncSess
         pytest.skip(f"库存太少 qty_sum={qty_sum}, 不适合测试总扣减为 5")
 
     order_id = "UT:PH3:OUT-TEST-1"
+    await _ensure_order_ref_exists(session, order_ref=order_id)
     lines = [
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 2},
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 3},
@@ -138,6 +171,7 @@ async def test_outbound_commit_idempotent_same_payload(session: AsyncSession):
         pytest.skip(f"库存太少 qty_sum={qty_sum}, 不适合测试")
 
     order_id = "UT:PH3:OUT-TEST-2"
+    await _ensure_order_ref_exists(session, order_ref=order_id)
     lines = [
         {"item_id": item_id, "warehouse_id": warehouse_id, "batch_code": batch_code, "qty": 3},
     ]

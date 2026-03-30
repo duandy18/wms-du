@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.stock.lots import ensure_lot_full
 from tests.utils.ensure_minimal import ensure_item
+from tests.services._helpers import ensure_store
 
 
 async def _upsert_order_and_fulfillment(
@@ -24,12 +25,20 @@ async def _upsert_order_and_fulfillment(
     - orders：只承载订单头（不再有 warehouse_id）
     - order_fulfillment：承载执行仓/履约快照（这里写 actual_warehouse_id）
     """
+    store_id = await ensure_store(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        name=f"UT-{platform}-{shop_id}",
+    )
+
     row = await session.execute(
         text(
             """
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 trace_id,
@@ -39,6 +48,7 @@ async def _upsert_order_and_fulfillment(
             VALUES (
                 :platform,
                 :shop_id,
+                :store_id,
                 :ext_order_no,
                 :status,
                 :trace_id,
@@ -46,7 +56,8 @@ async def _upsert_order_and_fulfillment(
                 now()
             )
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET status = EXCLUDED.status,
+              SET store_id = EXCLUDED.store_id,
+                  status = EXCLUDED.status,
                   trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
                   updated_at = now()
             RETURNING id
@@ -55,6 +66,7 @@ async def _upsert_order_and_fulfillment(
         {
             "platform": platform,
             "shop_id": shop_id,
+            "store_id": int(store_id),
             "ext_order_no": ext_order_no,
             "status": status,
             "trace_id": trace_id,

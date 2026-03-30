@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.outbound_service import OutboundService
 from app.services.stock_service import StockService
+from tests.services._helpers import ensure_store
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
@@ -69,6 +70,36 @@ async def _seed_stock(
     await session.commit()
 
 
+async def _ensure_order_ref_exists(session: AsyncSession, *, order_ref: str) -> None:
+    parts = str(order_ref).split(":", 2)
+    assert len(parts) == 3, f"invalid test order_ref: {order_ref}"
+    platform, shop_id, ext_order_no = parts
+    store_id = await ensure_store(
+        session,
+        platform=str(platform).upper(),
+        shop_id=str(shop_id),
+        name=f"UT-{str(platform).upper()}-{shop_id}",
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO orders(platform, shop_id, store_id, ext_order_no, status, created_at, updated_at)
+            VALUES (:p, :sid, :store_id, :ext, 'CREATED', now(), now())
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET store_id = EXCLUDED.store_id,
+                  updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "p": str(platform).upper(),
+            "sid": str(shop_id),
+            "store_id": int(store_id),
+            "ext": str(ext_order_no),
+        },
+    )
+    await session.commit()
+
+
 async def _sum_ledger_for_ref(
     session: AsyncSession,
     *,
@@ -114,6 +145,7 @@ async def test_outbound_idempotent_commit(session: AsyncSession):
     )
 
     order_id = f"PDD:CUST001:SO-IDEM-{int(datetime.now(UTC).timestamp())}"
+    await _ensure_order_ref_exists(session, order_ref=order_id)
     before_delta = await _sum_ledger_for_ref(
         session,
         warehouse_id=warehouse_id,

@@ -11,6 +11,7 @@ from app.services.outbound_service import OutboundService
 from app.services.stock.lots import ensure_internal_lot_singleton
 from app.services.stock_service_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
+from tests.services._helpers import ensure_store
 
 UTC = timezone.utc
 
@@ -40,6 +41,13 @@ async def _seed_minimal_order_for_outbound(
     # Phase M：items 有 NOT NULL policy 护栏，必须走合法插入（helper 统一兜底）
     await ensure_item(session, id=int(item_id), sku="SKU-0001", name="UT-ITEM-1")
 
+    store_id = await ensure_store(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        name=f"UT-{platform}-{shop_id}",
+    )
+
     # orders（不再包含 warehouse_id）
     row = await session.execute(
         text(
@@ -47,6 +55,7 @@ async def _seed_minimal_order_for_outbound(
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 trace_id,
@@ -56,6 +65,7 @@ async def _seed_minimal_order_for_outbound(
             VALUES (
                 :platform,
                 :shop_id,
+                :store_id,
                 :ext_order_no,
                 'CREATED',
                 :trace_id,
@@ -63,7 +73,8 @@ async def _seed_minimal_order_for_outbound(
                 now()
             )
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET status = EXCLUDED.status,
+              SET store_id = EXCLUDED.store_id,
+                  status = EXCLUDED.status,
                   trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
                   updated_at = now()
             RETURNING id
@@ -72,6 +83,7 @@ async def _seed_minimal_order_for_outbound(
         {
             "platform": platform,
             "shop_id": shop_id,
+            "store_id": int(store_id),
             "ext_order_no": ext_order_no,
             "trace_id": trace_id,
         },
