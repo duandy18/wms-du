@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.models.enums import MovementType
+from tests.services._helpers import ensure_store
 from app.services.platform_events import handle_event_batch
 from app.services.stock_service import StockService
 
@@ -138,38 +139,53 @@ async def test_smoke_multi_platform_end2end():
         # ---------- 2) Phase 5：预置 orders（使 ship commit 可解析到 orders.id） ----------
         # 注意：事件里用的是 ext_order_no-only（如 P-SMOKE-001），Phase 5 第二刀要求先能解析到 orders.id。
         ref_p, ref_t, ref_j = "P-SMOKE-001", "T-SMOKE-002", "J-SMOKE-003"
+        pdd_store_id = await ensure_store(s, platform="PDD", shop_id="SMOKE", name="UT-PDD-SMOKE")
+        tb_store_id = await ensure_store(s, platform="TAOBAO", shop_id="SMOKE", name="UT-TAOBAO-SMOKE")
+        jd_store_id = await ensure_store(s, platform="JD", shop_id="SMOKE", name="UT-JD-SMOKE")
         await s.execute(
             text(
                 """
-                INSERT INTO orders(platform, shop_id, ext_order_no)
+                INSERT INTO orders(platform, shop_id, store_id, ext_order_no)
                 VALUES
-                  ('PDD',    'SMOKE', :p),
-                  ('TAOBAO', 'SMOKE', :t),
-                  ('JD',     'SMOKE', :j)
-                ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
+                  ('PDD',    'SMOKE', :pdd_store_id, :p),
+                  ('TAOBAO', 'SMOKE', :tb_store_id, :t),
+                  ('JD',     'SMOKE', :jd_store_id, :j)
+                ON CONFLICT (platform, shop_id, ext_order_no) DO UPDATE
+                  SET store_id = EXCLUDED.store_id
                 """
             ),
-            {"p": ref_p, "t": ref_t, "j": ref_j},
+            {
+                "p": ref_p,
+                "t": ref_t,
+                "j": ref_j,
+                "pdd_store_id": int(pdd_store_id),
+                "tb_store_id": int(tb_store_id),
+                "jd_store_id": int(jd_store_id),
+            },
         )
         await s.commit()
 
         # ---------- 3) 多平台“已发货”事件 ----------
+        pdd_order_ref = f"ORD:PDD:SMOKE:{ref_p}"
+        tb_order_ref = f"ORD:TAOBAO:SMOKE:{ref_t}"
+        jd_order_ref = f"ORD:JD:SMOKE:{ref_j}"
+
         events = [
             {
                 "platform": "pdd",
-                "order_sn": ref_p,
+                "order_sn": pdd_order_ref,
                 "status": "SHIPPED",
                 "lines": [{"item_id": 1, "warehouse_id": 1, "batch_code": "B-1", "qty": 2}],
             },
             {
                 "platform": "taobao",
-                "tid": ref_t,
+                "tid": tb_order_ref,
                 "trade_status": "WAIT_BUYER_CONFIRM_GOODS",
                 "lines": [{"item_id": 2, "warehouse_id": 1, "batch_code": "B-2", "qty": 5}],
             },
             {
                 "platform": "jd",
-                "orderId": ref_j,
+                "orderId": jd_order_ref,
                 "orderStatus": "DELIVERED",
                 "lines": [{"item_id": 3, "warehouse_id": 1, "batch_code": "B-3", "qty": 1}],
             },

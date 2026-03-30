@@ -35,7 +35,6 @@ async def get_store_taobao_connection(
 
     说明：
     - 第一版先直接读新两张表
-    - 先不复用旧 stores_platform_auth.py
     """
     stores_router._check_perm(db, current_user, ["config.store.read"])
 

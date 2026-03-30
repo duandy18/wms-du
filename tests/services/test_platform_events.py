@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.platform_events import handle_event_batch
+from tests.services._helpers import ensure_store
 
 pytestmark = pytest.mark.contract
 
@@ -30,6 +31,13 @@ async def _ensure_order_for_event(
     """
     plat = platform.upper()
 
+    store_id = await ensure_store(
+        session,
+        platform=plat,
+        shop_id=shop_id,
+        name=f"UT-{plat}-{shop_id}",
+    )
+
     # 1) orders：只写订单头（不写 warehouse_id）
     await session.execute(
         text(
@@ -37,23 +45,33 @@ async def _ensure_order_for_event(
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
+                status,
                 trace_id,
-                created_at
+                created_at,
+                updated_at
             )
             VALUES (
                 :p,
                 :s,
+                :store_id,
                 :o,
+                'CREATED',
                 :tid,
+                now(),
                 now()
             )
-            ON CONFLICT (platform, shop_id, ext_order_no) DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET store_id = EXCLUDED.store_id,
+                  trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
+                  updated_at = now()
             """
         ),
         {
             "p": plat,
             "s": shop_id,
+            "store_id": int(store_id),
             "o": ext_order_no,
             "tid": trace_id,
         },

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.order_event_bus import OrderEventBus
 from app.services.order_platform_adapters import get_adapter
 from app.services.order_utils import to_dec_str
+from app.services.platform_order_resolve_store import resolve_store_id
 
 from app.services.order_ingest_items_writer import insert_order_items
 from app.services.order_ingest_lines_writer import insert_order_lines
@@ -87,11 +88,19 @@ class OrderIngestService:
         orders_has_extras = await _orders_has_extras(session)
         order_items_has_extras = await _order_items_has_extras(session)
 
+        store_id = await resolve_store_id(
+            session,
+            platform=plat,
+            shop_id=shop_id,
+            store_name=str(shop_id),
+        )
+
         # 1) orders（幂等）
         ins_res = await insert_order_or_get_idempotent(
             session,
             platform=plat,
             shop_id=shop_id,
+            store_id=store_id,
             ext_order_no=ext_order_no,
             occurred_at=occurred_at,
             buyer_name=buyer_name,

@@ -13,7 +13,7 @@ from app.api.lot_code_contract import fetch_item_expiry_policy_map
 from app.api.problem import raise_problem
 from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
 from app.services.order_fulfillment_service import OrderFulfillmentService
-from app.services.order_ref_resolver import resolve_order_id
+from app.services.order_ref_helper import parse_order_ref
 from app.services.outbound_commit_models import (
     ShipLine,
     coerce_line,
@@ -23,6 +23,93 @@ from app.services.outbound_commit_models import (
 from app.services.stock_service import StockService
 
 UTC = timezone.utc
+
+
+async def _load_existing_order_id(session: AsyncSession, *, order_ref: str) -> int:
+    s = str(order_ref or "").strip()
+    if not s:
+        raise ValueError("order_id/order_ref cannot be empty")
+
+    if s.isdigit():
+        row = (
+            await session.execute(
+                sa.text("SELECT id FROM orders WHERE id = :id LIMIT 1"),
+                {"id": int(s)},
+            )
+        ).first()
+        if row:
+            return int(row[0])
+        raise_problem(
+            status_code=404,
+            error_code="order_not_found",
+            message="订单不存在（按 orders.id 查询）。",
+            context={"order_ref": s, "order_id": int(s)},
+            details=[],
+            next_actions=[],
+        )
+        return 0
+
+    parsed = parse_order_ref(s)
+    if parsed is None:
+        parts = s.split(":", 2)
+        if len(parts) == 3:
+            plat, sid, ext = parts
+            plat = str(plat or "").upper().strip()
+            sid = str(sid or "").strip()
+            ext = str(ext or "").strip()
+            if plat and sid and ext:
+                class _CompatParsed:
+                    platform = plat
+                    shop_id = sid
+                    ext_order_no = ext
+                parsed = _CompatParsed()
+        if parsed is None:
+            raise_problem(
+                status_code=422,
+                error_code="invalid_order_ref",
+                message="订单引用格式不合法，必须传 orders.id、ORD:PLAT:SHOP:EXT 或 PLAT:SHOP:EXT。",
+                context={"order_ref": s},
+                details=[],
+                next_actions=[],
+            )
+            return 0
+
+    row = (
+        await session.execute(
+            sa.text(
+                """
+                SELECT id
+                  FROM orders
+                 WHERE platform = :p
+                   AND shop_id = :sid
+                   AND ext_order_no = :ext
+                 LIMIT 1
+                """
+            ),
+            {
+                "p": str(parsed.platform),
+                "sid": str(parsed.shop_id),
+                "ext": str(parsed.ext_order_no),
+            },
+        )
+    ).first()
+    if row:
+        return int(row[0])
+
+    raise_problem(
+        status_code=404,
+        error_code="order_not_found",
+        message="订单不存在，禁止在出库阶段自动补订单头。",
+        context={
+            "order_ref": s,
+            "platform": str(parsed.platform),
+            "shop_id": str(parsed.shop_id),
+            "ext_order_no": str(parsed.ext_order_no),
+        },
+        details=[],
+        next_actions=[],
+    )
+    return 0
 
 
 def _norm_lot_code_key(v: str | None) -> str | None:
@@ -93,7 +180,7 @@ class OutboundService:
         if not order_ref:
             raise ValueError("order_id/order_ref cannot be empty")
 
-        order_pk = await resolve_order_id(session, order_ref=order_ref)
+        order_pk = await _load_existing_order_id(session, order_ref=order_ref)
 
         agg_qty: Dict[Tuple[int, int, Optional[str]], int] = defaultdict(int)
         wh_set: set[int] = set()

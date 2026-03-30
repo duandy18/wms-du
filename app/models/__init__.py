@@ -75,11 +75,20 @@ MODEL_SPECS = [
     ("app.models.role", "Role"),
     ("app.models.permission", "Permission"),
     # ------------------------------------------------------------------
-    # 店铺 × 平台接入（OMS 淘宝最小闭环）
+    # 店铺 × 平台接入（OMS 淘宝 / 拼多多 / 京东）
     # ------------------------------------------------------------------
     ("app.models.taobao_app_config", "TaobaoAppConfig"),
+    ("app.models.pdd_app_config", "PddAppConfig"),
+    ("app.models.jd_app_config", "JdAppConfig"),
     ("app.models.store_platform_credential", "StorePlatformCredential"),
     ("app.models.store_platform_connection", "StorePlatformConnection"),
+    ("app.models.taobao_order", "TaobaoOrder"),
+    ("app.models.taobao_order", "TaobaoOrderItem"),
+    ("app.models.pdd_order", "PddOrder"),
+    ("app.models.pdd_order", "PddOrderItem"),
+    ("app.models.jd_order", "JdOrder"),
+    ("app.models.jd_order", "JdOrderItem"),
+    ("app.models.pdd_order_order_mapping", "PddOrderOrderMapping"),
     # ------------------------------------------------------------------
     # 采购系统
     # ------------------------------------------------------------------
@@ -190,8 +199,17 @@ __all__ = [
     "Permission",
     # ---- Store Platform Access ----
     "TaobaoAppConfig",
+    "PddAppConfig",
+    "JdAppConfig",
     "StorePlatformCredential",
     "StorePlatformConnection",
+    "TaobaoOrder",
+    "TaobaoOrderItem",
+    "PddOrder",
+    "PddOrderItem",
+    "JdOrder",
+    "JdOrderItem",
+    "PddOrderOrderMapping",
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",

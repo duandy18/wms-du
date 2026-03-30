@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.services._helpers import ensure_store
 from tests.utils.ensure_minimal import ensure_item
 
 from app.services.stock.lots import ensure_lot_full
@@ -42,19 +43,33 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         name=f"UT-Item-{item_id}",
     )
 
+    store_id = await ensure_store(
+        session,
+        platform=platform,
+        shop_id=shop_id,
+        name=f"UT-{platform}-{shop_id}",
+    )
+
     # orders：最小订单头（只保证 trace 聚合能看到）
     row = await session.execute(
         text(
             """
-            INSERT INTO orders (platform, shop_id, ext_order_no, status, trace_id, created_at, updated_at)
-            VALUES (:p, :s, :o, 'CREATED', :tid, now(), now())
+            INSERT INTO orders (platform, shop_id, store_id, ext_order_no, status, trace_id, created_at, updated_at)
+            VALUES (:p, :s, :store_id, :o, 'CREATED', :tid, now(), now())
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET trace_id = EXCLUDED.trace_id,
+              SET store_id = EXCLUDED.store_id,
+                  trace_id = EXCLUDED.trace_id,
                   updated_at = now()
             RETURNING id
             """
         ),
-        {"p": platform, "s": shop_id, "o": "UT-ORDER-TRACE-1", "tid": trace_id},
+        {
+            "p": platform,
+            "s": shop_id,
+            "store_id": int(store_id),
+            "o": "UT-ORDER-TRACE-1",
+            "tid": trace_id,
+        },
     )
     order_id = int(row.scalar_one())
 

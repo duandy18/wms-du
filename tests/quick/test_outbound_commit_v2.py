@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.services.outbound_service import ship_commit
 from app.services.stock_service import StockService
+from tests.services._helpers import ensure_store
 
 
 async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
@@ -24,6 +25,36 @@ async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
     # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位（lot_id IS NULL）
     return "NEAR" if await _requires_batch(session, item_id) else None
+
+
+async def _ensure_order_ref_exists(session: AsyncSession, *, order_ref: str) -> None:
+    parts = str(order_ref).split(":", 2)
+    assert len(parts) == 3, f"invalid test order_ref: {order_ref}"
+    platform, shop_id, ext_order_no = parts
+    store_id = await ensure_store(
+        session,
+        platform=str(platform).upper(),
+        shop_id=str(shop_id),
+        name=f"UT-{str(platform).upper()}-{shop_id}",
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO orders(platform, shop_id, store_id, ext_order_no, status, created_at, updated_at)
+            VALUES (:p, :sid, :store_id, :ext, 'CREATED', now(), now())
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+              SET store_id = EXCLUDED.store_id,
+                  updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "p": str(platform).upper(),
+            "sid": str(shop_id),
+            "store_id": int(store_id),
+            "ext": str(ext_order_no),
+        },
+    )
+    await session.commit()
 
 
 async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -> int:
@@ -124,6 +155,7 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
 
     # 幂等（两次同一单据，不应重复扣减）
     order_id = "UT:PH3:Q-OUT-1"
+    await _ensure_order_ref_exists(session, order_ref=order_id)
     lines = [{"item_id": item_id, "warehouse_id": wh, "batch_code": code, "qty": 1}]
     r1 = await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
     r2 = await ship_commit(session, order_id=order_id, lines=lines, warehouse_code="WH-1")
@@ -133,6 +165,8 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
     assert mid == before - 1
 
     # 不足：同一槽位请求超量 => 409(outbound_commit_reject)
+    await _ensure_order_ref_exists(session, order_ref="UT:PH3:Q-OUT-2")
+
     with pytest.raises(HTTPException) as ei:
         await ship_commit(
             session,

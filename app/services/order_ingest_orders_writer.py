@@ -15,6 +15,7 @@ async def insert_order_or_get_idempotent(
     *,
     platform: str,
     shop_id: str,
+    store_id: int,
     ext_order_no: str,
     occurred_at,
     buyer_name: Optional[str],
@@ -42,6 +43,7 @@ async def insert_order_or_get_idempotent(
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 buyer_name,
@@ -54,7 +56,7 @@ async def insert_order_or_get_idempotent(
                 trace_id
             )
             VALUES (
-                :p, :s, :o,
+                :p, :s, :store_id, :o,
                 'CREATED',
                 :bn, :bp,
                 :oa, :pa,
@@ -69,6 +71,7 @@ async def insert_order_or_get_idempotent(
         bind_orders = {
             "p": platform,
             "s": shop_id,
+            "store_id": int(store_id),
             "o": ext_order_no,
             "bn": buyer_name,
             "bp": buyer_phone,
@@ -84,6 +87,7 @@ async def insert_order_or_get_idempotent(
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 buyer_name,
@@ -95,7 +99,7 @@ async def insert_order_or_get_idempotent(
                 trace_id
             )
             VALUES (
-                :p, :s, :o,
+                :p, :s, :store_id, :o,
                 'CREATED',
                 :bn, :bp,
                 :oa, :pa,
@@ -109,6 +113,7 @@ async def insert_order_or_get_idempotent(
         bind_orders = {
             "p": platform,
             "s": shop_id,
+            "store_id": int(store_id),
             "o": ext_order_no,
             "bn": buyer_name,
             "bp": buyer_phone,

@@ -4,21 +4,31 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
+from tests.services._helpers import ensure_store
+
 pytestmark = pytest.mark.asyncio
 
 
 async def _insert_min_order(session, *, platform: str, shop_id: str, ext_order_no: str) -> int:
+    plat = platform.upper()
+    store_id = await ensure_store(
+        session,
+        platform=plat,
+        shop_id=shop_id,
+        name=f"UT-{plat}-{shop_id}",
+    )
     row = await session.execute(
         text(
             """
-            INSERT INTO orders(platform, shop_id, ext_order_no, status, created_at, updated_at)
-            VALUES (:p, :s, :e, 'CREATED', now(), now())
+            INSERT INTO orders(platform, shop_id, store_id, ext_order_no, status, created_at, updated_at)
+            VALUES (:p, :s, :store_id, :e, 'CREATED', now(), now())
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET updated_at = EXCLUDED.updated_at
+              SET store_id = EXCLUDED.store_id,
+                  updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
-        {"p": platform.upper(), "s": shop_id, "e": ext_order_no},
+        {"p": plat, "s": shop_id, "store_id": int(store_id), "e": ext_order_no},
     )
     return int(row.scalar_one())
 

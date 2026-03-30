@@ -53,12 +53,27 @@ async def _insert_order(
     - orders 只插订单头（不含 warehouse_id）
     - order_fulfillment.actual_warehouse_id 表示路由成功后的仓（NULL 表示失败）
     """
+    store_row = await session.execute(
+        sa.text(
+            """
+            SELECT id
+              FROM stores
+             WHERE platform = :p
+               AND shop_id = :s
+             LIMIT 1
+            """
+        ),
+        {"p": platform, "s": shop_id},
+    )
+    store_id = int(store_row.scalar_one())
+
     row = await session.execute(
         sa.text(
             """
             INSERT INTO orders (
                 platform,
                 shop_id,
+                store_id,
                 ext_order_no,
                 status,
                 buyer_name,
@@ -69,18 +84,19 @@ async def _insert_order(
                 updated_at
             )
             VALUES (
-                :p, :s, :o,
+                :p, :s, :store_id, :o,
                 'CREATED',
                 'buyer', '13800000000',
                 '10', '10',
                 :at, :at
             )
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET updated_at = EXCLUDED.updated_at
+              SET store_id = EXCLUDED.store_id,
+                  updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
-        {"p": platform, "s": shop_id, "o": ext_order_no, "at": created_at},
+        {"p": platform, "s": shop_id, "store_id": int(store_id), "o": ext_order_no, "at": created_at},
     )
     order_id = int(row.scalar_one())
 

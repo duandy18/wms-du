@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional, Sequence
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.services._helpers import ensure_store
+
 
 # ============================================================================
 # ✅ Test constants (legacy exports kept for compatibility)
@@ -53,20 +55,35 @@ async def insert_min_order(
     if not plat or not sid or not ext:
         raise ValueError("insert_min_order: platform/shop_id/ext_order_no must be non-empty")
 
+    store_id = await ensure_store(
+        session,
+        platform=plat,
+        shop_id=sid,
+        name=f"UT-{plat}-{sid}",
+    )
+
     # 1) orders：只插订单头（幂等）
     row = await session.execute(
         text(
             """
-            INSERT INTO orders (platform, shop_id, ext_order_no, status, trace_id, created_at, updated_at)
-            VALUES (:p, :s, :ext, :st, :tid, now(), now())
+            INSERT INTO orders (platform, shop_id, store_id, ext_order_no, status, trace_id, created_at, updated_at)
+            VALUES (:p, :s, :store_id, :ext, :st, :tid, now(), now())
             ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
-              SET status = EXCLUDED.status,
+              SET store_id = EXCLUDED.store_id,
+                  status = EXCLUDED.status,
                   trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
                   updated_at = now()
             RETURNING id
             """
         ),
-        {"p": plat, "s": sid, "ext": ext, "st": str(status), "tid": trace_id},
+        {
+            "p": plat,
+            "s": sid,
+            "store_id": int(store_id),
+            "ext": ext,
+            "st": str(status),
+            "tid": trace_id,
+        },
     )
     order_id = int(row.scalar_one())
 
