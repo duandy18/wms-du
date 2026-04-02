@@ -7,7 +7,7 @@ from typing import Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.snapshot_run import run_snapshot
+from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.services.stock_service import StockService
 
 

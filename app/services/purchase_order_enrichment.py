@@ -19,7 +19,7 @@ async def load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int
 
 async def load_primary_barcodes(session: AsyncSession, item_ids: List[int]) -> Dict[int, str]:
     """
-    主条码规则（与 snapshot_inventory.py 保持一致）：
+    主条码规则（与当前库存展示查询口径保持一致）：
     - 仅 active=true
     - is_primary 优先，否则最小 id（稳定且可解释）
     """

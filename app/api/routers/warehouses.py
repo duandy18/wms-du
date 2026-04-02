@@ -1,14 +1,5 @@
 # app/api/routers/warehouses.py
-from __future__ import annotations
-
-from fastapi import APIRouter
-
-from app.api.routers import warehouses_routes
-from app.api.routers.warehouses_helpers import (
-    check_perm as _check_perm,
-    row_to_warehouse as _row_to_warehouse,
-)
-from app.api.routers.warehouses_schemas import (
+from app.wms.warehouses.routers.warehouses import (
     WarehouseCreateIn,
     WarehouseCreateOut,
     WarehouseDetailOut,
@@ -16,16 +7,10 @@ from app.api.routers.warehouses_schemas import (
     WarehouseOut,
     WarehouseUpdateIn,
     WarehouseUpdateOut,
+    _check_perm,
+    _row_to_warehouse,
+    router,
 )
-
-router = APIRouter(tags=["warehouses"])
-
-
-def _register_all_routes() -> None:
-    warehouses_routes.register(router)
-
-
-_register_all_routes()
 
 __all__ = [
     "router",

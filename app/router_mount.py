@@ -9,7 +9,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # routers imports
     # ---------------------------------------------------------------------------
     from app.api.routers.autoheal_execute import router as autoheal_execute_router
-    from app.api.routers.count import router as count_router
+    from app.wms.reconciliation.routers.count import router as count_router
     from app.api.routers.debug_trace import router as debug_trace_router
     from app.api.routers.dev_seed_ledger import router as dev_seed_ledger_router
     from app.api.routers.dev_stock_adjust import router as dev_stock_adjust_router
@@ -17,14 +17,14 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.api.routers.finance_overview import router as finance_overview_router
     from app.api.routers.flow_replay import router as flow_replay_router
     from app.api.routers.geo_cn import router as geo_router
-    from app.api.routers.inbound_receipts import po_receive_router as po_receive_router
-    from app.api.routers.inbound_receipts import router as inbound_receipts_router
+    from app.wms.procurement.routers.inbound_receipts import po_receive_router as po_receive_router
+    from app.wms.procurement.routers.inbound_receipts import router as inbound_receipts_router
     from app.api.routers.intelligence import router as intelligence_router
-    from app.api.routers.item_barcodes import router as item_barcodes_router
-    from app.api.routers.item_uoms import router as item_uoms_router
-    from app.api.routers.items import router as items_router
-    from app.api.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
-    from app.api.routers.ledger_timeline import router as ledger_timeline_router
+    from app.wms.items.routers.item_barcodes import router as item_barcodes_router
+    from app.wms.items.routers.item_uoms import router as item_uoms_router
+    from app.wms.items.routers.items import router as items_router
+    from app.wms.analysis.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
+    from app.wms.ledger.routers.ledger_timeline import router as ledger_timeline_router
     from app.api.routers.lifecycle import router as lifecycle_router
     from app.api.routers.meta import router as meta_router
     from app.api.routers.metrics import router as metrics_router
@@ -34,29 +34,27 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     )
     from app.api.routers.orders_sla_stats import router as orders_sla_stats_router
     from app.api.routers.orders_stats import router as orders_stats_router
-    from app.api.routers.outbound import router as outbound_router
+    from app.wms.outbound.routers.outbound import router as outbound_router
     from app.api.routers.outbound_ops import router as outbound_ops_router
     from app.api.routers.pdd_auth import router as pdd_auth_router
     from app.api.routers.permissions import router as permissions_router
-    from app.api.routers.pick import router as pick_router
-    from app.api.routers.pick_tasks import router as pick_tasks_router
+    from app.wms.outbound.routers.pick import router as pick_router
+    from app.wms.outbound.routers.pick_tasks import router as pick_tasks_router
     from app.api.routers.print_jobs import router as print_jobs_router
-    from app.api.routers.purchase_orders import router as purchase_orders_router
+    from app.wms.procurement.routers.purchase_orders import router as purchase_orders_router
     from app.api.routers.purchase_reports import router as purchase_reports_router
     from app.api.routers.return_tasks import router as return_tasks_router
     from app.api.routers.roles import router as roles_router
-    from app.api.routers.snapshot import router as snapshot_router
-    from app.api.routers.snapshot_v3 import router as snapshot_v3_router
-    from app.api.routers.stock_batch import router as stock_batch_router
-    from app.api.routers.stock_ledger import router as stock_ledger_router
-    from app.api.routers.stock_lot import router as stock_lot_router
-    from app.api.routers.supplier_contacts import router as supplier_contacts_router
-    from app.api.routers.suppliers import router as suppliers_router
+    from app.wms.stock.routers.inventory_display import router as stock_inventory_display_router
+    from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
+    from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
+    from app.wms.suppliers.routers.supplier_contacts import router as supplier_contacts_router
+    from app.wms.suppliers.routers.suppliers import router as suppliers_router
     from app.api.routers.user import router as user_router
-    from app.api.routers.warehouses import router as warehouses_router
+    from app.wms.warehouses.routers.warehouses import router as warehouses_router
 
     from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
-    from app.api.routers.internal_outbound import router as internal_outbound_router
+    from app.wms.outbound.routers.internal_outbound import router as internal_outbound_router
 
     from app.oms.router import router as oms_router
 
@@ -72,7 +70,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     # scan routes
     # ---------------------------------------------------------------------------
-    from app.api.routers import scan_routes_count_commit, scan_routes_entrypoint
+    from app.api.routers import scan_routes_entrypoint
+    from app.wms.reconciliation.routers import scan_routes_count_commit
 
     scan_router = APIRouter(tags=["scan"])
     scan_routes_entrypoint.register(scan_router)
@@ -96,7 +95,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(scan_router)
     app.include_router(count_router)
     app.include_router(pick_router)
-
 
     app.include_router(orders_router)
     app.include_router(orders_fulfillment_v2_router)
@@ -142,10 +140,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(debug_trace_router)
     app.include_router(metrics_router)
-    app.include_router(snapshot_router)
+    app.include_router(stock_inventory_display_router)
 
-    app.include_router(stock_batch_router)
-    app.include_router(stock_lot_router)
     app.include_router(stock_ledger_router)
 
     app.include_router(orders_stats_router)

@@ -5,14 +5,14 @@ import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.db.session import async_session_maker
-from app.services.snapshot_service import SnapshotService
+from app.wms.snapshot.services.snapshot_run import run_snapshot
 
 _scheduler: AsyncIOScheduler | None = None
 
 
 async def _job_run_yesterday():
     async with async_session_maker() as session:  # type: AsyncSession
-        await SnapshotService.run_yesterday(session, sync_unbatched_from_stocks=True)
+        await run_snapshot(session)
 
 
 def init_scheduler():

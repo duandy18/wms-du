@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.return_task_service_impl import ReturnTaskServiceImpl
-from app.services.snapshot_run import run_snapshot
+from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.services.stock_service import StockService
 from app.services.three_books_consistency import verify_commit_three_books
 
