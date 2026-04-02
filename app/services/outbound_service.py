@@ -1,7 +1,3 @@
-from __future__ import annotations
-
-# Legacy shim
-
 from app.services.outbound_service_impl import (
     OutboundService,
     ShipLine,

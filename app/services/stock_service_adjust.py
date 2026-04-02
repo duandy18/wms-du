@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.ledger_writer import write_ledger as _write_ledger
-from app.services.stock_adjust import adjust_impl, adjust_lot_impl
 
 
 async def write_ledger_infra(**kwargs: Any) -> Any:
@@ -29,7 +28,5 @@ async def write_ledger_infra(**kwargs: Any) -> Any:
 
 
 __all__ = [
-    "adjust_impl",
-    "adjust_lot_impl",
     "write_ledger_infra",
 ]

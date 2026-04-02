@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.lot_service import ensure_internal_lot_singleton as ensure_internal_lot_singleton_svc
 from app.services.lot_service import ensure_lot_full as ensure_lot_full_svc
-from app.services.stock_service_adjust import adjust_lot_impl
+from app.services.stock_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
