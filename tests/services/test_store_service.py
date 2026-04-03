@@ -16,7 +16,7 @@ async def test_store_crud_and_visibility(session, _db_clean_and_seed):
     注意：
     - 使用随机 code / shop_id，避免与基线种子中的店铺唯一键冲突。
     """
-    from app.services.store_service import StoreService
+    from app.oms.services.store_service import StoreService
 
     svc = StoreService()
 

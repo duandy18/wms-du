@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_lifecycle_v2 import OrderLifecycleV2Service
+from app.diagnostics.services.order_lifecycle_v2 import OrderLifecycleV2Service
 from tests.services.order_lifecycle_v2.seeders import seed_missing_shipped_case
 
 pytestmark = pytest.mark.asyncio

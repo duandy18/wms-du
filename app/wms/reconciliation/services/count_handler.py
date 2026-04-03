@@ -1,4 +1,4 @@
-# app/services/scan_handlers/count_handler.py
+# app/wms/reconciliation/services/count_handler.py
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -7,9 +7,9 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.stock_service import StockService
-from app.services.three_books_enforcer import enforce_three_books
-from app.services.utils.expiry_resolver import resolve_batch_dates_for_item
+from app.wms.stock.services.stock_service import StockService
+from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
+from app.wms.shared.services.expiry_resolver import resolve_batch_dates_for_item
 
 
 async def _ensure_supplier_lot_id(
@@ -25,7 +25,7 @@ async def _ensure_supplier_lot_id(
     Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
     - Count 仍要求 batch_code（盘点维度必须落到确定 SUPPLIER lot 槽位）
     """
-    from app.services.stock.lots import ensure_lot_full
+    from app.wms.stock.services.lots import ensure_lot_full
 
     _ = production_date
     _ = expiry_date

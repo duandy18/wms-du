@@ -3,11 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.tms.permissions import check_config_perm
 from app.tms.pricing.templates.repository import list_templates as repo_list_templates
-from app.tms.pricing.templates.schemas.template import TemplateListOut
+from app.tms.pricing.templates.contracts.template import TemplateListOut
 
 _ALLOWED_TEMPLATE_STATUS_FILTERS = {"draft", "archived"}
 

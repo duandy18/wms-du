@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 from tests.services.pick._helpers_pick_blueprint import (
     PLATFORM,
     SHOP_ID,

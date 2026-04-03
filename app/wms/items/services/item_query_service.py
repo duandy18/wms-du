@@ -6,9 +6,9 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
-from app.services.item_repo import get_item_by_id as repo_get_item_by_id
-from app.services.item_repo import get_item_by_sku as repo_get_item_by_sku
-from app.services.item_repo import get_items as repo_get_items
+from app.wms.items.services.item_repo import get_item_by_id as repo_get_item_by_id
+from app.wms.items.services.item_repo import get_item_by_sku as repo_get_item_by_sku
+from app.wms.items.services.item_repo import get_items as repo_get_items
 
 
 class ItemQueryService:

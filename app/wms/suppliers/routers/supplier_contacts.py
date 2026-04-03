@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.supplier import Supplier
 from app.models.supplier_contact import SupplierContact
-from app.services.user_service import AuthorizationError, UserService
+from app.user.services.user_service import AuthorizationError, UserService
 
 router = APIRouter(tags=["supplier-contacts"])
 

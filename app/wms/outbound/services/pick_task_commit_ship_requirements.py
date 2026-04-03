@@ -1,4 +1,4 @@
-# app/services/pick_task_commit_ship_requirements.py
+# app/wms/outbound/services/pick_task_commit_ship_requirements.py
 from __future__ import annotations
 
 from typing import Optional

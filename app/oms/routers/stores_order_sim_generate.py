@@ -1,4 +1,4 @@
-# app/api/routers/stores_routes_order_sim_generate.py
+# app/oms/routers/stores_order_sim_generate.py
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -7,7 +7,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.oms.repos.stores_order_sim import get_cart_lines, get_merchant_lines, load_store_platform_shop_id
 from app.oms.services.stores_order_sim import (
     build_ext_order_no,
@@ -16,14 +17,14 @@ from app.oms.services.stores_order_sim import (
     choose_buyer_from_cart,
 )
 from app.oms.services.stores_bindings_helpers import check_store_perm, ensure_store_exists
-from app.oms.routers.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
+from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
 from app.oms.contracts.stores_order_sim import (
     OrderSimGenerateOrderIn,
     OrderSimGenerateOrderOut,
     OrderSimPreviewOrderIn,
     OrderSimPreviewOrderOut,
 )
-from app.oms.routers.stores_order_sim_testset_guard import assert_order_sim_all_items_in_test_set
+from app.oms.deps.stores_order_sim_testset_guard import assert_order_sim_all_items_in_test_set
 from app.db.deps import get_db
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 

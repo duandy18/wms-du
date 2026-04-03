@@ -1,4 +1,4 @@
-# app/api/routers/platform_orders_manual_decisions_schemas.py
+# app/oms/contracts/platform_orders_manual_decisions.py
 from __future__ import annotations
 
 from datetime import datetime

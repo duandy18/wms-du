@@ -7,10 +7,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.outbound_service_impl import OutboundService
+from app.wms.outbound.services.outbound_commit_service import OutboundService
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.services.stock_service import StockService
-from app.services.three_books_consistency import verify_receive_commit_three_books
+from app.wms.stock.services.stock_service import StockService
+from app.wms.reconciliation.services.three_books_consistency import verify_receive_commit_three_books
 from tests.services._helpers import ensure_store
 
 

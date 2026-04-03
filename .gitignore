@@ -128,3 +128,5 @@ openapi/_items_schemas.json
 
 # local schema dump artifacts
 tools/schema_dump/
+
+_archive__bak_merged/

@@ -8,10 +8,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.wms.warehouses.routers.warehouses_helpers import check_perm, row_to_warehouse
-from app.wms.warehouses.routers.warehouses_schemas import (
+from app.wms.warehouses.helpers.warehouses import check_perm, row_to_warehouse
+from app.wms.warehouses.contracts.warehouses import (
     WarehouseCreateIn,
     WarehouseCreateOut,
     WarehouseUpdateIn,

@@ -1,4 +1,4 @@
-# app/api/routers/platform_orders_confirm_create_schemas.py
+# app/oms/contracts/platform_orders_confirm_create.py
 from __future__ import annotations
 
 from typing import List, Optional

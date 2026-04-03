@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock.lots import ensure_lot_full
-from app.services.stock_adjust import adjust_lot_impl
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
 
 pytestmark = pytest.mark.grp_snapshot  # 分组标记，可按需调整

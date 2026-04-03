@@ -5,7 +5,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
 from app.models.shipping_provider_pricing_template_surcharge_config import (
@@ -19,7 +19,7 @@ from app.tms.pricing.templates.module_resources_shared import (
     ensure_template_draft,
     load_template_or_404,
 )
-from app.tms.pricing.templates.schemas.surcharge import (
+from app.tms.pricing.templates.contracts.surcharge import (
     SurchargeConfigBatchProvinceCreateIn,
     SurchargeConfigBatchProvinceCreateOut,
     SurchargeConfigCreateIn,

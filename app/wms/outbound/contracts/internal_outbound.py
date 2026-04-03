@@ -1,4 +1,4 @@
-# app/schemas/internal_outbound.py
+# app/wms/outbound/contracts/internal_outbound.py
 from __future__ import annotations
 
 from datetime import datetime

@@ -9,7 +9,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.audit_writer import AuditEventWriter
+from app.wms.shared.services.audit_writer import AuditEventWriter
 
 
 async def write_ship_commit_audit(

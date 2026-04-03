@@ -5,7 +5,7 @@ from typing import Set
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import (
+from app.wms.shared.services.lot_code_contract import (
     fetch_item_expiry_policy_map,
     validate_lot_code_contract,
 )

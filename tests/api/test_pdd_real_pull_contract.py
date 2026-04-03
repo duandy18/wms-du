@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.main import app
 from app.oms.platforms.pdd import router_pull as pdd_router_pull
 from app.oms.platforms.pdd.contracts import PddOrderSummary

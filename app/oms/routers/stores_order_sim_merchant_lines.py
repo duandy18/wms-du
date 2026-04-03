@@ -1,15 +1,16 @@
-# app/api/routers/stores_routes_order_sim_merchant_lines.py
+# app/oms/routers/stores_order_sim_merchant_lines.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.oms.repos.stores_order_sim_bindings import build_components_summary_by_filled_code, list_bound_filled_code_options
 from app.oms.repos.stores_order_sim import get_merchant_lines, load_store_platform_shop_id, upsert_merchant_line
 from app.oms.services.stores_bindings_helpers import check_store_perm, ensure_store_exists
-from app.oms.routers.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
+from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
 from app.oms.services.stores_order_sim import norm_row_no
 from app.oms.contracts.stores_order_sim import (
     OrderSimFilledCodeOptionsOut,

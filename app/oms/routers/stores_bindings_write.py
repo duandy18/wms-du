@@ -1,4 +1,4 @@
-# app/api/routers/stores_routes_bindings_write.py
+# app/oms/routers/stores_bindings_write.py
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.oms.services.stores_bindings_helpers import (
     check_store_perm,
     ensure_store_exists,
@@ -22,7 +23,7 @@ from app.oms.contracts.stores import (
     BindingUpdateOut,
 )
 from app.db.deps import get_db
-from app.services.store_service import StoreService
+from app.oms.services.store_service import StoreService
 
 
 def register(router: APIRouter) -> None:

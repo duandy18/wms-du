@@ -3,14 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.shipping_provider import ShippingProvider
 from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
 from app.tms.permissions import check_config_perm
 
 from app.tms.pricing.templates.repository import build_template_stats, serialize_template_out
-from app.tms.pricing.templates.schemas.template import (
+from app.tms.pricing.templates.contracts.template import (
     TemplateCreateIn,
     TemplateDetailOut,
 )

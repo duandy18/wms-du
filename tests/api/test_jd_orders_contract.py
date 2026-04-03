@@ -6,10 +6,10 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.main import app
 from app.models.jd_order import JdOrder, JdOrderItem
-from app.oms.routers import stores as stores_router
+import app.oms.platforms.jd.router_orders as jd_router_orders
 
 
 class _TestUser:
@@ -79,7 +79,7 @@ async def test_get_jd_orders_returns_list_rows(client, session, monkeypatch):
     await session.commit()
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/jd/orders")
@@ -156,7 +156,7 @@ async def test_get_jd_order_detail_returns_header_and_items(client, session, mon
     await session.commit()
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get(f"/oms/jd/orders/{order.id}")
@@ -192,7 +192,7 @@ async def test_get_jd_order_detail_returns_404_when_missing(client, session, mon
     await _clear_jd_orders(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/jd/orders/999999")

@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_event
-from app.services.batch_ageing_service import BatchAgeingService
-from app.services.inventory_anomaly_service import InventoryAnomalyService
-from app.services.inventory_autoheal_service import InventoryAutoHealService
+from app.wms.shared.services.batch_ageing_service import BatchAgeingService
+from app.diagnostics.services.inventory_anomaly_service import InventoryAnomalyService
+from app.diagnostics.services.inventory_autoheal_service import InventoryAutoHealService
 
 
 class InventoryGuard:

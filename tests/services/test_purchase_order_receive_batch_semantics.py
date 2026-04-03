@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from app.services.purchase_order_receive import receive_po_line
+from app.wms.procurement.services.receive_po_line import receive_po_line
 from tests.helpers.po_testkit import create_po_with_line_and_draft_receipt
 
 
@@ -209,7 +209,7 @@ async def test_shelf_life_batch_conflict_raises_409(async_session_maker):
             qty=1,
             uom_id=uom_id,
             occurred_at=datetime.now(tz=timezone.utc),
-            batch_code=code,
+            lot_code=code,
             production_date=date(2026, 1, 1),
             expiry_date=date(2026, 6, 1),
         )
@@ -224,7 +224,7 @@ async def test_shelf_life_batch_conflict_raises_409(async_session_maker):
             qty=1,
             uom_id=uom_id,
             occurred_at=datetime.now(tz=timezone.utc),
-            batch_code=code,
+            lot_code=code,
             production_date=date(2026, 1, 1),
             expiry_date=date(2026, 12, 1),
         )

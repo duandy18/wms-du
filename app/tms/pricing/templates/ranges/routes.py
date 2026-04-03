@@ -6,7 +6,7 @@ from typing import List, Tuple
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
@@ -19,7 +19,7 @@ from app.tms.pricing.templates.module_resources_shared import (
     load_template_or_404,
     validate_ranges_no_overlap,
 )
-from app.tms.pricing.templates.schemas.module_ranges import (
+from app.tms.pricing.templates.contracts.module_ranges import (
     ModuleRangeOut,
     ModuleRangesOut,
     ModuleRangesPutIn,

@@ -4,11 +4,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.api.problem import make_problem
-from app.api.schemas.fsku import FskuComponentsReplaceIn, FskuDetailOut
+from app.user.deps.auth import get_current_user
+from app.core.problem import make_problem
+from app.oms.fsku.contracts.fsku import FskuComponentsReplaceIn, FskuDetailOut
 from app.db.deps import get_db
-from app.services.fsku_service import FskuService
+from app.oms.fsku.services.fsku_service import FskuService
 
 from .shop_product_bundles_fskus_routes_base import _check_write_perm, _svc
 

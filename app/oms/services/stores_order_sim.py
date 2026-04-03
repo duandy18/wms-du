@@ -1,4 +1,4 @@
-# app/api/routers/stores_order_sim_service.py
+# app/oms/services/stores_order_sim.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
-from app.oms.routers.platform_orders_ingest_routes import normalize_filled_code
+from app.oms.services.platform_orders_line_normalizer import normalize_filled_code
 from app.oms.services.order_ingest_normalize import normalize_province_name
 
 
@@ -107,7 +107,6 @@ def choose_address_from_cart(selected: List[Dict[str, Any]]) -> Dict[str, str] |
 
     prov_norm = normalize_province_name(province_raw)
 
-    # 最小强约束：姓名/省/市/详细地址/电话 必填（逼真订单 + 订单路由/解释依赖）
     if not receiver_name:
         raise HTTPException(status_code=422, detail="请在购物车填写 receiver_name（收货人）")
     if not prov_norm:

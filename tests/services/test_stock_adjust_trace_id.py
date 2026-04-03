@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 UTC = timezone.utc

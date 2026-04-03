@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.services._helpers import ensure_store
 from tests.utils.ensure_minimal import ensure_item
 
-from app.services.stock.lots import ensure_lot_full
+from app.wms.stock.services.lots import ensure_lot_full
 
 pytestmark = pytest.mark.asyncio
 

@@ -1,9 +1,9 @@
-# app/services/pick_task_commit_ship_problems.py
+# app/wms/outbound/services/pick_task_commit_ship_problems.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 
 
 def raise_idempotency_conflict(

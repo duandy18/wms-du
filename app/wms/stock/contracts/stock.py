@@ -1,4 +1,4 @@
-# app/wms/inventory/contracts/stock.py
+# app/wms/stock/contracts/stock.py
 from __future__ import annotations
 
 from datetime import date

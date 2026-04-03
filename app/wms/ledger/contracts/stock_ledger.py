@@ -1,4 +1,4 @@
-# app/wms/inventory/contracts/stock_ledger.py
+# app/wms/ledger/contracts/stock_ledger.py
 from __future__ import annotations
 
 from datetime import datetime

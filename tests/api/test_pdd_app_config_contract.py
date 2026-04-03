@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.main import app
-from app.oms.routers import stores as stores_router
+import app.oms.platforms.pdd.router_app_config as pdd_router_app_config
 
 
 class _TestUser:
@@ -27,7 +27,7 @@ async def test_get_current_pdd_app_config_returns_empty_shell_when_missing(clien
     await _clear_pdd_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(pdd_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/pdd/app-config/current")
@@ -56,7 +56,7 @@ async def test_put_current_pdd_app_config_create_then_get_masked(client, session
     await _clear_pdd_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(pdd_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         payload = {
@@ -110,7 +110,7 @@ async def test_put_current_pdd_app_config_blank_secret_keeps_existing_secret(cli
     await _clear_pdd_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(pdd_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         create_payload = {
@@ -151,7 +151,7 @@ async def test_put_current_pdd_app_config_requires_secret_on_first_create(client
     await _clear_pdd_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(pdd_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         payload = {

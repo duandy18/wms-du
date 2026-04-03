@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.tms.quote import Dest
 from app.tms.quote.contracts import QuoteRecommendIn, QuoteRecommendOut

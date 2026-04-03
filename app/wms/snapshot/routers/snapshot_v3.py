@@ -1,4 +1,4 @@
-# app/api/routers/snapshot_v3.py
+# app/wms/snapshot/routers/snapshot_v3.py
 from __future__ import annotations
 
 from datetime import datetime

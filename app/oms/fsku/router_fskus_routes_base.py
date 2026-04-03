@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.oms.services.stores_helpers import check_perm
-from app.services.fsku_service import FskuService
+from app.oms.fsku.services.fsku_service import FskuService
 
 
 def _svc(db: Session = Depends(get_db)) -> FskuService:

@@ -1,18 +1,18 @@
-# app/api/routers/scan_routes_count_commit.py
+# app/wms/reconciliation/routers/scan_routes_count_commit.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import (
+from app.wms.shared.services.lot_code_contract import (
     fetch_item_expiry_policy_map,
     validate_lot_code_contract,
 )
-from app.api.deps import get_session
+from app.db.deps import get_async_session as get_session
 from app.models.enums import MovementType
-from app.api.routers.scan_schemas import ScanCountCommitRequest, ScanResponse
-from app.services.stock_service import StockService
+from app.wms.reconciliation.contracts.scan import ScanCountCommitRequest, ScanResponse
+from app.wms.stock.services.stock_service import StockService
 
 
 def _requires_batch_from_expiry_policy(v: object) -> bool:

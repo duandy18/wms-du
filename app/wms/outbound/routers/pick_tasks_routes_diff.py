@@ -1,14 +1,14 @@
-# app/api/routers/pick_tasks_routes_diff.py
+# app/wms/outbound/routers/pick_tasks_routes_diff.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from fastapi import status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 from app.db.session import get_session
 from app.wms.outbound.services.pick_task_service import PickTaskService
-from app.wms.outbound.contracts.pick_tasks_schemas import PickTaskDiffLineOut, PickTaskDiffSummaryOut
+from app.wms.outbound.contracts.pick_tasks import PickTaskDiffLineOut, PickTaskDiffSummaryOut
 
 
 def register_diff(router: APIRouter) -> None:

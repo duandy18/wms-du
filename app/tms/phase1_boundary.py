@@ -283,7 +283,7 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         note="Shipment /orders/.../ship-with-waybill 路由实现。",
     ),
     FileOwnershipRule(
-        path_prefix="app/tms/shipment/api_schemas.py",
+        path_prefix="app/tms/shipment/api_contracts.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.TRANSPORT_SHIPMENT,
         note="Shipment API 合同定义（含 ShipWithWaybill 请求/响应）。",

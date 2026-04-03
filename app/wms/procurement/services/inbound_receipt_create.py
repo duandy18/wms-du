@@ -1,15 +1,15 @@
 # app/wms/procurement/services/inbound_receipt_create.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.inbound_receipt import InboundReceipt
-from app.services.purchase_order_queries import get_po_with_lines
-from app.services.purchase_order_receive import get_or_create_po_draft_receipt_explicit
-from app.services.purchase_order_time import UTC
+from app.wms.procurement.repos.purchase_order_queries_repo import get_po_with_lines
+from app.wms.procurement.repos.receipt_draft_repo import get_or_create_po_draft_receipt_explicit
+UTC = timezone.utc
 
 
 async def create_po_draft_receipt(

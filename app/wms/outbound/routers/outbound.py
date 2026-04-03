@@ -1,4 +1,4 @@
-# app/api/routers/outbound.py
+# app/wms/outbound/routers/outbound.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, constr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
-from app.api.deps import get_session
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
+from app.db.deps import get_async_session as get_session
 from app.core.audit import new_trace
-from app.services.outbound_service import OutboundService
+from app.wms.outbound.services.outbound_commit_service import OutboundService
 
 router = APIRouter(prefix="/outbound", tags=["outbound"])
 

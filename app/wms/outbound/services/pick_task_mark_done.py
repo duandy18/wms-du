@@ -1,4 +1,4 @@
-# app/services/pick_task_mark_done.py
+# app/wms/outbound/services/pick_task_mark_done.py
 from __future__ import annotations
 
 from datetime import datetime, timezone

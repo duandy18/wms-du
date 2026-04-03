@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
+from app.db.deps import get_async_session as get_session
 
 from .bindings.routes import router as bindings_router
 from .summary.contracts import PricingListResponse

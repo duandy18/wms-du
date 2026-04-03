@@ -4,13 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
+from app.db.deps import get_async_session as get_session
 from app.tms.shipment import (
     ShipmentApplicationError,
     ShipWithWaybillCommand,
     TransportShipmentService,
 )
-from app.tms.shipment.api_schemas import (
+from app.tms.shipment.api_contracts import (
     ShipWithWaybillRequest,
     ShipWithWaybillResponse,
 )

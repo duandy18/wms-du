@@ -5,8 +5,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.stock.lots import ensure_internal_lot_singleton
-from app.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_internal_lot_singleton
+from app.wms.stock.services.stock_service import StockService
 
 UTC = timezone.utc
 

@@ -20,7 +20,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
 from app.tms.permissions import check_config_perm
 from app.tms.pricing.bindings.contracts import (
@@ -30,7 +31,7 @@ from app.tms.pricing.bindings.helpers import LIST_SQL, row_to_out
 from app.tms.pricing.templates.repository import (
     list_bindable_templates,
 )
-from app.tms.pricing.templates.schemas.template import TemplateListOut
+from app.tms.pricing.templates.contracts.template import TemplateListOut
 
 router = APIRouter()
 

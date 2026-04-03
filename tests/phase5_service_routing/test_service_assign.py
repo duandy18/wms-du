@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from app.services.order_service import OrderService
+from app.oms.services.order_service import OrderService
 
 pytestmark = pytest.mark.asyncio
 

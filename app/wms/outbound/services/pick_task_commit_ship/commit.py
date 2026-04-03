@@ -1,4 +1,4 @@
-# app/services/pick_task_commit_ship/commit.py
+# app/wms/outbound/services/pick_task_commit_ship/commit.py
 from __future__ import annotations
 
 from datetime import datetime

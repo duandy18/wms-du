@@ -1,4 +1,4 @@
-# app/services/pick_task_types.py
+# app/wms/outbound/services/pick_task_types.py
 from __future__ import annotations
 
 from dataclasses import dataclass

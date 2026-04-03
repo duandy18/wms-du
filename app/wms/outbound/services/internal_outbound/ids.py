@@ -1,4 +1,4 @@
-# app/services/internal_outbound_ids.py
+# app/wms/outbound/services/internal_outbound/ids.py
 from __future__ import annotations
 
 from datetime import datetime, timezone

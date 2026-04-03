@@ -1,4 +1,4 @@
-# app/services/platform_order_resolve_store.py
+# app/oms/services/platform_order_resolve_store.py
 from __future__ import annotations
 
 from typing import Optional
@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.oms.services.platform_order_resolve_utils import norm_platform, norm_shop_id
-from app.services.store_service import StoreService
+from app.oms.services.store_service import StoreService
 
 
 async def resolve_store_id(

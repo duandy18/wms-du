@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock_availability_service import StockAvailabilityService
+from app.wms.stock.services.stock_availability_service import StockAvailabilityService
 
 
 @dataclass(frozen=True)

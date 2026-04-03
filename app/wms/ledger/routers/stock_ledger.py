@@ -1,4 +1,4 @@
-# app/wms/inventory/routers/stock_ledger.py
+# app/wms/ledger/routers/stock_ledger.py
 from __future__ import annotations
 
 import logging

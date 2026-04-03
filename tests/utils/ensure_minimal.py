@@ -7,9 +7,9 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.lot_service import ensure_internal_lot_singleton as ensure_internal_lot_singleton_svc
-from app.services.lot_service import ensure_lot_full as ensure_lot_full_svc
-from app.services.stock_adjust import adjust_lot_impl
+from app.wms.stock.services.lot_service import ensure_internal_lot_singleton as ensure_internal_lot_singleton_svc
+from app.wms.stock.services.lot_service import ensure_lot_full as ensure_lot_full_svc
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 UTC = timezone.utc
 

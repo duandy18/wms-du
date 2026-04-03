@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.oms.routers import stores as stores_router
+from app.oms.services.stores_helpers import check_perm
 
 from .repository import (
     get_connection_by_store_platform,
@@ -36,7 +37,7 @@ async def get_store_taobao_connection(
     说明：
     - 第一版先直接读新两张表
     """
-    stores_router._check_perm(db, current_user, ["config.store.read"])
+    check_perm(db, current_user, ["config.store.read"])
 
     platform = "taobao"
 

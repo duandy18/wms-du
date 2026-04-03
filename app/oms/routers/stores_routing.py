@@ -1,4 +1,4 @@
-# app/api/routers/stores_routes_routing.py
+# app/oms/routers/stores_routing.py
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -9,7 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.oms.services.stores_bindings_helpers import (
     check_store_perm,
     ensure_store_exists,

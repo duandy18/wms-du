@@ -1,4 +1,4 @@
-# app/wms/inventory/services/stock_service.py
+# app/wms/stock/services/stock_service.py
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -7,9 +7,9 @@ from typing import Any, Dict, Optional, Union
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.stock_adjust import adjust_lot_impl
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from app.wms.stock.services.stock_ship_service import ship_commit_direct_lot_impl
 from app.wms.stock.services.lot_resolver import LotResolver
 from app.wms.stock.services.stock_contract_resolver import resolve_lot_for_stock_adjust

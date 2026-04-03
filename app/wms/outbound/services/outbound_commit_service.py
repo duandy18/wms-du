@@ -1,4 +1,4 @@
-# app/services/outbound_commit_service.py
+# app/wms/outbound/services/outbound_commit_service.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -9,18 +9,18 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map
-from app.api.problem import raise_problem
-from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
-from app.services.order_fulfillment_service import OrderFulfillmentService
-from app.services.order_ref_helper import parse_order_ref
-from app.services.outbound_commit_models import (
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map
+from app.core.problem import raise_problem
+from app.wms.outbound.services.invariant_guard_outbound import enforce_outbound_invariant_guard
+from app.wms.outbound.services.order_fulfillment_service import OrderFulfillmentService
+from app.oms.services.order_ref_helper import parse_order_ref
+from app.wms.outbound.contracts.outbound_commit_models import (
     ShipLine,
     coerce_line,
     norm_batch_code,
     problem_error_code_from_http_exc_detail,
 )
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 
 UTC = timezone.utc
 

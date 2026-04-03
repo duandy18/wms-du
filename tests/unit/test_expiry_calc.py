@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.services.utils.expiry import ExpiryError, calc_expire_at
+from app.wms.shared.services.expiry import ExpiryError, calc_expire_at
 
 
 def test_calc_expire_at_basic():

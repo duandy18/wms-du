@@ -1,4 +1,4 @@
-# app/wms/inventory/services/stock_contract_resolver.py
+# app/wms/stock/services/stock_contract_resolver.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import validate_lot_code_contract
+from app.wms.shared.services.lot_code_contract import validate_lot_code_contract
 from app.wms.stock.services.lot_resolver import LotResolver
 
 

@@ -2,161 +2,25 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import List
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.api.problem import raise_problem
-from app.models.enums import MovementType
-from app.models.inbound_receipt import InboundReceipt
-from app.models.item import Item
-from app.schemas.inbound_receipt import InboundReceiptOut
-from app.schemas.inbound_receipt_confirm import (
+from app.core.problem import raise_problem
+from app.wms.procurement.contracts.inbound_receipt import InboundReceiptOut
+from app.wms.procurement.contracts.inbound_receipt_confirm import (
     InboundReceiptConfirmLedgerRef,
     InboundReceiptConfirmOut,
 )
-from app.services.domain.lot_service import resolve_or_create_lot
-from app.services.inbound_receipt_explain import explain_receipt
-from app.services.stock_service import StockService
+from app.wms.procurement.repos.inbound_receipt_confirm_repo import (
+    load_items_by_ids,
+    load_receipt_for_update,
+)
+from app.wms.procurement.services.inbound_receipt_explain import explain_receipt
+from app.wms.procurement.services.inbound_atomic_adapter import apply_receipt_line_via_atomic_inbound
 
 UTC = timezone.utc
 _PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
-
-
-def _normalize_lot_code(v: Optional[str]) -> Optional[str]:
-    if v is None:
-        return None
-    s = str(v).strip()
-    return s or None
-
-
-def _is_pseudo_lot_code(lot_code: Optional[str]) -> bool:
-    c = _normalize_lot_code(lot_code)
-    if c is None:
-        return False
-    return c.upper() in _PSEUDO_LOT_CODE_TOKENS
-
-
-async def _load_receipt_for_update(session: AsyncSession, receipt_id: int) -> InboundReceipt:
-    stmt = (
-        select(InboundReceipt)
-        .options(selectinload(InboundReceipt.lines))
-        .where(InboundReceipt.id == int(receipt_id))
-        .with_for_update()
-    )
-    obj = (await session.execute(stmt)).scalars().first()
-    if obj is None:
-        raise ValueError("InboundReceipt not found")
-    if obj.lines:
-        obj.lines.sort(key=lambda x: (int(getattr(x, "line_no", 0) or 0), int(getattr(x, "id", 0) or 0)))
-    return obj
-
-
-async def _load_items_by_ids(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
-    if not item_ids:
-        return {}
-    stmt = select(Item).where(Item.id.in_([int(x) for x in item_ids]))
-    rows = (await session.execute(stmt)).scalars().all()
-    return {int(x.id): x for x in rows}
-
-
-def _infer_lot_code_source_from_item(item: Item) -> str:
-    """
-    Resolve lot_code_source in ('SUPPLIER','INTERNAL') from item.lot_source_policy.
-
-    We intentionally keep mapping conservative:
-    - if policy == 'SUPPLIER' => SUPPLIER
-    - else => INTERNAL
-    """
-    v = getattr(item, "lot_source_policy", None)
-    s = str(v or "").strip().upper()
-    if s == "SUPPLIER":
-        return "SUPPLIER"
-    if s == "INTERNAL":
-        return "INTERNAL"
-    return "INTERNAL"
-
-
-def _raise_adjust_lot_value_error(
-    *,
-    msg: str,
-    item_id: int,
-    warehouse_id: int,
-    lot_id: int,
-    ref: str,
-    ref_line: int,
-) -> None:
-    """
-    confirm_receipt 是 API 链路：adjust_lot 抛 ValueError 不能裸奔成 500。
-    这里做最小翻译到 Problem 形态。
-    """
-    m = (msg or "").strip()
-    ml = m.lower()
-
-    if "insufficient stock" in ml:
-        raise_problem(
-            status_code=409,
-            error_code="insufficient_stock",
-            message="库存不足，入库确认失败。",
-            context={
-                "ref": str(ref),
-                "ref_line": str(ref_line),
-                "warehouse_id": int(warehouse_id),
-                "item_id": int(item_id),
-                "lot_id": int(lot_id),
-                "raw_error": m,
-            },
-            details=[{"type": "validation", "path": "stock_adjust", "reason": m}],
-        )
-
-    if "lot_mismatch" in ml:
-        raise_problem(
-            status_code=409,
-            error_code="lot_mismatch",
-            message="lot 与 warehouse/item 不匹配，入库确认失败。",
-            context={
-                "ref": str(ref),
-                "ref_line": str(ref_line),
-                "warehouse_id": int(warehouse_id),
-                "item_id": int(item_id),
-                "lot_id": int(lot_id),
-                "raw_error": m,
-            },
-            details=[{"type": "lot", "path": "stock_adjust", "reason": "lot_mismatch"}],
-        )
-
-    if "lot_not_found" in ml:
-        raise_problem(
-            status_code=404,
-            error_code="lot_not_found",
-            message="lot 不存在，入库确认失败。",
-            context={
-                "ref": str(ref),
-                "ref_line": str(ref_line),
-                "warehouse_id": int(warehouse_id),
-                "item_id": int(item_id),
-                "lot_id": int(lot_id),
-                "raw_error": m,
-            },
-            details=[{"type": "lot", "path": "stock_adjust", "reason": "lot_not_found"}],
-        )
-
-    raise_problem(
-        status_code=422,
-        error_code="receipt_confirm_reject",
-        message="收货确认写库存失败。",
-        context={
-            "ref": str(ref),
-            "ref_line": str(ref_line),
-            "warehouse_id": int(warehouse_id),
-            "item_id": int(item_id),
-            "lot_id": int(lot_id),
-            "raw_error": m,
-        },
-        details=[{"type": "validation", "path": "stock_adjust", "reason": m}],
-    )
 
 
 async def confirm_receipt(
@@ -167,7 +31,7 @@ async def confirm_receipt(
 ) -> InboundReceiptConfirmOut:
     _ = user_id
 
-    receipt = await _load_receipt_for_update(session, receipt_id)
+    receipt = await load_receipt_for_update(session, receipt_id=receipt_id)
     status = str(getattr(receipt, "status", "") or "").upper()
 
     if status == "CONFIRMED":
@@ -198,9 +62,8 @@ async def confirm_receipt(
     warehouse_id = int(getattr(receipt, "warehouse_id"))
 
     item_ids = [int(getattr(rl, "item_id")) for rl in (receipt.lines or [])]
-    item_map = await _load_items_by_ids(session, item_ids=item_ids)
+    item_map = await load_items_by_ids(session, item_ids=item_ids)
 
-    stock_svc = StockService()
     ledger_refs: List[InboundReceiptConfirmLedgerRef] = []
 
     for idx, rl in enumerate(receipt.lines or [], start=1):
@@ -215,64 +78,23 @@ async def confirm_receipt(
                 message=f"商品不存在：item_id={item_id}",
             )
 
-        lot_id = getattr(rl, "lot_id", None)
+        res = await apply_receipt_line_via_atomic_inbound(
+            session,
+            warehouse_id=warehouse_id,
+            receipt_ref=ref,
+            ref_line=idx,
+            occurred_at=occurred_at,
+            item_id=item_id,
+            qty_base=qty_delta,
+            lot_code=getattr(rl, "lot_code_input", None),
+        )
 
-        if lot_id is None:
-            lot_code_source = _infer_lot_code_source_from_item(item)
-
-            lot_code: Optional[str] = None
-            source_receipt_id: Optional[int] = None
-            source_line_no: Optional[int] = None
-
-            if lot_code_source == "SUPPLIER":
-                lot_code = _normalize_lot_code(getattr(rl, "batch_code", None))
-            else:
-                source_receipt_id = int(getattr(receipt, "id"))
-                source_line_no = int(getattr(rl, "line_no"))
-
-            new_lot_id = await resolve_or_create_lot(
-                db=session,
-                warehouse_id=warehouse_id,
-                item=item,
-                lot_code_source=lot_code_source,  # type: ignore[arg-type]
-                lot_code=lot_code,
-                source_receipt_id=source_receipt_id,
-                source_line_no=source_line_no,
-            )
-            rl.lot_id = int(new_lot_id)
-            lot_id = int(new_lot_id)
+        row = res.get("row")
+        if row is not None and getattr(row, "lot_id", None) is not None:
+            rl.lot_id = int(row.lot_id)
 
         if getattr(rl, "receipt_status_snapshot", None) != "CONFIRMED":
             rl.receipt_status_snapshot = "CONFIRMED"
-
-        try:
-            res = await stock_svc.adjust_lot(
-                session=session,
-                item_id=item_id,
-                warehouse_id=warehouse_id,
-                lot_id=int(lot_id),
-                delta=qty_delta,
-                reason=MovementType.INBOUND,
-                ref=ref,
-                ref_line=idx,
-                occurred_at=occurred_at,
-                batch_code=getattr(rl, "batch_code", None),
-                meta={"sub_reason": "RECEIPT_CONFIRM"},
-                production_date=None,
-                expiry_date=None,
-                trace_id=None,
-                shadow_write_stocks=False,
-            )
-        except ValueError as e:
-            _raise_adjust_lot_value_error(
-                msg=str(e),
-                item_id=item_id,
-                warehouse_id=warehouse_id,
-                lot_id=int(lot_id),
-                ref=str(ref),
-                ref_line=int(idx),
-            )
-            raise
 
         ledger_refs.append(
             InboundReceiptConfirmLedgerRef(
@@ -281,8 +103,8 @@ async def confirm_receipt(
                 ref_line=idx,
                 item_id=item_id,
                 qty_delta=qty_delta,
-                idempotent=bool(res.get("idempotent")) if isinstance(res, dict) else None,
-                applied=bool(res.get("applied")) if isinstance(res, dict) else None,
+                idempotent=None,
+                applied=True,
             )
         )
 

@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_service import OrderService
+from app.oms.services.order_service import OrderService
 
 
 async def get_order_ref_and_trace_id(

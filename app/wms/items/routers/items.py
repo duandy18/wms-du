@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.schemas.item import ItemCreate, ItemOut, ItemUpdate, NextSkuOut
-from app.services.item_service import ItemService
+from app.wms.items.contracts.item import ItemCreate, ItemOut, ItemUpdate, NextSkuOut
+from app.wms.items.services.item_service import ItemService
 
 router = APIRouter(prefix="/items", tags=["items"])
 

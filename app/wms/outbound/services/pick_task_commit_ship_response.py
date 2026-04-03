@@ -1,4 +1,4 @@
-# app/services/pick_task_commit_ship_response.py
+# app/wms/outbound/services/pick_task_commit_ship_response.py
 from __future__ import annotations
 
 from dataclasses import asdict

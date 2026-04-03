@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.expiry_analytics_allocator import ExpiryAnalyticsAllocator
-from app.services.stock_service import StockService
+from app.wms.shared.services.expiry_analytics_allocator import ExpiryAnalyticsAllocator
+from app.wms.stock.services.stock_service import StockService
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc

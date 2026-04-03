@@ -1,4 +1,4 @@
-# app/services/internal_outbound_lines.py
+# app/wms/outbound/services/internal_outbound/lines.py
 from __future__ import annotations
 
 from typing import Optional

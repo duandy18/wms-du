@@ -1,13 +1,13 @@
-# app/api/routers/platform_orders_ingest_routes.py
+# app/oms/routers/platform_orders_ingest_routes.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
-from app.api.problem import make_problem
+from app.db.deps import get_async_session as get_session
+from app.core.problem import make_problem
 from app.core.audit import new_trace
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.oms.services.platform_order_resolve_service import (
@@ -15,11 +15,11 @@ from app.oms.services.platform_order_resolve_service import (
     norm_shop_id,
     resolve_store_id,
 )
-
 from app.oms.services.platform_orders_ingest_helpers import (
     build_address,
     load_shop_id_by_store_id,
 )
+from app.oms.services.platform_orders_line_normalizer import normalize_filled_code
 from app.oms.contracts.platform_orders_ingest import (
     PlatformOrderIngestIn,
     PlatformOrderIngestOut,
@@ -40,32 +40,6 @@ def _safe_preview(val: Any, max_len: int = 400) -> Optional[Any]:
         return [_safe_preview(v, max_len=120) for v in val[:20]]
     s = str(val)
     return s if len(s) <= max_len else s[: max_len - 3] + "..."
-
-
-def normalize_filled_code(line: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Phase N+2 · 输入归一层（无兼容兜底）
-
-    规则：
-    1) 只允许 filled_code（strip 后写回）
-    2) platform_sku_id 不再作为别名存在：出现即报错（由上游捕获并返回 422）
-    3) 若 filled_code 缺失：保持缺失，由 resolver 统一给出 MISSING_FILLED_CODE
-    """
-    out = dict(line)
-
-    # legacy 字段名在 Phase N+2 中直接禁止
-    legacy = out.get("platform_sku_id")
-    if legacy is not None and str(legacy).strip():
-        raise ValueError("platform_sku_id 已废弃：请使用 filled_code")
-
-    fc = out.get("filled_code")
-    if isinstance(fc, str) and fc.strip():
-        out["filled_code"] = fc.strip()
-        return out
-
-    # 都没有：保持 filled_code 缺失，由 resolver 统一处理
-    out.pop("filled_code", None)
-    return out
 
 
 @router.post(
@@ -149,7 +123,6 @@ async def ingest_platform_order(
             ),
         )
 
-    # ---------- Phase N+2：行级输入仅认 filled_code ----------
     raw_lines = []
     for ln in payload.lines or []:
         ln_dict = ln.model_dump()

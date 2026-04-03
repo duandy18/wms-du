@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import text
 
-from app.services.store_service import StoreService
+from app.oms.services.store_service import StoreService
 
 pytestmark = pytest.mark.asyncio
 

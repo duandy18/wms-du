@@ -1,4 +1,4 @@
-# app/wms/inventory/routers/stock_ledger_routes_summary.py
+# app/wms/ledger/routers/stock_ledger_routes_summary.py
 from __future__ import annotations
 
 from typing import List
@@ -8,14 +8,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import normalize_optional_lot_code
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.models.item import Item
 from app.models.item_test_set import ItemTestSet
 from app.models.item_test_set_item import ItemTestSetItem
 from app.models.stock_ledger import StockLedger
 from app.wms.ledger.contracts.stock_ledger import LedgerQuery, LedgerReasonStat, LedgerSummary
-from app.wms.ledger.routers.stock_ledger_helpers import build_common_filters, normalize_time_range
+from app.wms.ledger.helpers.stock_ledger import build_common_filters, normalize_time_range
 
 
 def register(router: APIRouter) -> None:

@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock.lots import ensure_internal_lot_singleton
-from app.services.stock_adjust import adjust_lot_impl
+from app.wms.stock.services.lots import ensure_internal_lot_singleton
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 pytestmark = pytest.mark.asyncio
 

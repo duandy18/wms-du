@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.main import app
 from app.oms.platforms.pdd import router_auth as pdd_router_auth
 from app.oms.platforms.pdd.repository import (
@@ -11,7 +11,7 @@ from app.oms.platforms.pdd.repository import (
     upsert_current_pdd_app_config,
 )
 from app.oms.platforms.pdd.service_auth import PddAuthCallbackResult, PddAuthServiceError
-from app.oms.routers import stores as stores_router
+from app.oms.services import stores_helpers
 
 
 class _TestUser:
@@ -51,7 +51,7 @@ async def test_pdd_oauth_start_returns_authorize_url(client, session, monkeypatc
     await _seed_pdd_app_config(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(stores_helpers, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/pdd/oauth/start", params={"store_id": 101})
@@ -77,7 +77,7 @@ async def test_pdd_oauth_start_requires_enabled_app_config(client, session, monk
     await _clear_pdd_state(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(stores_router, "_check_perm", lambda db, current_user, required: None)
+    monkeypatch.setattr(stores_helpers, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/pdd/oauth/start", params={"store_id": 101})

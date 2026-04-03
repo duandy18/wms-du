@@ -59,7 +59,7 @@ WMS_TEST_DATABASE_URL = os.getenv("WMS_TEST_DATABASE_URL")
 WMS_DATABASE_URL = os.getenv("WMS_DATABASE_URL")
 
 from app.main import app  # noqa: E402
-from app.api.deps import get_session as app_get_session  # noqa: E402
+from app.db.deps import get_async_session as app_get_session  # noqa: E402
 from scripts.seed_test_baseline import seed_in_conn  # noqa: E402
 
 

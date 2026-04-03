@@ -1,4 +1,4 @@
-# app/api/routers/platform_shops_schemas.py
+# app/oms/contracts/platform_shops.py
 from __future__ import annotations
 
 from datetime import datetime
