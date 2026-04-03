@@ -1,4 +1,4 @@
-# app/services/internal_outbound_ops.py
+# app/wms/outbound/services/internal_outbound/ops.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,12 +6,12 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 from app.models.internal_outbound import InternalOutboundDoc
-from app.services.audit_writer import AuditEventWriter
+from app.wms.shared.services.audit_writer import AuditEventWriter
 from app.wms.outbound.services.internal_outbound.ids import UTC, gen_doc_no, gen_trace_id
 from app.wms.outbound.services.internal_outbound.query import get_with_lines
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 
 
 async def create_doc(

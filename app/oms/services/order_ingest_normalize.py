@@ -1,4 +1,4 @@
-# app/services/order_ingest_routing/normalize.py
+# app/oms/services/order_ingest_normalize.py
 from __future__ import annotations
 
 from typing import Mapping, Optional

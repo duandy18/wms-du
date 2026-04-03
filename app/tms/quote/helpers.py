@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.services.user_service import AuthorizationError, UserService
+from app.user.services.user_service import AuthorizationError, UserService
 
 
 def check_perm(db: Session, user, perm: str) -> None:

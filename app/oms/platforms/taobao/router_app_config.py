@@ -7,9 +7,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.oms.routers import stores as stores_router
+from app.oms.services.stores_helpers import check_perm
 
 from .repository import (
     TaobaoAppConfigUpsertInput,
@@ -42,7 +43,7 @@ async def get_current_taobao_app_config(
     """
     读取当前启用中的淘宝系统配置。
     """
-    stores_router._check_perm(db, current_user, ["config.store.read"])
+    check_perm(db, current_user, ["config.store.read"])
 
     try:
         row = await get_enabled_taobao_app_config(session)
@@ -103,7 +104,7 @@ async def put_current_taobao_app_config(
     - 若当前已有启用配置，则原地更新
     - 若 app_secret 为空字符串，则沿用原 secret（已有记录时）
     """
-    stores_router._check_perm(db, current_user, ["config.store.read"])
+    check_perm(db, current_user, ["config.store.read"])
 
     app_key = str(payload.get("app_key") or "").strip()
     app_secret_raw = payload.get("app_secret")

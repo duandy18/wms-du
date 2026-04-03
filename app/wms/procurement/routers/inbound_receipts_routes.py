@@ -8,14 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.schemas.inbound_receipt import InboundReceiptOut
-from app.schemas.inbound_receipt_confirm import InboundReceiptConfirmOut
-from app.schemas.inbound_receipt_create import InboundReceiptCreateIn
-from app.schemas.inbound_receipt_explain import InboundReceiptExplainOut
-from app.services.inbound_receipt_confirm import confirm_receipt
-from app.services.inbound_receipt_create import create_po_draft_receipt
-from app.services.inbound_receipt_explain import explain_receipt
-from app.services.inbound_receipt_query import get_receipt, list_receipts
+from app.wms.procurement.contracts.inbound_receipt import InboundReceiptOut
+from app.wms.procurement.contracts.inbound_receipt_confirm import InboundReceiptConfirmOut
+from app.wms.procurement.contracts.inbound_receipt_create import InboundReceiptCreateIn
+from app.wms.procurement.contracts.inbound_receipt_explain import InboundReceiptExplainOut
+from app.wms.procurement.services.inbound_receipt_confirm import confirm_receipt
+from app.wms.procurement.services.inbound_receipt_create import create_po_draft_receipt
+from app.wms.procurement.services.inbound_receipt_explain import explain_receipt
+from app.wms.procurement.services.inbound_receipt_query import get_receipt, list_receipts
 
 router = APIRouter(prefix="/inbound-receipts", tags=["inbound-receipts"])
 

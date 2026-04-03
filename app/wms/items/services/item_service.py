@@ -6,9 +6,9 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
-from app.services.item_maintenance_service import ItemMaintenanceService
-from app.services.item_presenter import ItemPresenter
-from app.services.item_test_set_service import ItemTestSetService
+from app.wms.items.services.item_maintenance_service import ItemMaintenanceService
+from app.wms.items.services.item_presenter import ItemPresenter
+from app.wms.items.services.item_test_set_service import ItemTestSetService
 from app.wms.items.services.item_query_service import ItemQueryService
 from app.wms.items.services.item_write_service import ItemWriteService
 

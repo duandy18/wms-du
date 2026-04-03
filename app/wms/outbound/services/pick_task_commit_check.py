@@ -1,11 +1,11 @@
-# app/services/pick_task_commit_check.py
+# app/wms/outbound/services/pick_task_commit_check.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 from app.wms.outbound.services.pick_task_loaders import load_task
 from app.wms.outbound.services.pick_task_views import get_commit_lines
 from app.wms.outbound.services.pick_task_commit_ship_apply import build_agg_from_commit_lines

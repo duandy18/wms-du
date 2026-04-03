@@ -1,4 +1,4 @@
-# app/api/routers/pick_tasks_routes.py
+# app/wms/outbound/routers/pick_tasks_routes.py
 from __future__ import annotations
 
 from fastapi import APIRouter

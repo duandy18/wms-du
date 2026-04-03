@@ -1,4 +1,4 @@
-# app/services/internal_outbound_service.py
+# app/wms/outbound/services/internal_outbound/service.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.internal_outbound import InternalOutboundDoc
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 
 from app.wms.outbound.services.internal_outbound.ids import gen_doc_no as _gen_doc_no
 from app.wms.outbound.services.internal_outbound.ids import gen_trace_id as _gen_trace_id

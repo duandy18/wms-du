@@ -20,7 +20,7 @@ from app.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
 from app.models.warehouse_shipping_provider import WarehouseShippingProvider
-from app.tms.pricing.templates.schemas.template import TemplateOut
+from app.tms.pricing.templates.contracts.template import TemplateOut
 
 
 @dataclass(frozen=True)

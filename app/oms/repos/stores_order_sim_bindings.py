@@ -1,4 +1,4 @@
-# app/api/routers/stores_order_sim_bindings_repo.py
+# app/oms/repos/stores_order_sim_bindings.py
 from __future__ import annotations
 
 from decimal import Decimal

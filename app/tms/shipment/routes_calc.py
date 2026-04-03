@@ -6,8 +6,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.api.error_detail import raise_422, raise_500
+from app.user.deps.auth import get_current_user
+from app.core.error_detail import raise_422, raise_500
 from app.db.deps import get_db
 from app.tms.quote.recommend import recommend_quotes
 from app.tms.quote.types import Dest

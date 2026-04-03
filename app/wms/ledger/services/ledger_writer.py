@@ -1,4 +1,4 @@
-# app/wms/inventory/services/ledger_writer.py
+# app/wms/ledger/services/ledger_writer.py
 from __future__ import annotations
 
 from datetime import date, datetime

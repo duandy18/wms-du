@@ -10,9 +10,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.order_service import OrderService
-from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
-from app.services.stock_service import StockService
+from app.oms.services.order_service import OrderService
+from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
+from app.wms.stock.services.stock_service import StockService
 
 pytestmark = pytest.mark.asyncio
 

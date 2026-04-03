@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.devtools.fake_orders_service import parse_seed
+from app.devtools.services.fake_orders_service import parse_seed
 
 
 def test_parse_seed_requires_at_least_one_shop() -> None:

@@ -4,10 +4,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_service import OrderService
-from app.services.outbound_service import OutboundService
-from app.services.stock_service import StockService
-from app.services.trace_service import TraceService
+from app.oms.services.order_service import OrderService
+from app.wms.outbound.services.outbound_commit_service import OutboundService
+from app.wms.stock.services.stock_service import StockService
+from app.diagnostics.services.trace_service import TraceService
 
 pytestmark = pytest.mark.asyncio
 

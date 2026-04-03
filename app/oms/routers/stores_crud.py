@@ -1,4 +1,4 @@
-# app/api/routers/stores_routes_crud.py
+# app/oms/routers/stores_crud.py
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
 from app.oms.contracts.stores import (
     StoreCreateIn,
@@ -18,7 +19,8 @@ from app.oms.contracts.stores import (
     StoreUpdateIn,
     StoreUpdateOut,
 )
-from app.services.store_service import StoreService
+from app.oms.services.store_service import StoreService
+from app.oms.services.stores_helpers import check_perm, ensure_store_exists
 
 
 def register(router: APIRouter) -> None:
@@ -41,10 +43,7 @@ def register(router: APIRouter) -> None:
         - 支持 platform/q/limit/offset
         - 返回结构保持：{ ok: true, data: [...] }
         """
-        # ✅ 运行时从 stores 模块取 _check_perm，保证测试 monkeypatch 生效
-        from app.oms.routers import stores as stores_router
-
-        stores_router._check_perm(db, current_user, ["config.store.read"])
+        check_perm(db, current_user, ["config.store.read"])
 
         where_parts: list[str] = ["1=1"]
         params: dict[str, Any] = {}
@@ -130,9 +129,7 @@ def register(router: APIRouter) -> None:
           * TEST：写入/更新 platform_test_shops（绑定 store_id）
           * PROD：确保该 store_id 不在 platform_test_shops（删除绑定）
         """
-        from app.oms.routers import stores as stores_router
-
-        stores_router._check_perm(db, current_user, ["config.store.write"])
+        check_perm(db, current_user, ["config.store.write"])
 
         platform = payload.platform.upper().strip()
         shop_id = str(payload.shop_id).strip()
@@ -244,11 +241,9 @@ def register(router: APIRouter) -> None:
 
         权限：config.store.write
         """
-        from app.oms.routers import stores as stores_router
+        check_perm(db, current_user, ["config.store.write"])
 
-        stores_router._check_perm(db, current_user, ["config.store.write"])
-
-        await stores_router._ensure_store_exists(session, store_id)
+        await ensure_store_exists(session, store_id)
 
         fields: dict[str, Any] = {}
         if payload.name is not None:

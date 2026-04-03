@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.warehouse_router import (
+from app.wms.outbound.services.warehouse_router import (
     NoWarehouseCanFulfill,
     NoWarehouseConfigured,
     OrderContext,

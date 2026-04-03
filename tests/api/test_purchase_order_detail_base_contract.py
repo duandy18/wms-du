@@ -115,7 +115,7 @@ def _build_receive_payload(client: TestClient, token: str, line: Dict[str, Any])
     # 标签层：lot_source_policy=SUPPLIER_ONLY 时，供应商批次码必填
     lsp = _get_item_lot_source_policy(client, token, item_id).strip().upper()
     if lsp == "SUPPLIER_ONLY":
-        payload["batch_code"] = f"UT-PO-BC-{item_id}-{today.isoformat()}"
+        payload["lot_code"] = f"UT-PO-LOT-{item_id}-{today.isoformat()}"
 
     return payload
 

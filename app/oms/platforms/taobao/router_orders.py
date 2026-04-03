@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
 from app.oms.platforms.taobao.contracts_ledger import (
     TaobaoOrderLedgerDetailEnvelopeOut,
@@ -14,7 +15,7 @@ from app.oms.platforms.taobao.service_ledger import (
     get_taobao_order_ledger_detail,
     list_taobao_order_ledger_rows,
 )
-from app.oms.routers import stores as stores_router
+from app.oms.services.stores_helpers import check_perm
 
 router = APIRouter(tags=["oms-taobao-orders"])
 
@@ -27,7 +28,7 @@ async def list_taobao_orders_ledger(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    stores_router._check_perm(db, current_user, ["operations.outbound"])
+    check_perm(db, current_user, ["operations.outbound"])
 
     try:
         rows = await list_taobao_order_ledger_rows(
@@ -51,7 +52,7 @@ async def get_taobao_order_ledger(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    stores_router._check_perm(db, current_user, ["operations.outbound"])
+    check_perm(db, current_user, ["operations.outbound"])
 
     try:
         detail = await get_taobao_order_ledger_detail(

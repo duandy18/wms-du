@@ -1,16 +1,16 @@
-# app/api/routers/stores_routes_fskus.py
+# app/oms/routers/stores_fskus.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.api.problem import make_problem
+from app.user.deps.auth import get_current_user
+from app.core.problem import make_problem
 from app.oms.services.stores_bindings_helpers import check_store_perm
-from app.api.schemas.fsku import FskuListOut
+from app.oms.fsku.contracts.fsku import FskuListOut
 from app.db.deps import get_db
-from app.services import fsku_service_read
+from app.oms.fsku.services import fsku_service_read
 
 
 def register(router: APIRouter) -> None:

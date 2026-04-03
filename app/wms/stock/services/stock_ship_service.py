@@ -1,4 +1,4 @@
-# app/wms/inventory/services/stock_ship_service.py
+# app/wms/stock/services/stock_ship_service.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,10 +7,10 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map
-from app.api.problem import raise_problem
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map
+from app.core.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.invariant_guard_outbound import enforce_outbound_invariant_guard
+from app.wms.outbound.services.invariant_guard_outbound import enforce_outbound_invariant_guard
 
 AdjustLotFn = Callable[..., Awaitable[Dict[str, Any]]]
 

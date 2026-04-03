@@ -1,4 +1,4 @@
-# app/wms/inventory/routers/stock_ledger_routes_query_history.py
+# app/wms/ledger/routers/stock_ledger_routes_query_history.py
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.lot_code_contract import normalize_optional_lot_code
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.models.lot import Lot
@@ -25,7 +25,7 @@ from app.wms.ledger.contracts.stock_ledger_explain import (
     ExplainReceiptLine,
     LedgerExplainOut,
 )
-from app.wms.ledger.routers.stock_ledger_helpers import build_base_ids_stmt, infer_movement_type
+from app.wms.ledger.helpers.stock_ledger import build_base_ids_stmt, infer_movement_type
 
 UTC = timezone.utc
 MAX_HISTORY_DAYS = 3650

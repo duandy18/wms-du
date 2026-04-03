@@ -1,4 +1,4 @@
-# app/api/routers/platform_shops_helpers.py
+# app/oms/services/platform_shops_helpers.py
 from __future__ import annotations
 
 import json

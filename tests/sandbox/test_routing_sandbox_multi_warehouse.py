@@ -8,7 +8,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_service import OrderService
+from app.oms.services.order_service import OrderService
 
 
 @dataclass

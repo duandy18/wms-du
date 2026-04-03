@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.main import app
 from app.models.pdd_app_config import PddAppConfig
 from app.models.store_platform_connection import StorePlatformConnection

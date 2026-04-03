@@ -1,4 +1,4 @@
-# app/wms/inventory/services/lot_resolver.py
+# app/wms/stock/services/lot_resolver.py
 from __future__ import annotations
 
 from datetime import datetime

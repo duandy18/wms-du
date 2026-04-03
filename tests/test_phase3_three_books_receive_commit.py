@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.services.stock.lots import ensure_internal_lot_singleton, ensure_lot_full
-from app.services.stock_service import StockService
-from app.services.three_books_consistency import verify_receive_commit_three_books
+from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
+from app.wms.stock.services.stock_service import StockService
+from app.wms.reconciliation.services.three_books_consistency import verify_receive_commit_three_books
 
 
 async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:

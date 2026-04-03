@@ -1,11 +1,11 @@
-# app/api/routers/pick_tasks_routes_commit_check.py
+# app/wms/outbound/routers/pick_tasks_routes_commit_check.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.wms.outbound.contracts.pick_tasks_schemas import PickTaskCommitCheckOut
+from app.wms.outbound.contracts.pick_tasks import PickTaskCommitCheckOut
 from app.wms.outbound.services.pick_task_commit_check import check_commit
 
 

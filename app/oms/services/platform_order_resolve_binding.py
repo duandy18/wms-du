@@ -1,4 +1,4 @@
-# app/services/platform_order_resolve_binding.py
+# app/oms/services/platform_order_resolve_binding.py
 from __future__ import annotations
 
 from typing import Optional, Tuple

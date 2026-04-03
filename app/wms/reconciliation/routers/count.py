@@ -1,4 +1,4 @@
-# app/api/routers/count.py
+# app/wms/reconciliation/routers/count.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,10 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
-from app.api.deps import get_async_session
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
+from app.db.deps import get_async_session
 from app.models.enums import MovementType
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 
 router = APIRouter(prefix="/count", tags=["count"])
 

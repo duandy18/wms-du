@@ -1,4 +1,4 @@
-# app/api/routers/stores_helpers.py
+# app/oms/services/stores_helpers.py
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.services.user_service import AuthorizationError, UserService
+from app.user.services.user_service import AuthorizationError, UserService
 
 
 async def ensure_store_exists(session: AsyncSession, store_id: int) -> None:

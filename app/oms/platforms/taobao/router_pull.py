@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, Path, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.oms.routers import stores as stores_router
+from app.oms.services.stores_helpers import check_perm
 
 from .repository import require_enabled_taobao_app_config
 from .service_pull import TaobaoPullService, TaobaoPullServiceError
@@ -28,7 +29,7 @@ async def test_store_taobao_pull(
     """
     淘宝 test-pull（第一版）。
     """
-    stores_router._check_perm(db, current_user, ["config.store.read"])
+    check_perm(db, current_user, ["config.store.read"])
 
     try:
         app_config = await require_enabled_taobao_app_config(session)

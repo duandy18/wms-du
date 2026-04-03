@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models.item_uom import ItemUOM
-from app.schemas.item_uom import (
+from app.wms.items.contracts.item_uom import (
     ItemUomCreate,
     ItemUomOut,
     ItemUomUpdate,

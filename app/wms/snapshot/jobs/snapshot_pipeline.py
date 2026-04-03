@@ -1,4 +1,4 @@
-# app/jobs/snapshot_pipeline.py
+# app/wms/snapshot/jobs/snapshot_pipeline.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_event
-from app.services.inventory_anomaly_service import InventoryAnomalyService
+from app.diagnostics.services.inventory_anomaly_service import InventoryAnomalyService
 from app.wms.snapshot.services.snapshot_v3_service import SnapshotV3Service
 
 

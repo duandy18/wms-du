@@ -8,52 +8,50 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     # routers imports
     # ---------------------------------------------------------------------------
-    from app.api.routers.autoheal_execute import router as autoheal_execute_router
+    from app.diagnostics.routers.autoheal_execute import router as autoheal_execute_router
     from app.wms.reconciliation.routers.count import router as count_router
-    from app.api.routers.debug_trace import router as debug_trace_router
-    from app.api.routers.dev_seed_ledger import router as dev_seed_ledger_router
-    from app.api.routers.dev_stock_adjust import router as dev_stock_adjust_router
-    from app.api.routers.fake_platform import router as fake_platform_router
-    from app.api.routers.finance_overview import router as finance_overview_router
-    from app.api.routers.flow_replay import router as flow_replay_router
-    from app.api.routers.geo_cn import router as geo_router
-    from app.wms.procurement.routers.inbound_receipts import po_receive_router as po_receive_router
-    from app.wms.procurement.routers.inbound_receipts import router as inbound_receipts_router
-    from app.api.routers.intelligence import router as intelligence_router
+    from app.wms.reconciliation.routers.stock_inventory_recount import router as stock_inventory_recount_router
+    from app.diagnostics.routers.debug_trace import router as debug_trace_router
+    from app.devtools.routers.dev_seed_ledger import router as dev_seed_ledger_router
+    from app.devtools.routers.dev_stock_adjust import router as dev_stock_adjust_router
+    from app.devtools.routers.fake_platform_routes import router as fake_platform_router
+    from app.analytics.routers.finance_overview import router as finance_overview_router
+    from app.diagnostics.routers.flow_replay import router as flow_replay_router
+    from app.tms.routers.geo_cn import router as geo_router
+    from app.wms.procurement.routers.purchase_orders_receive import po_receive_router as po_receive_router
+    from app.wms.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
+    from app.diagnostics.routers.intelligence import router as intelligence_router
     from app.wms.items.routers.item_barcodes import router as item_barcodes_router
     from app.wms.items.routers.item_uoms import router as item_uoms_router
     from app.wms.items.routers.items import router as items_router
     from app.wms.analysis.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
     from app.wms.ledger.routers.ledger_timeline import router as ledger_timeline_router
-    from app.api.routers.lifecycle import router as lifecycle_router
-    from app.api.routers.meta import router as meta_router
-    from app.api.routers.metrics import router as metrics_router
-    from app.api.routers.orders import router as orders_router
-    from app.api.routers.orders_fulfillment_debug_routes import (
+    from app.diagnostics.routers.lifecycle import router as lifecycle_router
+    from app.oms.routers.meta_platforms import router as meta_router
+    from app.diagnostics.routers.metrics import router as metrics_router
+    from app.wms.outbound.routers.orders_fulfillment_debug import (
         router as orders_fulfillment_debug_router,
     )
-    from app.api.routers.orders_sla_stats import router as orders_sla_stats_router
-    from app.api.routers.orders_stats import router as orders_stats_router
+    from app.analytics.routers.orders_sla_stats_routes import router as orders_sla_stats_router
+    from app.analytics.routers.orders_stats_routes import router as orders_stats_router
     from app.wms.outbound.routers.outbound import router as outbound_router
-    from app.api.routers.outbound_ops import router as outbound_ops_router
-    from app.api.routers.pdd_auth import router as pdd_auth_router
-    from app.api.routers.permissions import router as permissions_router
+    from app.user.routers.permissions import router as permissions_router
     from app.wms.outbound.routers.pick import router as pick_router
     from app.wms.outbound.routers.pick_tasks import router as pick_tasks_router
-    from app.api.routers.print_jobs import router as print_jobs_router
+    from app.wms.outbound.routers.print_jobs import router as print_jobs_router
     from app.wms.procurement.routers.purchase_orders import router as purchase_orders_router
-    from app.api.routers.purchase_reports import router as purchase_reports_router
-    from app.api.routers.return_tasks import router as return_tasks_router
-    from app.api.routers.roles import router as roles_router
+    from app.wms.procurement.routers.purchase_reports import router as purchase_reports_router
+    from app.wms.outbound.routers.return_tasks import router as return_tasks_router
+    from app.user.routers.roles import router as roles_router
     from app.wms.stock.routers.inventory_display import router as stock_inventory_display_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
     from app.wms.suppliers.routers.supplier_contacts import router as supplier_contacts_router
     from app.wms.suppliers.routers.suppliers import router as suppliers_router
-    from app.api.routers.user import router as user_router
+    from app.user.routers.user import router as user_router
     from app.wms.warehouses.routers.warehouses import router as warehouses_router
 
-    from app.api.routers.dev_fake_orders import router as dev_fake_orders_router
+    from app.devtools.routers.dev_fake_orders_routes import router as dev_fake_orders_router
     from app.wms.outbound.routers.internal_outbound import router as internal_outbound_router
 
     from app.oms.router import router as oms_router
@@ -70,33 +68,35 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     # scan routes
     # ---------------------------------------------------------------------------
-    from app.api.routers import scan_routes_entrypoint
-    from app.wms.reconciliation.routers import scan_routes_count_commit
+    from app.wms.reconciliation.routers.scan_entrypoint import register as register_scan_entrypoint
+    from app.wms.reconciliation.routers.scan_routes_count_commit import register as register_scan_routes_count_commit
 
     scan_router = APIRouter(tags=["scan"])
-    scan_routes_entrypoint.register(scan_router)
-    scan_routes_count_commit.register(scan_router)
+    register_scan_entrypoint(scan_router)
+    register_scan_routes_count_commit(scan_router)
 
     # ---------------------------------------------------------------------------
     # orders_fulfillment_v2 routes
     # ---------------------------------------------------------------------------
-    from app.api.routers import (
-        orders_fulfillment_v2_routes_1_reserve,
-        orders_fulfillment_v2_routes_2_pick,
+    from app.wms.outbound.routers.orders_fulfillment_v2_routes_1_reserve import (
+        register as register_orders_fulfillment_v2_reserve,
+    )
+    from app.wms.outbound.routers.orders_fulfillment_v2_routes_2_pick import (
+        register as register_orders_fulfillment_v2_pick,
     )
 
     orders_fulfillment_v2_router = APIRouter(prefix="/orders", tags=["orders-fulfillment-v2"])
-    orders_fulfillment_v2_routes_1_reserve.register(orders_fulfillment_v2_router)
-    orders_fulfillment_v2_routes_2_pick.register(orders_fulfillment_v2_router)
+    register_orders_fulfillment_v2_reserve(orders_fulfillment_v2_router)
+    register_orders_fulfillment_v2_pick(orders_fulfillment_v2_router)
 
     # ===========================
     # mount routers
     # ===========================
     app.include_router(scan_router)
     app.include_router(count_router)
+    app.include_router(stock_inventory_recount_router)
     app.include_router(pick_router)
 
-    app.include_router(orders_router)
     app.include_router(orders_fulfillment_v2_router)
     app.include_router(tms_orders_shipment_v2_router)
     app.include_router(orders_fulfillment_debug_router)
@@ -104,7 +104,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(outbound_router)
     app.include_router(tms_shipment_router)
     app.include_router(internal_outbound_router)
-    app.include_router(outbound_ops_router)
 
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
@@ -118,7 +117,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(oms_router)
 
     app.include_router(warehouses_router)
-    app.include_router(pdd_auth_router)
 
     # 商品相关
     app.include_router(items_router)

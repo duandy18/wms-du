@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.item import Item
 from app.wms.items.services.item_barcode_service import ItemBarcodeService
-from app.services.item_sku import next_sku
+from app.wms.items.services.item_sku import next_sku
 
 
 def _norm_policy_str(v: Optional[str]) -> Optional[str]:

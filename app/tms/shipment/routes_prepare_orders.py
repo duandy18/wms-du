@@ -13,7 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 
 from .contracts_prepare_orders import (
     ShipPrepareAddressConfirmRequest,

@@ -17,14 +17,18 @@ from app.oms.platforms.taobao.router_auth import router as taobao_auth_router
 from app.oms.platforms.taobao.router_connection import router as taobao_connection_router
 from app.oms.platforms.taobao.router_pull import router as taobao_pull_router
 from app.oms.platforms.taobao.router_orders import router as taobao_orders_router
-from app.oms.routers.platform_orders_ingest import router as platform_orders_ingest_router
-from app.oms.routers.platform_shops import router as platform_shops_router
+from app.oms.routers.platform_orders_confirm_create import router as platform_orders_confirm_create_router
+from app.oms.routers.platform_orders_ingest_routes import router as platform_orders_ingest_router
+from app.oms.routers.platform_orders_manual_decisions import router as platform_orders_manual_decisions_router
+from app.oms.routers.platform_orders_replay import router as platform_orders_replay_router
 from app.oms.routers.stores import router as stores_router
 
 router = APIRouter(prefix="/oms", tags=["OMS"])
 
 router.include_router(platform_orders_ingest_router)
-router.include_router(platform_shops_router)
+router.include_router(platform_orders_confirm_create_router)
+router.include_router(platform_orders_replay_router)
+router.include_router(platform_orders_manual_decisions_router)
 router.include_router(stores_router)
 router.include_router(fsku_router)
 

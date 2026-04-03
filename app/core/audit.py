@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services._event_writer import EventWriter
+from app.wms.shared.services._event_writer import EventWriter
 
 # ---------------- Trace Context ----------------
 

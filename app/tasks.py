@@ -11,8 +11,7 @@ from app.db.session import async_session_maker
 from app.domain.events_enums import EventState
 from app.limits import ensure_bucket
 from app.metrics import ERRS, EVENTS, LAT
-from app.services.event_gateway import enforce_transition
-from app.services.outbound_service import OutboundService
+from app.wms.outbound.services.outbound_commit_service import OutboundService
 from app.worker import celery  # 导入项目里暴露的 Celery 实例
 
 
@@ -38,25 +37,11 @@ async def _process_one(
     s = _s(shop_id)
 
     order_no: str = _s(payload.get("order_no") or payload.get("ref"))
-    from_state: Optional[str] = _s(payload.get("from_state")) or None
     to_state: str = _s(
         payload.get("to_state") or payload.get("state") or EventState.PAID.value
     ).upper()
-    idem_key: str = _s(payload.get("idempotency_key")) or f"{p}:{s}:{order_no}:{to_state}"
 
-    # 1) 状态机守卫（不合法将抛出 ValueError("ILLEGAL_TRANSITION")）
-    await enforce_transition(
-        session,
-        platform=p,
-        shop_id=s,
-        order_no=order_no,
-        idem_key=idem_key,
-        from_state=from_state,
-        to_state=to_state,
-        payload=payload,
-    )
-
-    # 关键：结束网关阶段开启的事务，避免业务里再 begin() 报 'already begun'
+    # 1) 旧 event_gateway 已退场：当前任务直接进入业务推进
     await session.commit()
 
     # 2) 业务推进（示例：出库提交 / 记账；保持你项目原有实现）

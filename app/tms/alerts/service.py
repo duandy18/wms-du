@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.metrics_alerts import AlertItem, AlertsResponse
+from app.analytics.contracts.metrics_alerts import AlertItem, AlertsResponse
 
 
 def _today_utc_date() -> date:

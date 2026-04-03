@@ -1,11 +1,11 @@
-# app/api/routers/platform_orders_replay.py
+# app/oms/routers/platform_orders_replay.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
-from app.api.problem import make_problem
+from app.db.deps import get_async_session as get_session
+from app.core.problem import make_problem
 from app.core.audit import new_trace
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.oms.services.platform_order_resolve_service import norm_platform

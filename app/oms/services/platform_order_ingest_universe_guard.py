@@ -1,4 +1,4 @@
-# app/services/platform_order_ingest_universe_guard.py
+# app/oms/services/platform_order_ingest_universe_guard.py
 from __future__ import annotations
 
 import os
@@ -7,8 +7,8 @@ from typing import Any, Mapping, Optional, Sequence
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import make_problem
-from app.services.item_test_set_service import ItemTestSetService
+from app.core.problem import make_problem
+from app.wms.items.services.item_test_set_service import ItemTestSetService
 
 
 def _get_test_shop_id() -> str | None:

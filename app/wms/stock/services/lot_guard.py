@@ -1,4 +1,4 @@
-# app/wms/inventory/services/lot_guard.py
+# app/wms/stock/services/lot_guard.py
 from __future__ import annotations
 
 from typing import Optional

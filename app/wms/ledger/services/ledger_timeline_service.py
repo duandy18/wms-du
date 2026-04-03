@@ -1,4 +1,4 @@
-# app/wms/inventory/services/ledger_timeline_service.py
+# app/wms/ledger/services/ledger_timeline_service.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import normalize_optional_lot_code
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 
 
 class LedgerTimelineService:

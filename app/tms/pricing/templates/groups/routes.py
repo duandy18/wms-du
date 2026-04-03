@@ -5,7 +5,7 @@ from typing import Dict, List
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
@@ -26,7 +26,7 @@ from app.tms.pricing.templates.module_resources_shared import (
     replace_group_members,
     validate_group_provinces_unique_in_template,
 )
-from app.tms.pricing.templates.schemas.module_groups import (
+from app.tms.pricing.templates.contracts.module_groups import (
     ModuleGroupDeleteOut,
     ModuleGroupOut,
     ModuleGroupProvinceOut,

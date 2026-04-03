@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.stock.lots import ensure_lot_full
+from app.wms.stock.services.lots import ensure_lot_full
 from tests.utils.ensure_minimal import ensure_item
 from tests.services._helpers import ensure_store
 

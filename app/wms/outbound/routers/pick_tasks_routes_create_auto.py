@@ -1,12 +1,12 @@
-# app/api/routers/pick_tasks_routes_create_auto.py
+# app/wms/outbound/routers/pick_tasks_routes_create_auto.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_422
+from app.core.problem import raise_422
 from app.db.session import get_session
-from app.wms.outbound.contracts.pick_tasks_schemas import PickTaskCreateFromOrder, PickTaskOut
+from app.wms.outbound.contracts.pick_tasks import PickTaskCreateFromOrder, PickTaskOut
 
 
 def register_auto_disabled(router: APIRouter) -> None:

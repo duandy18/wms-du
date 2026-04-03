@@ -8,13 +8,16 @@ pytestmark = pytest.mark.asyncio
 try:
     import httpx
 
-    from app.api.deps import get_current_user
-    from app.oms.routers import stores as stores_router
+    from app.user.deps.auth import get_current_user
     from app.main import app
+    from app.oms.services import stores_helpers
+    from app.oms.routers import stores_crud as stores_crud_router
+    from app.oms.routers import stores_bindings_write as stores_bindings_write_router
+    from app.oms.routers import stores_bindings_read as stores_bindings_read_router
 except Exception:
     httpx = None
     app = None
-    stores_router = None
+    stores_helpers = None
     get_current_user = None
 
 
@@ -33,7 +36,7 @@ class _TestUser:
 
 @pytest.mark.asyncio
 async def test_stores_create_bind_and_default(session, monkeypatch):
-    if httpx is None or app is None or stores_router is None or get_current_user is None:
+    if httpx is None or app is None or stores_helpers is None or get_current_user is None:
         pytest.skip("httpx or app unavailable")
 
     # —— 1) 覆盖 get_current_user：让 FastAPI 认为已经有登录用户 ——
@@ -43,16 +46,31 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
     #
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
 
-    # —— 2) 覆盖 stores._check_perm：跳过 RBAC 实际检查 ——
+    # —— 2) 覆盖 stores_helpers.check_perm：跳过 RBAC 实际检查 ——
     #
     # 生产环境 /stores 已经接入 RBAC（config.store.read/write），
     # 本测试关注的是“合同级别行为”（建店、绑定、默认仓、详情聚合），
     # 不验证权限本身。
     #
     monkeypatch.setattr(
-        stores_router,
-        "_check_perm",
+        stores_helpers,
+        "check_perm",
         lambda db, current_user, required: None,
+    )
+    monkeypatch.setattr(
+        stores_crud_router,
+        "check_perm",
+        lambda db, current_user, required: None,
+    )
+    monkeypatch.setattr(
+        stores_bindings_write_router,
+        "check_store_perm",
+        lambda db, current_user, perms: None,
+    )
+    monkeypatch.setattr(
+        stores_bindings_read_router,
+        "check_store_perm",
+        lambda db, current_user, perms: None,
     )
 
     try:

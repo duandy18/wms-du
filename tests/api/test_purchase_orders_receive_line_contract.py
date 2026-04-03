@@ -335,10 +335,15 @@ async def test_receive_line_multi_commits_update_qty_and_status(
     po_bad_id = int(po_bad["id"])
     await _start_draft(client, headers, po_bad_id)
 
-    # SUPPLIER_ONLY 的 REQUIRED item：不传 batch_code 应被拒绝（http 400）
+    # SUPPLIER_ONLY 的 REQUIRED item：不传 lot_code 应被拒绝（http 400）
     bad = await _receive_line(client, headers, po_bad_id, line_no=1, qty=1, expect_status=400)
     assert int(bad.get("http_status") or 0) == 400, bad
-    assert "批次码必填" in str(bad.get("message") or ""), bad
+
+    msg = str(bad.get("message") or "")
+    detail_reasons = " | ".join(
+        str(d.get("reason") or "") for d in (bad.get("details") or []) if isinstance(d, dict)
+    )
+    assert ("lot_code 必填" in msg) or ("lot_code 必填" in detail_reasons), bad
 
     # ✅ 正例：happy-path 全部使用 NONE + INTERNAL_ONLY
     po = await _create_po_two_lines(session, client, headers, (item_none_a, item_none_b))

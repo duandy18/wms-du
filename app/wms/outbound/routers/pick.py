@@ -1,4 +1,4 @@
-# app/api/routers/pick.py
+# app/wms/outbound/routers/pick.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
-from app.api.problem import raise_409, raise_422
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
+from app.core.problem import raise_409, raise_422
 from app.db.session import get_session
 from app.wms.outbound.services.pick_service import PickService
 

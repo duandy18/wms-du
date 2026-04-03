@@ -11,10 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.helpers.inventory import ensure_wh_loc_item
 from tests.services._helpers import ensure_store
 
-from app.services.order_service import OrderService
-from app.services.pick_task_commit_ship import commit_ship
-from app.services.pick_task_commit_ship_handoff import expected_handoff_code_from_task_ref
-from app.services.stock.lots import ensure_internal_lot_singleton
+from app.oms.services.order_service import OrderService
+from app.wms.outbound.services.pick_task_commit_ship import commit_ship
+from app.wms.outbound.services.pick_task_commit_ship_handoff import expected_handoff_code_from_task_ref
+from app.wms.stock.services.lots import ensure_internal_lot_singleton
 
 UTC = timezone.utc
 pytestmark = pytest.mark.contract

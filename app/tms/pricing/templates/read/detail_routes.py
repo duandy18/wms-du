@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.tms.permissions import check_config_perm
 from app.tms.pricing.templates.repository import (
@@ -11,7 +11,7 @@ from app.tms.pricing.templates.repository import (
     load_template_detail_or_404,
     serialize_template_out,
 )
-from app.tms.pricing.templates.schemas.template import TemplateDetailOut
+from app.tms.pricing.templates.contracts.template import TemplateDetailOut
 
 
 def register_detail_routes(router: APIRouter) -> None:

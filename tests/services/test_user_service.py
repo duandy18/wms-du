@@ -16,7 +16,7 @@ async def test_user_crud(session, _db_clean_and_seed):
     注意：
     - 使用随机 username，避免与基线种子中的用户唯一键冲突。
     """
-    from app.services.user_service import AsyncUserService
+    from app.user.services.user_service import AsyncUserService
 
     svc = AsyncUserService()
 

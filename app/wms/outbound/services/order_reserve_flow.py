@@ -1,0 +1,98 @@
+# app/wms/outbound/services/order_reserve_flow.py
+from __future__ import annotations
+
+from typing import Any, Mapping, Optional, Sequence
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.wms.outbound.services.order_reserve_flow_cancel import cancel_flow
+from app.wms.outbound.services.order_reserve_flow_reserve import reserve_flow, resolve_warehouse_for_order
+
+
+class OrderPickFlow:
+    """
+    订单进入拣货主线 / 取消流程中控（历史文件名保留）：
+
+    ✅ 当前语义（Phase 5）：
+    - enter_pickable：生成 pick task + 入队拣货单打印，不做库存裁决/不做库存校验；
+    - cancel：取消执行态与审计动作。
+
+    注意：彻底消除“预占/RESERVE”概念：这里不引入任何占用/锁定语义。
+    """
+
+    @staticmethod
+    async def _resolve_warehouse_for_order(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+        ref: str,
+    ) -> int:
+        return await resolve_warehouse_for_order(
+            session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=ref,
+        )
+
+    @staticmethod
+    async def enter_pickable(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+        ref: str,
+        lines: Sequence[Mapping[str, Any]],
+        trace_id: Optional[str] = None,
+    ) -> dict:
+        return await reserve_flow(
+            session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=ref,
+            lines=lines,
+            trace_id=trace_id,
+        )
+
+    # ✅ 兼容旧调用点：reserve 已被收敛为 enter_pickable（无预占语义）
+    @staticmethod
+    async def reserve(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+        ref: str,
+        lines: Sequence[Mapping[str, Any]],
+        trace_id: Optional[str] = None,
+    ) -> dict:
+        return await OrderPickFlow.enter_pickable(
+            session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=ref,
+            lines=lines,
+            trace_id=trace_id,
+        )
+
+    @staticmethod
+    async def cancel(
+        session: AsyncSession,
+        *,
+        platform: str,
+        shop_id: str,
+        ref: str,
+        lines: Sequence[Mapping[str, Any]],
+        trace_id: Optional[str] = None,
+    ) -> dict:
+        return await cancel_flow(
+            session,
+            platform=platform,
+            shop_id=shop_id,
+            ref=ref,
+            lines=lines,
+            trace_id=trace_id,
+        )
+
+
+# ✅ 兼容旧 import：OrderReserveFlow 作为别名保留，但不再承载“预占”语义
+OrderReserveFlow = OrderPickFlow

@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_session
+from app.user.deps.auth import get_current_user
+from app.db.deps import get_async_session as get_session
 from app.tms.records.contracts import ShippingLedgerListResponse, ShippingLedgerRow
 from app.tms.records.repository import export_shipping_ledger_rows, list_shipping_ledger
 

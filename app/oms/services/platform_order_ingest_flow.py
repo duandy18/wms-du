@@ -1,4 +1,4 @@
-# app/services/platform_order_ingest_flow.py
+# app/oms/services/platform_order_ingest_flow.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_service import OrderService
-from app.oms.repos.platform_order_fact_service import upsert_platform_order_lines
+from app.oms.services.order_service import OrderService
+from app.oms.services.platform_order_fact_service import upsert_platform_order_lines
 from app.oms.services.platform_order_ingest_evidence import attach_reason_and_actions
 from app.oms.services.platform_order_ingest_universe_guard import enforce_no_test_items_in_non_test_shop, extract_item_ids_from_items_payload
 from app.oms.services.platform_order_resolve_service import (

@@ -1,4 +1,4 @@
-# app/services/pick_service.py
+# app/wms/outbound/services/pick_service.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,8 +8,8 @@ from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.services.stock.lots import normalize_lot_code
-from app.services.stock_service import StockService
+from app.wms.stock.services.lots import normalize_lot_code
+from app.wms.stock.services.stock_service import StockService
 
 
 class PickService:

@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.services._helpers import ensure_store
 
-from app.services.outbound_service import OutboundService
-from app.services.stock.lots import ensure_lot_full
+from app.wms.outbound.services.outbound_commit_service import OutboundService
+from app.wms.stock.services.lots import ensure_lot_full
 
 UTC = timezone.utc
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
+from app.db.deps import get_async_session as get_session
 
 from .repository import require_enabled_jd_app_config
 from .service_auth import JdAuthService, JdAuthServiceError

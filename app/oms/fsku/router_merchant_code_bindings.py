@@ -5,9 +5,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
-from app.api.problem import make_problem
-from app.api.routers.merchant_code_bindings_schemas import (
+from app.db.deps import get_async_session as get_session
+from app.core.problem import make_problem
+from app.oms.fsku.contracts.merchant_code_bindings import (
     FskuLiteOut,
     MerchantCodeBindingBindIn,
     MerchantCodeBindingCloseIn,
@@ -20,9 +20,9 @@ from app.api.routers.merchant_code_bindings_schemas import (
 from app.models.fsku import Fsku
 from app.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
 from app.models.store import Store
-from app.services.merchant_code_binding_service import MerchantCodeBindingService
-from app.services.platform_order_resolve_service import norm_platform, norm_shop_id
-from app.services.test_shop_testset_guard_service import TestShopTestSetGuardService
+from app.oms.fsku.services.merchant_code_binding_service import MerchantCodeBindingService
+from app.oms.services.platform_order_resolve_service import norm_platform, norm_shop_id
+from app.oms.services.test_shop_testset_guard_service import TestShopTestSetGuardService
 
 router = APIRouter(tags=["merchant-code-bindings"])
 

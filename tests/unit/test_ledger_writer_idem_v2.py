@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.ledger_writer import write_ledger
-from app.services.stock.lots import ensure_lot_full
+from app.wms.ledger.services.ledger_writer import write_ledger
+from app.wms.stock.services.lots import ensure_lot_full
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc

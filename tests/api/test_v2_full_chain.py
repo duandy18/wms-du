@@ -10,9 +10,9 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.order_service import OrderService
-from app.services.stock.lots import ensure_lot_full
-from app.services.stock_service import StockService
+from app.oms.services.order_service import OrderService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_service import StockService
 
 
 async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_id: str, province: str) -> None:

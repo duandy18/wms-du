@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.shipping_provider_pricing_template_matrix import (
     ShippingProviderPricingTemplateMatrix,
@@ -19,7 +19,7 @@ from app.tms.pricing.templates.module_resources_shared import (
     list_template_ranges,
     load_template_or_404,
 )
-from app.tms.pricing.templates.schemas.module_matrix_cells import (
+from app.tms.pricing.templates.contracts.module_matrix_cells import (
     ModuleMatrixCellOut,
     ModuleMatrixCellsOut,
     ModuleMatrixCellsPutIn,

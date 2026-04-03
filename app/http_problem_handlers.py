@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api.problem import make_problem
+from app.core.problem import make_problem
 
 logger = logging.getLogger("wmsdu")
 

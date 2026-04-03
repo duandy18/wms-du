@@ -1,8 +1,8 @@
 # tests/services/test_platform_order_line_key_format_contract.py
 from __future__ import annotations
 
-from app.api.routers.platform_orders_fact_repo import line_key_from_inputs
-from app.services.platform_order_fact_service import _line_key
+from app.oms.repos.platform_orders_fact import line_key_from_inputs
+from app.oms.services.platform_order_fact_service import _line_key
 
 
 def test_line_key_format_contract_keeps_legacy_prefixes_and_matches_repo_helper() -> None:

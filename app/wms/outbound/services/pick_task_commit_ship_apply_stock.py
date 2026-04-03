@@ -1,4 +1,4 @@
-# app/services/pick_task_commit_ship_apply_stock.py
+# app/wms/outbound/services/pick_task_commit_ship_apply_stock.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,9 +8,9 @@ from fastapi import HTTPException
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.problem import raise_problem
+from app.core.problem import raise_problem
 from app.models.enums import MovementType
-from app.services.stock_service import StockService
+from app.wms.stock.services.stock_service import StockService
 from app.wms.outbound.services.pick_task_commit_ship_requirements import item_requires_batch, normalize_batch_code
 from app.wms.outbound.services.pick_task_commit_ship_apply_stock_details import shortage_detail
 from app.wms.outbound.services.pick_task_commit_ship_apply_stock_queries import load_on_hand_qty

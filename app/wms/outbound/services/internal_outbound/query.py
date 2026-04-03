@@ -1,4 +1,4 @@
-# app/services/internal_outbound_query.py
+# app/wms/outbound/services/internal_outbound/query.py
 from __future__ import annotations
 
 from sqlalchemy import select

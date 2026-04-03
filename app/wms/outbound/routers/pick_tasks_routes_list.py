@@ -1,4 +1,4 @@
-# app/api/routers/pick_tasks_routes_list.py
+# app/wms/outbound/routers/pick_tasks_routes_list.py
 from __future__ import annotations
 
 from typing import List, Optional
@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
 from app.models.pick_task import PickTask
-from app.wms.outbound.contracts.pick_tasks_schemas import PickTaskOut
+from app.wms.outbound.contracts.pick_tasks import PickTaskOut
 
 
 def register_list(router: APIRouter) -> None:

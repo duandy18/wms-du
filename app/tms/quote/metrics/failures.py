@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.metrics_shipping_quote import (
+from app.analytics.contracts.metrics_shipping_quote import (
     ShippingQuoteFailureDetail,
     ShippingQuoteFailuresMetricsResponse,
 )

@@ -5,9 +5,9 @@ from datetime import date
 from sqlalchemy import text
 
 from app.db.session import async_session_maker
-from app.services.stock.lots import ensure_lot_full
-from app.services.stock_service import StockService
-from app.services.internal_outbound_service import InternalOutboundService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_service import StockService
+from app.wms.outbound.services.internal_outbound.service import InternalOutboundService
 from tests.utils.ensure_minimal import ensure_item, ensure_warehouse
 
 

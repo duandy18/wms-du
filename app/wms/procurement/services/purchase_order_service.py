@@ -6,13 +6,13 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.purchase_order import PurchaseOrderWithLinesOut
-from app.schemas.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
-from app.services.purchase_order_create import create_po_v2 as _create_po_v2
-from app.services.purchase_order_presenter import build_po_with_lines_out
-from app.services.purchase_order_queries import get_po_with_lines as _get_po_with_lines
-from app.services.purchase_order_receive import receive_po_line as _receive_po_line
-from app.services.purchase_order_receive_workbench import get_receive_workbench
+from app.wms.procurement.contracts.purchase_order import PurchaseOrderWithLinesOut
+from app.wms.procurement.contracts.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
+from app.wms.procurement.services.purchase_order_create import create_po_v2 as _create_po_v2
+from app.wms.procurement.services.purchase_order_presenter import build_po_with_lines_out
+from app.wms.procurement.repos.purchase_order_queries_repo import get_po_with_lines as _get_po_with_lines
+from app.wms.procurement.services.receive_po_line import receive_po_line as _receive_po_line
+from app.wms.procurement.services.purchase_order_receive_workbench import get_receive_workbench
 
 UTC = timezone.utc
 
@@ -89,7 +89,7 @@ class PurchaseOrderService:
         occurred_at: Optional[datetime] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
-        batch_code: Optional[str] = None,
+        lot_code: Optional[str] = None,
         barcode: Optional[str] = None,
     ):
         return await _receive_po_line(
@@ -102,7 +102,7 @@ class PurchaseOrderService:
             occurred_at=occurred_at,
             production_date=production_date,
             expiry_date=expiry_date,
-            batch_code=batch_code,
+            lot_code=lot_code,
             barcode=barcode,
         )
 
@@ -118,7 +118,7 @@ class PurchaseOrderService:
         occurred_at: Optional[datetime] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
-        batch_code: Optional[str] = None,
+        lot_code: Optional[str] = None,
         barcode: Optional[str] = None,
     ) -> PurchaseOrderReceiveWorkbenchOut:
         await _receive_po_line(
@@ -131,7 +131,7 @@ class PurchaseOrderService:
             occurred_at=occurred_at,
             production_date=production_date,
             expiry_date=expiry_date,
-            batch_code=batch_code,
+            lot_code=lot_code,
             barcode=barcode,
         )
 

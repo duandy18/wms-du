@@ -1,4 +1,4 @@
-# app/api/routers/platform_orders_manual_decisions.py
+# app/oms/routers/platform_orders_manual_decisions.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,11 +9,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session
-from app.api.problem import make_problem
+from app.db.deps import get_async_session as get_session
+from app.core.problem import make_problem
 from app.oms.contracts.platform_orders_manual_decisions import ManualDecisionOrdersOut
 from app.oms.services.platform_order_resolve_service import norm_platform
-from app.services.test_shop_testset_guard_service import TestShopTestSetGuardService
+from app.oms.services.test_shop_testset_guard_service import TestShopTestSetGuardService
 
 router = APIRouter(tags=["platform-orders"])
 

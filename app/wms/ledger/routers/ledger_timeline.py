@@ -1,4 +1,4 @@
-# app/wms/inventory/routers/ledger_timeline.py
+# app/wms/ledger/routers/ledger_timeline.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.lot_code_contract import normalize_optional_lot_code
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.wms.ledger.services.ledger_timeline_service import LedgerTimelineService
 
