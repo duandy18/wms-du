@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.user.deps.auth import get_current_user
 from app.db.session import get_db
 from app.models.role import Role
+from app.user.contracts.navigation import MyNavigationOut
+from app.user.deps.auth import get_current_user
+from app.user.services.user_navigation import UserNavigationService
 from app.user.services.user_service import UserService
 
 
@@ -53,3 +55,11 @@ def register(router: APIRouter) -> None:
             "roles": roles,
             "permissions": permissions,
         }
+
+    @router.get("/me/navigation", response_model=MyNavigationOut)
+    def get_my_navigation(
+        current_user=Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ):
+        svc = UserNavigationService(db)
+        return svc.get_my_navigation(current_user)
