@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.permission import Permission
-from app.models.role import role_permissions
+from app.models.user import user_permissions
 from app.user.services.user_errors import AuthorizationError
 
 
@@ -15,43 +14,38 @@ def get_user_permissions(db: Session, user: Any) -> List[str]:
     if not user:
         return []
 
+    # 优先使用 ORM 关系（若已加载）
     perms_attr = getattr(user, "permissions", None)
-    if perms_attr:
-        try:
-            return list(dict.fromkeys([str(x) for x in perms_attr if x]))
-        except TypeError:
-            pass
+    if perms_attr is not None:
+        out: List[str] = []
+        seen: set[str] = set()
+        for item in perms_attr:
+            if isinstance(item, str):
+                name = item
+            else:
+                name = getattr(item, "name", None)
+            if name and name not in seen:
+                seen.add(str(name))
+                out.append(str(name))
+        if out:
+            return out
 
-    if getattr(user, "id", None) is None:
-        return []
-
-    role_ids = set()
-
-    if getattr(user, "primary_role_id", None):
-        role_ids.add(int(user.primary_role_id))
-
-    rows = db.execute(
-        text("SELECT role_id FROM user_roles WHERE user_id = :uid"),
-        {"uid": user.id},
-    ).fetchall()
-    for (rid,) in rows:
-        role_ids.add(int(rid))
-
-    if not role_ids:
+    user_id = getattr(user, "id", None)
+    if user_id is None:
         return []
 
     rows = (
         db.query(Permission.name)
-        .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-        .filter(role_permissions.c.role_id.in_(role_ids))
+        .join(user_permissions, Permission.id == user_permissions.c.permission_id)
+        .filter(user_permissions.c.user_id == int(user_id))
+        .order_by(Permission.id.asc())
         .all()
     )
 
     out: List[str] = []
-    seen = set()
-
+    seen: set[str] = set()
     for (name,) in rows:
-        if name not in seen:
+        if name and name not in seen:
             seen.add(name)
             out.append(name)
 

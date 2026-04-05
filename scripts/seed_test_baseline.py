@@ -104,6 +104,7 @@ async def seed_in_conn(conn) -> None:
         role_id = (await conn.execute(text("SELECT id FROM roles WHERE name='admin' LIMIT 1"))).scalar_one()
     role_id = int(role_id)
 
+    # 4.1) 旧口径：role_permissions 保留，避免历史测试断裂
     await conn.execute(
         text(
             """
@@ -117,6 +118,9 @@ async def seed_in_conn(conn) -> None:
     )
 
     user_id = (await conn.execute(text("SELECT id FROM users WHERE username='admin' LIMIT 1"))).scalar_one()
+    user_id = int(user_id)
+
+    # 4.2) 旧口径：admin 仍挂到 admin 角色
     await conn.execute(
         text(
             """
@@ -125,7 +129,7 @@ async def seed_in_conn(conn) -> None:
             ON CONFLICT DO NOTHING
             """
         ),
-        {"uid": int(user_id), "rid": role_id},
+        {"uid": user_id, "rid": role_id},
     )
 
     await conn.execute(
@@ -137,7 +141,22 @@ async def seed_in_conn(conn) -> None:
                AND primary_role_id IS NULL
             """
         ),
-        {"uid": int(user_id), "rid": role_id},
+        {"uid": user_id, "rid": role_id},
+    )
+
+    # 4.3) 新口径：运行时权限真相源 = user_permissions
+    # 测试基线中的 admin 应当直配全部 permissions，
+    # 否则 /users/me/navigation 等基于 user_permissions 的接口会返回空。
+    await conn.execute(
+        text(
+            """
+            INSERT INTO user_permissions (user_id, permission_id)
+            SELECT :uid, p.id
+            FROM permissions p
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"uid": user_id},
     )
 
 

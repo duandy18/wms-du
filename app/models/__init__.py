@@ -74,6 +74,8 @@ MODEL_SPECS = [
     ("app.models.user", "User"),
     ("app.models.role", "Role"),
     ("app.models.permission", "Permission"),
+    ("app.models.page_registry", "PageRegistry"),
+    ("app.models.page_route_prefix", "PageRoutePrefix"),
     # ------------------------------------------------------------------
     # 店铺 × 平台接入（OMS 淘宝 / 拼多多 / 京东）
     # ------------------------------------------------------------------
@@ -197,6 +199,8 @@ __all__ = [
     "User",
     "Role",
     "Permission",
+    "PageRegistry",
+    "PageRoutePrefix",
     # ---- Store Platform Access ----
     "TaobaoAppConfig",
     "PddAppConfig",
