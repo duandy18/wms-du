@@ -18,25 +18,23 @@ async def ensure_admin(
 ) -> None:
     hashed = get_password_hash(password)
 
-    async with async_session_maker() as session:  # type: AsyncSession
+    async with async_session_maker() as session:
         await session.execute(
             text(
                 """
-                INSERT INTO users (username, password_hash, is_active, primary_role_id, full_name, phone, email)
+                INSERT INTO users (username, password_hash, is_active, full_name, phone, email)
                 VALUES (
                   :username,
                   :password_hash,
                   TRUE,
-                  NULL,
                   :full_name,
                   NULL,
                   NULL
                 )
                 ON CONFLICT (username) DO UPDATE
-                  SET password_hash   = EXCLUDED.password_hash,
-                      is_active       = TRUE,
-                      primary_role_id = EXCLUDED.primary_role_id,
-                      full_name       = EXCLUDED.full_name
+                  SET password_hash = EXCLUDED.password_hash,
+                      is_active     = TRUE,
+                      full_name     = EXCLUDED.full_name
                 """
             ),
             {

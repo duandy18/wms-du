@@ -5,7 +5,6 @@ from sqlalchemy import Column, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
-from app.models.role import role_permissions  # 旧角色权限关联
 from app.models.user import user_permissions  # 新用户权限关联
 
 
@@ -18,14 +17,6 @@ class Permission(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(128), nullable=False, unique=True)
-
-    # 旧模型：角色拥有的权限（暂保留用于历史清理）
-    roles = relationship(
-        "Role",
-        secondary=role_permissions,
-        back_populates="permissions",
-        lazy="selectin",
-    )
 
     # 新模型：用户直接拥有的权限
     users = relationship(

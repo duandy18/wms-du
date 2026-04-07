@@ -4,7 +4,7 @@
 # - 验证 admin 用户可以：
 #   - 登录
 #   - 访问 /users/ 列表
-#   - 访问 /users/me 并拿到 system.user.manage 权限
+#   - 访问 /users/me 并拿到 page.admin.read / page.admin.write 权限
 # - 仅通过 HTTP 调用，不直接写数据库。
 #
 # 前置要求：
@@ -90,9 +90,10 @@ def test_admin_can_list_users(client: TestClient) -> None:
     assert isinstance(users, list)
 
 
-def test_admin_permissions_contains_system_user_manage(client: TestClient) -> None:
+def test_admin_permissions_contains_page_admin_permissions(client: TestClient) -> None:
     """
-    admin 访问 /users/me，应当能看到 system.user.manage 在 permissions 列表中。
+    admin 访问 /users/me，应当能看到 page.admin.read / page.admin.write
+    在 permissions 列表中。
     """
     _ensure_env_dsn()
 
@@ -110,4 +111,5 @@ def test_admin_permissions_contains_system_user_manage(client: TestClient) -> No
 
     perms = me.get("permissions") or []
     assert isinstance(perms, list)
-    assert "system.user.manage" in perms
+    assert "page.admin.read" in perms
+    assert "page.admin.write" in perms

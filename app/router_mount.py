@@ -42,7 +42,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.procurement.routers.purchase_orders import router as purchase_orders_router
     from app.wms.procurement.routers.purchase_reports import router as purchase_reports_router
     from app.wms.outbound.routers.return_tasks import router as return_tasks_router
-    from app.user.routers.roles import router as roles_router
     from app.wms.stock.routers.inventory_display import router as stock_inventory_display_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
@@ -146,7 +145,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(orders_sla_stats_router)
 
     app.include_router(user_router)
-    app.include_router(roles_router)
     app.include_router(permissions_router)
 
     app.include_router(ledger_reconcile_v2_router)

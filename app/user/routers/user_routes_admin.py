@@ -4,16 +4,30 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.user.deps.auth import get_current_user
 from app.db.session import get_db
-from app.models.user import User
 from app.user.contracts.user import UserOut
+from app.user.contracts.user_admin import (
+    PasswordResetIn,
+    UserCreateMulti,
+    UserSetPermissionsIn,
+    UserUpdateMulti,
+)
+from app.user.deps.auth import get_current_user
 from app.user.services.user_service import DuplicateUserError, NotFoundError, UserService
-
-from app.user.contracts.user_admin import PasswordResetIn, UserCreateMulti, UserUpdateMulti
 
 
 def register(router: APIRouter) -> None:
+    def _to_user_out(svc: UserService, user) -> UserOut:
+        return UserOut(
+            id=user.id,
+            username=user.username,
+            is_active=user.is_active,
+            full_name=user.full_name,
+            phone=user.phone,
+            email=user.email,
+            permissions=svc.get_user_permissions(user),
+        )
+
     @router.post("/register", response_model=UserOut, status_code=201)
     def register_user(
         body: UserCreateMulti,
@@ -21,29 +35,18 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ):
         svc = UserService(db)
-        svc.check_permission(current_user, ["system.user.manage"])
+        svc.check_permission(current_user, ["page.admin.write"])
 
         try:
             user = svc.create_user(
                 username=body.username,
                 password=body.password,
-                primary_role_id=body.primary_role_id,
+                permission_ids=body.permission_ids,
                 full_name=body.full_name,
                 phone=body.phone,
                 email=body.email,
-                extra_role_ids=body.extra_role_ids,
             )
-
-            return UserOut(
-                id=user.id,
-                username=user.username,
-                role_id=user.primary_role_id,
-                is_active=user.is_active,
-                full_name=user.full_name,
-                phone=user.phone,
-                email=user.email,
-            )
-
+            return _to_user_out(svc, user)
         except (DuplicateUserError, NotFoundError) as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -53,21 +56,10 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ):
         svc = UserService(db)
-        svc.check_permission(current_user, ["system.user.manage"])
+        svc.check_permission(current_user, ["page.admin.read"])
 
-        users = db.query(User).all()
-        return [
-            UserOut(
-                id=u.id,
-                username=u.username,
-                role_id=u.primary_role_id,
-                is_active=u.is_active,
-                full_name=u.full_name,
-                phone=u.phone,
-                email=u.email,
-            )
-            for u in users
-        ]
+        users = svc.list_users()
+        return [_to_user_out(svc, u) for u in users]
 
     @router.patch("/{user_id}", response_model=UserOut)
     def update_user(
@@ -77,7 +69,7 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ):
         svc = UserService(db)
-        svc.check_permission(current_user, ["system.user.manage"])
+        svc.check_permission(current_user, ["page.admin.write"])
 
         try:
             user = svc.update_user(
@@ -85,20 +77,28 @@ def register(router: APIRouter) -> None:
                 full_name=body.full_name,
                 phone=body.phone,
                 email=body.email,
-                primary_role_id=body.primary_role_id,
-                extra_role_ids=body.extra_role_ids,
                 is_active=body.is_active,
             )
+            return _to_user_out(svc, user)
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
-            return UserOut(
-                id=user.id,
-                username=user.username,
-                role_id=user.primary_role_id,
-                is_active=user.is_active,
-                full_name=user.full_name,
-                phone=user.phone,
-                email=user.email,
+    @router.put("/{user_id}/permissions", response_model=UserOut)
+    def set_user_permissions(
+        user_id: int,
+        body: UserSetPermissionsIn,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+    ):
+        svc = UserService(db)
+        svc.check_permission(current_user, ["page.admin.write"])
+
+        try:
+            user = svc.set_user_permissions(
+                user_id=user_id,
+                permission_ids=body.permission_ids,
             )
+            return _to_user_out(svc, user)
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
@@ -110,18 +110,12 @@ def register(router: APIRouter) -> None:
         current_user=Depends(get_current_user),
     ):
         svc = UserService(db)
-        svc.check_permission(current_user, ["system.user.manage"])
-
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(404, "用户不存在")
-
-        from app.core.security import get_password_hash
+        svc.check_permission(current_user, ["page.admin.write"])
 
         try:
-            user.password_hash = get_password_hash("000000")
-            db.commit()
+            svc.reset_user_password(user_id, new_password="000000")
             return {"ok": True, "message": "密码重置为 000000"}
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
-            db.rollback()
             raise HTTPException(status_code=400, detail=f"重置密码失败: {e}")

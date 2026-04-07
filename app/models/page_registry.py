@@ -22,7 +22,7 @@ class PageRegistry(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "domain_code IN ('oms', 'pms', 'procurement', 'wms', 'tms')",
+            "domain_code IN ('oms', 'pms', 'procurement', 'wms', 'tms', 'admin')",
             name="ck_page_registry_domain_code",
         ),
         CheckConstraint(
