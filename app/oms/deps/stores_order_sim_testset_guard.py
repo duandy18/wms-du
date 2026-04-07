@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from app.core.problem import make_problem
-from app.wms.items.services.item_test_set_service import ItemTestSetService
+from app.pms.items.services.item_test_set_service import ItemTestSetService
 
 
 def extract_expanded_item_ids(out_dict: dict) -> list[int]:

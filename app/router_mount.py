@@ -21,9 +21,9 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.procurement.routers.purchase_orders_receive import po_receive_router as po_receive_router
     from app.wms.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
     from app.diagnostics.routers.intelligence import router as intelligence_router
-    from app.wms.items.routers.item_barcodes import router as item_barcodes_router
-    from app.wms.items.routers.item_uoms import router as item_uoms_router
-    from app.wms.items.routers.items import router as items_router
+    from app.pms.items.routers.item_barcodes import router as item_barcodes_router
+    from app.pms.items.routers.item_uoms import router as item_uoms_router
+    from app.pms.items.routers.items import router as items_router
     from app.wms.analysis.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
     from app.wms.ledger.routers.ledger_timeline import router as ledger_timeline_router
     from app.diagnostics.routers.lifecycle import router as lifecycle_router
@@ -45,8 +45,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.stock.routers.inventory_display import router as stock_inventory_display_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
-    from app.wms.suppliers.routers.supplier_contacts import router as supplier_contacts_router
-    from app.wms.suppliers.routers.suppliers import router as suppliers_router
+    from app.pms.suppliers.routers.supplier_contacts import router as supplier_contacts_router
+    from app.pms.suppliers.routers.suppliers import router as suppliers_router
     from app.user.routers.user import router as user_router
     from app.wms.warehouses.routers.warehouses import router as warehouses_router
 
