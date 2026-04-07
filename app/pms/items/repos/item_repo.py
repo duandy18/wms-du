@@ -1,4 +1,4 @@
-# app/pms/items/services/item_repo.py
+# app/pms/items/repos/item_repo.py
 from __future__ import annotations
 
 from typing import List, Optional

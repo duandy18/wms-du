@@ -5,15 +5,20 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
-from sqlalchemy import exists, or_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.models.supplier import Supplier
-from app.models.supplier_contact import SupplierContact
 from app.pms.suppliers.contracts.suppliers import SupplierCreateIn, SupplierOut, SupplierUpdateIn
 from app.pms.suppliers.helpers.suppliers import check_perm, contacts_out
+from app.pms.suppliers.repos.supplier_repo import (
+    create_supplier as repo_create_supplier,
+    get_supplier_with_contacts as repo_get_supplier_with_contacts,
+    list_suppliers as repo_list_suppliers,
+    list_suppliers_basic as repo_list_suppliers_basic,
+    save_supplier as repo_save_supplier,
+)
 
 
 class SupplierBasicOut(BaseModel):
@@ -23,6 +28,26 @@ class SupplierBasicOut(BaseModel):
     name: str
     code: Optional[str] = None
     active: bool
+
+
+def _to_supplier_out(supplier: Supplier) -> SupplierOut:
+    return SupplierOut(
+        id=supplier.id,
+        name=supplier.name,
+        code=supplier.code,
+        website=supplier.website,
+        active=bool(supplier.active),
+        contacts=contacts_out(list(supplier.contacts or [])),
+    )
+
+
+def _to_supplier_basic_out(supplier: Supplier) -> SupplierBasicOut:
+    return SupplierBasicOut(
+        id=supplier.id,
+        name=supplier.name,
+        code=supplier.code,
+        active=bool(supplier.active),
+    )
 
 
 def register(router: APIRouter) -> None:
@@ -37,44 +62,8 @@ def register(router: APIRouter) -> None:
     ):
         check_perm(db, user, ["config.store.read"])
 
-        query = db.query(Supplier).options(selectinload(Supplier.contacts))
-
-        if active is not None:
-            query = query.filter(Supplier.active == active)
-
-        if q and q.strip():
-            pat = f"%{q.strip()}%"
-
-            base_match = or_(
-                Supplier.name.ilike(pat),
-                Supplier.code.ilike(pat),
-            )
-
-            contact_match = exists().where(
-                (SupplierContact.supplier_id == Supplier.id)
-                & (
-                    SupplierContact.name.ilike(pat)
-                    | SupplierContact.phone.ilike(pat)
-                    | SupplierContact.email.ilike(pat)
-                    | SupplierContact.wechat.ilike(pat)
-                )
-            )
-
-            query = query.filter(or_(base_match, contact_match))
-
-        suppliers = query.order_by(Supplier.id).all()
-
-        return [
-            SupplierOut(
-                id=s.id,
-                name=s.name,
-                code=s.code,
-                website=s.website,
-                active=bool(s.active),
-                contacts=contacts_out(list(s.contacts or [])),
-            )
-            for s in suppliers
-        ]
+        suppliers = repo_list_suppliers(db, active=active, q=q)
+        return [_to_supplier_out(s) for s in suppliers]
 
     @router.get("/suppliers/basic", response_model=List[SupplierBasicOut])
     def list_suppliers_basic(
@@ -87,26 +76,8 @@ def register(router: APIRouter) -> None:
     ):
         check_perm(db, user, ["purchase.manage"])
 
-        query = db.query(Supplier)
-
-        if active is not None:
-            query = query.filter(Supplier.active == active)
-
-        if q and q.strip():
-            pat = f"%{q.strip()}%"
-            query = query.filter(or_(Supplier.name.ilike(pat), Supplier.code.ilike(pat)))
-
-        rows = query.order_by(Supplier.id).all()
-
-        return [
-            SupplierBasicOut(
-                id=s.id,
-                name=s.name,
-                code=s.code,
-                active=bool(s.active),
-            )
-            for s in rows
-        ]
+        rows = repo_list_suppliers_basic(db, active=active, q=q)
+        return [_to_supplier_basic_out(s) for s in rows]
 
     @router.post("/suppliers", response_model=SupplierOut, status_code=status.HTTP_201_CREATED)
     def create_supplier(
@@ -123,18 +94,15 @@ def register(router: APIRouter) -> None:
         if not code:
             raise HTTPException(status_code=422, detail="code is required")
 
-        supplier = Supplier(
+        website = payload.website.strip() if payload.website and payload.website.strip() else None
+
+        supplier = repo_create_supplier(
+            db,
             name=name,
             code=code,
-            website=payload.website.strip()
-            if payload.website and payload.website.strip()
-            else None,
+            website=website,
             active=bool(payload.active),
         )
-
-        db.add(supplier)
-        db.commit()
-        db.refresh(supplier)
 
         return SupplierOut(
             id=supplier.id,
@@ -154,11 +122,7 @@ def register(router: APIRouter) -> None:
     ):
         check_perm(db, user, ["config.store.write"])
 
-        supplier = (
-            db.query(Supplier)
-            .options(selectinload(Supplier.contacts))
-            .get(supplier_id)
-        )
+        supplier = repo_get_supplier_with_contacts(db, supplier_id)
         if not supplier:
             raise HTTPException(status_code=404, detail="Supplier not found")
 
@@ -181,14 +145,5 @@ def register(router: APIRouter) -> None:
         if payload.active is not None:
             supplier.active = bool(payload.active)
 
-        db.commit()
-        db.refresh(supplier)
-
-        return SupplierOut(
-            id=supplier.id,
-            name=supplier.name,
-            code=supplier.code,
-            website=supplier.website,
-            active=bool(supplier.active),
-            contacts=contacts_out(list(supplier.contacts or [])),
-        )
+        supplier = repo_save_supplier(db, supplier)
+        return _to_supplier_out(supplier)
