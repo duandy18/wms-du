@@ -9,23 +9,28 @@ from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.models.supplier import Supplier
-from app.models.supplier_contact import SupplierContact
+from app.pms.suppliers.contracts.suppliers import SupplierContactOut
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    clear_primary_contacts as repo_clear_primary_contacts,
+)
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    create_contact as repo_create_contact,
+)
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    delete_contact as repo_delete_contact,
+)
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    get_contact as repo_get_contact,
+)
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    get_supplier as repo_get_supplier,
+)
+from app.pms.suppliers.repos.supplier_contact_repo import (
+    save_contact as repo_save_contact,
+)
 from app.user.services.user_service import AuthorizationError, UserService
 
 router = APIRouter(tags=["supplier-contacts"])
-
-
-class SupplierContactOut(BaseModel):
-    id: int
-    supplier_id: int
-    name: str
-    phone: Optional[str] = None
-    email: Optional[EmailStr] = None
-    wechat: Optional[str] = None
-    role: str
-    is_primary: bool
-    active: bool
 
 
 class SupplierContactCreateIn(BaseModel):
@@ -56,7 +61,7 @@ def _check_perm(db: Session, user) -> None:
         raise HTTPException(status_code=403, detail="Not authorized")
 
 
-def _to_out(c: SupplierContact) -> SupplierContactOut:
+def _to_out(c) -> SupplierContactOut:
     return SupplierContactOut(
         id=c.id,
         supplier_id=c.supplier_id,
@@ -91,7 +96,7 @@ def create_contact(
 ):
     _check_perm(db, user)
 
-    supplier = db.query(Supplier).get(supplier_id)
+    supplier = repo_get_supplier(db, supplier_id)
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
@@ -102,28 +107,22 @@ def create_contact(
     phone = _trim_or_none(payload.phone)
     wechat = _trim_or_none(payload.wechat)
     role = (payload.role or "other").strip() or "other"
+    email = str(payload.email).strip() if payload.email else None
 
     if payload.is_primary:
-        db.query(SupplierContact).filter(
-            SupplierContact.supplier_id == supplier_id,
-            SupplierContact.is_primary.is_(True),
-        ).update({"is_primary": False}, synchronize_session=False)
+        repo_clear_primary_contacts(db, supplier_id)
 
-    contact = SupplierContact(
+    contact = repo_create_contact(
+        db,
         supplier_id=supplier_id,
         name=name,
         phone=phone,
-        email=str(payload.email).strip() if payload.email else None,
+        email=email,
         wechat=wechat,
         role=role,
         is_primary=payload.is_primary,
         active=payload.active,
     )
-
-    db.add(contact)
-    db.commit()
-    db.refresh(contact)
-
     return _to_out(contact)
 
 
@@ -140,17 +139,14 @@ def update_contact(
 ):
     _check_perm(db, user)
 
-    contact = db.query(SupplierContact).get(contact_id)
+    contact = repo_get_contact(db, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
     if payload.is_primary is True:
-        db.query(SupplierContact).filter(
-            SupplierContact.supplier_id == contact.supplier_id,
-            SupplierContact.is_primary.is_(True),
-        ).update({"is_primary": False}, synchronize_session=False)
+        repo_clear_primary_contacts(db, contact.supplier_id)
 
-    data = payload.dict(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True)
 
     if "name" in data:
         n = (data["name"] or "").strip()
@@ -176,9 +172,7 @@ def update_contact(
     if "active" in data:
         contact.active = bool(data["active"])
 
-    db.commit()
-    db.refresh(contact)
-
+    contact = repo_save_contact(db, contact)
     return _to_out(contact)
 
 
@@ -194,11 +188,9 @@ def delete_contact(
 ):
     _check_perm(db, user)
 
-    contact = db.query(SupplierContact).get(contact_id)
+    contact = repo_get_contact(db, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    db.delete(contact)
-    db.commit()
-
+    repo_delete_contact(db, contact)
     return {"ok": True}
