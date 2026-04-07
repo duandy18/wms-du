@@ -25,7 +25,7 @@ def _load_sql(path: Path) -> str:
 def discover_permission_names() -> list[str]:
     app_dir = _repo_root() / "app"
     if not app_dir.exists():
-        return ["system.user.manage"]
+        return ["page.admin.read", "page.admin.write"]
 
     pat = re.compile(r"""["']([a-z][a-z0-9_]*\.[a-z0-9_]+\.[a-z0-9_.]+)["']""")
     names: set[str] = set()
@@ -45,7 +45,9 @@ def discover_permission_names() -> list[str]:
                 continue
             names.add(v)
 
-    names.add("system.user.manage")
+    # 当前 admin 主线至少应包含页面级权限
+    names.add("page.admin.read")
+    names.add("page.admin.write")
     return sorted(names)
 
 
@@ -58,6 +60,11 @@ async def seed_in_conn(conn) -> None:
     - baseline 可以写 stocks
     - 但 baseline 不应写 stock_ledger（部分测试要求 baseline ledger_sum == 0）
     - opening ledger 仅作为 Phase 3 的“体检解释层”，应放在 pytest 结束后再补（Makefile 已制度化）
+
+    当前权限基线：
+    - 运行时权限真相源 = user_permissions
+    - 不再创建 roles / user_roles / role_permissions
+    - admin 测试用户直接拥有全部 permissions
     """
     root = _repo_root()
     base_sql_path = root / "tests" / "fixtures" / "base_seed.sql"
@@ -73,7 +80,7 @@ async def seed_in_conn(conn) -> None:
     # 3) admin 用户（可登录）
     await ensure_admin_user(username="admin", password="admin123", full_name="Dev Admin")
 
-    # 4) RBAC：admin 全权
+    # 4) 权限字典
     names = discover_permission_names()
 
     await conn.execute(
@@ -88,72 +95,27 @@ async def seed_in_conn(conn) -> None:
         {"names": names},
     )
 
-    role_id = (
-        await conn.execute(
-            text(
-                """
-                INSERT INTO roles (name, description)
-                VALUES ('admin', 'TEST admin role')
-                ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
-                RETURNING id
-                """
-            )
-        )
-    ).scalar_one_or_none()
-    if role_id is None:
-        role_id = (await conn.execute(text("SELECT id FROM roles WHERE name='admin' LIMIT 1"))).scalar_one()
-    role_id = int(role_id)
-
-    # 4.1) 旧口径：role_permissions 保留，避免历史测试断裂
-    await conn.execute(
-        text(
-            """
-            INSERT INTO role_permissions (role_id, permission_id)
-            SELECT :rid, p.id
-            FROM permissions p
-            ON CONFLICT DO NOTHING
-            """
-        ),
-        {"rid": role_id},
-    )
-
     user_id = (await conn.execute(text("SELECT id FROM users WHERE username='admin' LIMIT 1"))).scalar_one()
     user_id = int(user_id)
 
-    # 4.2) 旧口径：admin 仍挂到 admin 角色
+    # 5) 运行时权限真相源：admin 直配全部 permissions
+    # 先清再灌，确保测试基线确定且可重复。
     await conn.execute(
         text(
             """
-            INSERT INTO user_roles (user_id, role_id)
-            VALUES (:uid, :rid)
-            ON CONFLICT DO NOTHING
+            DELETE FROM user_permissions
+             WHERE user_id = :uid
             """
         ),
-        {"uid": user_id, "rid": role_id},
+        {"uid": user_id},
     )
 
-    await conn.execute(
-        text(
-            """
-            UPDATE users
-               SET primary_role_id = :rid
-             WHERE id = :uid
-               AND primary_role_id IS NULL
-            """
-        ),
-        {"uid": user_id, "rid": role_id},
-    )
-
-    # 4.3) 新口径：运行时权限真相源 = user_permissions
-    # 测试基线中的 admin 应当直配全部 permissions，
-    # 否则 /users/me/navigation 等基于 user_permissions 的接口会返回空。
     await conn.execute(
         text(
             """
             INSERT INTO user_permissions (user_id, permission_id)
             SELECT :uid, p.id
             FROM permissions p
-            ON CONFLICT DO NOTHING
             """
         ),
         {"uid": user_id},

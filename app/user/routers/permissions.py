@@ -31,11 +31,10 @@ def create_permission(
     """
     创建权限。
 
-    需要权限: system.permission.manage
+    需要权限: page.admin.write
     """
     try:
-        # 统一走新权限名
-        user_service.check_permission(current_user, ["system.permission.manage"])
+        user_service.check_permission(current_user, ["page.admin.write"])
         return perm_service.create_permission(permission_in.name)
     except AuthorizationError:
         raise HTTPException(
@@ -58,10 +57,10 @@ def get_all_permissions(
     """
     获取全部权限列表。
 
-    需要权限: system.permission.manage
+    需要权限: page.admin.read
     """
     try:
-        user_service.check_permission(current_user, ["system.permission.manage"])
+        user_service.check_permission(current_user, ["page.admin.read"])
         return perm_service.get_all_permissions()
     except AuthorizationError:
         raise HTTPException(
@@ -80,10 +79,10 @@ def get_permission_by_id(
     """
     按 ID 获取权限详情。
 
-    需要权限: system.permission.manage
+    需要权限: page.admin.read
     """
     try:
-        user_service.check_permission(current_user, ["system.permission.manage"])
+        user_service.check_permission(current_user, ["page.admin.read"])
         permission = perm_service.get_permission_by_id(permission_id)
         if not permission:
             raise HTTPException(

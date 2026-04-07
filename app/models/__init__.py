@@ -68,11 +68,10 @@ MODEL_SPECS = [
     ("app.models.event_error_log", "EventErrorLog"),
     ("app.models.audit_event", "AuditEvent"),
     # ------------------------------------------------------------------
-    # 门店 & RBAC
+    # 门店 & 权限导航
     # ------------------------------------------------------------------
     ("app.models.store", "Store"),
     ("app.models.user", "User"),
-    ("app.models.role", "Role"),
     ("app.models.permission", "Permission"),
     ("app.models.page_registry", "PageRegistry"),
     ("app.models.page_route_prefix", "PageRoutePrefix"),
@@ -194,10 +193,9 @@ __all__ = [
     "EventLog",
     "EventErrorLog",
     "AuditEvent",
-    # ---- Store & RBAC ----
+    # ---- Store & Access ----
     "Store",
     "User",
-    "Role",
     "Permission",
     "PageRegistry",
     "PageRoutePrefix",

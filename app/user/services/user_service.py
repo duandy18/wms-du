@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-
 from typing import Any, List, Optional
-
-from app.user.services.user_errors import AuthorizationError, DuplicateUserError, NotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,17 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.user import User
-
+from app.user.repositories.user_repository import UserRepository
 from app.user.services.user_auth import (
     authenticate_user as _authenticate_user,
     create_token_for_user as _create_token_for_user,
     get_user_from_token as _get_user_from_token,
 )
-from app.user.services.user_crud import (
-    change_password as _change_password,
-    create_user as _create_user,
-    update_user as _update_user,
-)
+from app.user.services.user_errors import AuthorizationError, DuplicateUserError, NotFoundError
 from app.user.services.user_permissions import (
     check_permission as _check_permission,
     get_user_permissions as _get_user_permissions,
@@ -32,20 +25,29 @@ from app.user.services.user_permissions import (
 
 class UserService:
     """
-    多角色 RBAC 版 UserService：
-    - 支持 primary_role_id（主角色）
-    - 支持 user_roles 多角色
-    - 权限 = 所有角色权限并集
+    用户直配权限版 UserService：
+
+    当前主线：
+    - 用户最终权限真相源 = user_permissions
+    - 用户管理主流程不再使用 primary_role_id / user_roles
+    - 角色相关模型与接口暂保留，仅用于后续历史清理
     """
 
     def __init__(self, db_session: Session):
         self.db: Session = db_session
+        self.repo = UserRepository(db_session)
 
     # =======================================================
     # 用户查询
     # =======================================================
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        return self.repo.get_user_by_id(user_id)
+
     def get_user_by_username(self, username: str) -> Optional[User]:
-        return self.db.query(User).filter(User.username == username).first()
+        return self.repo.get_user_by_username(username)
+
+    def list_users(self) -> list[User]:
+        return self.repo.list_users()
 
     # =======================================================
     # 登录认证
@@ -63,32 +65,29 @@ class UserService:
         return _get_user_from_token(self.db, token)
 
     # =======================================================
-    # 创建用户（主角色 + 多角色）
+    # 创建用户（用户直配权限）
     # =======================================================
     def create_user(
         self,
         username: str,
         password: str,
-        primary_role_id: int,
         *,
+        permission_ids: Optional[List[int]] = None,
         full_name: Optional[str] = None,
         phone: Optional[str] = None,
         email: Optional[str] = None,
-        extra_role_ids: Optional[List[int]] = None,
     ) -> User:
-        return _create_user(
-            self.db,
+        return self.repo.create_user(
             username=username,
             password=password,
-            primary_role_id=primary_role_id,
+            permission_ids=permission_ids,
             full_name=full_name,
             phone=phone,
             email=email,
-            extra_role_ids=extra_role_ids,
         )
 
     # =======================================================
-    # 更新用户（基础信息 + 主角色 + 多角色）
+    # 更新用户（仅基础信息 + 启停用）
     # =======================================================
     def update_user(
         self,
@@ -97,31 +96,59 @@ class UserService:
         full_name: Optional[str] = None,
         phone: Optional[str] = None,
         email: Optional[str] = None,
-        primary_role_id: Optional[int] = None,
-        extra_role_ids: Optional[List[int]] = None,
         is_active: Optional[bool] = None,
     ) -> User:
-        return _update_user(
-            self.db,
+        return self.repo.update_user_profile(
             user_id=user_id,
             full_name=full_name,
             phone=phone,
             email=email,
-            primary_role_id=primary_role_id,
-            extra_role_ids=extra_role_ids,
             is_active=is_active,
+        )
+
+    # =======================================================
+    # 覆盖用户直配权限
+    # =======================================================
+    def set_user_permissions(
+        self,
+        user_id: int,
+        *,
+        permission_ids: Optional[List[int]] = None,
+    ) -> User:
+        return self.repo.replace_user_permissions(
+            user_id=user_id,
+            permission_ids=permission_ids,
+        )
+
+    # =======================================================
+    # 管理员重置密码
+    # =======================================================
+    def reset_user_password(self, user_id: int, *, new_password: str = "000000") -> User:
+        return self.repo.reset_user_password(
+            user_id=user_id,
+            new_password=new_password,
         )
 
     # =======================================================
     # 密码修改
     # =======================================================
     def change_password(self, user_id: int, old_password: str, new_password: str):
-        _change_password(
-            self.db, user_id=user_id, old_password=old_password, new_password=new_password
-        )
+        user = self.repo.get_user_by_id(user_id)
+        if not user:
+            raise NotFoundError("用户不存在")
+        if not getattr(user, "password_hash", None):
+            raise AuthorizationError("旧密码不正确")
+
+        from app.core.security import verify_password
+
+        if not verify_password(old_password, user.password_hash):
+            raise AuthorizationError("旧密码不正确")
+
+        user.password_hash = get_password_hash(new_password)
+        self.db.commit()
 
     # =======================================================
-    # 权限查询（并集）
+    # 权限查询（user_permissions 真相源）
     # =======================================================
     def get_user_permissions(self, user: Any) -> List[str]:
         return _get_user_permissions(self.db, user)
@@ -151,13 +178,6 @@ class AsyncUserService:
     def __init__(self) -> None:
         pass
 
-    async def _pick_default_primary_role_id(self, session: AsyncSession) -> int:
-        res = await session.execute(text("SELECT id FROM roles ORDER BY id ASC LIMIT 1"))
-        rid = res.scalar()
-        if rid is None:
-            raise NotFoundError("主角色不存在")
-        return int(rid)
-
     async def create_user(self, *, session: AsyncSession, username: str) -> int:
         uname = (username or "").strip()
         if not uname:
@@ -171,22 +191,19 @@ class AsyncUserService:
         if existed_id is not None:
             raise DuplicateUserError("用户名已存在")
 
-        primary_role_id = await self._pick_default_primary_role_id(session)
-
         password_hash = get_password_hash("admin123")
 
         res_ins = await session.execute(
             text(
                 """
-                INSERT INTO users (username, password_hash, primary_role_id)
-                VALUES (:username, :password_hash, :primary_role_id)
+                INSERT INTO users (username, password_hash)
+                VALUES (:username, :password_hash)
                 RETURNING id
                 """
             ),
             {
                 "username": uname,
                 "password_hash": password_hash,
-                "primary_role_id": primary_role_id,
             },
         )
         new_id = res_ins.scalar()
