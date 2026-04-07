@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.problem import make_problem
 from app.oms.fsku.services.fsku_components_repo import load_component_item_ids
-from app.wms.items.services.item_test_set_service import ItemTestSetService
+from app.pms.items.services.item_test_set_service import ItemTestSetService
 from app.oms.services.platform_test_shop_service import PlatformTestShopService
 
 
