@@ -16,6 +16,7 @@ class NavigationRepository:
     - 只负责读取页面与 route_prefix 基础数据
     - 不负责用户权限过滤
     - 不负责页面树组装
+    - 不在 SQL 层做多级权限继承推断
     """
 
     def __init__(self, db: Session):
@@ -23,12 +24,9 @@ class NavigationRepository:
 
     def list_pages(self) -> list[dict[str, Any]]:
         page = PageRegistry
-        parent = aliased(PageRegistry)
 
         self_read = aliased(Permission)
         self_write = aliased(Permission)
-        parent_read = aliased(Permission)
-        parent_write = aliased(Permission)
 
         rows = (
             self.db.query(
@@ -44,14 +42,9 @@ class NavigationRepository:
                 page.inherit_permissions.label("inherit_permissions"),
                 self_read.name.label("self_read_permission"),
                 self_write.name.label("self_write_permission"),
-                parent_read.name.label("parent_read_permission"),
-                parent_write.name.label("parent_write_permission"),
             )
-            .outerjoin(parent, parent.code == page.parent_code)
             .outerjoin(self_read, self_read.id == page.read_permission_id)
             .outerjoin(self_write, self_write.id == page.write_permission_id)
-            .outerjoin(parent_read, parent_read.id == parent.read_permission_id)
-            .outerjoin(parent_write, parent_write.id == parent.write_permission_id)
             .filter(page.is_active.is_(True))
             .order_by(page.level.asc(), page.sort_order.asc(), page.code.asc())
             .all()

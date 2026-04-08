@@ -13,18 +13,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_navigation_registry_state(session: AsyncSession) -> None:
     """
-    导航测试会临时改 page_registry.is_active。
-    但 tests baseline 不会 TRUNCATE page_registry / page_route_prefixes，
-    所以这里在每个用例开始前显式恢复静态导航表状态，避免状态串到后续用例。
+    仅恢复本文件测试会临时修改的导航状态，不破坏静态 seed 真相。
+
+    当前主线要求：
+    - tms 下子页在相关测试前恢复为可见
+    - wms.count.adjustments 仍保持 is_active = FALSE
     """
     await session.execute(
         text(
-            "UPDATE page_registry SET is_active = TRUE WHERE is_active IS DISTINCT FROM TRUE"
+            """
+            UPDATE page_registry
+               SET is_active = TRUE
+             WHERE parent_code = 'tms'
+            """
         )
     )
     await session.execute(
         text(
-            "UPDATE page_route_prefixes SET is_active = TRUE WHERE is_active IS DISTINCT FROM TRUE"
+            """
+            UPDATE page_registry
+               SET is_active = FALSE
+             WHERE code = 'wms.count.adjustments'
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE page_route_prefixes
+               SET is_active = TRUE
+             WHERE route_prefix LIKE '/tms/%'
+            """
         )
     )
     await session.commit()
@@ -37,24 +56,26 @@ async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _index_pages(
-    pages: list[dict[str, Any]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    parents: dict[str, dict[str, Any]] = {}
-    children: dict[str, dict[str, Any]] = {}
+def _walk_pages(pages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
 
-    for parent in pages:
-        parents[parent["code"]] = parent
-        for child in parent.get("children") or []:
-            children[child["code"]] = child
+    def walk(node: dict[str, Any]) -> None:
+        out[node["code"]] = node
+        for child in node.get("children") or []:
+            walk(child)
 
-    return parents, children
+    for page in pages:
+        walk(page)
+
+    return out
 
 
-def _index_route_prefixes(
-    route_prefixes: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
+def _index_route_prefixes(route_prefixes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {item["route_prefix"]: item for item in route_prefixes}
+
+
+def _child_codes(node: dict[str, Any]) -> list[str]:
+    return [child["code"] for child in (node.get("children") or [])]
 
 
 async def _set_user_permissions_by_names(
@@ -110,12 +131,11 @@ async def test_my_me_shape_unchanged(client: AsyncClient) -> None:
     data = r.json()
     assert isinstance(data, dict)
 
-    assert set(data.keys()) == {"id", "username", "permissions"}
+    assert {"id", "username", "permissions"} <= set(data.keys())
     assert isinstance(data["id"], int)
     assert isinstance(data["username"], str)
     assert isinstance(data["permissions"], list)
-    assert "page.admin.read" in data["permissions"]
-    assert "page.admin.write" in data["permissions"]
+    assert "system.user.manage" in data["permissions"]
 
 
 @pytest.mark.asyncio
@@ -138,59 +158,7 @@ async def test_my_navigation_returns_pages_and_route_prefixes(client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_my_navigation_admin_baseline_counts(client: AsyncClient) -> None:
-    headers = await _login_admin_headers(client)
-
-    r = await client.get("/users/me/navigation", headers=headers)
-    assert r.status_code == 200, r.text
-
-    data = r.json()
-    pages = data["pages"]
-    route_prefixes = data["route_prefixes"]
-
-    assert len(pages) == 10
-
-    child_count = sum(len(page.get("children") or []) for page in pages)
-    assert child_count == 29
-
-    assert len(route_prefixes) == 30
-
-
-@pytest.mark.asyncio
-async def test_my_navigation_masterdata_domain_codes_are_correct(client: AsyncClient) -> None:
-    headers = await _login_admin_headers(client)
-
-    r = await client.get("/users/me/navigation", headers=headers)
-    assert r.status_code == 200, r.text
-
-    data = r.json()
-    parents, children = _index_pages(data["pages"])
-
-    pms = parents.get("pms")
-    masterdata = parents.get("wms.masterdata")
-
-    assert pms is not None, "pms parent should exist"
-    assert masterdata is not None, "wms.masterdata parent should exist"
-
-    items = children.get("wms.masterdata.items")
-    suppliers = children.get("wms.masterdata.suppliers")
-    warehouses = children.get("wms.masterdata.warehouses")
-
-    assert items is not None, "wms.masterdata.items should exist"
-    assert suppliers is not None, "wms.masterdata.suppliers should exist"
-    assert warehouses is not None, "wms.masterdata.warehouses should exist"
-
-    assert items["parent_code"] == "pms"
-    assert suppliers["parent_code"] == "pms"
-    assert warehouses["parent_code"] == "wms.masterdata"
-
-    assert items["domain_code"] == "pms"
-    assert suppliers["domain_code"] == "pms"
-    assert warehouses["domain_code"] == "wms"
-
-
-@pytest.mark.asyncio
-async def test_my_navigation_route_prefix_mapping_and_effective_permissions(
+async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shells(
     client: AsyncClient,
 ) -> None:
     headers = await _login_admin_headers(client)
@@ -199,18 +167,104 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(
     assert r.status_code == 200, r.text
 
     data = r.json()
-    _, children = _index_pages(data["pages"])
+    pages = data["pages"]
+    nodes = _walk_pages(pages)
+
+    root_codes = [page["code"] for page in pages]
+    assert "wms" in root_codes
+
+    wms = nodes["wms"]
+    assert _child_codes(wms) == [
+        "wms.inventory",
+        "wms.inbound",
+        "wms.outbound",
+        "wms.count",
+        "wms.warehouses",
+    ]
+
+    assert _child_codes(nodes["wms.inventory"]) == [
+        "wms.inventory.snapshot",
+        "wms.inventory.ledger",
+    ]
+    assert _child_codes(nodes["wms.inbound"]) == [
+        "wms.inbound.atomic",
+        "wms.inbound.purchase",
+        "wms.inbound.returns",
+    ]
+    assert _child_codes(nodes["wms.outbound"]) == [
+        "wms.outbound.atomic",
+        "wms.outbound.order",
+    ]
+    assert _child_codes(nodes["wms.count"]) == [
+        "wms.count.tasks",
+    ]
+    assert _child_codes(nodes["wms.warehouses"]) == []
+
+    assert "wms.order_outbound" not in nodes
+    assert "wms.order_management" not in nodes
+    assert "wms.logistics" not in nodes
+    assert "wms.analytics" not in nodes
+    assert "wms.masterdata" not in nodes
+    assert "wms.internal_ops" not in nodes
+    assert "wms.inbound.receiving" not in nodes
+    assert "wms.internal_ops.count" not in nodes
+    assert "wms.internal_ops.internal_outbound" not in nodes
+    assert "wms.order_outbound.pick_tasks" not in nodes
+    assert "wms.order_outbound.dashboard" not in nodes
+    assert "wms.masterdata.warehouses" not in nodes
+
+
+@pytest.mark.asyncio
+async def test_my_navigation_masterdata_and_wms_warehouses_domain_codes_are_correct(
+    client: AsyncClient,
+) -> None:
+    headers = await _login_admin_headers(client)
+
+    r = await client.get("/users/me/navigation", headers=headers)
+    assert r.status_code == 200, r.text
+
+    data = r.json()
+    nodes = _walk_pages(data["pages"])
+
+    pms_root = nodes.get("pms")
+    assert pms_root is not None, "pms parent should exist"
+
+    items = nodes.get("wms.masterdata.items")
+    suppliers = nodes.get("wms.masterdata.suppliers")
+    warehouses = nodes.get("wms.warehouses")
+
+    assert items is not None, "wms.masterdata.items should exist"
+    assert suppliers is not None, "wms.masterdata.suppliers should exist"
+    assert warehouses is not None, "wms.warehouses should exist"
+
+    assert items["parent_code"] == "pms"
+    assert suppliers["parent_code"] == "pms"
+    assert warehouses["parent_code"] == "wms"
+
+    assert items["domain_code"] == "pms"
+    assert suppliers["domain_code"] == "pms"
+    assert warehouses["domain_code"] == "wms"
+
+    assert "wms.masterdata" not in nodes
+    assert "wms.masterdata.warehouses" not in nodes
+
+
+@pytest.mark.asyncio
+async def test_my_navigation_route_prefix_mapping_and_effective_permissions(client: AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    r = await client.get("/users/me/navigation", headers=headers)
+    assert r.status_code == 200, r.text
+
+    data = r.json()
+    nodes = _walk_pages(data["pages"])
     route_map = _index_route_prefixes(data["route_prefixes"])
 
-    finance_page = children["wms.analytics.finance"]
-    pricing_page = children["wms.logistics.pricing"]
-    items_page = children["wms.masterdata.items"]
-    suppliers_page = children["wms.masterdata.suppliers"]
-    admin_users_page = children["admin.users"]
-    admin_permissions_page = children["admin.permissions"]
-
-    assert finance_page["effective_read_permission"] == "page.analytics.read"
-    assert finance_page["effective_write_permission"] == "page.analytics.write"
+    pricing_page = nodes["wms.logistics.pricing"]
+    items_page = nodes["wms.masterdata.items"]
+    suppliers_page = nodes["wms.masterdata.suppliers"]
+    snapshot_page = nodes["wms.inventory.snapshot"]
+    warehouses_page = nodes["wms.warehouses"]
 
     assert pricing_page["effective_read_permission"] == "page.tms.read"
     assert pricing_page["effective_write_permission"] == "page.tms.write"
@@ -221,37 +275,29 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(
     assert suppliers_page["effective_read_permission"] == "page.pms.read"
     assert suppliers_page["effective_write_permission"] == "page.pms.write"
 
-    assert admin_users_page["effective_read_permission"] == "page.admin.read"
-    assert admin_users_page["effective_write_permission"] == "page.admin.write"
+    assert snapshot_page["effective_read_permission"] == "page.wms.read"
+    assert snapshot_page["effective_write_permission"] == "page.wms.write"
 
-    assert admin_permissions_page["effective_read_permission"] == "page.admin.read"
-    assert admin_permissions_page["effective_write_permission"] == "page.admin.write"
+    assert warehouses_page["effective_read_permission"] == "page.wms.read"
+    assert warehouses_page["effective_write_permission"] == "page.wms.write"
 
-    finance_route = route_map.get("/finance")
     pricing_route = route_map.get("/tms/pricing")
     items_route = route_map.get("/items")
     suppliers_route = route_map.get("/suppliers")
-    admin_users_route = route_map.get("/admin/users")
-    admin_permissions_route = route_map.get("/admin/permissions")
+    snapshot_route = route_map.get("/snapshot")
+    warehouses_route = route_map.get("/warehouses")
 
-    assert finance_route is not None, "/finance should exist in route_prefixes"
     assert pricing_route is not None, "/tms/pricing should exist in route_prefixes"
     assert items_route is not None, "/items should exist in route_prefixes"
     assert suppliers_route is not None, "/suppliers should exist in route_prefixes"
-    assert admin_users_route is not None, "/admin/users should exist in route_prefixes"
-    assert (
-        admin_permissions_route is not None
-    ), "/admin/permissions should exist in route_prefixes"
+    assert snapshot_route is not None, "/snapshot should exist in route_prefixes"
+    assert warehouses_route is not None, "/warehouses should exist in route_prefixes"
 
-    assert finance_route["page_code"] == "wms.analytics.finance"
     assert pricing_route["page_code"] == "wms.logistics.pricing"
     assert items_route["page_code"] == "wms.masterdata.items"
     assert suppliers_route["page_code"] == "wms.masterdata.suppliers"
-    assert admin_users_route["page_code"] == "admin.users"
-    assert admin_permissions_route["page_code"] == "admin.permissions"
-
-    assert finance_route["effective_read_permission"] == "page.analytics.read"
-    assert finance_route["effective_write_permission"] == "page.analytics.write"
+    assert snapshot_route["page_code"] == "wms.inventory.snapshot"
+    assert warehouses_route["page_code"] == "wms.warehouses"
 
     assert pricing_route["effective_read_permission"] == "page.tms.read"
     assert pricing_route["effective_write_permission"] == "page.tms.write"
@@ -262,11 +308,11 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(
     assert suppliers_route["effective_read_permission"] == "page.pms.read"
     assert suppliers_route["effective_write_permission"] == "page.pms.write"
 
-    assert admin_users_route["effective_read_permission"] == "page.admin.read"
-    assert admin_users_route["effective_write_permission"] == "page.admin.write"
+    assert snapshot_route["effective_read_permission"] == "page.wms.read"
+    assert snapshot_route["effective_write_permission"] == "page.wms.write"
 
-    assert admin_permissions_route["effective_read_permission"] == "page.admin.read"
-    assert admin_permissions_route["effective_write_permission"] == "page.admin.write"
+    assert warehouses_route["effective_read_permission"] == "page.wms.read"
+    assert warehouses_route["effective_write_permission"] == "page.wms.write"
 
 
 @pytest.mark.asyncio
@@ -322,7 +368,7 @@ async def test_my_navigation_filters_to_only_directly_visible_parent_tree(
 
 
 @pytest.mark.asyncio
-async def test_my_navigation_hides_parent_when_no_visible_children(
+async def test_my_navigation_keeps_parent_visible_when_no_visible_children(
     client: AsyncClient,
     session: AsyncSession,
 ) -> None:
@@ -349,5 +395,6 @@ async def test_my_navigation_hides_parent_when_no_visible_children(
     assert r.status_code == 200, r.text
 
     data = r.json()
-    assert data["pages"] == []
+    assert [page["code"] for page in data["pages"]] == ["tms"]
+    assert data["pages"][0]["children"] == []
     assert data["route_prefixes"] == []

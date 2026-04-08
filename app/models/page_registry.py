@@ -14,8 +14,9 @@ class PageRegistry(Base):
 
     当前主线：
     - 一级页面 = 权限主边界
-    - 二级页面 = 展示与归属主边界
-    - 二级页面默认继承一级页面权限
+    - 二级页面 = 业务组，或二级主页面
+    - 三级页面 = 具体业务页
+    - 二级、三级页面默认继承一级页面权限
     """
 
     __tablename__ = "page_registry"
@@ -26,11 +27,11 @@ class PageRegistry(Base):
             name="ck_page_registry_domain_code",
         ),
         CheckConstraint(
-            "level IN (1, 2)",
+            "level IN (1, 2, 3)",
             name="ck_page_registry_level",
         ),
         CheckConstraint(
-            "((level = 1 AND parent_code IS NULL) OR (level = 2 AND parent_code IS NOT NULL))",
+            "((level = 1 AND parent_code IS NULL) OR (level IN (2, 3) AND parent_code IS NOT NULL))",
             name="ck_page_registry_parent_level_consistency",
         ),
         CheckConstraint(
@@ -86,7 +87,7 @@ class PageRegistry(Base):
     sort_order = Column(Integer, nullable=False, server_default="0")
     is_active = Column(Boolean, nullable=False, server_default="TRUE")
 
-    # 自关联：父子页面
+    # 自关联：父子页面（支持三级树）
     parent = relationship(
         "PageRegistry",
         remote_side=[code],
