@@ -1,16 +1,16 @@
-# app/user/routers/permissions.py
+# app/admin/routers/permissions.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
 from app.user.contracts.permission import PermissionCreate, PermissionOut
+from app.user.deps.auth import get_current_user
 from app.user.services.permission_service import PermissionService
 from app.user.services.user_service import AuthorizationError, UserService
 
-router = APIRouter(prefix="/permissions", tags=["permissions"])
+router = APIRouter(prefix="/permissions", tags=["admin-permissions"])
 
 
 def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
@@ -95,3 +95,6 @@ def get_permission_by_id(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized.",
         )
+
+
+__all__ = ["router"]
