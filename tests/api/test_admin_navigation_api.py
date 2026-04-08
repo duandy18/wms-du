@@ -1,8 +1,9 @@
 # tests/api/test_admin_navigation_api.py
 #
 # 目标：
-# - 验证 /users/me/navigation 中 admin 根与 admin 子页存在
-# - 验证 /admin/users 与 /admin/permissions 的 route_prefix 映射存在
+# - 验证 /users/me/navigation 中 admin 根与 admin.users 子页存在
+# - 验证 /admin/users 的 route_prefix 映射存在
+# - 验证 admin.permissions 与 /admin/permissions 已退役
 # - 仅通过 HTTP 调用，不直接写数据库
 
 from __future__ import annotations
@@ -86,19 +87,16 @@ def test_my_navigation_contains_admin_tree_and_route_prefixes(client: TestClient
 
     assert "admin" in nodes
     assert "admin.users" in nodes
-    assert "admin.permissions" in nodes
+    assert "admin.permissions" not in nodes
 
     admin_root = nodes["admin"]
-    assert _child_codes(admin_root) == ["admin.users", "admin.permissions"]
+    assert _child_codes(admin_root) == ["admin.users"]
 
     users_route = route_map.get("/admin/users")
     permissions_route = route_map.get("/admin/permissions")
 
     assert users_route is not None
-    assert permissions_route is not None
+    assert permissions_route is None
 
     assert users_route["page_code"] == "admin.users"
-    assert permissions_route["page_code"] == "admin.permissions"
-
     assert users_route["effective_read_permission"] == "page.admin.read"
-    assert permissions_route["effective_read_permission"] == "page.admin.read"
