@@ -2,6 +2,7 @@
 #
 # 目标：
 # - 验证管理员用户管理接口已经收口到 /admin/users
+# - 验证授权调整通过 /admin/users/{user_id}/permission-matrix 完成
 # - 仅通过 HTTP 调用，不直接写数据库
 #
 # 副作用：
@@ -46,23 +47,11 @@ def _login_admin_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _get_permission_ids_by_name(
-    client: TestClient,
-    headers: dict[str, str],
-) -> dict[str, int]:
-    r = client.get("/admin/permissions", headers=headers)
-    assert r.status_code == 200, r.text
-
-    data = r.json()
-    assert isinstance(data, list)
-
-    out: dict[str, int] = {}
-    for item in data:
-        name = item.get("name")
-        pid = item.get("id")
-        if isinstance(name, str) and isinstance(pid, int):
-            out[name] = pid
-    return out
+def _find_user_by_username(rows: list[dict], username: str) -> dict:
+    for row in rows:
+        if row.get("username") == username:
+            return row
+    raise AssertionError(f"未找到用户名={username} 的用户行")
 
 
 def test_admin_can_list_users_via_admin_users(client: TestClient) -> None:
@@ -81,27 +70,23 @@ def test_admin_can_list_users_via_admin_users(client: TestClient) -> None:
     assert {"id", "username", "permissions"} <= set(first.keys())
 
 
-def test_admin_can_create_update_set_permissions_and_reset_password(
+def test_admin_can_create_update_save_matrix_and_reset_password(
     client: TestClient,
 ) -> None:
     _ensure_env_dsn()
     headers = _login_admin_headers(client)
 
-    permission_ids = _get_permission_ids_by_name(client, headers)
-    assert "page.admin.read" in permission_ids
-    assert "page.admin.write" in permission_ids
-
     username = f"zz_admin_api_{uuid4().hex[:10]}"
     initial_password = "abc12345"
 
-    # 1) 创建用户
+    # 1) 创建用户（初始不给页面权限）
     create_resp = client.post(
         "/admin/users",
         headers=headers,
         json={
             "username": username,
             "password": initial_password,
-            "permission_ids": [permission_ids["page.admin.read"]],
+            "permission_ids": [],
             "full_name": "Admin API Test",
             "phone": "13800000000",
             "email": f"{username}@example.com",
@@ -113,7 +98,9 @@ def test_admin_can_create_update_set_permissions_and_reset_password(
     assert created["username"] == username
     assert created["full_name"] == "Admin API Test"
     assert created["email"] == f"{username}@example.com"
-    assert "page.admin.read" in created["permissions"]
+    assert isinstance(created.get("permissions"), list)
+    assert "page.admin.read" not in created["permissions"]
+    assert "page.admin.write" not in created["permissions"]
 
     user_id = created["id"]
     assert isinstance(user_id, int)
@@ -136,24 +123,45 @@ def test_admin_can_create_update_set_permissions_and_reset_password(
     assert updated["phone"] == "13900000000"
     assert updated["email"] == f"{username}.updated@example.com"
 
-    # 3) 覆盖权限
-    perms_resp = client.put(
-        f"/admin/users/{user_id}/permissions",
+    # 3) 通过矩阵授予 admin 写权限；write=true 应自动补 read=true
+    matrix_resp = client.put(
+        f"/admin/users/{user_id}/permission-matrix",
         headers=headers,
         json={
-            "permission_ids": [
-                permission_ids["page.admin.read"],
-                permission_ids["page.admin.write"],
-            ]
+            "pages": {
+                "admin": {"read": False, "write": True},
+                "wms": {"read": False, "write": False},
+                "oms": {"read": False, "write": False},
+                "tms": {"read": False, "write": False},
+                "analytics": {"read": False, "write": False},
+                "pms": {"read": False, "write": False},
+            }
         },
     )
-    assert perms_resp.status_code == 200, perms_resp.text
+    assert matrix_resp.status_code == 200, matrix_resp.text
 
-    perms_user = perms_resp.json()
-    assert "page.admin.read" in perms_user["permissions"]
-    assert "page.admin.write" in perms_user["permissions"]
+    saved = matrix_resp.json()
+    assert saved["user_id"] == user_id
+    assert saved["username"] == username
+    assert saved["pages"]["admin"]["write"] is True
+    assert saved["pages"]["admin"]["read"] is True
 
-    # 4) 重置密码
+    # 4) 用户列表里应能看到已经落到真实 permissions
+    users_resp = client.get("/admin/users", headers=headers)
+    assert users_resp.status_code == 200, users_resp.text
+
+    users = users_resp.json()
+    assert isinstance(users, list)
+
+    saved_user = _find_user_by_username(users, username)
+    assert saved_user["id"] == user_id
+    assert saved_user["full_name"] == "Admin API Test Updated"
+    assert saved_user["phone"] == "13900000000"
+    assert saved_user["email"] == f"{username}.updated@example.com"
+    assert "page.admin.read" in saved_user["permissions"]
+    assert "page.admin.write" in saved_user["permissions"]
+
+    # 5) 重置密码
     reset_resp = client.post(
         f"/admin/users/{user_id}/reset-password",
         headers=headers,
@@ -164,7 +172,7 @@ def test_admin_can_create_update_set_permissions_and_reset_password(
     reset_data = reset_resp.json()
     assert reset_data["ok"] is True
 
-    # 5) 使用重置后的密码登录
+    # 6) 使用重置后的密码登录
     login_resp = client.post(
         "/users/login",
         json={"username": username, "password": "000000"},

@@ -4,12 +4,20 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.admin.contracts.user_permission_matrix import (
+    PermissionMatrixRowOut,
+    UserPermissionMatrixOut,
+)
+from app.admin.contracts.user_permission_matrix_update import UserPermissionMatrixUpdateIn
+from app.admin.services.user_permission_matrix_service import UserPermissionMatrixService
+from app.admin.services.user_permission_matrix_write_service import (
+    UserPermissionMatrixWriteService,
+)
 from app.db.session import get_db
 from app.user.contracts.user import UserOut
 from app.user.contracts.user_admin import (
     PasswordResetIn,
     UserCreateMulti,
-    UserSetPermissionsIn,
     UserUpdateMulti,
 )
 from app.user.deps.auth import get_current_user
@@ -28,6 +36,40 @@ def _to_user_out(svc: UserService, user) -> UserOut:
         email=user.email,
         permissions=svc.get_user_permissions(user),
     )
+
+
+@router.get("/permission-matrix", response_model=UserPermissionMatrixOut)
+def get_user_permission_matrix(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    svc = UserService(db)
+    svc.check_permission(current_user, ["page.admin.read"])
+
+    matrix_service = UserPermissionMatrixService(db)
+    return matrix_service.get_matrix()
+
+
+@router.put("/{user_id}/permission-matrix", response_model=PermissionMatrixRowOut)
+def update_user_permission_matrix(
+    user_id: int,
+    body: UserPermissionMatrixUpdateIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    svc = UserService(db)
+    svc.check_permission(current_user, ["page.admin.write"])
+
+    matrix_write_service = UserPermissionMatrixWriteService(db)
+    try:
+        return matrix_write_service.update_matrix_for_user(
+            user_id=user_id,
+            body=body,
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("", response_model=UserOut, status_code=201)
@@ -88,24 +130,25 @@ def update_user(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.put("/{user_id}/permissions", response_model=UserOut)
-def set_user_permissions(
+@router.post("/{user_id}/delete")
+def delete_user(
     user_id: int,
-    body: UserSetPermissionsIn,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     svc = UserService(db)
     svc.check_permission(current_user, ["page.admin.write"])
 
+    if int(getattr(current_user, "id")) == int(user_id):
+        raise HTTPException(status_code=400, detail="不能删除当前登录用户")
+
     try:
-        user = svc.set_user_permissions(
-            user_id=user_id,
-            permission_ids=body.permission_ids,
-        )
-        return _to_user_out(svc, user)
+        svc.delete_user(user_id=user_id)
+        return {"ok": True, "message": "用户已删除"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{user_id}/reset-password")

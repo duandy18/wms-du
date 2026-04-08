@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
@@ -166,3 +167,18 @@ class UserRepository:
         self.db.commit()
         self.db.refresh(user)
         return user
+
+    def delete_user(self, *, user_id: int) -> None:
+        user = self.get_user_by_id(user_id)
+        if not user:
+            raise NotFoundError("用户不存在")
+
+        try:
+            self.db.delete(user)
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise ValueError("该用户已被业务单据引用，暂不能删除")
+
+
+__all__ = ["UserRepository"]
