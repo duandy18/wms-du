@@ -8,6 +8,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     # routers imports
     # ---------------------------------------------------------------------------
+    from app.admin.router import router as admin_router
     from app.diagnostics.routers.autoheal_execute import router as autoheal_execute_router
     from app.wms.reconciliation.routers.count import router as count_router
     from app.wms.reconciliation.routers.stock_inventory_recount import router as stock_inventory_recount_router
@@ -35,7 +36,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.analytics.routers.orders_sla_stats_routes import router as orders_sla_stats_router
     from app.analytics.routers.orders_stats_routes import router as orders_stats_router
     from app.wms.outbound.routers.outbound import router as outbound_router
-    from app.user.routers.permissions import router as permissions_router
     from app.wms.outbound.routers.pick import router as pick_router
     from app.wms.outbound.routers.pick_tasks import router as pick_tasks_router
     from app.wms.outbound.routers.print_jobs import router as print_jobs_router
@@ -145,7 +145,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(orders_sla_stats_router)
 
     app.include_router(user_router)
-    app.include_router(permissions_router)
+    app.include_router(admin_router)
 
     app.include_router(ledger_reconcile_v2_router)
     app.include_router(ledger_timeline_router)

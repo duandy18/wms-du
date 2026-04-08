@@ -1,11 +1,10 @@
 # tests/api/test_user_api.py
 #
 # 目标：
-# - 验证 admin 用户可以：
-#   - 登录
-#   - 访问 /users/ 列表
-#   - 访问 /users/me 并拿到 page.admin.read / page.admin.write 权限
-# - 仅通过 HTTP 调用，不直接写数据库。
+# - 验证运行时基础用户接口仍然可用：
+#   - /users/login
+#   - /users/me
+# - 不再把管理员“用户列表”接口放在 /users/ 下面测试
 #
 # 前置要求：
 # - 环境变量已指向 DEV 库，例如：
@@ -67,33 +66,9 @@ def test_admin_can_login_and_get_token(client: TestClient) -> None:
     assert data.get("token_type") == "bearer"
 
 
-def test_admin_can_list_users(client: TestClient) -> None:
+def test_admin_can_get_me_and_permissions(client: TestClient) -> None:
     """
-    admin 拿 token 后，访问 /users/ 不应再 403。
-    """
-    _ensure_env_dsn()
-
-    # 1) 登录拿 token
-    login_resp = client.post(
-        "/users/login",
-        json={"username": "admin", "password": "admin123"},
-    )
-    assert login_resp.status_code == 200, login_resp.text
-    token = login_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 2) 访问 /users/ 列表
-    list_resp = client.get("/users/", headers=headers)
-    assert list_resp.status_code == 200, list_resp.text
-
-    users = list_resp.json()
-    assert isinstance(users, list)
-
-
-def test_admin_permissions_contains_page_admin_permissions(client: TestClient) -> None:
-    """
-    admin 访问 /users/me，应当能看到 page.admin.read / page.admin.write
-    在 permissions 列表中。
+    admin 拿 token 后，访问 /users/me 成功，并能看到 page.admin.read / page.admin.write。
     """
     _ensure_env_dsn()
 
@@ -109,7 +84,12 @@ def test_admin_permissions_contains_page_admin_permissions(client: TestClient) -
     assert me_resp.status_code == 200, me_resp.text
     me = me_resp.json()
 
-    perms = me.get("permissions") or []
-    assert isinstance(perms, list)
+    assert isinstance(me, dict)
+    assert {"id", "username", "permissions"} <= set(me.keys())
+    assert isinstance(me["id"], int)
+    assert isinstance(me["username"], str)
+    assert isinstance(me["permissions"], list)
+
+    perms = me["permissions"]
     assert "page.admin.read" in perms
     assert "page.admin.write" in perms

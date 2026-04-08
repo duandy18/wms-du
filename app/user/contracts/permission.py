@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ========= 通用基类（v1.0 统一） =========
@@ -11,7 +11,7 @@ class _Base(BaseModel):
     """
     - from_attributes: 允许 ORM 对象直接序列化
     - extra="ignore": 忽略冗余字段（对旧客户端更宽容）
-    - populate_by_name: 支持别名/字段名互填（便于未来加 alias）
+    - populate_by_name: 支持别名/字段名互填
     """
 
     model_config = ConfigDict(
@@ -28,16 +28,15 @@ class PermissionCreate(_Base):
     - name 建议形如：`stock.read` / `order.approve`
     """
 
-    name: Annotated[str, Field(min_length=1, max_length=64, description="权限名（唯一）")]
-    description: Annotated[str | None, Field(default=None, max_length=256)] = None
+    name: Annotated[str, Field(min_length=1, max_length=128, description="权限名（唯一）")]
 
-    @field_validator("name", "description", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
-    def _trim_text(cls, v):
+    def _trim_name(cls, v):
         return v.strip() if isinstance(v, str) else v
 
     model_config = _Base.model_config | {
-        "json_schema_extra": {"example": {"name": "stock.read", "description": "读取库存数据"}}
+        "json_schema_extra": {"example": {"name": "stock.read"}}
     }
 
 
@@ -46,37 +45,32 @@ class PermissionUpdate(_Base):
     更新权限（至少提供一项）
     """
 
-    name: Annotated[str | None, Field(default=None, min_length=1, max_length=64)] = None
-    description: Annotated[str | None, Field(default=None, max_length=256)] = None
+    name: Annotated[str | None, Field(default=None, min_length=1, max_length=128)] = None
 
-    @field_validator("*", mode="after")
+    @field_validator("name", mode="before")
     @classmethod
-    def _at_least_one(cls, _v, info):
-        data = info.data
-        if all(v is None for v in data.values()):
-            raise ValueError("至少提供一个要更新的字段")
-        return _v
-
-    @field_validator("name", "description", mode="before")
-    @classmethod
-    def _trim_text(cls, v):
+    def _trim_name(cls, v):
         return v.strip() if isinstance(v, str) else v
 
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if self.name is None:
+            raise ValueError("至少提供一个要更新的字段")
+        return self
+
     model_config = _Base.model_config | {
-        "json_schema_extra": {"example": {"description": "允许审批订单"}}
+        "json_schema_extra": {"example": {"name": "order.approve"}}
     }
 
 
 # ========= 输出 =========
 class PermissionOut(_Base):
-    # 关键修复：id 改为 int，与 DB 中 permissions.id 对齐
     id: Annotated[int, Field(description="权限ID（整数）")]
-    name: Annotated[str, Field(min_length=1, max_length=64)]
-    description: Annotated[str | None, Field(default=None, max_length=256)] = None
+    name: Annotated[str, Field(min_length=1, max_length=128)]
 
     model_config = _Base.model_config | {
         "json_schema_extra": {
-            "example": {"id": 1, "name": "stock.read", "description": "读取库存数据"}
+            "example": {"id": 1, "name": "stock.read"}
         }
     }
 
