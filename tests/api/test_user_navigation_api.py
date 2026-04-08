@@ -135,7 +135,8 @@ async def test_my_me_shape_unchanged(client: AsyncClient) -> None:
     assert isinstance(data["id"], int)
     assert isinstance(data["username"], str)
     assert isinstance(data["permissions"], list)
-    assert "system.user.manage" in data["permissions"]
+    assert "page.admin.read" in data["permissions"]
+    assert "page.admin.write" in data["permissions"]
 
 
 @pytest.mark.asyncio
