@@ -21,7 +21,7 @@ class UserPermissionMatrixService:
     用户一级页面权限矩阵读取服务：
 
     目标：
-    - 只按一级页面输出矩阵列
+    - 只按真正可授权的一级页面输出矩阵列
     - 二级页面不作为独立授权边界
     - write=true 视为同时具备 read=true（读取时也做归一）
 
@@ -60,19 +60,13 @@ class UserPermissionMatrixService:
 
         out: list[dict[str, Any]] = []
         for page in raw_pages:
-            level = int(page.get("level") or 0)
-            if level != 1:
-                continue
-
-            code = str(page.get("code") or "").strip()
-            name = str(page.get("name") or "").strip()
-            if not code or not name:
+            if not self._is_grantable_root_page(page):
                 continue
 
             out.append(
                 {
-                    "code": code,
-                    "name": name,
+                    "code": str(page["code"]).strip(),
+                    "name": str(page["name"]).strip(),
                     "sort_order": int(page.get("sort_order") or 0),
                     "self_read_permission": page.get("self_read_permission"),
                     "self_write_permission": page.get("self_write_permission"),
@@ -80,6 +74,29 @@ class UserPermissionMatrixService:
             )
 
         return out
+
+    def _is_grantable_root_page(self, page: dict[str, Any]) -> bool:
+        level = int(page.get("level") or 0)
+        if level != 1:
+            return False
+
+        code = str(page.get("code") or "").strip()
+        name = str(page.get("name") or "").strip()
+        if not code or not name:
+            return False
+
+        if bool(page.get("inherit_permissions")):
+            return False
+
+        read_permission = page.get("self_read_permission")
+        write_permission = page.get("self_write_permission")
+
+        if not isinstance(read_permission, str) or not read_permission.strip():
+            return False
+        if not isinstance(write_permission, str) or not write_permission.strip():
+            return False
+
+        return True
 
     def _build_user_row(
         self,

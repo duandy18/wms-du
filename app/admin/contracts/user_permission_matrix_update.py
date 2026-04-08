@@ -10,6 +10,7 @@ class PagePermissionCellIn(BaseModel):
 
 
 class UserPermissionMatrixUpdateIn(BaseModel):
+    page_codes: list[str] = Field(default_factory=list)
     pages: dict[str, PagePermissionCellIn] = Field(default_factory=dict)
 
 
