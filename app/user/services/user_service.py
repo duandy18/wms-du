@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
 from app.models.user import User
 from app.user.repositories.user_repository import UserRepository
+from app.user.services.user_admin_audit import AdminUserAuditService
 from app.user.services.user_auth import (
     authenticate_user as _authenticate_user,
     create_token_for_user as _create_token_for_user,
@@ -21,6 +22,8 @@ from app.user.services.user_permissions import (
     check_permission as _check_permission,
     get_user_permissions as _get_user_permissions,
 )
+
+ADMIN_WRITE_PERMISSION = "page.admin.write"
 
 
 class UserService:
@@ -36,6 +39,7 @@ class UserService:
     def __init__(self, db_session: Session):
         self.db: Session = db_session
         self.repo = UserRepository(db_session)
+        self.admin_audit = AdminUserAuditService(db_session)
 
     # =======================================================
     # 用户查询
@@ -93,12 +97,23 @@ class UserService:
         self,
         user_id: int,
         *,
+        actor_user_id: int | None = None,
         full_name: Optional[str] = None,
         phone: Optional[str] = None,
         email: Optional[str] = None,
         is_active: Optional[bool] = None,
     ) -> User:
-        return self.repo.update_user_profile(
+        user = self.repo.get_user_by_id(user_id)
+        if not user:
+            raise NotFoundError("用户不存在")
+
+        before_is_active = bool(getattr(user, "is_active", True))
+        before_username = str(getattr(user, "username", ""))
+
+        if is_active is False and self._is_active_admin_write_user(user):
+            self._ensure_not_last_active_admin_writer(action="停用")
+
+        updated_user = self.repo.update_user_profile(
             user_id=user_id,
             full_name=full_name,
             phone=phone,
@@ -106,11 +121,57 @@ class UserService:
             is_active=is_active,
         )
 
+        after_is_active = bool(getattr(updated_user, "is_active", True))
+        if (
+            actor_user_id is not None
+            and is_active is not None
+            and before_is_active != after_is_active
+        ):
+            self.admin_audit.write_user_status_updated(
+                actor_user_id=int(actor_user_id),
+                target_user_id=int(updated_user.id),
+                target_username=str(updated_user.username or before_username),
+                before_is_active=before_is_active,
+                after_is_active=after_is_active,
+            )
+
+        return updated_user
+
     # =======================================================
     # 删除用户
     # =======================================================
-    def delete_user(self, user_id: int) -> None:
+    def delete_user(
+        self,
+        user_id: int,
+        *,
+        actor_user_id: int | None = None,
+    ) -> None:
+        user = self.repo.get_user_by_id(user_id)
+        if not user:
+            raise NotFoundError("用户不存在")
+
+        before_snapshot = {
+            "id": int(user.id),
+            "username": str(user.username),
+            "is_active": bool(getattr(user, "is_active", True)),
+            "full_name": getattr(user, "full_name", None),
+            "phone": getattr(user, "phone", None),
+            "email": getattr(user, "email", None),
+            "permissions": sorted(self.get_user_permissions(user)),
+        }
+
+        if self._is_active_admin_write_user(user):
+            self._ensure_not_last_active_admin_writer(action="删除")
+
         self.repo.delete_user(user_id=user_id)
+
+        if actor_user_id is not None:
+            self.admin_audit.write_user_deleted(
+                actor_user_id=int(actor_user_id),
+                target_user_id=int(before_snapshot["id"]),
+                target_username=str(before_snapshot["username"]),
+                before_snapshot=before_snapshot,
+            )
 
     # =======================================================
     # 覆盖用户直配权限
@@ -129,11 +190,26 @@ class UserService:
     # =======================================================
     # 管理员重置密码
     # =======================================================
-    def reset_user_password(self, user_id: int, *, new_password: str = "000000") -> User:
-        return self.repo.reset_user_password(
+    def reset_user_password(
+        self,
+        user_id: int,
+        *,
+        new_password: str = "000000",
+        actor_user_id: int | None = None,
+    ) -> User:
+        updated_user = self.repo.reset_user_password(
             user_id=user_id,
             new_password=new_password,
         )
+
+        if actor_user_id is not None:
+            self.admin_audit.write_password_reset(
+                actor_user_id=int(actor_user_id),
+                target_user_id=int(updated_user.id),
+                target_username=str(updated_user.username),
+            )
+
+        return updated_user
 
     # =======================================================
     # 密码修改
@@ -164,6 +240,18 @@ class UserService:
     # =======================================================
     def check_permission(self, user: Any, required: List[str], *, any_of=True):
         return _check_permission(self.db, user, required, any_of=any_of)
+
+    def _is_active_admin_write_user(self, user: User) -> bool:
+        if not bool(getattr(user, "is_active", True)):
+            return False
+
+        permission_names = set(self.get_user_permissions(user))
+        return ADMIN_WRITE_PERMISSION in permission_names
+
+    def _ensure_not_last_active_admin_writer(self, *, action: str) -> None:
+        count = self.repo.count_active_users_with_permission(ADMIN_WRITE_PERMISSION)
+        if count <= 1:
+            raise ValueError(f"不能{action}最后一个仍拥有 page.admin.write 的有效用户")
 
 
 class AsyncUserService:

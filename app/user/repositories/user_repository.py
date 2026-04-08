@@ -35,6 +35,19 @@ class UserRepository:
     def list_users(self) -> list[User]:
         return self.db.query(User).order_by(User.id.asc()).all()
 
+    def count_active_users_with_permission(self, permission_name: str) -> int:
+        return int(
+            self.db.query(User.id)
+            .join(user_permissions, user_permissions.c.user_id == User.id)
+            .join(Permission, Permission.id == user_permissions.c.permission_id)
+            .filter(
+                User.is_active.is_(True),
+                Permission.name == permission_name,
+            )
+            .distinct()
+            .count()
+        )
+
     # =======================================================
     # 内部工具：权限 ID 校验 / 归一
     # =======================================================

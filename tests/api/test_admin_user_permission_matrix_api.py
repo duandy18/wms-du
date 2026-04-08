@@ -55,6 +55,29 @@ def _find_row_by_username(rows: list[dict], username: str) -> dict:
     raise AssertionError(f"未找到用户名={username} 的矩阵行")
 
 
+def _get_matrix_page_codes(
+    client: TestClient,
+    headers: dict[str, str],
+) -> list[str]:
+    resp = client.get("/admin/users/permission-matrix", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    data = resp.json()
+    pages = data.get("pages")
+    assert isinstance(pages, list)
+
+    page_codes = [item["page_code"] for item in pages]
+    assert page_codes, "permission-matrix page_codes should not be empty"
+    return page_codes
+
+
+def _build_empty_pages(page_codes: list[str]) -> dict[str, dict[str, bool]]:
+    return {
+        code: {"read": False, "write": False}
+        for code in page_codes
+    }
+
+
 def test_admin_can_get_user_permission_matrix(client: TestClient) -> None:
     _ensure_env_dsn()
     headers = _login_admin_headers(client)
@@ -76,13 +99,18 @@ def test_admin_can_get_user_permission_matrix(client: TestClient) -> None:
     user_id = created["id"]
     assert isinstance(user_id, int)
 
+    page_codes = _get_matrix_page_codes(client, headers)
+    assert "admin" in set(page_codes)
+
+    pages_payload = _build_empty_pages(page_codes)
+    pages_payload["admin"] = {"read": True, "write": False}
+
     save_resp = client.put(
         f"/admin/users/{user_id}/permission-matrix",
         headers=headers,
         json={
-            "pages": {
-                "admin": {"read": True, "write": False},
-            }
+            "page_codes": page_codes,
+            "pages": pages_payload,
         },
     )
     assert save_resp.status_code == 200, save_resp.text
@@ -105,8 +133,8 @@ def test_admin_can_get_user_permission_matrix(client: TestClient) -> None:
     assert isinstance(first_page, dict)
     assert {"page_code", "page_name", "sort_order"} <= set(first_page.keys())
 
-    page_codes = [item["page_code"] for item in pages]
-    assert "admin" in page_codes
+    result_page_codes = [item["page_code"] for item in pages]
+    assert "admin" in result_page_codes
 
     created_row = _find_row_by_username(rows, username)
     assert {"user_id", "username", "is_active", "pages"} <= set(created_row.keys())
@@ -117,7 +145,7 @@ def test_admin_can_get_user_permission_matrix(client: TestClient) -> None:
     assert admin_cell["read"] is True
     assert admin_cell["write"] is False
 
-    for page_code in page_codes:
+    for page_code in result_page_codes:
         cell = created_row["pages"].get(page_code)
         assert isinstance(cell, dict)
         assert isinstance(cell.get("read"), bool)

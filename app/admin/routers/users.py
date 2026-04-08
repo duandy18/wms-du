@@ -64,6 +64,7 @@ def update_user_permission_matrix(
     try:
         return matrix_write_service.update_matrix_for_user(
             user_id=user_id,
+            actor_user_id=int(getattr(current_user, "id")),
             body=body,
         )
     except NotFoundError as e:
@@ -120,6 +121,7 @@ def update_user(
     try:
         user = svc.update_user(
             user_id=user_id,
+            actor_user_id=int(getattr(current_user, "id")),
             full_name=body.full_name,
             phone=body.phone,
             email=body.email,
@@ -128,6 +130,8 @@ def update_user(
         return _to_user_out(svc, user)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{user_id}/delete")
@@ -143,7 +147,10 @@ def delete_user(
         raise HTTPException(status_code=400, detail="不能删除当前登录用户")
 
     try:
-        svc.delete_user(user_id=user_id)
+        svc.delete_user(
+            user_id=user_id,
+            actor_user_id=int(getattr(current_user, "id")),
+        )
         return {"ok": True, "message": "用户已删除"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -162,7 +169,11 @@ def reset_password(
     svc.check_permission(current_user, ["page.admin.write"])
 
     try:
-        svc.reset_user_password(user_id, new_password="000000")
+        svc.reset_user_password(
+            user_id,
+            new_password="000000",
+            actor_user_id=int(getattr(current_user, "id")),
+        )
         return {"ok": True, "message": "密码重置为 000000"}
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

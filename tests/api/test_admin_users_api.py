@@ -3,6 +3,7 @@
 # 目标：
 # - 验证管理员用户管理接口已经收口到 /admin/users
 # - 验证授权调整通过 /admin/users/{user_id}/permission-matrix 完成
+# - 验证不能停用最后一个仍拥有 page.admin.write 的有效用户
 # - 仅通过 HTTP 调用，不直接写数据库
 #
 # 副作用：
@@ -17,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.user.repositories.user_repository import UserRepository
 
 
 @pytest.fixture(scope="session")
@@ -52,6 +54,29 @@ def _find_user_by_username(rows: list[dict], username: str) -> dict:
         if row.get("username") == username:
             return row
     raise AssertionError(f"未找到用户名={username} 的用户行")
+
+
+def _get_matrix_page_codes(
+    client: TestClient,
+    headers: dict[str, str],
+) -> list[str]:
+    resp = client.get("/admin/users/permission-matrix", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    data = resp.json()
+    pages = data.get("pages")
+    assert isinstance(pages, list)
+
+    page_codes = [item["page_code"] for item in pages]
+    assert page_codes, "permission-matrix page_codes should not be empty"
+    return page_codes
+
+
+def _build_empty_pages(page_codes: list[str]) -> dict[str, dict[str, bool]]:
+    return {
+        code: {"read": False, "write": False}
+        for code in page_codes
+    }
 
 
 def test_admin_can_list_users_via_admin_users(client: TestClient) -> None:
@@ -124,18 +149,18 @@ def test_admin_can_create_update_save_matrix_and_reset_password(
     assert updated["email"] == f"{username}.updated@example.com"
 
     # 3) 通过矩阵授予 admin 写权限；write=true 应自动补 read=true
+    page_codes = _get_matrix_page_codes(client, headers)
+    assert "admin" in set(page_codes)
+
+    pages = _build_empty_pages(page_codes)
+    pages["admin"] = {"read": False, "write": True}
+
     matrix_resp = client.put(
         f"/admin/users/{user_id}/permission-matrix",
         headers=headers,
         json={
-            "pages": {
-                "admin": {"read": False, "write": True},
-                "wms": {"read": False, "write": False},
-                "oms": {"read": False, "write": False},
-                "tms": {"read": False, "write": False},
-                "analytics": {"read": False, "write": False},
-                "pms": {"read": False, "write": False},
-            }
+            "page_codes": page_codes,
+            "pages": pages,
         },
     )
     assert matrix_resp.status_code == 200, matrix_resp.text
@@ -179,3 +204,67 @@ def test_admin_can_create_update_save_matrix_and_reset_password(
     )
     assert login_resp.status_code == 200, login_resp.text
     assert "access_token" in login_resp.json()
+
+
+def test_admin_cannot_disable_last_admin_write_user(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ensure_env_dsn()
+    headers = _login_admin_headers(client)
+
+    username = f"zz_admin_api_{uuid4().hex[:10]}"
+
+    create_resp = client.post(
+        "/admin/users",
+        headers=headers,
+        json={
+            "username": username,
+            "password": "abc12345",
+            "permission_ids": [],
+            "full_name": "Admin Disable Guard Test",
+        },
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    created = create_resp.json()
+    user_id = created["id"]
+
+    page_codes = _get_matrix_page_codes(client, headers)
+    assert "admin" in set(page_codes)
+
+    pages = _build_empty_pages(page_codes)
+    pages["admin"] = {"read": True, "write": True}
+
+    grant_resp = client.put(
+        f"/admin/users/{user_id}/permission-matrix",
+        headers=headers,
+        json={
+            "page_codes": page_codes,
+            "pages": pages,
+        },
+    )
+    assert grant_resp.status_code == 200, grant_resp.text
+
+    def fake_count_active_users_with_permission(self, permission_name: str) -> int:
+        assert permission_name == "page.admin.write"
+        return 1
+
+    monkeypatch.setattr(
+        UserRepository,
+        "count_active_users_with_permission",
+        fake_count_active_users_with_permission,
+    )
+
+    disable_resp = client.patch(
+        f"/admin/users/{user_id}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert disable_resp.status_code == 400, disable_resp.text
+    assert "不能停用最后一个仍拥有 page.admin.write 的有效用户" in disable_resp.text
+
+    users_resp = client.get("/admin/users", headers=headers)
+    assert users_resp.status_code == 200, users_resp.text
+    users = users_resp.json()
+    saved_user = _find_user_by_username(users, username)
+    assert saved_user["is_active"] is True
