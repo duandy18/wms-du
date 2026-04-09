@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.models.item import Item
 from app.pms.items.services.item_maintenance_service import ItemMaintenanceService
 from app.pms.items.services.item_presenter import ItemPresenter
-from app.pms.items.services.item_test_set_service import ItemTestSetService
 from app.pms.items.services.item_query_service import ItemQueryService
+from app.pms.items.services.item_test_set_service import ItemTestSetService
 from app.pms.items.services.item_write_service import ItemWriteService
 
 
@@ -18,6 +18,8 @@ class ItemService:
     门面（Facade）：
 
     - 内部按功能拆分到：Query / Write / Presenter / TestSet / Maintenance
+    - 主合同写入语义通过 ItemWriteService 统一收口
+    - 例外修复通道（create_item_by_id）仍走 Maintenance
 
     Phase M-3：
     - items.case_ratio / items.case_uom 已删除；包装单位/倍率请走 item_uoms
@@ -76,12 +78,10 @@ class ItemService:
         *,
         name: str,
         spec: Optional[str] = None,
-        barcode: Optional[str] = None,
         brand: Optional[str] = None,
         category: Optional[str] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
-        has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
         weight_kg: Optional[float] = None,
@@ -93,12 +93,10 @@ class ItemService:
         obj = self._write.create_item(
             name=name,
             spec=spec,
-            barcode=barcode,
             brand=brand,
             category=category,
             enabled=enabled,
             supplier_id=supplier_id,
-            has_shelf_life=has_shelf_life,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
             weight_kg=weight_kg,
@@ -174,40 +172,60 @@ class ItemService:
         *,
         id: int,
         name: Optional[str] = None,
+        name_set: bool = False,
         spec: Optional[str] = None,
+        spec_set: bool = False,
         enabled: Optional[bool] = None,
+        enabled_set: bool = False,
         supplier_id: Optional[int] = None,
-        has_shelf_life: Optional[bool] = None,
+        supplier_id_set: bool = False,
         shelf_life_value: Optional[int] = None,
+        shelf_life_value_set: bool = False,
         shelf_life_unit: Optional[str] = None,
+        shelf_life_unit_set: bool = False,
         weight_kg: Optional[float] = None,
+        weight_kg_set: bool = False,
         brand: Optional[str] = None,
         category: Optional[str] = None,
         brand_set: bool = False,
         category_set: bool = False,
         lot_source_policy: Optional[str] = None,
+        lot_source_policy_set: bool = False,
         expiry_policy: Optional[str] = None,
+        expiry_policy_set: bool = False,
         derivation_allowed: Optional[bool] = None,
+        derivation_allowed_set: bool = False,
         uom_governance_enabled: Optional[bool] = None,
+        uom_governance_enabled_set: bool = False,
     ) -> Item:
         obj = self._write.update_item(
             id=id,
             name=name,
+            name_set=name_set,
             spec=spec,
+            spec_set=spec_set,
             enabled=enabled,
+            enabled_set=enabled_set,
             supplier_id=supplier_id,
-            has_shelf_life=has_shelf_life,
+            supplier_id_set=supplier_id_set,
             shelf_life_value=shelf_life_value,
+            shelf_life_value_set=shelf_life_value_set,
             shelf_life_unit=shelf_life_unit,
+            shelf_life_unit_set=shelf_life_unit_set,
             weight_kg=weight_kg,
+            weight_kg_set=weight_kg_set,
             brand=brand,
             category=category,
             brand_set=brand_set,
             category_set=category_set,
             lot_source_policy=lot_source_policy,
+            lot_source_policy_set=lot_source_policy_set,
             expiry_policy=expiry_policy,
+            expiry_policy_set=expiry_policy_set,
             derivation_allowed=derivation_allowed,
+            derivation_allowed_set=derivation_allowed_set,
             uom_governance_enabled=uom_governance_enabled,
+            uom_governance_enabled_set=uom_governance_enabled_set,
         )
         out = self._present.present_item(item=obj)
         assert out is not None
