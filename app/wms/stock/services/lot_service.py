@@ -7,8 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
 from app.models.lot import Lot
+from app.pms.public.items.contracts.item_policy import ItemPolicy
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
 
 
@@ -32,7 +32,7 @@ async def resolve_or_create_lot(
     db: AsyncSession,
     *,
     warehouse_id: int,
-    item: Item,
+    item_policy: ItemPolicy,
     lot_code_source: str,
     lot_code: Optional[str],
     source_receipt_id: Optional[int],
@@ -45,20 +45,19 @@ async def resolve_or_create_lot(
     - SUPPLIER lot 统一走 ensure_lot_full（写 lot_code_key 防漂移）
     - INTERNAL lot 统一走 ensure_internal_lot_singleton（按 wh+item 单例）
     - 本模块不再直接 new Lot()/flush，避免第二入口造成漂移与约束冲突
+    - 跨域输入不再接收 Item ORM，而是接收 PMS public ItemPolicy
     """
     lot_code_source_u = str(lot_code_source or "").upper().strip()
     if lot_code_source_u not in ("SUPPLIER", "INTERNAL"):
         raise HTTPException(status_code=422, detail="invalid_lot_code_source")
 
-    expiry_policy = getattr(item, "expiry_policy", None)
-
     snapshot = {
-        "item_shelf_life_value_snapshot": getattr(item, "shelf_life_value", None),
-        "item_shelf_life_unit_snapshot": getattr(item, "shelf_life_unit", None),
-        "item_lot_source_policy_snapshot": getattr(item, "lot_source_policy"),
-        "item_expiry_policy_snapshot": expiry_policy,
-        "item_derivation_allowed_snapshot": bool(getattr(item, "derivation_allowed")),
-        "item_uom_governance_enabled_snapshot": bool(getattr(item, "uom_governance_enabled")),
+        "item_shelf_life_value_snapshot": item_policy.shelf_life_value,
+        "item_shelf_life_unit_snapshot": item_policy.shelf_life_unit,
+        "item_lot_source_policy_snapshot": item_policy.lot_source_policy,
+        "item_expiry_policy_snapshot": item_policy.expiry_policy,
+        "item_derivation_allowed_snapshot": bool(item_policy.derivation_allowed),
+        "item_uom_governance_enabled_snapshot": bool(item_policy.uom_governance_enabled),
     }
 
     if snapshot["item_lot_source_policy_snapshot"] is None:
@@ -73,7 +72,7 @@ async def resolve_or_create_lot(
         # ensure supplier lot by key (drift-proof)
         lot_id = await ensure_lot_full(
             db,
-            item_id=int(item.id),
+            item_id=int(item_policy.item_id),
             warehouse_id=int(warehouse_id),
             lot_code=str(lot_code),
             production_date=None,
@@ -94,7 +93,7 @@ async def resolve_or_create_lot(
     try:
         lot_id2 = await ensure_internal_lot_singleton(
             db,
-            item_id=int(item.id),
+            item_id=int(item_policy.item_id),
             warehouse_id=int(warehouse_id),
             source_receipt_id=int(source_receipt_id) if source_receipt_id is not None else None,
             source_line_no=int(source_line_no) if source_line_no is not None else None,

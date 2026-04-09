@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.pms.public.items.services.item_read_service import ItemReadService
+
 
 async def load_fsku_components(
     session: AsyncSession,
@@ -38,20 +40,14 @@ async def load_items_brief(
 ) -> Dict[int, Dict[str, Any]]:
     if not item_ids:
         return {}
-    rows = (
-        await session.execute(
-            text(
-                """
-                SELECT id, sku, name
-                  FROM items
-                 WHERE id = ANY(:ids)
-                """
-            ),
-            {"ids": [int(x) for x in item_ids]},
-        )
-    ).mappings().all()
+
+    svc = ItemReadService(session)
+    rows = await svc.aget_basics_by_item_ids(item_ids=[int(x) for x in item_ids])
 
     out: Dict[int, Dict[str, Any]] = {}
-    for r in rows:
-        out[int(r["id"])] = {"sku": r.get("sku"), "name": r.get("name")}
+    for item_id, item in rows.items():
+        out[int(item_id)] = {
+            "sku": item.sku,
+            "name": item.name,
+        }
     return out

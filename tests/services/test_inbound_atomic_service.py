@@ -44,17 +44,28 @@ async def test_create_inbound_atomic_happy_path_with_repo_mocks(monkeypatch):
         }
     )
 
-    class DummyItem:
-        id = 101
-        lot_source_policy = "SUPPLIER"
+    class DummyPolicy:
+        item_id = 101
+        lot_source_policy = "SUPPLIER_ONLY"
+        expiry_policy = "NONE"
+        shelf_life_value = None
+        shelf_life_unit = None
+        derivation_allowed = False
+        uom_governance_enabled = False
 
-    async def fake_get_item_by_id(session, *, item_id: int):
+    async def fake_get_item_policy_by_id(session, *, item_id: int):
         assert item_id == 101
-        return DummyItem()
+        return DummyPolicy()
 
-    async def fake_resolve_inbound_lot(session, *, warehouse_id: int, item, lot_code: str | None):
+    async def fake_resolve_inbound_lot(
+        session,
+        *,
+        warehouse_id: int,
+        item_policy,
+        lot_code: str | None,
+    ):
         assert warehouse_id == 1
-        assert item.id == 101
+        assert item_policy.item_id == 101
         assert lot_code == "LOT-001"
         return 9001
 
@@ -88,7 +99,7 @@ async def test_create_inbound_atomic_happy_path_with_repo_mocks(monkeypatch):
         assert trace_id.startswith("IN-ATOMIC-")
         return {"ok": True}
 
-    monkeypatch.setattr(svc, "get_item_by_id", fake_get_item_by_id)
+    monkeypatch.setattr(svc, "get_item_policy_by_id", fake_get_item_policy_by_id)
     monkeypatch.setattr(svc, "resolve_inbound_lot", fake_resolve_inbound_lot)
     monkeypatch.setattr(svc, "apply_inbound_stock", fake_apply_inbound_stock)
 

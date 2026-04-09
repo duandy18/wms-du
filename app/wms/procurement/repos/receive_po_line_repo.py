@@ -3,26 +3,26 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
+from app.pms.public.items.services.item_read_service import ItemReadService
 
 
 async def load_item_expiry_policy(session: AsyncSession, *, item_id: int) -> str:
-    row = await session.execute(select(Item.expiry_policy).where(Item.id == int(item_id)))
-    v = row.scalar_one_or_none()
-    if v is None:
+    svc = ItemReadService(session)
+    policy = await svc.aget_policy_by_id(item_id=int(item_id))
+    if policy is None:
         return "NONE"
-    return str(getattr(v, "value", v) or "NONE").upper()
+    return str(policy.expiry_policy or "NONE").upper()
 
 
 async def load_item_lot_source_policy(session: AsyncSession, *, item_id: int) -> str:
-    row = await session.execute(select(Item.lot_source_policy).where(Item.id == int(item_id)))
-    v = row.scalar_one_or_none()
-    if v is None:
+    svc = ItemReadService(session)
+    policy = await svc.aget_policy_by_id(item_id=int(item_id))
+    if policy is None:
         return "INTERNAL_ONLY"
-    return str(getattr(v, "value", v) or "INTERNAL_ONLY").upper()
+    return str(policy.lot_source_policy or "INTERNAL_ONLY").upper()
 
 
 async def require_item_uom_ratio_to_base(
@@ -48,7 +48,10 @@ async def require_item_uom_ratio_to_base(
     )
     r = row.mappings().first()
     if r is None:
-        raise HTTPException(status_code=400, detail=f"uom_id 不存在或不属于该商品：item_id={int(item_id)} uom_id={int(uom_id)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"uom_id 不存在或不属于该商品：item_id={int(item_id)} uom_id={int(uom_id)}",
+        )
 
     try:
         ratio = int(r.get("ratio_to_base") or 0)
