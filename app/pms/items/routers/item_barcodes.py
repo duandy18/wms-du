@@ -9,24 +9,36 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.models.item import Item
 from app.models.item_barcode import ItemBarcode
+from app.models.item_uom import ItemUOM
 
 router = APIRouter(prefix="/item-barcodes", tags=["item-barcodes"])
 
 
+def _normalize_symbology(v: str | None) -> str:
+    s = (v or "").strip().upper()
+    return s or "CUSTOM"
+
+
+def _get_item_uom_or_404(db: Session, item_uom_id: int) -> ItemUOM:
+    obj = db.get(ItemUOM, int(item_uom_id))
+    if not obj:
+        raise HTTPException(404, "ItemUom not found")
+    return obj
+
+
 class ItemBarcodeCreate(BaseModel):
-    item_id: int
+    item_uom_id: int
     barcode: str
-    kind: str = "CUSTOM"
+    symbology: str = "CUSTOM"
     active: bool = True
 
 
 class ItemBarcodeUpdate(BaseModel):
-    """PATCH 更新条码：可用于切主条码/启用/停用/修改类型"""
+    """PATCH 更新条码：可用于切主条码/启用/停用/修改码制/修改条码值"""
 
     barcode: Optional[str] = None
-    kind: Optional[str] = None
+    symbology: Optional[str] = None
     active: Optional[bool] = None
     is_primary: Optional[bool] = None
 
@@ -34,8 +46,9 @@ class ItemBarcodeUpdate(BaseModel):
 class ItemBarcodeOut(BaseModel):
     id: int
     item_id: int
+    item_uom_id: int
     barcode: str
-    kind: str
+    symbology: str
     active: bool
     is_primary: bool
 
@@ -47,9 +60,7 @@ def create_barcode(
     body: ItemBarcodeCreate,
     db: Session = Depends(get_db),
 ):
-    item = db.get(Item, body.item_id)
-    if not item:
-        raise HTTPException(404, "Item not found")
+    uom = _get_item_uom_or_404(db, body.item_uom_id)
 
     code = body.barcode.strip()
     if not code:
@@ -60,9 +71,10 @@ def create_barcode(
         raise HTTPException(409, "Barcode already exists")
 
     obj = ItemBarcode(
-        item_id=body.item_id,
+        item_id=int(uom.item_id),
+        item_uom_id=int(uom.id),
         barcode=code,
-        kind=body.kind.strip() or "CUSTOM",
+        symbology=_normalize_symbology(body.symbology),
         active=bool(body.active),
         is_primary=False,
     )
@@ -114,6 +126,7 @@ def set_primary(id: int, db: Session = Depends(get_db)):
     db.execute(
         update(ItemBarcode).where(ItemBarcode.item_id == bc.item_id).values(is_primary=False)
     )
+    bc.active = True
     bc.is_primary = True
     db.commit()
     db.refresh(bc)
@@ -132,17 +145,41 @@ def update_barcode(id: int, body: ItemBarcodeUpdate, db: Session = Depends(get_d
     if not bc:
         raise HTTPException(404, "Barcode not found")
 
-    if body.kind is not None:
-        bc.kind = body.kind
+    if body.barcode is not None:
+        code = body.barcode.strip()
+        if not code:
+            raise HTTPException(400, "barcode is required")
+        exists = (
+            db.execute(
+                select(ItemBarcode).where(
+                    ItemBarcode.barcode == code,
+                    ItemBarcode.id != bc.id,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if exists:
+            raise HTTPException(409, "Barcode already exists")
+        bc.barcode = code
+
+    if body.symbology is not None:
+        bc.symbology = _normalize_symbology(body.symbology)
 
     if body.active is not None:
-        bc.active = bool(body.active)
+        next_active = bool(body.active)
+        if (body.is_primary is True) or (body.is_primary is None and bc.is_primary and not next_active):
+            raise HTTPException(400, "primary barcode must be active")
+        bc.active = next_active
 
     if body.is_primary is True:
         db.execute(
             update(ItemBarcode).where(ItemBarcode.item_id == bc.item_id).values(is_primary=False)
         )
+        bc.active = True
         bc.is_primary = True
+    elif body.is_primary is False:
+        bc.is_primary = False
 
     db.commit()
     db.refresh(bc)

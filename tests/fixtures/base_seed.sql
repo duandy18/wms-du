@@ -224,10 +224,20 @@ DO UPDATE SET
   is_inbound_default = EXCLUDED.is_inbound_default,
   is_outbound_default = EXCLUDED.is_outbound_default;
 
--- ===== item_barcodes (primary) =====
-INSERT INTO item_barcodes (item_id, barcode, kind, active, is_primary, created_at, updated_at)
+-- ===== item_barcodes (primary; bind to base item_uom) =====
+INSERT INTO item_barcodes (
+  item_id,
+  item_uom_id,
+  barcode,
+  symbology,
+  active,
+  is_primary,
+  created_at,
+  updated_at
+)
 SELECT
   i.id,
+  u.id,
   'AUTO-BC-' || i.id::text,
   'CUSTOM',
   true,
@@ -235,7 +245,14 @@ SELECT
   NOW(),
   NOW()
 FROM items i
-WHERE NOT EXISTS (SELECT 1 FROM item_barcodes b WHERE b.item_id = i.id);
+JOIN item_uoms u
+  ON u.item_id = i.id
+ AND u.is_base = true
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM item_barcodes b
+  WHERE b.item_id = i.id
+);
 
 -- ===== inbound_receipts (compat placeholder) =====
 -- 注意：当前 INTERNAL lot 的终态 identity 不应依赖 inbound_receipts。
@@ -301,7 +318,6 @@ SELECT setval(
   COALESCE((SELECT MAX(id) FROM shipping_provider_pricing_template_matrix), 0),
   true
 );
-
 
 SELECT setval(
   pg_get_serial_sequence('items','id'),
