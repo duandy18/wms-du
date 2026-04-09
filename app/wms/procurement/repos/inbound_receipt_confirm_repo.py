@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.inbound_receipt import InboundReceipt
-from app.models.item import Item
+from app.pms.public.items.contracts.item_basic import ItemBasic
+from app.pms.public.items.services.item_read_service import ItemReadService
 
 
 async def load_receipt_for_update(
@@ -25,7 +26,12 @@ async def load_receipt_for_update(
     if obj is None:
         raise ValueError("InboundReceipt not found")
     if obj.lines:
-        obj.lines.sort(key=lambda x: (int(getattr(x, "line_no", 0) or 0), int(getattr(x, "id", 0) or 0)))
+        obj.lines.sort(
+            key=lambda x: (
+                int(getattr(x, "line_no", 0) or 0),
+                int(getattr(x, "id", 0) or 0),
+            )
+        )
     return obj
 
 
@@ -33,12 +39,12 @@ async def load_items_by_ids(
     session: AsyncSession,
     *,
     item_ids: List[int],
-) -> Dict[int, Item]:
+) -> Dict[int, ItemBasic]:
     if not item_ids:
         return {}
-    stmt = select(Item).where(Item.id.in_([int(x) for x in item_ids]))
-    rows = (await session.execute(stmt)).scalars().all()
-    return {int(x.id): x for x in rows}
+
+    svc = ItemReadService(session)
+    return await svc.aget_basics_by_item_ids(item_ids=[int(x) for x in item_ids])
 
 
 __all__ = [

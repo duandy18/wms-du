@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Tuple
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
+from app.pms.public.items.services.item_read_service import ItemReadService
 from app.wms.shared.services.expiry_rules import ShelfLife, ShelfLifeUnit, resolve_expiry_date
 
 
@@ -28,8 +27,8 @@ async def resolve_batch_dates_for_item(
     规则：
     1) 如果显式给了 expiry_date → 直接使用（不动）
     2) 若未给 expiry_date 且有 production_date：
-         - 从 items 读取 (shelf_life_value, shelf_life_unit)
-         - 若存在有效保质期 → 通过 expiry_rules 计算 expiry_date
+         - 从 PMS public policy 读取 expiry_policy / shelf_life
+         - 若 expiry_policy=REQUIRED 且存在有效保质期 → 通过 expiry_rules 计算 expiry_date
     3) 若两者皆无或无保质期配置 → 如实返回（可能都是 None）
 
     注意：
@@ -44,18 +43,20 @@ async def resolve_batch_dates_for_item(
     if production_date is None:
         return None, None
 
-    # 读取 item 的保质期配置
-    row = await session.execute(
-        select(Item.shelf_life_value, Item.shelf_life_unit).where(Item.id == item_id)
-    )
-    res = row.one_or_none()
-    if res is None:
+    svc = ItemReadService(session)
+    policy = await svc.aget_policy_by_id(item_id=int(item_id))
+    if policy is None:
         # 未找到 item，直接返回原值，后续由调用方决定是否抛错
         return production_date, None
 
-    value, unit_str = res
-    if value is None or value <= 0:
-        # 没配置保质期，无法推断
+    if policy.expiry_policy == "NONE":
+        # 明确无效期策略：不推算
+        return production_date, None
+
+    value = policy.shelf_life_value
+    unit_str = policy.shelf_life_unit
+    if value is None or value <= 0 or unit_str is None:
+        # 没配置完整保质期，无法推断
         return production_date, None
 
     # 解析单位字符串；异常时保底按 DAY 处理，避免脏数据引发 500
@@ -64,7 +65,7 @@ async def resolve_batch_dates_for_item(
     except ValueError:
         unit = ShelfLifeUnit.DAY
 
-    shelf_life = ShelfLife(value=value, unit=unit)
+    shelf_life = ShelfLife(value=int(value), unit=unit)
 
     computed = resolve_expiry_date(
         production_date=production_date,

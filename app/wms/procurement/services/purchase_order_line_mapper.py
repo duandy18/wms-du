@@ -54,8 +54,6 @@ def map_po_line_out(
     ln: Any,
     *,
     received_base: int,
-    items_map: Dict[int, Any],
-    barcode_map: Dict[int, str],
 ) -> PurchaseOrderLineListOut:
     data = build_line_base_data(ln=ln, received_base=received_base)
     return PurchaseOrderLineListOut.model_validate(data)

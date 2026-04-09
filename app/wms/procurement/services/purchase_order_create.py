@@ -8,17 +8,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 from app.models.supplier import Supplier
+from app.pms.public.items.contracts.item_basic import ItemBasic
+from app.pms.public.items.services.item_read_service import ItemReadService
 
 
-async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, Item]:
+async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, ItemBasic]:
     if not item_ids:
         return {}
-    rows = (await session.execute(select(Item).where(Item.id.in_(item_ids)))).scalars().all()
-    return {int(it.id): it for it in rows}
+    svc = ItemReadService(session)
+    return await svc.aget_basics_by_item_ids(item_ids=item_ids)
 
 
 async def _require_supplier_for_po(session: AsyncSession, supplier_id: Optional[int]) -> Supplier:
@@ -194,7 +195,7 @@ async def create_po_v2(
         if it is None:
             raise ValueError(f"商品不存在：item_id={int(item_id)}")
 
-        it_supplier_id = int(getattr(it, "supplier_id", 0) or 0)
+        it_supplier_id = int(it.supplier_id or 0)
         if it_supplier_id != 0 and it_supplier_id != po_supplier_id:
             raise ValueError("商品不属于当前供应商")
 
@@ -213,15 +214,18 @@ async def create_po_v2(
             supply_price = Decimal(str(supply_price))
 
         discount_amount = _parse_discount_amount(raw.get("discount_amount"))
-        line_total = (Decimal("0") if supply_price is None else (supply_price * Decimal(qty_ordered_base))) - discount_amount
+        line_total = (
+            (Decimal("0") if supply_price is None else (supply_price * Decimal(qty_ordered_base)))
+            - discount_amount
+        )
         total_amount += line_total
 
         norm_lines.append(
             {
                 "line_no": raw.get("line_no") or idx,
                 "item_id": item_id,
-                "item_name": getattr(it, "name", None),
-                "item_sku": getattr(it, "sku", None),
+                "item_name": it.name,
+                "item_sku": it.sku,
                 "spec_text": raw.get("spec_text"),
                 "purchase_uom_id_snapshot": uom_id,
                 "purchase_ratio_to_base_snapshot": ratio_to_base,

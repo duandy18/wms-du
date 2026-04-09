@@ -14,7 +14,7 @@ from app.wms.inbound.contracts.inbound_atomic import (
     InboundAtomicResultRow,
 )
 from app.wms.inbound.repos.inbound_stock_write_repo import apply_inbound_stock
-from app.wms.inbound.repos.item_lookup_repo import get_item_by_id
+from app.wms.inbound.repos.item_lookup_repo import get_item_policy_by_id
 from app.wms.inbound.repos.lot_resolve_repo import resolve_inbound_lot
 
 
@@ -99,14 +99,14 @@ async def _apply_inbound_lines(
     rows: list[InboundAtomicResultRow] = []
 
     for idx, line in enumerate(lines, start=1):
-        item = await get_item_by_id(session, item_id=int(line.item_id))
-        if item is None:
+        item_policy = await get_item_policy_by_id(session, item_id=int(line.item_id))
+        if item_policy is None:
             raise HTTPException(status_code=422, detail=f"item_not_found:{line.item_id}")
 
         lot_id = await resolve_inbound_lot(
             session,
             warehouse_id=int(warehouse_id),
-            item=item,
+            item_policy=item_policy,
             lot_code=line.lot_code,
         )
 

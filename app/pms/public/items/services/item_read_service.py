@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
+from app.models.item_barcode import ItemBarcode
 from app.pms.items.repos.item_repo import get_item_by_id as repo_get_item_by_id
 from app.pms.items.repos.item_repo import get_item_by_sku as repo_get_item_by_sku
 from app.pms.items.repos.item_repo import get_items as repo_get_items
@@ -30,16 +33,33 @@ class ItemReadService:
     - 供其他模块读取 PMS 商品最小事实
     - 不承载写入语义
     - 不暴露 owner 内部兼容输入逻辑
+
+    说明：
+    - 当前同时支持 sync Session 与 AsyncSession
+    - sync 路径复用 owner repo / barcode service
+    - async 路径在 public 层自行查询，避免把 owner 内部直接双栈化
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session | AsyncSession) -> None:
         self.db = db
-        self._barcodes = ItemBarcodeService(db)
+
+    def _require_sync_db(self) -> Session:
+        if isinstance(self.db, AsyncSession):
+            raise TypeError("ItemReadService sync API requires Session, got AsyncSession")
+        if not isinstance(self.db, Session):
+            raise TypeError(f"ItemReadService expected Session, got {type(self.db)!r}")
+        return self.db
+
+    def _require_async_db(self) -> AsyncSession:
+        if not isinstance(self.db, AsyncSession):
+            raise TypeError("ItemReadService async API requires AsyncSession")
+        return self.db
 
     def list_basic(self, *, query: ItemReadQuery | None = None) -> List[ItemBasic]:
+        db = self._require_sync_db()
         q = query or ItemReadQuery()
         rows = repo_get_items(
-            self.db,
+            db,
             supplier_id=q.supplier_id,
             enabled=q.enabled,
             q=q.q,
@@ -48,48 +68,116 @@ class ItemReadService:
         return self._map_items_to_basic(rows)
 
     def get_basic_by_id(self, *, item_id: int) -> ItemBasic | None:
-        obj = repo_get_item_by_id(self.db, int(item_id))
+        db = self._require_sync_db()
+        obj = repo_get_item_by_id(db, int(item_id))
         if obj is None:
             return None
         return self._map_item_to_basic(obj)
 
     def get_basic_by_sku(self, *, sku: str) -> ItemBasic | None:
-        obj = repo_get_item_by_sku(self.db, sku)
+        db = self._require_sync_db()
+        obj = repo_get_item_by_sku(db, sku)
         if obj is None:
             return None
         return self._map_item_to_basic(obj)
 
     def get_policy_by_id(self, *, item_id: int) -> ItemPolicy | None:
-        obj = repo_get_item_by_id(self.db, int(item_id))
+        db = self._require_sync_db()
+        obj = repo_get_item_by_id(db, int(item_id))
         if obj is None:
             return None
         return self._map_item_to_policy(obj)
 
     def get_policies_by_item_ids(self, *, item_ids: Iterable[int]) -> dict[int, ItemPolicy]:
+        db = self._require_sync_db()
         ids = sorted({int(x) for x in item_ids if x is not None})
         if not ids:
             return {}
 
         rows: list[Item] = []
         for item_id in ids:
-            obj = repo_get_item_by_id(self.db, item_id)
+            obj = repo_get_item_by_id(db, item_id)
             if obj is not None:
                 rows.append(obj)
 
         return {int(x.id): self._map_item_to_policy(x) for x in rows}
 
+    async def aget_basic_by_id(self, *, item_id: int) -> ItemBasic | None:
+        db = self._require_async_db()
+        stmt = select(Item).where(Item.id == int(item_id))
+        obj = (await db.execute(stmt)).scalars().first()
+        if obj is None:
+            return None
+
+        barcode_map = await self._aload_primary_barcodes_map(item_ids=[int(obj.id)])
+        return self._build_item_basic(obj, barcode_map.get(int(obj.id)))
+
+    async def aget_basics_by_item_ids(self, *, item_ids: Iterable[int]) -> dict[int, ItemBasic]:
+        db = self._require_async_db()
+        ids = sorted({int(x) for x in item_ids if x is not None})
+        if not ids:
+            return {}
+
+        stmt = select(Item).where(Item.id.in_(ids)).order_by(Item.id.asc())
+        rows = (await db.execute(stmt)).scalars().all()
+        if not rows:
+            return {}
+
+        barcode_map = await self._aload_primary_barcodes_map(item_ids=ids)
+        basics = self._build_basics_from_items(rows, barcode_map)
+        return {int(x.id): x for x in basics}
+
+    async def aget_policy_by_id(self, *, item_id: int) -> ItemPolicy | None:
+        db = self._require_async_db()
+        stmt = select(Item).where(Item.id == int(item_id))
+        obj = (await db.execute(stmt)).scalars().first()
+        if obj is None:
+            return None
+        return self._map_item_to_policy(obj)
+
     def _map_items_to_basic(self, items: list[Item]) -> List[ItemBasic]:
         if not items:
             return []
 
-        barcode_map = self._barcodes.load_primary_barcodes_map(
+        db = self._require_sync_db()
+        barcode_map = ItemBarcodeService(db).load_primary_barcodes_map(
             item_ids=[int(x.id) for x in items if getattr(x, "id", None) is not None]
         )
-        return [self._build_item_basic(x, barcode_map.get(int(x.id))) for x in items]
+        return self._build_basics_from_items(items, barcode_map)
 
     def _map_item_to_basic(self, item: Item) -> ItemBasic:
-        barcode_map = self._barcodes.load_primary_barcodes_map(item_ids=[int(item.id)])
+        db = self._require_sync_db()
+        barcode_map = ItemBarcodeService(db).load_primary_barcodes_map(item_ids=[int(item.id)])
         return self._build_item_basic(item, barcode_map.get(int(item.id)))
+
+    async def _aload_primary_barcodes_map(self, *, item_ids: Iterable[int]) -> dict[int, str]:
+        db = self._require_async_db()
+        ids = sorted({int(x) for x in item_ids if x is not None})
+        if not ids:
+            return {}
+
+        rows = (
+            await db.execute(
+                select(ItemBarcode.item_id, ItemBarcode.barcode)
+                .where(ItemBarcode.item_id.in_(ids))
+                .where(ItemBarcode.is_primary.is_(True))
+                .where(ItemBarcode.active.is_(True))
+            )
+        ).all()
+
+        result: dict[int, str] = {}
+        for item_id, barcode in rows:
+            if item_id is None or barcode is None:
+                continue
+            result[int(item_id)] = str(barcode)
+        return result
+
+    def _build_basics_from_items(
+        self,
+        items: list[Item],
+        barcode_map: dict[int, str],
+    ) -> List[ItemBasic]:
+        return [self._build_item_basic(x, barcode_map.get(int(x.id))) for x in items]
 
     def _map_item_to_policy(self, item: Item) -> ItemPolicy:
         expiry_policy = _enum_value(getattr(item, "expiry_policy", None))
@@ -97,7 +185,9 @@ class ItemReadService:
         shelf_life_unit = _enum_value(getattr(item, "shelf_life_unit", None))
 
         if expiry_policy not in {"NONE", "REQUIRED"}:
-            raise RuntimeError(f"unexpected expiry_policy for item_id={int(item.id)}: {expiry_policy!r}")
+            raise RuntimeError(
+                f"unexpected expiry_policy for item_id={int(item.id)}: {expiry_policy!r}"
+            )
         if lot_source_policy not in {"INTERNAL_ONLY", "SUPPLIER_ONLY"}:
             raise RuntimeError(
                 f"unexpected lot_source_policy for item_id={int(item.id)}: {lot_source_policy!r}"

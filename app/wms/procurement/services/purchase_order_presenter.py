@@ -7,7 +7,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.procurement.contracts.purchase_order import PurchaseOrderWithLinesOut
-from app.wms.procurement.services.purchase_order_enrichment import load_items_map, load_primary_barcodes
 from app.wms.procurement.services.purchase_order_line_mapper import map_po_line_out
 
 
@@ -43,10 +42,6 @@ async def build_po_with_lines_out(
     if getattr(po, "lines", None):
         po.lines.sort(key=lambda line: (line.line_no, line.id))
 
-    item_ids = sorted({int(ln.item_id) for ln in (po.lines or [])})
-    items_map: Dict[int, Any] = await load_items_map(session, item_ids)
-    barcode_map = await load_primary_barcodes(session, item_ids)
-
     received_map = await _load_po_confirmed_received_base_map(
         session, po_id=int(po.id)
     )
@@ -58,8 +53,6 @@ async def build_po_with_lines_out(
             map_po_line_out(
                 ln,
                 received_base=received_base,
-                items_map=items_map,
-                barcode_map=barcode_map,
             )
         )
 
