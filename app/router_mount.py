@@ -25,6 +25,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
     from app.pms.items.routers.item_uoms import router as item_uoms_router
     from app.pms.items.routers.items import router as items_router
+    from app.pms.public.items.routers.barcode_probe import router as pms_public_barcode_probe_router
+    from app.pms.public.items.routers.items_read import router as pms_public_items_read_router
     from app.wms.analysis.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
     from app.wms.ledger.routers.ledger_timeline import router as ledger_timeline_router
     from app.diagnostics.routers.lifecycle import router as lifecycle_router
@@ -117,7 +119,12 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(warehouses_router)
 
-    # 商品相关
+    # 商品相关：
+    # - PMS public 读面先挂
+    # - /items/barcode-probe 先于 /items/{id}
+    # - /public/items 独立前缀，不与 owner /items 冲突
+    app.include_router(pms_public_items_read_router)
+    app.include_router(pms_public_barcode_probe_router)
     app.include_router(items_router)
     app.include_router(item_barcodes_router)
     app.include_router(item_uoms_router)
