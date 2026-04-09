@@ -26,6 +26,7 @@ class ItemMaintenanceService:
     Phase M-5：
     - items.uom 已物理移除；此通道不再接收/写入 uom
     - 必须补齐 items 的 NOT NULL 策略字段
+    - 若要写入主条码，必须先存在 base item_uom（不再做隐式兜底）
     """
 
     def __init__(self, db: Session) -> None:
@@ -50,7 +51,9 @@ class ItemMaintenanceService:
         weight_kg: Optional[float] = None,
     ) -> Item:
         if not _allow_create_item_by_id():
-            raise ValueError("create_item_by_id disabled: set WMS_ALLOW_CREATE_ITEM_BY_ID=1 to enable for maintenance")
+            raise ValueError(
+                "create_item_by_id disabled: set WMS_ALLOW_CREATE_ITEM_BY_ID=1 to enable for maintenance"
+            )
 
         if not id or id <= 0:
             raise ValueError("id 必须为正整数")
@@ -102,7 +105,11 @@ class ItemMaintenanceService:
 
             code = (barcode or "").strip()
             if code:
-                self._barcodes.create_primary_for_item(item_id=int(obj.id), barcode=code, kind="EAN13")
+                self._barcodes.create_primary_for_item(
+                    item_id=int(obj.id),
+                    barcode=code,
+                    symbology="EAN13",
+                )
 
             self.db.commit()
         except IntegrityError as e:

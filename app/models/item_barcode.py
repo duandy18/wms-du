@@ -3,7 +3,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -11,11 +21,12 @@ from app.db.base import Base
 
 class ItemBarcode(Base):
     """
-    商品条码表（v2 完整形态）
+    商品条码表（uom 级绑定终态）
 
     用途：
-    - 绑定商品 → barcode → item_id
-    - 用于 scan、采购、入库、盘点、出库等全链路
+    - 绑定条码 → item_id + item_uom_id
+    - 包装语义由 item_uom_id 表达（基准单位 / 盒 / 箱 / ...）
+    - 码制/来源由 symbology 表达（EAN13 / UPC / GS1 / CUSTOM ...）
     - 主条码用于 UI 显示（itemsStore.primaryBarcodes）
     """
 
@@ -28,8 +39,14 @@ class ItemBarcode(Base):
     )
 
     item_id: Mapped[int] = mapped_column(
-        BigInteger,
+        Integer,
         ForeignKey("items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    item_uom_id: Mapped[int] = mapped_column(
+        Integer,
         nullable=False,
         index=True,
     )
@@ -39,11 +56,11 @@ class ItemBarcode(Base):
         nullable=False,
     )
 
-    kind: Mapped[str] = mapped_column(
+    symbology: Mapped[str] = mapped_column(
         Text,
         nullable=False,
         server_default=text("'CUSTOM'"),
-        comment="条码类型：EAN13 / UPC / INNER / CUSTOM ...",
+        comment="条码码制/来源：EAN13 / EAN8 / UPC / UPC12 / GS1 / CUSTOM ...",
     )
 
     active: Mapped[bool] = mapped_column(
@@ -72,6 +89,11 @@ class ItemBarcode(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["item_uom_id", "item_id"],
+            ["item_uoms.id", "item_uoms.item_id"],
+            name="fk_item_barcodes_item_uom_pair",
+        ),
         # 一个 item 只能有一个主条码（部分索引）
         Index(
             "uq_item_barcodes_primary",
@@ -85,6 +107,6 @@ class ItemBarcode(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<ItemBarcode id={self.id} item={self.item_id} "
-            f"barcode={self.barcode!r} primary={self.is_primary}>"
+            f"<ItemBarcode id={self.id} item={self.item_id} item_uom_id={self.item_uom_id} "
+            f"barcode={self.barcode!r} symbology={self.symbology!r} primary={self.is_primary}>"
         )
