@@ -128,7 +128,10 @@ class ScanResponse(BaseModel):
     source: str
 
     item_id: Optional[int] = None
+    item_uom_id: Optional[int] = None
+    ratio_to_base: Optional[int] = None
     qty: Optional[int] = None
+    qty_base: Optional[int] = None
 
     # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
     lot_code: Optional[str] = None

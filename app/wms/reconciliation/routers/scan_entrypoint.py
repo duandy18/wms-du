@@ -35,8 +35,12 @@ def register(router: APIRouter) -> None:
         # ★ item_id：优先 orchestrator，其次请求体
         item_id = result.get("item_id") or req.item_id
 
-        # qty / lot_code/batch_code 仍以请求体为主（count 模式下 actual 单独返回）
+        item_uom_id = result.get("item_uom_id")
+        ratio_to_base = result.get("ratio_to_base")
+
+        # qty 继续作为输入单位数量回显
         qty = req.qty
+        qty_base = result.get("qty_base")
 
         # 合同双轨：对外返回两者对齐；内部仍沿用 batch_code 作为 key
         lot_code = req.lot_code or req.batch_code
@@ -70,7 +74,10 @@ def register(router: APIRouter) -> None:
             event_id=result.get("event_id"),
             source=result.get("source") or "scan_orchestrator",
             item_id=item_id,
+            item_uom_id=item_uom_id,
+            ratio_to_base=ratio_to_base,
             qty=qty,
+            qty_base=qty_base,
             lot_code=lot_code,
             batch_code=batch_code,
             warehouse_id=warehouse_id,

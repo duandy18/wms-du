@@ -53,6 +53,51 @@ def _build_scan_ref(*, mode: str, scan_session_id: str) -> str:
     return f"scan:{str(mode).strip().lower()}:dev:{scan_session_id}"
 
 
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _build_qty_base(
+    *,
+    mode: str,
+    qty: int,
+    ratio_to_base: Optional[int],
+) -> Optional[int]:
+    """
+    仅 receive / pick 进入“执行单位基础化”：
+    - qty：仍代表输入单位数量
+    - qty_base：代表真正下送 handler 的 base qty
+
+    count 暂不改语义：
+    - count_handler 的 actual 是“盘点后的绝对量”，不是增量
+    - 因此这里先返回 None，不参与 count 执行
+    """
+    if mode not in {"receive", "pick"}:
+        return None
+
+    ratio = int(ratio_to_base or 1)
+    if ratio <= 0:
+        raise ValueError("ratio_to_base 必须 >= 1")
+
+    return int(qty) * int(ratio)
+
+
+def _attach_scan_passthrough(
+    result: Dict[str, Any],
+    *,
+    item_uom_id: Optional[int],
+    ratio_to_base: Optional[int],
+    qty_base: Optional[int],
+) -> Dict[str, Any]:
+    out = dict(result)
+    out["item_uom_id"] = item_uom_id
+    out["ratio_to_base"] = ratio_to_base
+    out["qty_base"] = qty_base
+    return out
+
+
 async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[str, Any]:
     """
     v2 扫描编排器（receive / pick / count；历史 putaway 已下线）：
@@ -83,6 +128,9 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
             "evidence": [],
             "errors": [{"stage": "ingest", "error": "missing session"}],
             "item_id": None,
+            "item_uom_id": None,
+            "ratio_to_base": None,
+            "qty_base": None,
         }
 
     (
@@ -96,6 +144,14 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
         production_date,
         expiry_date,
     ) = await parse_scan(scan_mut, session)
+
+    item_uom_id = _coerce_optional_int(parsed.get("item_uom_id"))
+    ratio_to_base = _coerce_optional_int(parsed.get("ratio_to_base"))
+    qty_base = _build_qty_base(
+        mode=mode,
+        qty=int(qty),
+        ratio_to_base=ratio_to_base,
+    )
 
     # ✅ 关键：确保 scan_ref 一定含 mode（哪怕调用方没传、parse_scan 推导了）
     scan_with_mode: Dict[str, Any] = dict(scan_mut or {})
@@ -122,6 +178,9 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
             "evidence": [{"source": "scan_feature_disabled", "db": True}],
             "errors": [{"stage": "ingest", "error": f"FEATURE_DISABLED: unsupported_mode:{mode}"}],
             "item_id": item_id,
+            "item_uom_id": item_uom_id,
+            "ratio_to_base": ratio_to_base,
+            "qty_base": qty_base,
         }
 
     base_kwargs: Dict[str, Any] = {
@@ -135,7 +194,7 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
 
     try:
         if mode == "count":
-            return await run_count_flow(
+            result = await run_count_flow(
                 session=session,
                 audit=AUDIT,
                 scan_ref_norm=scan_ref_norm,
@@ -149,34 +208,54 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
                 expiry_date=expiry_date,
                 evidence=evidence,
             )
+            return _attach_scan_passthrough(
+                result,
+                item_uom_id=item_uom_id,
+                ratio_to_base=ratio_to_base,
+                qty_base=qty_base,
+            )
 
         if mode == "receive":
-            return await run_receive_flow(
+            exec_qty = int(qty_base if qty_base is not None else qty)
+            result = await run_receive_flow(
                 session=session,
                 audit=AUDIT,
                 scan_ref_norm=scan_ref_norm,
                 probe=probe,
                 base_kwargs=base_kwargs,
-                qty=qty,
+                qty=exec_qty,
                 item_id=item_id,
                 evidence=evidence,
             )
+            return _attach_scan_passthrough(
+                result,
+                item_uom_id=item_uom_id,
+                ratio_to_base=ratio_to_base,
+                qty_base=exec_qty,
+            )
 
         # pick
-        return await run_pick_flow(
+        exec_qty = int(qty_base if qty_base is not None else qty)
+        result = await run_pick_flow(
             session=session,
             audit=AUDIT,
             scan_ref_norm=scan_ref_norm,
             probe=probe,
             parsed=parsed,
             base_kwargs=base_kwargs,
-            qty=qty,
+            qty=exec_qty,
             item_id=item_id,
             wh_id=wh_id,
             batch_code=batch_code,
             production_date=production_date,
             expiry_date=expiry_date,
             evidence=evidence,
+        )
+        return _attach_scan_passthrough(
+            result,
+            item_uom_id=item_uom_id,
+            ratio_to_base=ratio_to_base,
+            qty_base=exec_qty,
         )
 
     except Exception as e:
@@ -190,4 +269,7 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
             "evidence": evidence,
             "errors": [{"stage": mode, "error": str(e)}],
             "item_id": item_id,
+            "item_uom_id": item_uom_id,
+            "ratio_to_base": ratio_to_base,
+            "qty_base": qty_base,
         }
