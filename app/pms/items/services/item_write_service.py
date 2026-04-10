@@ -7,11 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
+from app.pms.items.repos.item_uom_repo import create_item_uom
 from app.pms.items.repos.item_write_repo import (
     add_item,
-    flush,
+    commit as repo_commit,
+    flush as repo_flush,
     get_item_by_id_for_update,
     refresh_item,
+    rollback as repo_rollback,
 )
 from app.pms.items.services.item_sku import next_sku
 
@@ -102,18 +105,21 @@ class ItemWriteService:
     """
     写入层（Write）：
 
-    - 负责 Item 的 create/update + 事务边界
+    - 负责 Item 本体（public.items）的 create/update + 事务边界
     - 负责字段归一、默认值、补丁语义
     - 不负责 HTTP 兼容字段
     - 不负责输出投影
+    - 不负责 item_uoms / item_barcodes 的聚合编排
     - 持久化动作交给 repos/item_write_repo.py
 
-    Phase M-5：
-    - items.uom 已物理移除；单位治理完全由 item_uoms 结构层承载
+    终态收口：
+    - items.uom / items.case_* / items.weight_kg 已移除
+    - 包装、单位、净重、条码属于商品聚合的其他真相源
+    - owner 聚合写接口应在更高一层 orchestrate item + item_uoms + item_barcodes
 
-    Phase M-6：
-    - items.weight_kg 不再作为写入真相源
-    - 基础包装净重请通过 item_uoms（base uom）维护
+    兼容保留：
+    - 主合同 `POST /items` 创建 item 时，仍自动补最小 base item_uom
+    - 这是当前 items 主合同与既有测试/调用链约定的一部分
     """
 
     def __init__(self, db: Session) -> None:
@@ -190,10 +196,26 @@ class ItemWriteService:
 
         add_item(self.db, obj)
         try:
-            flush(self.db)
-            self.db.commit()
+            repo_flush(self.db)
+
+            # 维持当前主合同语义：创建 item 时自动补最小 base item_uom
+            create_item_uom(
+                self.db,
+                item_id=int(obj.id),
+                uom="PCS",
+                ratio_to_base=1,
+                display_name="PCS",
+                net_weight_kg=None,
+                is_base=True,
+                is_purchase_default=True,
+                is_inbound_default=True,
+                is_outbound_default=True,
+            )
+
+            repo_flush(self.db)
+            repo_commit(self.db)
         except IntegrityError as e:
-            self.db.rollback()
+            repo_rollback(self.db)
             raw = str(getattr(e, "orig", e)).lower()
             if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
                 raise ValueError("SKU duplicate") from e
@@ -318,9 +340,9 @@ class ItemWriteService:
             return obj
 
         try:
-            self.db.commit()
+            repo_commit(self.db)
         except IntegrityError as e:
-            self.db.rollback()
+            repo_rollback(self.db)
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
 
         refresh_item(self.db, obj)

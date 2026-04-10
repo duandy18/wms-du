@@ -22,6 +22,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.procurement.routers.purchase_orders_receive import po_receive_router as po_receive_router
     from app.wms.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
     from app.diagnostics.routers.intelligence import router as intelligence_router
+    from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
     from app.pms.items.routers.item_uoms import router as item_uoms_router
     from app.pms.items.routers.items import router as items_router
@@ -122,9 +123,11 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # 商品相关：
     # - PMS public 读面先挂
     # - /items/barcode-probe 先于 /items/{id}
+    # - /items/aggregate 先于 /items/{id}
     # - /public/items 独立前缀，不与 owner /items 冲突
     app.include_router(pms_public_items_read_router)
     app.include_router(pms_public_barcode_probe_router)
+    app.include_router(item_aggregate_router)
     app.include_router(items_router)
     app.include_router(item_barcodes_router)
     app.include_router(item_uoms_router)

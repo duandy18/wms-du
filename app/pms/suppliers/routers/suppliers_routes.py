@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
@@ -50,6 +51,39 @@ def _to_supplier_basic_out(supplier: Supplier) -> SupplierBasicOut:
     )
 
 
+def _normalize_name(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(status_code=422, detail="name is required")
+    return v
+
+
+def _normalize_code(value: str) -> str:
+    v = (value or "").strip().upper()
+    if not v:
+        raise HTTPException(status_code=422, detail="code is required")
+    return v
+
+
+def _normalize_website(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    v = value.strip()
+    return v or None
+
+
+def _raise_supplier_integrity(db: Session, exc: IntegrityError) -> None:
+    db.rollback()
+    raw = str(getattr(exc, "orig", exc)).lower()
+
+    if "uq_suppliers_code" in raw or ("unique" in raw and "code" in raw):
+        raise HTTPException(status_code=409, detail="供应商编码已存在")
+    if "uq_suppliers_name" in raw or ("unique" in raw and "name" in raw):
+        raise HTTPException(status_code=409, detail="供应商名称已存在")
+
+    raise HTTPException(status_code=400, detail=f"DB integrity error: {getattr(exc, 'orig', exc)}")
+
+
 def register(router: APIRouter) -> None:
     @router.get("/suppliers", response_model=List[SupplierOut])
     def list_suppliers(
@@ -60,7 +94,7 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        check_perm(db, user, ["config.store.read"])
+        check_perm(db, user, ["page.pms.read"])
 
         suppliers = repo_list_suppliers(db, active=active, q=q)
         return [_to_supplier_out(s) for s in suppliers]
@@ -74,7 +108,7 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        check_perm(db, user, ["purchase.manage"])
+        check_perm(db, user, ["page.pms.read"])
 
         rows = repo_list_suppliers_basic(db, active=active, q=q)
         return [_to_supplier_basic_out(s) for s in rows]
@@ -85,24 +119,22 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        check_perm(db, user, ["config.store.write"])
+        check_perm(db, user, ["page.pms.write"])
 
-        name = payload.name.strip()
-        code = payload.code.strip()
-        if not name:
-            raise HTTPException(status_code=422, detail="name is required")
-        if not code:
-            raise HTTPException(status_code=422, detail="code is required")
+        name = _normalize_name(payload.name)
+        code = _normalize_code(payload.code)
+        website = _normalize_website(payload.website)
 
-        website = payload.website.strip() if payload.website and payload.website.strip() else None
-
-        supplier = repo_create_supplier(
-            db,
-            name=name,
-            code=code,
-            website=website,
-            active=bool(payload.active),
-        )
+        try:
+            supplier = repo_create_supplier(
+                db,
+                name=name,
+                code=code,
+                website=website,
+                active=bool(payload.active),
+            )
+        except IntegrityError as exc:
+            _raise_supplier_integrity(db, exc)
 
         return SupplierOut(
             id=supplier.id,
@@ -120,30 +152,27 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         user=Depends(get_current_user),
     ):
-        check_perm(db, user, ["config.store.write"])
+        check_perm(db, user, ["page.pms.write"])
 
         supplier = repo_get_supplier_with_contacts(db, supplier_id)
         if not supplier:
             raise HTTPException(status_code=404, detail="Supplier not found")
 
         if payload.name is not None:
-            n = payload.name.strip()
-            if not n:
-                raise HTTPException(status_code=422, detail="name is required")
-            supplier.name = n
+            supplier.name = _normalize_name(payload.name)
 
         if payload.code is not None:
-            c = payload.code.strip()
-            if not c:
-                raise HTTPException(status_code=422, detail="code is required")
-            supplier.code = c
+            supplier.code = _normalize_code(payload.code)
 
         if payload.website is not None:
-            w = payload.website.strip()
-            supplier.website = w or None
+            supplier.website = _normalize_website(payload.website)
 
         if payload.active is not None:
             supplier.active = bool(payload.active)
 
-        supplier = repo_save_supplier(db, supplier)
+        try:
+            supplier = repo_save_supplier(db, supplier)
+        except IntegrityError as exc:
+            _raise_supplier_integrity(db, exc)
+
         return _to_supplier_out(supplier)

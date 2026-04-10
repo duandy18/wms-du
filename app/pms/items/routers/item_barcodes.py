@@ -6,13 +6,23 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.repos.item_barcode_repo import (
+    clear_primary_flags_for_item,
+    create_item_barcode,
+    delete_item_barcode,
+    get_item_barcode_by_code,
+    get_item_barcode_by_id,
+    get_item_uom_by_id,
+    has_barcode_bound_to_item_uom,
+    list_barcode_row_sources_for_item,
+    list_item_barcodes_by_item_id,
+    list_item_barcodes_by_item_ids,
+    refresh_item_barcode,
+    update_item_barcode_fields,
+)
 
 router = APIRouter(prefix="/item-barcodes", tags=["item-barcodes"])
 
@@ -22,8 +32,8 @@ def _normalize_symbology(v: str | None) -> str:
     return s or "CUSTOM"
 
 
-def _get_item_uom_or_404(db: Session, item_uom_id: int) -> ItemUOM:
-    obj = db.get(ItemUOM, int(item_uom_id))
+def _get_item_uom_or_404(db: Session, item_uom_id: int):
+    obj = get_item_uom_by_id(db, int(item_uom_id))
     if not obj:
         raise HTTPException(404, "ItemUom not found")
     return obj
@@ -36,15 +46,13 @@ def _ensure_item_uom_barcode_vacant(
     item_uom_id: int,
     exclude_barcode_id: int | None = None,
 ) -> None:
-    stmt = select(ItemBarcode.id).where(
-        ItemBarcode.item_id == int(item_id),
-        ItemBarcode.item_uom_id == int(item_uom_id),
+    exists = has_barcode_bound_to_item_uom(
+        db,
+        item_id=int(item_id),
+        item_uom_id=int(item_uom_id),
+        exclude_barcode_id=exclude_barcode_id,
     )
-    if exclude_barcode_id is not None:
-        stmt = stmt.where(ItemBarcode.id != int(exclude_barcode_id))
-
-    exists = db.execute(stmt.limit(1)).scalar_one_or_none()
-    if exists is not None:
+    if exists:
         raise HTTPException(409, "Current item_uom already bound to a barcode")
 
 
@@ -115,7 +123,7 @@ def create_barcode(
     if not code:
         raise HTTPException(400, "barcode is required")
 
-    exists = db.execute(select(ItemBarcode).where(ItemBarcode.barcode == code)).scalars().first()
+    exists = get_item_barcode_by_code(db, barcode=code)
     if exists:
         raise HTTPException(409, "Barcode already exists")
 
@@ -125,7 +133,8 @@ def create_barcode(
         item_uom_id=int(uom.id),
     )
 
-    obj = ItemBarcode(
+    obj = create_item_barcode(
+        db,
         item_id=int(uom.item_id),
         item_uom_id=int(uom.id),
         barcode=code,
@@ -133,9 +142,8 @@ def create_barcode(
         active=bool(body.active),
         is_primary=False,
     )
-    db.add(obj)
     db.commit()
-    db.refresh(obj)
+    refresh_item_barcode(db, obj)
     return obj
 
 
@@ -145,15 +153,11 @@ def list_barcodes_for_items(
     active_only: bool = Query(True, description="默认只返回 active=true"),
     db: Session = Depends(get_db),
 ):
-    ids = [int(x) for x in item_id if int(x) > 0]
-    if not ids:
-        return []
-
-    stmt = select(ItemBarcode).where(ItemBarcode.item_id.in_(ids))
-    if active_only:
-        stmt = stmt.where(ItemBarcode.active.is_(True))
-
-    rows = db.execute(stmt.order_by(ItemBarcode.item_id.asc(), ItemBarcode.id.asc())).scalars().all()
+    rows = list_item_barcodes_by_item_ids(
+        db,
+        item_ids=item_id,
+        active_only=bool(active_only),
+    )
     return list(rows)
 
 
@@ -171,27 +175,11 @@ def list_barcode_rows_for_item(
     if item_id <= 0:
         raise HTTPException(400, "invalid item_id")
 
-    stmt = (
-        select(ItemBarcode, ItemUOM, Item)
-        .join(
-            ItemUOM,
-            (ItemUOM.id == ItemBarcode.item_uom_id)
-            & (ItemUOM.item_id == ItemBarcode.item_id),
-        )
-        .join(Item, Item.id == ItemBarcode.item_id)
-        .where(ItemBarcode.item_id == item_id)
+    rows = list_barcode_row_sources_for_item(
+        db,
+        item_id=int(item_id),
+        active_only=bool(active_only),
     )
-
-    if active_only:
-        stmt = stmt.where(ItemBarcode.active.is_(True))
-
-    rows = db.execute(
-        stmt.order_by(
-            ItemUOM.ratio_to_base.asc(),
-            ItemUOM.id.asc(),
-            ItemBarcode.id.asc(),
-        )
-    ).all()
 
     return [
         ItemBarcodeCompositeRow(
@@ -220,29 +208,28 @@ def list_barcodes_for_item(item_id: int, db: Session = Depends(get_db)):
     if item_id <= 0:
         raise HTTPException(400, "invalid item_id")
 
-    rows = (
-        db.execute(
-            select(ItemBarcode).where(ItemBarcode.item_id == item_id).order_by(ItemBarcode.id.asc())
-        )
-        .scalars()
-        .all()
+    rows = list_item_barcodes_by_item_id(
+        db,
+        item_id=int(item_id),
+        active_only=None,
     )
     return list(rows)
 
 
 @router.post("/{id}/set-primary", response_model=ItemBarcodeOut)
 def set_primary(id: int, db: Session = Depends(get_db)):
-    bc = db.get(ItemBarcode, id)
+    bc = get_item_barcode_by_id(db, int(id))
     if not bc:
         raise HTTPException(404, "Barcode not found")
 
-    db.execute(
-        update(ItemBarcode).where(ItemBarcode.item_id == bc.item_id).values(is_primary=False)
+    clear_primary_flags_for_item(db, item_id=int(bc.item_id))
+    update_item_barcode_fields(
+        bc,
+        active=True,
+        is_primary=True,
     )
-    bc.active = True
-    bc.is_primary = True
     db.commit()
-    db.refresh(bc)
+    refresh_item_barcode(db, bc)
     return bc
 
 
@@ -254,10 +241,11 @@ def set_primary_compat(id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{id}", response_model=ItemBarcodeOut)
 def update_barcode(id: int, body: ItemBarcodeUpdate, db: Session = Depends(get_db)):
-    bc = db.get(ItemBarcode, id)
+    bc = get_item_barcode_by_id(db, int(id))
     if not bc:
         raise HTTPException(404, "Barcode not found")
 
+    next_item_uom_id: int | None = None
     if body.item_uom_id is not None:
         target_uom = _get_item_uom_or_404(db, body.item_uom_id)
         if int(target_uom.item_id) != int(bc.item_id):
@@ -269,55 +257,56 @@ def update_barcode(id: int, body: ItemBarcodeUpdate, db: Session = Depends(get_d
             item_uom_id=int(target_uom.id),
             exclude_barcode_id=int(bc.id),
         )
-        bc.item_uom_id = int(target_uom.id)
+        next_item_uom_id = int(target_uom.id)
 
+    next_barcode: str | None = None
     if body.barcode is not None:
         code = body.barcode.strip()
         if not code:
             raise HTTPException(400, "barcode is required")
-        exists = (
-            db.execute(
-                select(ItemBarcode).where(
-                    ItemBarcode.barcode == code,
-                    ItemBarcode.id != bc.id,
-                )
-            )
-            .scalars()
-            .first()
+        exists = get_item_barcode_by_code(
+            db,
+            barcode=code,
+            exclude_id=int(bc.id),
         )
         if exists:
             raise HTTPException(409, "Barcode already exists")
-        bc.barcode = code
+        next_barcode = code
 
-    if body.symbology is not None:
-        bc.symbology = _normalize_symbology(body.symbology)
+    next_symbology = _normalize_symbology(body.symbology) if body.symbology is not None else None
 
     if body.active is not None:
         next_active = bool(body.active)
         if (body.is_primary is True) or (body.is_primary is None and bc.is_primary and not next_active):
             raise HTTPException(400, "primary barcode must be active")
-        bc.active = next_active
+    else:
+        next_active = None
 
     if body.is_primary is True:
-        db.execute(
-            update(ItemBarcode).where(ItemBarcode.item_id == bc.item_id).values(is_primary=False)
-        )
-        bc.active = True
-        bc.is_primary = True
-    elif body.is_primary is False:
-        bc.is_primary = False
+        clear_primary_flags_for_item(db, item_id=int(bc.item_id))
+        # 主条码必须 active
+        next_active = True
+
+    update_item_barcode_fields(
+        bc,
+        item_uom_id=next_item_uom_id,
+        barcode=next_barcode,
+        symbology=next_symbology,
+        active=next_active,
+        is_primary=body.is_primary,
+    )
 
     db.commit()
-    db.refresh(bc)
+    refresh_item_barcode(db, bc)
     return bc
 
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_barcode(id: int, db: Session = Depends(get_db)):
-    bc = db.get(ItemBarcode, id)
+    bc = get_item_barcode_by_id(db, int(id))
     if not bc:
         raise HTTPException(404, "Barcode not found")
 
-    db.delete(bc)
+    delete_item_barcode(db, bc)
     db.commit()
     return None
