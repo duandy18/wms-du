@@ -1,4 +1,4 @@
-# app/models/supplier_contact.py
+# app/pms/suppliers/models/supplier_contact.py
 from __future__ import annotations
 
 from datetime import datetime

@@ -1,13 +1,15 @@
 # app/pms/public/items/services/item_read_service.py
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Iterable, List
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
+from app.pms.items.models.item_barcode import ItemBarcode
 from app.pms.items.repos.item_repo import get_item_by_id as repo_get_item_by_id
 from app.pms.items.repos.item_repo import get_item_by_sku as repo_get_item_by_sku
 from app.pms.items.repos.item_repo import get_items as repo_get_items
@@ -21,6 +23,23 @@ def _enum_value(v: object) -> str | None:
         return None
     value = getattr(v, "value", v)
     return str(value) if value is not None else None
+
+
+def _strip_or_none(v: object) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+@dataclass(slots=True)
+class ItemReportMeta:
+    item_id: int
+    sku: str
+    name: str
+    brand: str | None
+    category: str | None
+    barcode: str | None
 
 
 class ItemReadService:
@@ -129,6 +148,118 @@ class ItemReadService:
         if obj is None:
             return None
         return self._map_item_to_policy(obj)
+
+    async def asearch_report_item_ids_by_keyword(
+        self,
+        *,
+        keyword: str,
+        limit: int | None = None,
+    ) -> list[int]:
+        """
+        面向跨域报表/台账的最小异步搜索能力：
+        - 匹配 item.name
+        - 匹配 item.sku
+        - 匹配 active barcode
+        返回 item_id 列表，不暴露 ORM。
+        """
+        db = self._require_async_db()
+        kw = str(keyword or "").strip()
+        if not kw:
+            return []
+
+        like_kw = f"%{kw}%"
+        barcode_exists = (
+            select(ItemBarcode.id)
+            .where(
+                ItemBarcode.item_id == Item.id,
+                ItemBarcode.active.is_(True),
+                ItemBarcode.barcode.ilike(like_kw),
+            )
+            .limit(1)
+            .exists()
+        )
+
+        stmt = (
+            select(Item.id)
+            .where(
+                or_(
+                    Item.name.ilike(like_kw),
+                    Item.sku.ilike(like_kw),
+                    barcode_exists,
+                )
+            )
+            .order_by(Item.id.asc())
+        )
+
+        if limit is not None and int(limit) > 0:
+            stmt = stmt.limit(int(limit))
+
+        rows = (await db.execute(stmt)).scalars().all()
+        return [int(x) for x in rows]
+
+    async def aget_report_meta_by_item_ids(
+        self,
+        *,
+        item_ids: Iterable[int],
+    ) -> dict[int, ItemReportMeta]:
+        """
+        面向跨域报表/台账的最小批量元信息读面：
+        - sku
+        - name
+        - brand
+        - category
+        - 主条码（优先 is_primary，其次最小 id 的 active barcode）
+        """
+        db = self._require_async_db()
+        ids = sorted({int(x) for x in item_ids if x is not None and int(x) > 0})
+        if not ids:
+            return {}
+
+        item_stmt = select(Item).where(Item.id.in_(ids)).order_by(Item.id.asc())
+        items = (await db.execute(item_stmt)).scalars().all()
+        if not items:
+            return {}
+
+        barcode_stmt = (
+            select(
+                ItemBarcode.item_id,
+                ItemBarcode.barcode,
+                ItemBarcode.is_primary,
+                ItemBarcode.id,
+            )
+            .where(
+                ItemBarcode.item_id.in_(ids),
+                ItemBarcode.active.is_(True),
+            )
+            .order_by(
+                ItemBarcode.item_id.asc(),
+                ItemBarcode.is_primary.desc(),
+                ItemBarcode.id.asc(),
+            )
+        )
+        barcode_rows = (await db.execute(barcode_stmt)).all()
+
+        primary_barcode_map: dict[int, str] = {}
+        for item_id, barcode, _is_primary, _barcode_id in barcode_rows:
+            iid = int(item_id)
+            if iid in primary_barcode_map:
+                continue
+            b = _strip_or_none(barcode)
+            if b is not None:
+                primary_barcode_map[iid] = b
+
+        out: dict[int, ItemReportMeta] = {}
+        for item in items:
+            iid = int(item.id)
+            out[iid] = ItemReportMeta(
+                item_id=iid,
+                sku=str(item.sku),
+                name=str(item.name),
+                brand=_strip_or_none(getattr(item, "brand", None)),
+                category=_strip_or_none(getattr(item, "category", None)),
+                barcode=primary_barcode_map.get(iid),
+            )
+        return out
 
     def _map_items_to_basic(self, items: list[Item]) -> List[ItemBasic]:
         if not items:

@@ -1,4 +1,4 @@
-# app/models/supplier.py
+# app/pms/suppliers/models/supplier.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.supplier_contact import SupplierContact
+    from app.pms.suppliers.models.supplier_contact import SupplierContact
 
 
 class Supplier(Base):
@@ -26,11 +26,9 @@ class Supplier(Base):
     __table_args__ = (
         UniqueConstraint("name", name="uq_suppliers_name"),
         UniqueConstraint("code", name="uq_suppliers_code"),
-        # code：允许修改，但必须规范化且不可为空白
         CheckConstraint("btrim(code) <> ''", name="ck_suppliers_code_nonblank"),
         CheckConstraint("code = btrim(code)", name="ck_suppliers_code_trimmed"),
         CheckConstraint("code = upper(code)", name="ck_suppliers_code_upper"),
-        # name：展示字段，不允许空白，且统一 trim
         CheckConstraint("btrim(name) <> ''", name="ck_suppliers_name_nonblank"),
         CheckConstraint("name = btrim(name)", name="ck_suppliers_name_trimmed"),
         {"info": {"skip_autogen": True}},
@@ -61,12 +59,6 @@ class Supplier(Base):
 
     @validates("code")
     def _validate_code(self, _key: str, value: str) -> str:
-        """
-        供应商编码：
-        - 统一 trim + upper
-        - 禁止空白
-        - 允许更新；唯一性由 DB UNIQUE 约束保证
-        """
         if value is None:
             raise ValueError("supplier.code 不能为空")
 

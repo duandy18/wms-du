@@ -1,4 +1,4 @@
-# app/models/item_uom.py
+# app/pms/items/models/item_uom.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,7 +22,7 @@ from sqlalchemy.sql import func
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .item import Item
+    from app.pms.items.models.item import Item
 
 
 class ItemUOM(Base):
@@ -118,7 +118,6 @@ class ItemUOM(Base):
             unique=True,
             postgresql_where=text("is_base = true"),
         ),
-        # Phase M-5: one default per item（partial unique）
         Index(
             "uq_item_uoms_one_purchase_default_per_item",
             "item_id",

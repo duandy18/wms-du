@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
 from app.pms.items.contracts.item_aggregate import (
     AggregateBarcodeInput,
     AggregateItemInput,
@@ -14,6 +14,7 @@ from app.pms.items.contracts.item_aggregate import (
     ItemAggregateOut,
     ItemAggregatePayload,
 )
+from app.pms.items.repos.item_aggregate_read_repo import get_item_aggregate_record
 from app.pms.items.repos.item_barcode_repo import (
     clear_primary_flags_for_item,
     create_item_barcode,
@@ -39,7 +40,6 @@ from app.pms.items.repos.item_write_repo import (
     add_item,
     commit as repo_commit,
     flush as repo_flush,
-    get_item_by_id,
     get_item_by_id_for_update,
     refresh_item,
     rollback as repo_rollback,
@@ -146,16 +146,22 @@ class ItemOwnerAggregateService:
         self._present = ItemPresenter(db)
 
     def get_aggregate(self, *, item_id: int) -> ItemAggregateOut:
-        item = get_item_by_id(self.db, int(item_id))
-        if item is None:
+        record = get_item_aggregate_record(
+            self.db,
+            item_id=int(item_id),
+            active_only=None,
+        )
+        if record is None:
             raise ValueError("Item not found")
 
-        presented = self._present.present_item(item=item)
+        presented = self._present.present_item(item=record.item)
         assert presented is not None
 
-        uoms = list_item_uoms_by_item_id(self.db, int(item_id))
-        barcodes = list_item_barcodes_by_item_id(self.db, item_id=int(item_id), active_only=None)
-        return ItemAggregateOut(item=presented, uoms=uoms, barcodes=barcodes)
+        return ItemAggregateOut(
+            item=presented,
+            uoms=record.uoms,
+            barcodes=record.barcodes,
+        )
 
     def create_aggregate(self, *, payload: ItemAggregatePayload) -> ItemAggregateOut:
         item_fields = _resolve_item_fields(payload.item)

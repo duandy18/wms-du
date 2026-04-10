@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .item import Item
+    from app.pms.items.models.item import Item
 
 
 class StockSnapshot(Base):

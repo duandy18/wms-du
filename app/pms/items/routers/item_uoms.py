@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_uom import ItemUOM
 from app.pms.items.contracts.item_uom import (
     ItemUomBarcodeRowOut,
     ItemUomCreate,
