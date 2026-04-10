@@ -6,7 +6,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.supplier_contact import SupplierContact
+from app.pms.suppliers.models.supplier_contact import SupplierContact
 from app.user.services.user_service import AuthorizationError, UserService
 from app.pms.suppliers.contracts.suppliers import SupplierContactOut
 

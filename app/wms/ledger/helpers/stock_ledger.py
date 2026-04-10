@@ -11,11 +11,19 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
-from app.models.item import Item
 from app.models.lot import Lot
 from app.models.stock_ledger import StockLedger
 from app.wms.ledger.contracts.stock_ledger import LedgerQuery
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
+
+# 仅用于 ledger 关键词过滤的轻量只读表映射：
+# 先去掉对 PMS Item ORM 的直接依赖，不改 helper 的调用签名。
+ITEMS_TABLE = sa.table(
+    "items",
+    sa.column("id"),
+    sa.column("name"),
+    sa.column("sku"),
+)
 
 
 def normalize_time_range(q: LedgerQuery) -> Tuple[datetime, datetime]:
@@ -75,7 +83,6 @@ def _to_str_or_none(v) -> str | None:
     """
     if v is None:
         return None
-    # Enum: 优先取 value（ReasonCanon / SubReason）
     vv = getattr(v, "value", None)
     if isinstance(vv, str):
         x = vv.strip()
@@ -83,7 +90,6 @@ def _to_str_or_none(v) -> str | None:
     if isinstance(v, str):
         x = v.strip()
         return x or None
-    # 其他类型尽量转字符串（保险）
     x = str(v).strip()
     return x or None
 
@@ -108,18 +114,12 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if q.warehouse_id is not None:
         conditions.append(StockLedger.warehouse_id == q.warehouse_id)
 
-    # Phase 4A-2a: lot 维度过滤（精确）
     if getattr(q, "lot_id", None) is not None:
         conditions.append(StockLedger.lot_id == getattr(q, "lot_id"))
 
-    # ✅ lot-only：batch_code 仅作为展示码（lots.lot_code）过滤
-    # - 不传 batch_code：不加过滤
-    # - 传 "" / "None"：归一为 None -> lots.lot_code IS NULL（无批次标签槽位）
-    # - 传 "B2026..."：lots.lot_code = 'B2026...'
     fields_set = getattr(q, "model_fields_set", set())
     if "batch_code" in fields_set:
         norm_bc = normalize_optional_lot_code(getattr(q, "batch_code", None))
-        # 通过 EXISTS 约束到 lots.lot_code（支持 NULL 语义）
         if norm_bc is None:
             conditions.append(
                 sa.exists(
@@ -146,19 +146,14 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if q.reason:
         conditions.append(StockLedger.reason == q.reason)
 
-    # ✅ 新增：reason_canon（Enum/str 都支持）
     rc = _to_str_or_none(getattr(q, "reason_canon", None))
     if rc:
         conditions.append(StockLedger.reason_canon == rc)
 
-    # ✅ 新增：sub_reason（Enum/str 都支持）
     sr = _to_str_or_none(getattr(q, "sub_reason", None))
     if sr:
         conditions.append(StockLedger.sub_reason == sr)
 
-    # ✅ ref 等价匹配（解决 ref 口径漂移：UT-OUT-2 vs UT:UT:UT-OUT-2）
-    # - 用户输入不含 ":" 时：匹配 ref==x OR ref LIKE "%:x"
-    # - 用户输入含 ":" 时：既匹配原值，也匹配其最后一段（以及 "%:最后一段"）
     if q.ref:
         x = str(q.ref).strip()
         if x:
@@ -184,23 +179,18 @@ def infer_movement_type(reason: str | None) -> str | None:
         return None
     r = reason.upper()
 
-    # 入库类
     if r in {"RECEIPT", "INBOUND", "INBOUND_RECEIPT"}:
         return "INBOUND"
 
-    # 出库 / 发货类
     if r in {"SHIP", "SHIPMENT", "OUTBOUND_SHIP", "OUTBOUND_COMMIT"}:
         return "OUTBOUND"
 
-    # 盘点类
     if r in {"COUNT", "STOCK_COUNT", "INVENTORY_COUNT"}:
         return "COUNT"
 
-    # 调整类
     if r in {"ADJUSTMENT", "ADJUST", "MANUAL_ADJUST"}:
         return "ADJUST"
 
-    # 退货 / 逆向
     if r in {"RETURN", "RMA", "INBOUND_RETURN"}:
         return "RETURN"
 
@@ -214,18 +204,21 @@ def build_base_ids_stmt(q: LedgerQuery, time_from: datetime, time_to: datetime):
     - 支持按 item_id / warehouse_id / lot_id / batch_code(展示码) / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
     - 支持按 item_keyword 模糊匹配 items.name / items.sku；
     - 不再依赖 stock_id / batch_id，完全对齐当前 StockLedger 模型。
+
+    当前阶段：
+    - 先去掉对 PMS Item ORM 的直接依赖
+    - 仍保持查询语义和 helper 签名不变
     """
     stmt = select(StockLedger.id).select_from(StockLedger)
     conditions = build_common_filters(q, time_from, time_to)
 
-    # item_keyword 模糊搜索：name/sku
     if q.item_keyword:
         kw = f"%{q.item_keyword.strip()}%"
-        stmt = stmt.join(Item, Item.id == StockLedger.item_id)
+        stmt = stmt.join(ITEMS_TABLE, ITEMS_TABLE.c.id == StockLedger.item_id)
         conditions.append(
             sa.or_(
-                Item.name.ilike(kw),
-                Item.sku.ilike(kw),
+                ITEMS_TABLE.c.name.ilike(kw),
+                ITEMS_TABLE.c.sku.ilike(kw),
             )
         )
 

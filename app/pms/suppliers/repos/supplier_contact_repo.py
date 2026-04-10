@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models.supplier import Supplier
-from app.models.supplier_contact import SupplierContact
+from app.pms.suppliers.models.supplier import Supplier
+from app.pms.suppliers.models.supplier_contact import SupplierContact
 
 
 def get_supplier(db: Session, supplier_id: int) -> Supplier | None:

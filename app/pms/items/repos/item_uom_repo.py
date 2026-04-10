@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.inbound_receipt import InboundReceiptLine
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.models.item import Item
+from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_uom import ItemUOM
 from app.models.purchase_order_line import PurchaseOrderLine
 
 

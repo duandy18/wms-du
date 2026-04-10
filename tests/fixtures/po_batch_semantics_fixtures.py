@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.item import Item
-from app.models.item_uom import ItemUOM
+from app.pms.items.models.item import Item
+from app.pms.items.models.item_uom import ItemUOM
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
 

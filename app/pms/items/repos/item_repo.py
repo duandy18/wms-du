@@ -6,8 +6,8 @@ from typing import List, Optional
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
+from app.pms.items.models.item import Item
+from app.pms.items.models.item_barcode import ItemBarcode
 
 
 def get_items(

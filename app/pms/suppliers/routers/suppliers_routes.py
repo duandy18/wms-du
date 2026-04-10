@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.models.supplier import Supplier
+from app.pms.suppliers.models.supplier import Supplier
 from app.pms.suppliers.contracts.suppliers import SupplierCreateIn, SupplierOut, SupplierUpdateIn
 from app.pms.suppliers.helpers.suppliers import check_perm, contacts_out
 from app.pms.suppliers.repos.supplier_repo import (

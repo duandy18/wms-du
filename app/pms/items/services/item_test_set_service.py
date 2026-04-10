@@ -6,7 +6,7 @@ from typing import Any, List
 
 from sqlalchemy import text
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
 
 
 class ItemTestSetService:

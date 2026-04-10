@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
 from app.pms.items.services.item_maintenance_service import ItemMaintenanceService
 from app.pms.items.services.item_presenter import ItemPresenter
 from app.pms.items.services.item_query_service import ItemQueryService

@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.supplier import Supplier
+from app.pms.suppliers.models.supplier import Supplier
 from app.pms.public.suppliers.contracts.supplier_basic import SupplierBasic
 from app.pms.suppliers.repos.supplier_repo import (
     list_suppliers_basic as repo_list_suppliers_basic,
