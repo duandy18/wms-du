@@ -5,7 +5,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -41,6 +41,10 @@ class Item(Base):
     Phase M-5（unit_governance 二阶段）：
     - items.uom 已物理移除
     - base_uom 的事实口径 = item_uoms.is_base=true（结构层）
+
+    Phase M-6（item weight cutover）：
+    - items.weight_kg 已物理删除
+    - 运行时 weight_kg = base item_uom.net_weight_kg
     """
 
     __tablename__ = "items"
@@ -83,12 +87,6 @@ class Item(Base):
     derivation_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     uom_governance_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
-    weight_kg: Mapped[Optional[float]] = mapped_column(
-        Numeric(10, 3),
-        nullable=True,
-        comment="单件净重（kg），用于运费预估，不含包材",
-    )
-
     shelf_life_value: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shelf_life_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
@@ -117,6 +115,21 @@ class Item(Base):
         if base is None or not getattr(base, "uom", None):
             raise RuntimeError(f"item missing base item_uom (is_base=true): item_id={int(self.id)}")
         return str(getattr(base, "uom"))
+
+    @property
+    def weight_kg(self) -> Optional[float]:
+        """
+        Phase M-6：只读输出投影
+        - items.weight_kg 已物理删除
+        - 运行时真相源 = base item_uom.net_weight_kg
+        """
+        base = self.get_base_uom()
+        if base is None:
+            return None
+        raw = getattr(base, "net_weight_kg", None)
+        if raw is None:
+            return None
+        return float(raw)
 
     @property
     def barcode(self) -> Optional[str]:

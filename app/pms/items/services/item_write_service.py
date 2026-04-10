@@ -110,6 +110,10 @@ class ItemWriteService:
 
     Phase M-5：
     - items.uom 已物理移除；单位治理完全由 item_uoms 结构层承载
+
+    Phase M-6：
+    - items.weight_kg 不再作为写入真相源
+    - 基础包装净重请通过 item_uoms（base uom）维护
     """
 
     def __init__(self, db: Session) -> None:
@@ -129,7 +133,6 @@ class ItemWriteService:
         supplier_id: Optional[int] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,
         lot_source_policy: Optional[str] = None,
         expiry_policy: Optional[str] = None,
         derivation_allowed: Optional[bool] = None,
@@ -183,7 +186,6 @@ class ItemWriteService:
             uom_governance_enabled=uom_gov,
             shelf_life_value=sl_value,
             shelf_life_unit=sl_unit,
-            weight_kg=weight_kg,
         )
 
         add_item(self.db, obj)
@@ -216,8 +218,6 @@ class ItemWriteService:
         shelf_life_value_set: bool = False,
         shelf_life_unit: Optional[str] = None,
         shelf_life_unit_set: bool = False,
-        weight_kg: Optional[float] = None,
-        weight_kg_set: bool = False,
         brand: Optional[str] = None,
         category: Optional[str] = None,
         brand_set: bool = False,
@@ -282,10 +282,6 @@ class ItemWriteService:
             if uom_governance_enabled is None:
                 raise ValueError("uom_governance_enabled 不能为空")
             obj.uom_governance_enabled = bool(uom_governance_enabled)
-            changed = True
-
-        if weight_kg_set:
-            obj.weight_kg = weight_kg
             changed = True
 
         if brand_set:

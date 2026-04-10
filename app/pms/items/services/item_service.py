@@ -26,6 +26,10 @@ class ItemService:
 
     Phase M-5：
     - items.uom 已物理移除；单位治理完全由 item_uoms 承载
+
+    Phase M-6：
+    - items.weight_kg 不再作为写入真相源
+    - PMS 主合同的净重读写转移到 base item_uom.net_weight_kg
     """
 
     def __init__(self, db: Session) -> None:
@@ -84,7 +88,6 @@ class ItemService:
         supplier_id: Optional[int] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,
         lot_source_policy: Optional[str] = None,
         expiry_policy: Optional[str] = None,
         derivation_allowed: Optional[bool] = None,
@@ -99,7 +102,6 @@ class ItemService:
             supplier_id=supplier_id,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
-            weight_kg=weight_kg,
             lot_source_policy=lot_source_policy,
             expiry_policy=expiry_policy,
             derivation_allowed=derivation_allowed,
@@ -124,7 +126,6 @@ class ItemService:
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,
     ) -> Item:
         obj = self._maintenance.create_item_by_id(
             id=id,
@@ -139,7 +140,6 @@ class ItemService:
             has_shelf_life=has_shelf_life,
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
-            weight_kg=weight_kg,
         )
         out = self._present.present_item(item=obj)
         assert out is not None
@@ -183,8 +183,6 @@ class ItemService:
         shelf_life_value_set: bool = False,
         shelf_life_unit: Optional[str] = None,
         shelf_life_unit_set: bool = False,
-        weight_kg: Optional[float] = None,
-        weight_kg_set: bool = False,
         brand: Optional[str] = None,
         category: Optional[str] = None,
         brand_set: bool = False,
@@ -212,8 +210,6 @@ class ItemService:
             shelf_life_value_set=shelf_life_value_set,
             shelf_life_unit=shelf_life_unit,
             shelf_life_unit_set=shelf_life_unit_set,
-            weight_kg=weight_kg,
-            weight_kg_set=weight_kg_set,
             brand=brand,
             category=category,
             brand_set=brand_set,

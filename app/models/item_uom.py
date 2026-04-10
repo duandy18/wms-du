@@ -5,7 +5,17 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -23,6 +33,7 @@ class ItemUOM(Base):
     - 一个 item 可以有多个 uom（PCS/箱/盒/...）
     - ratio_to_base：1 uom = ratio_to_base * base_uom（base_uom 真相源 = item_uoms.is_base）
     - is_base：每个 item 恰好一个 base（用 partial unique index 强制）
+    - net_weight_kg：净重（kg）。基础包装为真相源；非基础包装默认可按 ratio_to_base 推导；不含包材。
 
     Phase M-5（二阶段）：
     - 强化默认单位唯一性（purchase/inbound/outbound）——DB 用 partial unique index 强制
@@ -46,6 +57,13 @@ class ItemUOM(Base):
 
     # 展示名（可选）：如“箱”“盒”
     display_name: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    # 净重（kg）。基础包装为真相源；非基础包装默认可按 ratio_to_base 推导；不含包材。
+    net_weight_kg: Mapped[Optional[float]] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+        comment="净重（kg）。基础包装为真相源；非基础包装默认可按 ratio_to_base 推导；不含包材。",
+    )
 
     is_base: Mapped[bool] = mapped_column(
         Boolean,
@@ -125,5 +143,6 @@ class ItemUOM(Base):
         return (
             f"<ItemUOM id={self.id} item_id={self.item_id} "
             f"uom={self.uom!r} ratio_to_base={self.ratio_to_base} "
+            f"net_weight_kg={self.net_weight_kg} "
             f"is_base={self.is_base}>"
         )

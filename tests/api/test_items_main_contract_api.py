@@ -33,7 +33,6 @@ async def _create_item(
         "uom_governance_enabled": False,
         "shelf_life_value": 12,
         "shelf_life_unit": "MONTH",
-        "weight_kg": 1.25,
     }
     payload.update(overrides)
     r = await client.post("/items", json=payload, headers=headers)
@@ -62,6 +61,18 @@ async def test_items_create_rejects_has_shelf_life_field(client: httpx.AsyncClie
     payload = {
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "has_shelf_life": True,
+    }
+    r = await client.post("/items", json=payload, headers=headers)
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_items_create_rejects_weight_kg_field(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    payload = {
+        "name": f"UT-ITEM-{uuid4().hex[:8]}",
+        "weight_kg": 1.25,
     }
     r = await client.post("/items", json=payload, headers=headers)
     assert r.status_code == 422, r.text
@@ -107,7 +118,6 @@ async def test_items_patch_explicit_null_clears_nullable_fields(client: httpx.As
         headers,
         spec="SPEC-TO-CLEAR",
         supplier_id=1,
-        weight_kg=2.5,
         expiry_policy="REQUIRED",
         shelf_life_value=9,
         shelf_life_unit="YEAR",
@@ -117,7 +127,6 @@ async def test_items_patch_explicit_null_clears_nullable_fields(client: httpx.As
     patch_payload = {
         "spec": None,
         "supplier_id": None,
-        "weight_kg": None,
         "shelf_life_value": None,
         "shelf_life_unit": None,
     }
@@ -127,7 +136,6 @@ async def test_items_patch_explicit_null_clears_nullable_fields(client: httpx.As
 
     assert patched["spec"] is None
     assert patched["supplier_id"] is None
-    assert patched["weight_kg"] is None
     assert patched["shelf_life_value"] is None
     assert patched["shelf_life_unit"] is None
 
@@ -137,9 +145,29 @@ async def test_items_patch_explicit_null_clears_nullable_fields(client: httpx.As
 
     assert fetched["spec"] is None
     assert fetched["supplier_id"] is None
-    assert fetched["weight_kg"] is None
     assert fetched["shelf_life_value"] is None
     assert fetched["shelf_life_unit"] is None
+
+
+@pytest.mark.asyncio
+async def test_items_patch_rejects_weight_kg_field(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    created = await _create_item(
+        client,
+        headers,
+        expiry_policy="REQUIRED",
+        shelf_life_value=30,
+        shelf_life_unit="DAY",
+    )
+    item_id = int(created["id"])
+
+    r_patch = await client.patch(
+        f"/items/{item_id}",
+        json={"weight_kg": None},
+        headers=headers,
+    )
+    assert r_patch.status_code == 422, r_patch.text
 
 
 @pytest.mark.asyncio
