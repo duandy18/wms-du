@@ -52,7 +52,7 @@ async def test_item_read_service_aget_policy_by_id_returns_policy(
     assert got.uom_governance_enabled is bool(row["uom_governance_enabled"])
 
 
-async def test_item_read_service_aget_basics_by_item_ids_returns_basic_and_primary_barcode(
+async def test_item_read_service_aget_basics_by_item_ids_returns_items_table_fields_only(
     session: AsyncSession,
 ) -> None:
     rows = (
@@ -67,16 +67,7 @@ async def test_item_read_service_aget_basics_by_item_ids_returns_basic_and_prima
                   i.enabled,
                   i.supplier_id,
                   i.brand,
-                  i.category,
-                  (
-                    SELECT ib.barcode
-                    FROM item_barcodes ib
-                    WHERE ib.item_id = i.id
-                      AND ib.is_primary = true
-                      AND ib.active = true
-                    ORDER BY ib.id
-                    LIMIT 1
-                  ) AS primary_barcode
+                  i.category
                 FROM items i
                 ORDER BY i.id
                 LIMIT 5
@@ -109,8 +100,4 @@ async def test_item_read_service_aget_basics_by_item_ids_returns_basic_and_prima
         assert basic.category == (
             str(row["category"]).strip() if row["category"] is not None else None
         )
-        assert basic.primary_barcode == (
-            str(row["primary_barcode"]).strip()
-            if row["primary_barcode"] is not None
-            else None
-        )
+        assert not hasattr(basic, "primary_barcode")
