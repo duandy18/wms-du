@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,18 +16,8 @@ from app.pms.suppliers.repos.supplier_repo import (
     create_supplier as repo_create_supplier,
     get_supplier_with_contacts as repo_get_supplier_with_contacts,
     list_suppliers as repo_list_suppliers,
-    list_suppliers_basic as repo_list_suppliers_basic,
     save_supplier as repo_save_supplier,
 )
-
-
-class SupplierBasicOut(BaseModel):
-    """采购/收货用：供应商基础信息（不带 contacts）"""
-
-    id: int
-    name: str
-    code: Optional[str] = None
-    active: bool
 
 
 def _to_supplier_out(supplier: Supplier) -> SupplierOut:
@@ -39,15 +28,6 @@ def _to_supplier_out(supplier: Supplier) -> SupplierOut:
         website=supplier.website,
         active=bool(supplier.active),
         contacts=contacts_out(list(supplier.contacts or [])),
-    )
-
-
-def _to_supplier_basic_out(supplier: Supplier) -> SupplierBasicOut:
-    return SupplierBasicOut(
-        id=supplier.id,
-        name=supplier.name,
-        code=supplier.code,
-        active=bool(supplier.active),
     )
 
 
@@ -88,7 +68,7 @@ def register(router: APIRouter) -> None:
     @router.get("/suppliers", response_model=List[SupplierOut])
     def list_suppliers(
         active: Optional[bool] = Query(
-            None, description="active=true 仅返回合作中供应商（用于下拉）"
+            None, description="active=true 仅返回合作中供应商（owner 页面使用）"
         ),
         q: Optional[str] = Query(None, description="名称/编码/联系人/电话/邮箱/微信 模糊搜索"),
         db: Session = Depends(get_db),
@@ -98,20 +78,6 @@ def register(router: APIRouter) -> None:
 
         suppliers = repo_list_suppliers(db, active=active, q=q)
         return [_to_supplier_out(s) for s in suppliers]
-
-    @router.get("/suppliers/basic", response_model=List[SupplierBasicOut])
-    def list_suppliers_basic(
-        active: Optional[bool] = Query(
-            True, description="默认仅返回合作中供应商（用于下拉）"
-        ),
-        q: Optional[str] = Query(None, description="名称/编码 模糊搜索"),
-        db: Session = Depends(get_db),
-        user=Depends(get_current_user),
-    ):
-        check_perm(db, user, ["page.pms.read"])
-
-        rows = repo_list_suppliers_basic(db, active=active, q=q)
-        return [_to_supplier_basic_out(s) for s in rows]
 
     @router.post("/suppliers", response_model=SupplierOut, status_code=status.HTTP_201_CREATED)
     def create_supplier(

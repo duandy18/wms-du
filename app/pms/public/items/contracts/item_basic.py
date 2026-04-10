@@ -24,7 +24,8 @@ class ItemBasic(_Base):
 
     说明：
     - 这是跨域 public read surface，不承载 owner 内部兼容输入语义
-    - 只暴露其他模块稳定需要的最小读取字段
+    - 只暴露 items 主表稳定需要的最小读取字段
+    - 不承载条码 / 单位 / 净重等跨子表事实
     """
 
     id: Annotated[int, Field(gt=0)]
@@ -38,15 +39,12 @@ class ItemBasic(_Base):
     brand: Annotated[str | None, Field(default=None, max_length=64)] = None
     category: Annotated[str | None, Field(default=None, max_length=64)] = None
 
-    primary_barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
-
     @field_validator(
         "sku",
         "name",
         "spec",
         "brand",
         "category",
-        "primary_barcode",
         mode="before",
     )
     @classmethod
