@@ -1,6 +1,7 @@
 # app/pms/items/routers/item_barcodes.py
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
+from app.models.item import Item
 from app.models.item_barcode import ItemBarcode
 from app.models.item_uom import ItemUOM
 
@@ -53,6 +55,33 @@ class ItemBarcodeOut(BaseModel):
     is_primary: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ItemBarcodeCompositeRow(BaseModel):
+    """
+    商品条码页 owner 复合只读行：
+    - 一行 = 一个商品 + 一个单位 + 一条码
+    - 页面用它直接渲染，不再让前端分别请求 /item-barcodes 与 /item-uoms 后自行 join
+    """
+
+    barcode_id: int
+    item_id: int
+    item_uom_id: int
+
+    sku: str
+    item_name: str
+
+    uom: str
+    display_name: Optional[str]
+    ratio_to_base: int
+    is_base: bool
+    is_purchase_default: bool
+
+    barcode: str
+    symbology: str
+    is_primary: bool
+    active: bool
+    updated_at: datetime
 
 
 @router.post("", response_model=ItemBarcodeOut, status_code=status.HTTP_201_CREATED)
@@ -100,6 +129,64 @@ def list_barcodes_for_items(
 
     rows = db.execute(stmt.order_by(ItemBarcode.item_id.asc(), ItemBarcode.id.asc())).scalars().all()
     return list(rows)
+
+
+@router.get("/item/{item_id}/rows", response_model=List[ItemBarcodeCompositeRow])
+def list_barcode_rows_for_item(
+    item_id: int,
+    active_only: bool = Query(False, description="true 时仅返回 active=true 的条码行"),
+    db: Session = Depends(get_db),
+):
+    """
+    Owner 读模型：
+    - 返回“一个商品、一个单位、一行条码”的复合结果
+    - 供 PMS 商品条码页直接渲染当前商品条码表
+    """
+    if item_id <= 0:
+        raise HTTPException(400, "invalid item_id")
+
+    stmt = (
+        select(ItemBarcode, ItemUOM, Item)
+        .join(
+            ItemUOM,
+            (ItemUOM.id == ItemBarcode.item_uom_id)
+            & (ItemUOM.item_id == ItemBarcode.item_id),
+        )
+        .join(Item, Item.id == ItemBarcode.item_id)
+        .where(ItemBarcode.item_id == item_id)
+    )
+
+    if active_only:
+        stmt = stmt.where(ItemBarcode.active.is_(True))
+
+    rows = db.execute(
+        stmt.order_by(
+            ItemUOM.ratio_to_base.asc(),
+            ItemUOM.id.asc(),
+            ItemBarcode.id.asc(),
+        )
+    ).all()
+
+    return [
+        ItemBarcodeCompositeRow(
+            barcode_id=int(bc.id),
+            item_id=int(item.id),
+            item_uom_id=int(uom.id),
+            sku=str(item.sku),
+            item_name=str(item.name),
+            uom=str(uom.uom),
+            display_name=str(uom.display_name).strip() if uom.display_name is not None else None,
+            ratio_to_base=int(uom.ratio_to_base),
+            is_base=bool(uom.is_base),
+            is_purchase_default=bool(uom.is_purchase_default),
+            barcode=str(bc.barcode),
+            symbology=str(bc.symbology),
+            is_primary=bool(bc.is_primary),
+            active=bool(bc.active),
+            updated_at=bc.updated_at,
+        )
+        for bc, uom, item in rows
+    ]
 
 
 @router.get("/item/{item_id}", response_model=List[ItemBarcodeOut])

@@ -251,6 +251,25 @@ async def test_my_navigation_masterdata_and_wms_warehouses_domain_codes_are_corr
 
 
 @pytest.mark.asyncio
+async def test_my_navigation_item_barcodes_page_is_under_pms(client: AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    r = await client.get("/users/me/navigation", headers=headers)
+    assert r.status_code == 200, r.text
+
+    data = r.json()
+    nodes = _walk_pages(data["pages"])
+
+    item_barcodes = nodes.get("pms.item_barcodes")
+    assert item_barcodes is not None, "pms.item_barcodes should exist"
+
+    assert item_barcodes["parent_code"] == "pms"
+    assert item_barcodes["domain_code"] == "pms"
+    assert item_barcodes["effective_read_permission"] == "page.pms.read"
+    assert item_barcodes["effective_write_permission"] == "page.pms.write"
+
+
+@pytest.mark.asyncio
 async def test_my_navigation_route_prefix_mapping_and_effective_permissions(client: AsyncClient) -> None:
     headers = await _login_admin_headers(client)
 
@@ -314,6 +333,26 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
 
     assert warehouses_route["effective_read_permission"] == "page.wms.read"
     assert warehouses_route["effective_write_permission"] == "page.wms.write"
+
+
+@pytest.mark.asyncio
+async def test_my_navigation_item_barcodes_route_prefix_mapping_and_permissions(
+    client: AsyncClient,
+) -> None:
+    headers = await _login_admin_headers(client)
+
+    r = await client.get("/users/me/navigation", headers=headers)
+    assert r.status_code == 200, r.text
+
+    data = r.json()
+    route_map = _index_route_prefixes(data["route_prefixes"])
+
+    item_barcodes_route = route_map.get("/item-barcodes")
+    assert item_barcodes_route is not None, "/item-barcodes should exist in route_prefixes"
+
+    assert item_barcodes_route["page_code"] == "pms.item_barcodes"
+    assert item_barcodes_route["effective_read_permission"] == "page.pms.read"
+    assert item_barcodes_route["effective_write_permission"] == "page.pms.write"
 
 
 @pytest.mark.asyncio
