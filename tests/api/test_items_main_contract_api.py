@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
@@ -107,6 +109,62 @@ async def test_items_create_rejects_zero_shelf_life_value(client: httpx.AsyncCli
     }
     r = await client.post("/items", json=payload, headers=headers)
     assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_items_create_auto_bootstraps_base_item_uom(
+    client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _login_admin_headers(client)
+
+    created = await _create_item(client, headers)
+    item_id = int(created["id"])
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  uom,
+                  ratio_to_base,
+                  display_name,
+                  is_base,
+                  is_purchase_default,
+                  is_inbound_default,
+                  is_outbound_default
+                FROM item_uoms
+                WHERE item_id = :item_id
+                  AND is_base = true
+                ORDER BY id ASC
+                LIMIT 1
+                """
+            ),
+            {"item_id": item_id},
+        )
+    ).mappings().first()
+
+    assert row is not None, {"msg": "new item should auto-create base item_uom", "item_id": item_id}
+    assert str(row["uom"]) == "PCS"
+    assert int(row["ratio_to_base"]) == 1
+    assert str(row["display_name"] or "").strip() == "PCS"
+    assert bool(row["is_base"]) is True
+    assert bool(row["is_purchase_default"]) is True
+    assert bool(row["is_inbound_default"]) is True
+    assert bool(row["is_outbound_default"]) is True
+
+    base_count = await session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM item_uoms
+            WHERE item_id = :item_id
+              AND is_base = true
+            """
+        ),
+        {"item_id": item_id},
+    )
+    assert int(base_count.scalar_one()) == 1
 
 
 @pytest.mark.asyncio

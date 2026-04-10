@@ -28,7 +28,7 @@ from app.pms.suppliers.repos.supplier_contact_repo import (
 from app.pms.suppliers.repos.supplier_contact_repo import (
     save_contact as repo_save_contact,
 )
-from app.user.services.user_service import AuthorizationError, UserService
+from app.pms.suppliers.helpers.suppliers import check_perm
 
 router = APIRouter(tags=["supplier-contacts"])
 
@@ -51,14 +51,6 @@ class SupplierContactUpdateIn(BaseModel):
     role: Optional[str] = Field(None, max_length=32)
     is_primary: Optional[bool] = None
     active: Optional[bool] = None
-
-
-def _check_perm(db: Session, user) -> None:
-    svc = UserService(db)
-    try:
-        svc.check_permission(user, ["config.store.write"])
-    except AuthorizationError:
-        raise HTTPException(status_code=403, detail="Not authorized")
 
 
 def _to_out(c) -> SupplierContactOut:
@@ -94,7 +86,7 @@ def create_contact(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _check_perm(db, user)
+    check_perm(db, user, ["page.pms.write"])
 
     supplier = repo_get_supplier(db, supplier_id)
     if not supplier:
@@ -137,7 +129,7 @@ def update_contact(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _check_perm(db, user)
+    check_perm(db, user, ["page.pms.write"])
 
     contact = repo_get_contact(db, contact_id)
     if not contact:
@@ -186,7 +178,7 @@ def delete_contact(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _check_perm(db, user)
+    check_perm(db, user, ["page.pms.write"])
 
     contact = repo_get_contact(db, contact_id)
     if not contact:

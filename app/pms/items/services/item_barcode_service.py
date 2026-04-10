@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from typing import List
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.repos.item_barcode_repo import (
+    create_item_barcode,
+    get_item_barcode_by_code,
+    load_primary_barcodes_map as repo_load_primary_barcodes_map,
+)
+from app.pms.items.repos.item_uom_repo import get_base_item_uom
 
 
 class ItemBarcodeService:
@@ -18,6 +21,10 @@ class ItemBarcodeService:
     - 输出层投影：primary_barcode（以及兼容 alias barcode）
     - 写入层：创建 item 时可选写入一条主条码；后续更新主条码必须走 /item-barcodes
     - 条码绑定终态：条码必须绑定到 item_uom_id；主条码默认绑定到 base item_uom
+
+    分层约束：
+    - repo 负责查询/创建/唯一性相关持久化动作
+    - service 只保留业务口径与错误语义，不直接写 select/ORM 细节
     """
 
     def __init__(self, db: Session) -> None:
@@ -29,46 +36,20 @@ class ItemBarcodeService:
         return s or "CUSTOM"
 
     def _require_base_item_uom_id(self, *, item_id: int) -> int:
-        row = self.db.execute(
-            select(ItemUOM.id)
-            .where(ItemUOM.item_id == int(item_id))
-            .where(ItemUOM.is_base.is_(True))
-            .limit(1)
-        ).scalar_one_or_none()
-        if row is None:
+        base = get_base_item_uom(self.db, int(item_id))
+        if base is None:
             raise ValueError(f"base item_uom missing for item_id={int(item_id)}")
-        return int(row)
+        return int(base.id)
 
     def load_primary_barcodes_map(self, *, item_ids: List[int]) -> dict[int, str]:
-        ids = sorted({int(x) for x in item_ids if x is not None})
-        if not ids:
-            return {}
-
-        rows = (
-            self.db.execute(
-                select(ItemBarcode.item_id, ItemBarcode.barcode)
-                .where(ItemBarcode.item_id.in_(ids))
-                .where(ItemBarcode.is_primary.is_(True))
-                .where(ItemBarcode.active.is_(True))
-            )
-            .all()
-        )
-        m: dict[int, str] = {}
-        for item_id, barcode in rows:
-            if item_id is None or barcode is None:
-                continue
-            m[int(item_id)] = str(barcode)
-        return m
+        return repo_load_primary_barcodes_map(self.db, item_ids=item_ids)
 
     def ensure_unique_or_raise(self, *, barcode: str) -> None:
         code = (barcode or "").strip()
         if not code:
             raise ValueError("barcode is required")
-        existing = (
-            self.db.execute(select(ItemBarcode).where(ItemBarcode.barcode == code))
-            .scalars()
-            .first()
-        )
+
+        existing = get_item_barcode_by_code(self.db, barcode=code)
         if existing is not None:
             raise ValueError("barcode duplicate: already bound to an item")
 
@@ -82,11 +63,12 @@ class ItemBarcodeService:
         code = (barcode or "").strip()
         if not code:
             return
-        self.ensure_unique_or_raise(barcode=code)
 
+        self.ensure_unique_or_raise(barcode=code)
         base_uom_id = self._require_base_item_uom_id(item_id=int(item_id))
 
-        b = ItemBarcode(
+        create_item_barcode(
+            self.db,
             item_id=int(item_id),
             item_uom_id=int(base_uom_id),
             barcode=code,
@@ -94,4 +76,3 @@ class ItemBarcodeService:
             active=True,
             is_primary=True,
         )
-        self.db.add(b)

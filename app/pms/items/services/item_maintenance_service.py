@@ -4,15 +4,47 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.item import Item
+from app.models.item_uom import ItemUOM
 from app.pms.items.services.item_barcode_service import ItemBarcodeService
 
 
 def _allow_create_item_by_id() -> bool:
     return os.getenv("WMS_ALLOW_CREATE_ITEM_BY_ID", "").strip() == "1"
+
+
+def _ensure_min_base_item_uom(db: Session, *, item_id: int) -> None:
+    """
+    maintenance 路径也补最小 base item_uom，避免：
+    - create_item_by_id 后条码写入失败
+    - 生成出一个不满足终态结构合同的 item
+    """
+    existing = db.execute(
+        select(ItemUOM.id)
+        .where(ItemUOM.item_id == int(item_id))
+        .where(ItemUOM.is_base.is_(True))
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    db.add(
+        ItemUOM(
+            item_id=int(item_id),
+            uom="PCS",
+            ratio_to_base=1,
+            display_name="PCS",
+            net_weight_kg=None,
+            is_base=True,
+            is_purchase_default=True,
+            is_inbound_default=True,
+            is_outbound_default=True,
+        )
+    )
 
 
 class ItemMaintenanceService:
@@ -31,6 +63,9 @@ class ItemMaintenanceService:
     Phase M-6：
     - 此通道不再接收/写入 items.weight_kg
     - 基础包装净重请改走 item_uoms（base uom）
+
+    Items page cutover：
+    - maintenance 创建 item 时也自动补最小 base item_uom（PCS × 1）
     """
 
     def __init__(self, db: Session) -> None:
@@ -103,6 +138,8 @@ class ItemMaintenanceService:
 
         self.db.add(obj)
         try:
+            self.db.flush()
+            _ensure_min_base_item_uom(self.db, item_id=int(obj.id))
             self.db.flush()
 
             code = (barcode or "").strip()
