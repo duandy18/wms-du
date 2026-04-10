@@ -27,6 +27,10 @@ class ItemMaintenanceService:
     - items.uom 已物理移除；此通道不再接收/写入 uom
     - 必须补齐 items 的 NOT NULL 策略字段
     - 若要写入主条码，必须先存在 base item_uom（不再做隐式兜底）
+
+    Phase M-6：
+    - 此通道不再接收/写入 items.weight_kg
+    - 基础包装净重请改走 item_uoms（base uom）
     """
 
     def __init__(self, db: Session) -> None:
@@ -48,7 +52,6 @@ class ItemMaintenanceService:
         has_shelf_life: Optional[bool] = None,
         shelf_life_value: Optional[int] = None,
         shelf_life_unit: Optional[str] = None,
-        weight_kg: Optional[float] = None,
     ) -> Item:
         if not _allow_create_item_by_id():
             raise ValueError(
@@ -96,7 +99,6 @@ class ItemMaintenanceService:
             # shelf_life params
             shelf_life_value=shelf_life_value,
             shelf_life_unit=shelf_life_unit,
-            weight_kg=weight_kg,
         )
 
         self.db.add(obj)

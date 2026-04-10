@@ -50,7 +50,6 @@ def create_item(
             ),
             shelf_life_value=item_in.shelf_life_value,
             shelf_life_unit=item_in.shelf_life_unit,
-            weight_kg=item_in.weight_kg,
         )
     except ValueError as e:
         detail = str(e)
@@ -153,8 +152,6 @@ def update_item(
             shelf_life_value_set=("shelf_life_value" in fields_set),
             shelf_life_unit=data.get("shelf_life_unit"),
             shelf_life_unit_set=("shelf_life_unit" in fields_set),
-            weight_kg=data.get("weight_kg"),
-            weight_kg_set=("weight_kg" in fields_set),
             brand=data.get("brand"),
             brand_set=("brand" in fields_set),
             category=data.get("category"),

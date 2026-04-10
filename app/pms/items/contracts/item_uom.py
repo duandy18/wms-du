@@ -1,3 +1,4 @@
+# app/pms/items/contracts/item_uom.py
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +9,7 @@ class ItemUomCreate(BaseModel):
     uom: str = Field(..., min_length=1, max_length=16)
     ratio_to_base: int = Field(..., ge=1)
     display_name: Optional[str] = Field(None, max_length=32)
+    net_weight_kg: Optional[float] = Field(None, ge=0)
     is_base: bool = False
     is_purchase_default: bool = False
     is_inbound_default: bool = False
@@ -18,6 +20,7 @@ class ItemUomUpdate(BaseModel):
     uom: Optional[str] = Field(None, min_length=1, max_length=16)
     ratio_to_base: Optional[int] = Field(None, ge=1)
     display_name: Optional[str] = Field(None, max_length=32)
+    net_weight_kg: Optional[float] = Field(None, ge=0)
     is_base: Optional[bool] = None
     is_purchase_default: Optional[bool] = None
     is_inbound_default: Optional[bool] = None
@@ -32,6 +35,7 @@ class ItemUomOut(BaseModel):
     uom: str
     ratio_to_base: int
     display_name: Optional[str]
+    net_weight_kg: Optional[float]
     is_base: bool
     is_purchase_default: bool
     is_inbound_default: bool

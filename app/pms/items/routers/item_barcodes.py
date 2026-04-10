@@ -29,6 +29,25 @@ def _get_item_uom_or_404(db: Session, item_uom_id: int) -> ItemUOM:
     return obj
 
 
+def _ensure_item_uom_barcode_vacant(
+    db: Session,
+    *,
+    item_id: int,
+    item_uom_id: int,
+    exclude_barcode_id: int | None = None,
+) -> None:
+    stmt = select(ItemBarcode.id).where(
+        ItemBarcode.item_id == int(item_id),
+        ItemBarcode.item_uom_id == int(item_uom_id),
+    )
+    if exclude_barcode_id is not None:
+        stmt = stmt.where(ItemBarcode.id != int(exclude_barcode_id))
+
+    exists = db.execute(stmt.limit(1)).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(409, "Current item_uom already bound to a barcode")
+
+
 class ItemBarcodeCreate(BaseModel):
     item_uom_id: int
     barcode: str
@@ -37,8 +56,9 @@ class ItemBarcodeCreate(BaseModel):
 
 
 class ItemBarcodeUpdate(BaseModel):
-    """PATCH 更新条码：可用于切主条码/启用/停用/修改码制/修改条码值"""
+    """PATCH 更新条码：可用于改绑包装 / 改条码 / 改码制 / 切主条码"""
 
+    item_uom_id: Optional[int] = None
     barcode: Optional[str] = None
     symbology: Optional[str] = None
     active: Optional[bool] = None
@@ -98,6 +118,12 @@ def create_barcode(
     exists = db.execute(select(ItemBarcode).where(ItemBarcode.barcode == code)).scalars().first()
     if exists:
         raise HTTPException(409, "Barcode already exists")
+
+    _ensure_item_uom_barcode_vacant(
+        db,
+        item_id=int(uom.item_id),
+        item_uom_id=int(uom.id),
+    )
 
     obj = ItemBarcode(
         item_id=int(uom.item_id),
@@ -231,6 +257,19 @@ def update_barcode(id: int, body: ItemBarcodeUpdate, db: Session = Depends(get_d
     bc = db.get(ItemBarcode, id)
     if not bc:
         raise HTTPException(404, "Barcode not found")
+
+    if body.item_uom_id is not None:
+        target_uom = _get_item_uom_or_404(db, body.item_uom_id)
+        if int(target_uom.item_id) != int(bc.item_id):
+            raise HTTPException(400, "item_uom_id does not belong to current item")
+
+        _ensure_item_uom_barcode_vacant(
+            db,
+            item_id=int(bc.item_id),
+            item_uom_id=int(target_uom.id),
+            exclude_barcode_id=int(bc.id),
+        )
+        bc.item_uom_id = int(target_uom.id)
 
     if body.barcode is not None:
         code = body.barcode.strip()

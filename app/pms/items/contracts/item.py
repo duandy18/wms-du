@@ -55,6 +55,7 @@ class ItemBase(_Base):
     shelf_life_value: Annotated[int | None, Field(default=None, gt=0)] = None
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
 
+    # 兼容输出字段：事实来源已切到 base item_uom.net_weight_kg
     weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
     @field_validator(
@@ -77,6 +78,7 @@ class ItemCreate(_Base):
     Create Item（统一由后端生成 SKU）：
     - 不接受 sku 输入
     - 不接受 barcode 输入；主条码请走 /item-barcodes
+    - 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）
 
     Phase M-3：
     - items.case_ratio/case_uom 已删除；包装单位请走 item_uoms
@@ -104,8 +106,6 @@ class ItemCreate(_Base):
     shelf_life_value: Annotated[int | None, Field(default=None, gt=0)] = None
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
 
-    weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
-
     @field_validator(
         "name",
         "spec",
@@ -124,6 +124,7 @@ class ItemUpdate(_Base):
 
     - 不开放 sku 变更
     - 不接受 barcode / has_shelf_life
+    - 不接受 weight_kg；基础包装净重请改 item_uoms
     - nullable 字段支持显式传 null 清空
     """
 
@@ -148,8 +149,6 @@ class ItemUpdate(_Base):
 
     shelf_life_value: Annotated[int | None, Field(default=None, gt=0)] = None
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
-
-    weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
     @field_validator(
         "name",
@@ -179,6 +178,7 @@ class ItemCreateById(_Base):
     说明：
     - 本轮主线不收这个例外通道
     - 仅把 shelf_life 的合同口径对齐到真实 DB
+    - 不接受 weight_kg；基础包装净重请改 item_uoms
     """
 
     id: Annotated[int, Field(gt=0)]
@@ -201,8 +201,6 @@ class ItemCreateById(_Base):
 
     shelf_life_value: Annotated[int | None, Field(default=None, gt=0)] = None
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
-
-    weight_kg: Annotated[float | None, Field(default=None, ge=0)] = None
 
 
 class ItemOut(ItemBase):
