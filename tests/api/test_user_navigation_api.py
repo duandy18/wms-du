@@ -184,7 +184,7 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
     ]
 
     assert _child_codes(nodes["wms.inventory"]) == [
-        "wms.inventory.snapshot",
+        "wms.inventory.main",
         "wms.inventory.ledger",
     ]
     assert _child_codes(nodes["wms.inbound"]) == [
@@ -283,7 +283,7 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     pricing_page = nodes["wms.logistics.pricing"]
     items_page = nodes["wms.masterdata.items"]
     suppliers_page = nodes["wms.masterdata.suppliers"]
-    snapshot_page = nodes["wms.inventory.snapshot"]
+    inventory_page = nodes["wms.inventory.main"]
     warehouses_page = nodes["wms.warehouses"]
 
     assert pricing_page["effective_read_permission"] == "page.tms.read"
@@ -295,8 +295,8 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     assert suppliers_page["effective_read_permission"] == "page.pms.read"
     assert suppliers_page["effective_write_permission"] == "page.pms.write"
 
-    assert snapshot_page["effective_read_permission"] == "page.wms.read"
-    assert snapshot_page["effective_write_permission"] == "page.wms.write"
+    assert inventory_page["effective_read_permission"] == "page.wms.read"
+    assert inventory_page["effective_write_permission"] == "page.wms.write"
 
     assert warehouses_page["effective_read_permission"] == "page.wms.read"
     assert warehouses_page["effective_write_permission"] == "page.wms.write"
@@ -304,19 +304,19 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     pricing_route = route_map.get("/tms/pricing")
     items_route = route_map.get("/items")
     suppliers_route = route_map.get("/suppliers")
-    snapshot_route = route_map.get("/snapshot")
+    inventory_route = route_map.get("/inventory")
     warehouses_route = route_map.get("/warehouses")
 
     assert pricing_route is not None, "/tms/pricing should exist in route_prefixes"
     assert items_route is not None, "/items should exist in route_prefixes"
     assert suppliers_route is not None, "/suppliers should exist in route_prefixes"
-    assert snapshot_route is not None, "/snapshot should exist in route_prefixes"
+    assert inventory_route is not None, "/inventory should exist in route_prefixes"
     assert warehouses_route is not None, "/warehouses should exist in route_prefixes"
 
     assert pricing_route["page_code"] == "wms.logistics.pricing"
     assert items_route["page_code"] == "wms.masterdata.items"
     assert suppliers_route["page_code"] == "wms.masterdata.suppliers"
-    assert snapshot_route["page_code"] == "wms.inventory.snapshot"
+    assert inventory_route["page_code"] == "wms.inventory.main"
     assert warehouses_route["page_code"] == "wms.warehouses"
 
     assert pricing_route["effective_read_permission"] == "page.tms.read"
@@ -328,8 +328,8 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     assert suppliers_route["effective_read_permission"] == "page.pms.read"
     assert suppliers_route["effective_write_permission"] == "page.pms.write"
 
-    assert snapshot_route["effective_read_permission"] == "page.wms.read"
-    assert snapshot_route["effective_write_permission"] == "page.wms.write"
+    assert inventory_route["effective_read_permission"] == "page.wms.read"
+    assert inventory_route["effective_write_permission"] == "page.wms.write"
 
     assert warehouses_route["effective_read_permission"] == "page.wms.read"
     assert warehouses_route["effective_write_permission"] == "page.wms.write"

@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.lot import Lot
+from app.wms.stock.models.lot import Lot
 
 
 class StockLot(Base):

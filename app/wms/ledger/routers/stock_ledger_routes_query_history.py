@@ -12,9 +12,9 @@ from sqlalchemy.orm import selectinload
 from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
-from app.models.lot import Lot
+from app.wms.stock.models.lot import Lot
 from app.models.purchase_order import PurchaseOrder
-from app.models.stock_ledger import StockLedger
+from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.ledger.contracts.stock_ledger import LedgerList, LedgerQuery, LedgerRow
 from app.wms.ledger.contracts.stock_ledger_explain import (
     ExplainAnchor,

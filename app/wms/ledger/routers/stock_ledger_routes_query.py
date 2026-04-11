@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
-from app.models.lot import Lot
-from app.models.stock_ledger import StockLedger
+from app.wms.stock.models.lot import Lot
+from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.ledger.contracts.stock_ledger import (
     LedgerEnums,
     LedgerList,

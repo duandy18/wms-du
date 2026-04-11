@@ -51,7 +51,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.procurement.routers.purchase_orders import router as purchase_orders_router
     from app.wms.procurement.routers.purchase_reports import router as purchase_reports_router
     from app.wms.outbound.routers.return_tasks import router as return_tasks_router
-    from app.wms.stock.routers.inventory_display import router as stock_inventory_display_router
+    from app.wms.stock.routers.inventory import router as stock_inventory_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
     from app.pms.suppliers.routers.supplier_contacts import router as supplier_contacts_router
@@ -155,7 +155,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(debug_trace_router)
     app.include_router(metrics_router)
-    app.include_router(stock_inventory_display_router)
+    app.include_router(stock_inventory_router)
 
     app.include_router(stock_ledger_router)
 

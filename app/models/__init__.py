@@ -38,11 +38,11 @@ MODEL_SPECS = [
     ("app.pms.items.models.item_uom", "ItemUOM"),
     ("app.models.item_test_set", "ItemTestSet"),
     ("app.models.item_test_set_item", "ItemTestSetItem"),
-    ("app.models.lot", "Lot"),
+    ("app.wms.stock.models.lot", "Lot"),
     # ✅ Phase 5：lot-world 成为唯一库存余额真相（stocks_lot + lots）
-    ("app.models.stock_lot", "StockLot"),
-    ("app.models.stock_ledger", "StockLedger"),
-    ("app.models.stock_snapshot", "StockSnapshot"),
+    ("app.wms.stock.models.stock_lot", "StockLot"),
+    ("app.wms.ledger.models.stock_ledger", "StockLedger"),
+    ("app.wms.stock.models.stock_snapshot", "StockSnapshot"),
     # ------------------------------------------------------------------
     # 订单 & 出库
     # ------------------------------------------------------------------

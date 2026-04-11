@@ -19,19 +19,24 @@ class Base(DeclarativeBase):
 
 _INITIALIZED: bool = False  # 防重复初始化
 
+# Phase 5：这些 legacy 模型对应的表在当前 DB/主线迁移中不存在，
+# 若被导入会污染 Base.metadata，触发 alembic-check 误报 add_table。
+# ✅ 规则：主线 metadata 禁止加载它们（不允许双真相 / 不复活旧表）。
 _DEFAULT_EXCLUDE: Set[str] = {
     "app.models.batch",
 }
 
+# Phase M-5：表名级别的 legacy 黑名单（防止未来模块改名/移动导致 ex 失效）
+# 一旦被导入，必须从 Base.metadata 移除，避免 alembic-check 噪音。
 _LEGACY_TABLE_NAMES: Set[str] = {
     "stocks",
     "batches",
-    "snapshots",
+    "snapshots",  # 若未来有人误复活 v1 快照表
 }
 
 
-def _iter_model_modules_recursive(pkg_name: str) -> Iterator[str]:
-    """递归发现给定 package 下的所有模块（排除以下划线开头的内部模块）"""
+def _iter_model_modules_recursive(pkg_name: str = "app.models") -> Iterator[str]:
+    """递归发现 app.models.* 下的所有模块（排除以下划线开头的内部模块）"""
     try:
         pkg = importlib.import_module(pkg_name)
     except ModuleNotFoundError:
@@ -80,34 +85,34 @@ def init_models(
     """
     集中导入模型 + 固化关系映射：
       1) 先显式导入关键模型（保证字符串关系目标类已注册）
-      2) 再递归导入模型包补齐遗漏
+      2) 再递归导入 app.models.* 补齐遗漏
       3) 最后统一 configure_mappers()
 
-    当前阶段：
-    - 通用模型继续位于 app.models
-    - PMS items 域拥有的 ORM 模型已下沉到 app.pms.items.models
-    - 主线 metadata 禁止加载 legacy 的 batch
+    Phase 5 约束（硬）：
+    - 主线 metadata 禁止加载 legacy 的 batch（对应表不存在），避免 alembic-check 误报。
     """
     global _INITIALIZED
     if _INITIALIZED and not force:
         log.debug("init_models() called again; already initialized, skipping.")
         return
 
+    # 合并 exclude：调用方 exclude + 默认排除（Phase 5 legacy）
     ex: Set[str] = set(exclude or [])
     ex |= set(_DEFAULT_EXCLUDE)
 
     loaded: List[str] = []
 
+    # ✅ 显式加载链：只放“主线真相表”的模型（避免把 legacy 表带进 metadata）
     explicit_chain = [
         "app.pms.suppliers.models.supplier",
         "app.pms.suppliers.models.supplier_contact",
         "app.pms.items.models.item",
         "app.pms.items.models.item_uom",
         "app.pms.items.models.item_barcode",
-        "app.models.lot",
-        "app.models.stock_lot",
-        "app.models.stock_ledger",
-        "app.models.stock_snapshot",
+        "app.wms.stock.models.lot",
+        "app.wms.stock.models.stock_lot",
+        "app.wms.ledger.models.stock_ledger",
+        "app.wms.stock.models.stock_snapshot",
         "app.models.order",
         "app.models.order_item",
         "app.models.order_address",

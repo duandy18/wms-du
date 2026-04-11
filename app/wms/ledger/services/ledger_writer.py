@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.stock_ledger import StockLedger
+from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.stock.services.lot_guard import assert_lot_belongs_to
 
 

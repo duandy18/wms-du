@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.lot import Lot
-from app.models.stock_ledger import StockLedger
+from app.wms.stock.models.lot import Lot
+from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.procurement.contracts.purchase_order_receive_workbench import WorkbenchBatchRowOut
 
 

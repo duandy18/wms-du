@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.lot import Lot
+from app.wms.stock.models.lot import Lot
 from app.pms.public.items.contracts.item_policy import ItemPolicy
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
 
