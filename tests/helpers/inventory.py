@@ -1,6 +1,7 @@
 # tests/helpers/inventory.py
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, List, Optional, Tuple
 
@@ -65,6 +66,26 @@ def _as_lot_id(v: object) -> int:
     tests 侧用这个函数统一兼容，避免类型漂移导致的 AttributeError。
     """
     return int(getattr(v, "id", v))
+
+
+def _stable_required_dates_from_code(code_raw: str, *, days: int) -> tuple[date, date]:
+    """
+    REQUIRED lot helper：按 lot_code 稳定生成日期，避免不同批次都撞到同一天 production_date。
+
+    规则：
+    - 同一 code -> 同一 production_date
+    - 不同 code -> 大概率不同 production_date
+    - expiry_date = production_date + days
+    """
+    code = str(code_raw).strip()
+    if not code:
+        raise ValueError("code empty")
+
+    digest = hashlib.sha1(code.encode("utf-8")).hexdigest()
+    offset_days = int(digest[:8], 16) % 73000  # ~200 years range, collision risk much lower than using today
+    production_date = date(2000, 1, 1) + timedelta(days=offset_days)
+    expiry_date = production_date + timedelta(days=int(days))
+    return production_date, expiry_date
 
 
 async def ensure_wh_loc_item(
@@ -132,8 +153,8 @@ async def seed_batch_slot(
       （等价于旧实现的 ON CONFLICT DO UPDATE SET qty）
 
     关键：日期合同必须认真对待
-    - 若 item.expiry_policy == 'REQUIRED' 且发生入库（delta>0），必须提供 expiry_date（production_date 可为空）
-    - 若 item.expiry_policy == 'NONE'，日期一律传 None（避免伪造日期事实）
+    - seed_batch_slot 的语义就是“造一个 SUPPLIER batch slot”，因此商品必须走 REQUIRED
+    - REQUIRED 且发生入库（delta>0）时，必须提供 production/expiry 事实
     """
     wh = _wh_from_loc(loc)
     code_raw = str(code).strip()
@@ -145,14 +166,21 @@ async def seed_batch_slot(
         SA("INSERT INTO warehouses (id, name) VALUES (:w, 'WH') ON CONFLICT (id) DO NOTHING"),
         {"w": int(wh)},
     )
-    await ensure_item(session, id=int(item), sku=f"SKU-{item}", name=f"ITEM-{item}")
+
+    # 当前 helper 语义就是“造 batch slot”，因此显式把商品设为 REQUIRED。
+    # 不能用 ensure_item 默认值（expiry_required=False），否则会把上游已设好的 REQUIRED 冲回 NONE。
+    await ensure_item(
+        session,
+        id=int(item),
+        sku=f"SKU-{item}",
+        name=f"ITEM-{item}",
+        expiry_required=True,
+    )
 
     expiry_policy = await _load_item_expiry_policy(session, item_id=int(item))
 
-    # 先确保 lot（满足 ensure_lot_full 的强制入参）
     if expiry_policy == "REQUIRED":
-        expiry_date: Optional[date] = date.today() + timedelta(days=int(days))
-        production_date: Optional[date] = None
+        production_date, expiry_date = _stable_required_dates_from_code(code_raw, days=int(days))
     else:
         expiry_date = None
         production_date = None
@@ -173,12 +201,9 @@ async def seed_batch_slot(
     if delta == 0:
         return
 
-    # 入库合同：REQUIRED 且 delta>0 必须提供 expiry_date
     if expiry_policy == "REQUIRED" and int(delta) > 0 and expiry_date is None:
-        expiry_date = date.today() + timedelta(days=int(days))
+        production_date, expiry_date = _stable_required_dates_from_code(code_raw, days=int(days))
 
-    # 用 ref 携带 target，保证“重复 seed 同 qty”幂等，
-    # 但“不同 qty 的 overwrite”不会被 idem 吃掉（等价于旧 DO UPDATE）。
     ref = f"ut:seed_batch_slot:set:{int(wh)}:{int(item)}:{code_raw}:{int(target)}"
 
     await adjust_lot_impl(

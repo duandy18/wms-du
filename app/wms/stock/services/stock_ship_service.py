@@ -1,18 +1,19 @@
 # app/wms/stock/services/stock_ship_service.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map
 from app.core.problem import raise_problem
 from app.models.enums import MovementType
 from app.wms.outbound.services.invariant_guard_outbound import enforce_outbound_invariant_guard
+from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map
 
 AdjustLotFn = Callable[..., Awaitable[Dict[str, Any]]]
+UTC = timezone.utc
 
 
 def _shortage_detail(
@@ -68,7 +69,7 @@ async def ship_commit_direct_lot_impl(
     - REQUIRED 商品：必须显式批次（但本函数 lines 不含 batch_code），因此直接拒绝。
     - NONE 商品：batch_code 必须为 null，统一扣 INTERNAL 槽位（lots.lot_code IS NULL）。
     """
-    ts = occurred_at or datetime.utcnow()
+    ts = occurred_at or datetime.now(UTC)
 
     need_by_item: Dict[int, int] = {}
     for line in lines or []:

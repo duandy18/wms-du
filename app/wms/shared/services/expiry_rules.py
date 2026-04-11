@@ -36,12 +36,13 @@ class ShelfLife:
 
 def add_months(d: date, months: int) -> date:
     """
-    按“自然月”增加月份，而不是简单 30 * N 天。
+    按“自然月”增减月份，而不是简单 30 * N 天。
 
     规则：
     - 2025-01-15 + 1 月 -> 2025-02-15
     - 2025-01-31 + 1 月 -> 2025-02-28（取该月最后一天）
     - 2025-01-31 + 2 月 -> 2025-03-31
+    - 2025-03-31 - 1 月 -> 2025-02-28
     """
     if months == 0:
         return d
@@ -85,6 +86,35 @@ def compute_expiry_from_shelf_life(
     return add_months(production_date, shelf_life.value)
 
 
+def compute_production_from_shelf_life(
+    expiry_date: date,
+    shelf_life: ShelfLife,
+) -> date:
+    """
+    根据“到期日 + 保质期”反推生产日期。
+
+    语义约定：
+    - 与 compute_expiry_from_shelf_life 对称
+    - DAY  ：production = expiry_date - value 天
+    - MONTH：production = expiry_date - value 个月（自然月逆推）
+
+    注意：
+    - 这里按当前工程语义把 expiry_date 视为“最后一个合规日（含当天）”，
+      因此反推时不做额外 ±1 天处理，保持和正推规则镜像。
+    """
+    if expiry_date is None:
+        raise ValueError("expiry_date is required to compute production_date")
+
+    if not shelf_life.is_effective():
+        raise ValueError("shelf_life must be a positive value")
+
+    if shelf_life.unit == ShelfLifeUnit.DAY:
+        return expiry_date - timedelta(days=shelf_life.value)
+
+    # 默认按月逆推
+    return add_months(expiry_date, -shelf_life.value)
+
+
 def resolve_expiry_date(
     *,
     production_date: Optional[date],
@@ -108,6 +138,29 @@ def resolve_expiry_date(
 
     if production_date is not None and shelf_life is not None and shelf_life.is_effective():
         return compute_expiry_from_shelf_life(production_date, shelf_life)
+
+    return None
+
+
+def resolve_production_date(
+    *,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+    shelf_life: Optional[ShelfLife],
+) -> Optional[date]:
+    """
+    统一“生产日期”解析规则：
+
+    优先级：
+    1) 如果显式给了 production_date → 直接使用
+    2) 否则，如果给了 expiry_date + 有效 shelf_life → 通过保质期反推
+    3) 否则 → 返回 None
+    """
+    if production_date is not None:
+        return production_date
+
+    if expiry_date is not None and shelf_life is not None and shelf_life.is_effective():
+        return compute_production_from_shelf_life(expiry_date, shelf_life)
 
     return None
 

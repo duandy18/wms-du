@@ -16,13 +16,13 @@ from app.wms.outbound.services.pick_task_commit_ship_apply_stock_details import 
 from app.wms.outbound.services.pick_task_commit_ship_apply_stock_queries import load_on_hand_qty
 
 
-def _norm_lot_code_key(v: str | None) -> str | None:
+def _norm_lot_code(v: str | None) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     if not s:
         return None
-    return s.upper()
+    return s
 
 
 async def _resolve_supplier_lot_id(
@@ -33,17 +33,17 @@ async def _resolve_supplier_lot_id(
     lot_code: str,
 ) -> Optional[int]:
     """
-    批次受控商品（展示码非空）：lot_code 视为 lots.lot_code（SUPPLIER）。
+    批次受控商品（展示码非空）：lot_code 仅作为 lots.lot_code 的辅助解析输入。
 
-    终态：
-    - SUPPLIER 批次按 lot_code_key 唯一（防漂移）
-    - 找不到 lot_id 属于业务数据缺失（应提示“lot_not_found”类问题）
+    当前阶段：
+    - lot_code 不再是结构身份
+    - 若命中多个 SUPPLIER lots，则显式报歧义
     """
-    k = _norm_lot_code_key(lot_code)
-    if not k:
+    code = _norm_lot_code(lot_code)
+    if not code:
         return None
 
-    row = (
+    rows = (
         await session.execute(
             SA(
                 """
@@ -52,16 +52,20 @@ async def _resolve_supplier_lot_id(
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code_key = :k
-                 LIMIT 1
+                   AND lot_code = :code
+                 ORDER BY id ASC
+                 LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
         )
-    ).first()
-    if not row:
+    ).all()
+
+    if not rows:
         return None
-    return int(row[0])
+    if len(rows) > 1:
+        raise ValueError("supplier_lot_code_ambiguous")
+    return int(rows[0][0])
 
 
 async def _pick_one_lot_for_none_code(
@@ -162,7 +166,6 @@ async def apply_stock_deductions_impl(
 
         need_total = int(total_picked)
 
-        # 只读校验（用于可行动错误提示；不参与扣减原子性裁决）
         on_hand = await load_on_hand_qty(
             session,
             warehouse_id=int(warehouse_id),
@@ -198,9 +201,7 @@ async def apply_stock_deductions_impl(
             )
 
         try:
-            # --- lot_id 解析 + 扣减 ---
             if bc_norm:
-                # 批次受控：lot_code -> SUPPLIER lot_id（按 lot_code_key 唯一）
                 lot_id = await _resolve_supplier_lot_id(
                     session,
                     warehouse_id=int(warehouse_id),
@@ -223,7 +224,7 @@ async def apply_stock_deductions_impl(
                             {
                                 "type": "validation",
                                 "path": "stock_adjust",
-                                "reason": "failed to resolve lot_id from batch_code",
+                                "reason": "failed to resolve lot_id from lot_code",
                             }
                         ],
                         next_actions=[
@@ -259,8 +260,6 @@ async def apply_stock_deductions_impl(
                 ref_line += 1
                 continue
 
-            # 非批次商品：batch_code=None（展示码为空）
-            # INTERNAL 单例 lot：仍按“从可扣减库存中找一个 lot”执行（更稳健）
             remain = int(need_total)
             while remain > 0:
                 pick = await _pick_one_lot_for_none_code(
@@ -269,7 +268,6 @@ async def apply_stock_deductions_impl(
                     item_id=int(item_id),
                 )
                 if pick is None:
-                    # 理论上不会发生（前面 on_hand 已校验够），但为防“总量够但没有可扣 lot”的脏数据情况
                     raise_problem(
                         status_code=409,
                         error_code="insufficient_stock",
@@ -327,10 +325,47 @@ async def apply_stock_deductions_impl(
                 remain -= int(take)
 
         except HTTPException:
-            # ✅ Problem 化异常原样透传（库存不足/批次不合法/其它业务拒绝）
             raise
+        except ValueError as e:
+            if str(e) == "supplier_lot_code_ambiguous":
+                raise_problem(
+                    status_code=422,
+                    error_code="supplier_lot_code_ambiguous",
+                    message="同一展示批次码命中多个库存槽位，禁止提交出库。",
+                    context={
+                        "task_id": int(task_id),
+                        "warehouse_id": int(warehouse_id),
+                        "ref": str(order_ref),
+                        "item_id": int(item_id),
+                        "batch_code": bc_norm,
+                    },
+                    details=[
+                        {
+                            "type": "validation",
+                            "path": "stock_adjust",
+                            "reason": "lot_code matched multiple supplier lots",
+                        }
+                    ],
+                    next_actions=[
+                        {"action": "rescan_stock", "label": "刷新库存"},
+                        {"action": "edit_batch", "label": "更正批次"},
+                    ],
+                )
+
+            raise_problem(
+                status_code=500,
+                error_code="pick_apply_failed",
+                message="拣货扣减失败：系统异常。",
+                context={
+                    "task_id": int(task_id),
+                    "warehouse_id": int(warehouse_id),
+                    "ref": str(order_ref),
+                    "item_id": int(item_id),
+                    "batch_code": bc_norm,
+                },
+                details=[{"type": "state", "path": "apply_stock_deductions", "reason": str(e)}],
+            )
         except Exception as e:
-            # ✅ 未知异常统一收敛为 500 Problem
             raise_problem(
                 status_code=500,
                 error_code="pick_apply_failed",

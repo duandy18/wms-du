@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from sqlalchemy import text
 
 from app.wms.inbound.contracts.inbound_atomic import InboundAtomicCreateIn
@@ -48,8 +50,11 @@ async def test_inbound_atomic_direct_single_line_happy_path(session):
         id=item_id,
         sku=f"SKU-{item_id}",
         name=f"ITEM-{item_id}",
-        expiry_required=False,
+        expiry_required=True,
     )
+
+    prod = date.today()
+    exp = prod + timedelta(days=30)
 
     payload = InboundAtomicCreateIn.model_validate(
         {
@@ -62,6 +67,8 @@ async def test_inbound_atomic_direct_single_line_happy_path(session):
                     "item_id": item_id,
                     "qty": qty,
                     "lot_code": lot_code,
+                    "production_date": prod.isoformat(),
+                    "expiry_date": exp.isoformat(),
                 }
             ],
         }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Sequence
 from uuid import uuid4
 
@@ -32,8 +32,8 @@ class ResolvedInboundLine:
     qty: int
     ref_line: int | None = None
     lot_code: str | None = None
-    production_date: datetime | None = None
-    expiry_date: datetime | None = None
+    production_date: date | None = None
+    expiry_date: date | None = None
 
 
 async def _resolve_lines(
@@ -61,16 +61,8 @@ async def _resolve_lines(
                 qty=int(line.qty),
                 ref_line=int(line.ref_line) if line.ref_line is not None else None,
                 lot_code=line.lot_code,
-                production_date=(
-                    datetime.combine(line.production_date, datetime.min.time(), tzinfo=UTC)
-                    if line.production_date is not None
-                    else None
-                ),
-                expiry_date=(
-                    datetime.combine(line.expiry_date, datetime.min.time(), tzinfo=UTC)
-                    if line.expiry_date is not None
-                    else None
-                ),
+                production_date=line.production_date,
+                expiry_date=line.expiry_date,
             )
         )
 
@@ -108,6 +100,8 @@ async def _apply_inbound_lines(
             warehouse_id=int(warehouse_id),
             item_policy=item_policy,
             lot_code=line.lot_code,
+            production_date=line.production_date,
+            expiry_date=line.expiry_date,
         )
 
         ref = source_ref or trace_id
@@ -123,6 +117,8 @@ async def _apply_inbound_lines(
             ref_line=ref_line,
             occurred_at=datetime.now(UTC),
             batch_code=line.lot_code,
+            production_date=line.production_date,
+            expiry_date=line.expiry_date,
             trace_id=trace_id,
             source_type=source_type,
             source_biz_type=source_biz_type,

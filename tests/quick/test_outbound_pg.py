@@ -1,5 +1,5 @@
 # tests/quick/test_outbound_pg.py — v2: warehouse + batch_code 口径
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -125,6 +125,8 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             batch_code=None,
         )
     else:
+        prod = date.today()
+        exp = prod + timedelta(days=365)
         await svc.adjust(
             session=session,
             item_id=int(item_id),
@@ -135,7 +137,8 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             ref_line=1,
             occurred_at=now,
             batch_code=str(code),
-            production_date=date.today(),
+            production_date=prod,
+            expiry_date=exp,
         )
     await session.commit()
 
@@ -201,6 +204,8 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
     cur = await _qty(session, item_id, wh, code)
     if cur != 0:
         svc = StockService()
+        zero_prod = date.today() if code is not None else None
+        zero_exp = (zero_prod + timedelta(days=365)) if zero_prod is not None else None
         await svc.adjust(
             session=session,
             item_id=int(item_id),
@@ -211,8 +216,8 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
             ref_line=1,
             occurred_at=datetime.now(UTC),
             batch_code=code,
-            production_date=date.today() if code is not None else None,
-            expiry_date=None,
+            production_date=zero_prod,
+            expiry_date=zero_exp,
         )
         await session.commit()
 

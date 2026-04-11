@@ -1,7 +1,7 @@
 # tests/services/test_pick_commit_idempotent_shape.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,6 +74,7 @@ async def test_pick_commit_idempotent_shape(client, session: AsyncSession):
 
     # ✅ commit 需要真实库存，否则会 409 insufficient_stock
     now = datetime.now(UTC)
+    exp = now.date() + timedelta(days=365)
     stock = StockService()
     await stock.adjust(
         session=session,
@@ -86,7 +87,7 @@ async def test_pick_commit_idempotent_shape(client, session: AsyncSession):
         occurred_at=now,
         batch_code=batch_code,
         production_date=now.date(),
-        expiry_date=None,
+        expiry_date=exp,
         trace_id="T-UT-SEED",
         meta={"sub_reason": "UT_PICK_SHAPE_SEED"},
     )

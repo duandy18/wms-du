@@ -158,7 +158,7 @@ async def test_pick_task_commit_writes_shipment_reason(session: AsyncSession):
     - stocks_lot.lot_id NOT NULL（不存在 NULL 槽位）
     - 非批次商品用 INTERNAL lot（lots.lot_code 可能为 NULL）承载
     """
-    wh, item = 1, 3003
+    wh, item = 1, 93003  # 用 fresh NONE item，避免命中 baseline 中可能已被提升为 REQUIRED 的旧 id
 
     await ensure_wh_loc_item(session, wh=wh, loc=1, item=item)
 

@@ -72,7 +72,7 @@ def build_scoped_metadata(scope: str) -> MetaData:
     md = MetaData()
     if scope == "all":
         for t in Base.metadata.tables.values():
-            t.tometadata(md)
+            t.to_metadata(md)
         return md
 
     wanted: set[str] = set()
@@ -83,12 +83,12 @@ def build_scoped_metadata(scope: str) -> MetaData:
     else:
         # 未知 scope 时退回全量，宁可多查，不搞黑盒
         for t in Base.metadata.tables.values():
-            t.tometadata(md)
+            t.to_metadata(md)
         return md
 
     for name, tbl in Base.metadata.tables.items():
         if name in wanted:
-            tbl.tometadata(md)
+            tbl.to_metadata(md)
 
     return md
 

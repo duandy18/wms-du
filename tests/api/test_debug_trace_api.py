@@ -1,5 +1,6 @@
-# tests/api/test_debug_trace_api.py
 from __future__ import annotations
+
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -41,6 +42,7 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         id=int(item_id),
         sku=f"UT-SKU-{item_id}",
         name=f"UT-Item-{item_id}",
+        expiry_required=True,
     )
 
     store_id = await ensure_store(
@@ -131,13 +133,15 @@ async def _seed_trace_case(session: AsyncSession) -> str:
 
     # ensure SUPPLIER lot（展示码 lot_code='B-TRACE-1'）
     lot_code = "B-TRACE-1"
+    prod = date.today()
+    exp = prod + timedelta(days=365)
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
 
     # stock_ledger：SHIPMENT（lot_id 维度；不写 batch_code）

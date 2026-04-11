@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -71,13 +71,13 @@ async def _ensure_seed_stock_slot(
         {"i": it},
     )
 
-    # ✅ 终态：supplier lot 必须走 ensure_lot_full（内部会写 lot_code_key，并匹配 partial unique index）
+    # ✅ 当前终态：REQUIRED lot 身份已经切到 production_date
     lot_id = await ensure_lot_full(
         session,
         item_id=it,
         warehouse_id=wh,
         lot_code=code_raw,
-        production_date=None,
+        production_date=date.today(),
         expiry_date=None,
     )
 

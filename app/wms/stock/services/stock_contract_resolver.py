@@ -1,7 +1,7 @@
 # app/wms/stock/services/stock_contract_resolver.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,8 @@ async def resolve_lot_for_stock_adjust(
     lot_id: Optional[int],
     ref: str,
     occurred_at: Optional[datetime],
+    production_date: Optional[date],
+    expiry_date: Optional[date],
 ) -> Tuple[int, Optional[str]]:
     """
     任务3（StockService API 拆分）第一刀：抽离“合同裁决 + lot_id 解析”。
@@ -30,6 +32,9 @@ async def resolve_lot_for_stock_adjust(
         2) validate_lot_code_contract（REQUIRED/NONE 合同裁决）
         3) ensure_*_lot_id（lot identity 解析 / 创建入口）
     - 不负责写库存（不得调用 adjust_lot_impl），以保持“执行器单入口”铁律。
+
+    当前阶段：
+    - REQUIRED 商品：若需要创建 / 解析 SUPPLIER lot，必须携带 production_date
     """
     requires_batch = await lot_resolver.requires_batch(session, item_id=int(item_id))
     bc_norm = validate_lot_code_contract(requires_batch=requires_batch, lot_code=batch_code)
@@ -49,6 +54,8 @@ async def resolve_lot_for_stock_adjust(
             item_id=int(item_id),
             lot_code=bc_norm,
             occurred_at=occurred_at,
+            production_date=production_date,
+            expiry_date=expiry_date,
         )
 
     return int(resolved_lot_id), bc_norm

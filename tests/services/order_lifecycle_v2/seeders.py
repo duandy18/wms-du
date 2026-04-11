@@ -1,5 +1,6 @@
-# tests/services/order_lifecycle_v2/seeders.py
 from __future__ import annotations
+
+from datetime import date, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -141,8 +142,14 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
         {"w": int(wh_id)},
     )
 
-    # items（Phase M：items policy NOT NULL，必须最小合法插入）
-    await ensure_item(session, id=int(item_id), sku=f"UT-SKU-{item_id}", name=f"UT-Item-{item_id}")
+    # items（本场景显式走 SUPPLIER lot，因此商品必须站到 REQUIRED）
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"UT-SKU-{item_id}",
+        name=f"UT-Item-{item_id}",
+        expiry_required=True,
+    )
 
     # orders + order_fulfillment（Phase5+）
     await _upsert_order_and_fulfillment(
@@ -193,13 +200,15 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
 
     # ensure SUPPLIER lot (lot_code 展示码)
     lot_code = "B-LIFE-1"
+    prod = date(2030, 1, 1)
+    exp = prod + timedelta(days=365)
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
 
     # stock_ledger：SHIPMENT / RETURN_IN（lot_id 维度；不写 batch_code）
@@ -218,7 +227,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 delta,
                 occurred_at,
                 created_at,
-                after_qty
+                after_qty,
+                production_date,
+                expiry_date
             )
             VALUES
             (
@@ -233,7 +244,9 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 -2,
                 now() + INTERVAL '5 min',
                 now() + INTERVAL '5 min',
-                0
+                0,
+                NULL,
+                NULL
             ),
             (
                 :trace_id,
@@ -247,11 +260,21 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
                 1,
                 now() + INTERVAL '20 min',
                 now() + INTERVAL '20 min',
-                1
+                1,
+                :prod,
+                :exp
             )
             """
         ),
-        {"trace_id": trace_id, "wh_id": wh_id, "item_id": item_id, "lot_id": int(lot_id), "ref": order_ref},
+        {
+            "trace_id": trace_id,
+            "wh_id": wh_id,
+            "item_id": item_id,
+            "lot_id": int(lot_id),
+            "ref": order_ref,
+            "prod": prod,
+            "exp": exp,
+        },
     )
 
     await session.commit()

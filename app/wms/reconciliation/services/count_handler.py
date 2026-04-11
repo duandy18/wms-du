@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.wms.stock.services.stock_service import StockService
 from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
-from app.wms.shared.services.expiry_resolver import resolve_batch_dates_for_item
+from app.wms.shared.services.expiry_resolver import normalize_batch_dates_for_item
 
 
 async def _ensure_supplier_lot_id(
@@ -22,13 +22,10 @@ async def _ensure_supplier_lot_id(
     expiry_date: date | None,
 ) -> int:
     """
-    Phase 2：Lot upsert 收口到 app/services/stock/lots.py（ensure_lot_full）
-    - Count 仍要求 batch_code（盘点维度必须落到确定 SUPPLIER lot 槽位）
+    Count 仍要求 batch_code，但对 REQUIRED 商品，lot 身份已经切到 production_date。
+    因此这里必须把 production_date / expiry_date 继续传给 ensure_lot_full。
     """
     from app.wms.stock.services.lots import ensure_lot_full
-
-    _ = production_date
-    _ = expiry_date
 
     code = str(lot_code).strip()
     if not code:
@@ -39,8 +36,8 @@ async def _ensure_supplier_lot_id(
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         lot_code=str(code),
-        production_date=None,
-        expiry_date=None,
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
 
 
@@ -107,8 +104,6 @@ async def _refresh_snapshot_for_item(
         {"d": snapshot_date, "w": int(warehouse_id), "i": int(item_id)},
     )
 
-    # Lot-world: snapshot grain is (snapshot_date, warehouse_id, item_id, lot_id).
-    # Do NOT write batch_code into stock_snapshots (column no longer exists).
     await session.execute(
         sa.text(
             """
@@ -164,13 +159,24 @@ async def handle_count(
 
     bcode = str(batch_code).strip()
 
+    resolved_production_date = production_date
+    resolved_expiry_date = expiry_date
+
+    if production_date is not None or expiry_date is not None:
+        resolved_production_date, resolved_expiry_date, _resolution_mode = await normalize_batch_dates_for_item(
+            session,
+            item_id=item_id,
+            production_date=production_date,
+            expiry_date=expiry_date,
+        )
+
     lot_id = await _ensure_supplier_lot_id(
         session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
         lot_code=bcode,
-        production_date=production_date,
-        expiry_date=expiry_date,
+        production_date=resolved_production_date,
+        expiry_date=resolved_expiry_date,
     )
 
     current = await _lock_current_qty_by_lot(
@@ -188,18 +194,23 @@ async def handle_count(
         if production_date is None and expiry_date is None:
             raise ValueError("盘盈为入库行为，必须提供 production_date 或 expiry_date。")
 
-        production_date, expiry_date = await resolve_batch_dates_for_item(
+        resolved_production_date, resolved_expiry_date, _resolution_mode = await normalize_batch_dates_for_item(
             session,
             item_id=item_id,
             production_date=production_date,
             expiry_date=expiry_date,
         )
 
+        if resolved_production_date is None:
+            raise ValueError("批次受控商品必须提供 production_date，或提供可结合保质期反推出 production_date 的 expiry_date。")
+
+        if resolved_expiry_date is None:
+            raise ValueError("未提供到期日期，且商品未配置可用于推算的保质期，无法形成 canonical expiry_date。")
+
     meta = {"sub_reason": "COUNT_ADJUST" if delta != 0 else "COUNT_CONFIRM"}
     if delta == 0:
         meta["allow_zero_delta_ledger"] = True
 
-    # ✅ 任务3 终态：Count 已持有 authoritative lot_id，必须走 adjust_lot（lot-only 原语入口）
     stock_svc = StockService()
     await stock_svc.adjust_lot(
         session=session,
@@ -213,8 +224,8 @@ async def handle_count(
         occurred_at=None,
         meta=meta,
         batch_code=bcode,
-        production_date=production_date,
-        expiry_date=expiry_date,
+        production_date=resolved_production_date,
+        expiry_date=resolved_expiry_date,
         trace_id=trace_id,
         shadow_write_stocks=False,
     )
@@ -253,6 +264,6 @@ async def handle_count(
         "delta": int(delta),
         "before": int(before),
         "after": int(after),
-        "production_date": production_date,
-        "expiry_date": expiry_date,
+        "production_date": resolved_production_date,
+        "expiry_date": resolved_expiry_date,
     }

@@ -1,6 +1,6 @@
 # tests/services/test_internal_outbound_service.py
 import pytest
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import text
 
@@ -20,21 +20,15 @@ async def test_internal_outbound_end_to_end():
       3) 添加一行 item_id=1, qty=4，指定同一 lot_code（batch_code 展示码）
       4) 确认内部出库（扣 stocks_lot）
       5) 验证：stocks_lot 减少 / ledger 写入 INTERNAL_OUT 记录
-
-    Phase M-3：
-      - items.case_ratio/case_uom 已删除；lots 不再承载 item_case_*_snapshot / item_uom_snapshot 等历史残影列
-      - lots 也不再承载 production_date/expiry_date/expiry_source（日期事实在 receipt/ledger 侧表达）
     """
 
     warehouse_id = 1
     item_id = 1
     qty_seed = 10
     qty_outbound = 4
-    batch_code = "INT-SEED-TEST-001"  # 作为 SUPPLIER lot_code 使用
+    batch_code = "INT-SEED-TEST-001"
 
-    code_key = str(batch_code).strip().upper()
-
-    # STEP 0 — 清理现场：删除旧的 seed 测试台账 + lot-world 库存
+    # STEP 0 — 清理现场
     async with async_session_maker() as session:
         await session.execute(text("DELETE FROM stock_ledger WHERE ref = 'INT-SEED-TEST-001'"))
 
@@ -50,11 +44,11 @@ async def test_internal_outbound_end_to_end():
                         WHERE warehouse_id = :w
                           AND item_id      = :i
                           AND lot_code_source = 'SUPPLIER'
-                          AND lot_code_key = :k
+                          AND lot_code = :code
                    )
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(batch_code)},
         )
 
         await session.execute(
@@ -64,20 +58,19 @@ async def test_internal_outbound_end_to_end():
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code_key = :k
+                   AND lot_code = :code
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(batch_code)},
         )
 
         await session.commit()
 
-    # STEP 1 — 种子库存 +10（特定 lot_code）
+    # STEP 1 — 种子库存 +10
     async with async_session_maker() as session:
         await ensure_warehouse(session, id=int(warehouse_id), name="WH-1")
         await ensure_item(session, id=int(item_id), sku=f"SKU-{item_id}", name=f"ITEM-{item_id}")
 
-        # 本测试走显式批次（SUPPLIER lot_code），因此必须把 item 设为 REQUIRED（终态合同）
         await session.execute(
             text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
             {"i": int(item_id)},
@@ -85,14 +78,16 @@ async def test_internal_outbound_end_to_end():
 
         await session.commit()
 
-        # ✅ 终态：supplier lot 必须走 ensure_lot_full（lot_code_key + partial unique index）
+        prod = date.today()
+        exp = prod + timedelta(days=365)
+
         lot_id = await ensure_lot_full(
             session,
             item_id=int(item_id),
             warehouse_id=int(warehouse_id),
             lot_code=str(batch_code),
-            production_date=None,
-            expiry_date=None,
+            production_date=prod,
+            expiry_date=exp,
         )
 
         stock_svc = StockService()
@@ -106,8 +101,8 @@ async def test_internal_outbound_end_to_end():
             ref="INT-SEED-TEST-001",
             ref_line=1,
             batch_code=batch_code,
-            production_date=date.today(),
-            expiry_date=None,
+            production_date=prod,
+            expiry_date=exp,
             trace_id="INT-SEED-TRACE",
         )
         await session.commit()
@@ -129,7 +124,7 @@ async def test_internal_outbound_end_to_end():
         assert doc.status == "DRAFT"
         assert doc.recipient_name == "张三"
 
-    # STEP 3 — 添加一行 qty=4，显式指定和种子相同的 lot_code（batch_code 展示码）
+    # STEP 3 — 添加一行 qty=4
     async with async_session_maker() as session:
         svc = InternalOutboundService()
         await svc.upsert_line(
@@ -174,14 +169,14 @@ async def test_internal_outbound_end_to_end():
                      WHERE sl.warehouse_id = :w
                        AND sl.item_id      = :i
                        AND l.lot_code_source = 'SUPPLIER'
-                       AND l.lot_code_key = :k
+                       AND l.lot_code = :code
                     """
                 ),
-                {"w": int(warehouse_id), "i": int(item_id), "k": str(code_key)},
+                {"w": int(warehouse_id), "i": int(item_id), "code": str(batch_code)},
             )
         ).scalar()
 
-        assert int(stock or 0) == qty_seed - qty_outbound  # 10 - 4 = 6
+        assert int(stock or 0) == qty_seed - qty_outbound
 
         ledger_rows = (
             await session.execute(

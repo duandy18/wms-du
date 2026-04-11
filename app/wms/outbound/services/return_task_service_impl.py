@@ -11,8 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.models.enums import MovementType
 from app.models.return_task import ReturnTask, ReturnTaskLine
 from app.wms.ledger.models.stock_ledger import StockLedger
-from app.wms.stock.services.stock_service import StockService
 from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
+from app.wms.stock.services.stock_service import StockService
 
 UTC = timezone.utc
 
@@ -31,48 +31,57 @@ def _norm_bc(v: Any) -> Optional[str]:
     return s2
 
 
-def _norm_lot_code_key(v: str | None) -> str | None:
+def _norm_lot_code(v: str | None) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     if not s:
         return None
-    return s.upper()
+    return s
 
 
-async def _resolve_lot_id_by_lot_code(
+async def _load_supplier_lot_snapshot_by_lot_code(
     session: AsyncSession,
     *,
     warehouse_id: int,
     item_id: int,
     lot_code: str | None,
-) -> Optional[int]:
+) -> Optional[dict[str, Any]]:
     if lot_code is None:
         return None
-    k = _norm_lot_code_key(lot_code)
-    if not k:
+
+    code = _norm_lot_code(lot_code)
+    if not code:
         return None
-    row = (
+
+    rows = (
         await session.execute(
             text(
                 """
-                SELECT id
+                SELECT id, production_date, expiry_date
                   FROM lots
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code_key = :k
+                   AND lot_code = :code
                  LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
         )
-    ).fetchall()
-    if not row:
+    ).mappings().all()
+
+    if not rows:
         return None
-    if len(row) > 1:
+    if len(rows) > 1:
         return None
-    return int(row[0][0])
+
+    row = rows[0]
+    return {
+        "id": int(row["id"]),
+        "production_date": row.get("production_date"),
+        "expiry_date": row.get("expiry_date"),
+    }
 
 
 class ReturnTaskServiceImpl:
@@ -289,30 +298,51 @@ class ReturnTaskServiceImpl:
             bc = _norm_bc(ln.batch_code)
 
             resolved_lot_id: Optional[int] = None
+
             if bc is not None:
-                resolved_lot_id = await _resolve_lot_id_by_lot_code(
+                lot_snapshot = await _load_supplier_lot_snapshot_by_lot_code(
                     session,
                     warehouse_id=int(task.warehouse_id),
                     item_id=int(ln.item_id),
                     lot_code=str(bc),
                 )
-                if resolved_lot_id is None:
+                if lot_snapshot is None:
                     raise ValueError("lot_not_found_for_batch_code")
 
-            # ✅ 任务3 收口：不再把 lot_id 传给 adjust（合同入口禁止混用）
-            res = await self.stock_svc.adjust(
-                session=session,
-                item_id=int(ln.item_id),
-                delta=+picked,
-                reason=MovementType.RETURN,
-                ref=str(task.order_id),
-                ref_line=ref_line,
-                occurred_at=ts,
-                batch_code=bc,
-                warehouse_id=int(task.warehouse_id),
-                trace_id=trace_id,
-                meta={"sub_reason": "RETURN_RECEIPT"},
-            )
+                resolved_lot_id = int(lot_snapshot["id"])
+
+                # 已经解析到真实 lot_id 后，直接走 lot-only 原语入口，
+                # 不再让 RETURN 正增量再次走 batch_code -> 日期裁决。
+                res = await self.stock_svc.adjust_lot(
+                    session=session,
+                    item_id=int(ln.item_id),
+                    warehouse_id=int(task.warehouse_id),
+                    lot_id=int(resolved_lot_id),
+                    delta=+picked,
+                    reason=MovementType.RETURN,
+                    ref=str(task.order_id),
+                    ref_line=ref_line,
+                    occurred_at=ts,
+                    batch_code=None,
+                    production_date=lot_snapshot.get("production_date"),
+                    expiry_date=lot_snapshot.get("expiry_date"),
+                    trace_id=trace_id,
+                    meta={"sub_reason": "RETURN_RECEIPT"},
+                )
+            else:
+                res = await self.stock_svc.adjust(
+                    session=session,
+                    item_id=int(ln.item_id),
+                    delta=+picked,
+                    reason=MovementType.RETURN,
+                    ref=str(task.order_id),
+                    ref_line=ref_line,
+                    occurred_at=ts,
+                    batch_code=None,
+                    warehouse_id=int(task.warehouse_id),
+                    trace_id=trace_id,
+                    meta={"sub_reason": "RETURN_RECEIPT"},
+                )
 
             applied_lot_id = int(res.get("lot_id") or (resolved_lot_id or 0) or 0)
 

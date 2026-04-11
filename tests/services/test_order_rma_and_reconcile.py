@@ -1,7 +1,7 @@
 # tests/services/test_order_rma_and_reconcile.py
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 import pytest
@@ -64,11 +64,10 @@ async def _pick_base_uom_and_ratio(session: AsyncSession, *, item_id: int) -> Tu
 
 async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, code: str) -> int:
     """
-    SUPPLIER lot（终态合同）：
-    - identity = (warehouse_id, item_id, lot_code_key)
-    - unique index = UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
-    - lot_code 为展示码；lot_code_key 为 normalize(key) 防漂移（trim+upper）
-    - 必填快照从 items 取值。
+    SUPPLIER lot（当前终态合同）：
+    - REQUIRED lot 身份 = (warehouse_id, item_id, production_date)
+    - lot_code 只保留为展示/输入/追溯属性
+    - 必填快照从 items 取值
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
     -> 统一走 app/services/stock/lots.py: ensure_lot_full
@@ -76,13 +75,17 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
     code_raw = str(code).strip()
     assert code_raw, {"msg": "empty lot_code", "warehouse_id": warehouse_id, "item_id": item_id}
 
+    required = await _item_batch_mode_is_required(session, item_id=int(item_id))
+    production_date = date.today() if required else None
+    expiry_date = (production_date + timedelta(days=30)) if production_date is not None else None
+
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         lot_code=str(code_raw),
-        production_date=None,
-        expiry_date=None,
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
     return int(lot_id)
 
@@ -278,7 +281,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     if required:
         bc: Optional[str] = "RMA-BATCH-1"
         pd = date.today()
-        ed = None
+        ed = pd + timedelta(days=30)
     else:
         bc = None
         pd = None
@@ -414,7 +417,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
     if required:
         bc: Optional[str] = "RMA-BATCH-2"
         pd = date.today()
-        ed = None
+        ed = pd + timedelta(days=30)
     else:
         bc = None
         pd = None

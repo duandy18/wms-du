@@ -1,4 +1,3 @@
-# tests/api/test_scan_pick_v2.py
 from __future__ import annotations
 
 import pytest
@@ -21,6 +20,7 @@ async def test_scan_pick_v2_decreases_stock(client):
     warehouse_id = 1
     item_id = 3001
     batch_code = "BATCH-PICK-V2"
+    production_date = "2030-01-01"
     expiry_date = "2030-12-31"
 
     # 1) 先收货 10 件
@@ -30,6 +30,7 @@ async def test_scan_pick_v2_decreases_stock(client):
         "qty": 10,
         "warehouse_id": warehouse_id,
         "batch_code": batch_code,
+        "production_date": production_date,
         "expiry_date": expiry_date,
         "ctx": {"device_id": "scan-pick-v2-test"},
     }
@@ -46,6 +47,8 @@ async def test_scan_pick_v2_decreases_stock(client):
         "qty": 4,
         "warehouse_id": warehouse_id,
         "batch_code": batch_code,
+        "production_date": production_date,
+        "expiry_date": expiry_date,
         "ctx": {"device_id": "scan-pick-v2-test"},
     }
     r2 = await client.post("/scan", json=pick_payload)

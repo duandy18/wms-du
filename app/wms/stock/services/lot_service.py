@@ -1,6 +1,7 @@
 # app/wms/stock/services/lot_service.py
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import HTTPException
@@ -35,17 +36,18 @@ async def resolve_or_create_lot(
     item_policy: ItemPolicy,
     lot_code_source: str,
     lot_code: Optional[str],
+    production_date: Optional[date],
+    expiry_date: Optional[date],
     source_receipt_id: Optional[int],
     source_line_no: Optional[int],
 ) -> int:
     """
     兼容层 lot 创建/解析（Phase M-5）：
 
-    终态收口：
-    - SUPPLIER lot 统一走 ensure_lot_full（写 lot_code_key 防漂移）
-    - INTERNAL lot 统一走 ensure_internal_lot_singleton（按 wh+item 单例）
-    - 本模块不再直接 new Lot()/flush，避免第二入口造成漂移与约束冲突
-    - 跨域输入不再接收 Item ORM，而是接收 PMS public ItemPolicy
+    当前中心任务收口：
+    - REQUIRED 商品：production_date 是 lot 身份决策输入
+    - SUPPLIER lot 仍保留 lot_code 作为展示/追溯属性
+    - INTERNAL lot 继续走 singleton（warehouse,item）
     """
     lot_code_source_u = str(lot_code_source or "").upper().strip()
     if lot_code_source_u not in ("SUPPLIER", "INTERNAL"):
@@ -69,17 +71,24 @@ async def resolve_or_create_lot(
         if not lot_code or not str(lot_code).strip():
             raise HTTPException(status_code=422, detail="supplier_lot_code_required")
 
-        # ensure supplier lot by key (drift-proof)
-        lot_id = await ensure_lot_full(
-            db,
-            item_id=int(item_policy.item_id),
-            warehouse_id=int(warehouse_id),
-            lot_code=str(lot_code),
-            production_date=None,
-            expiry_date=None,
-        )
+        if str(snapshot["item_expiry_policy_snapshot"]).upper() == "REQUIRED" and production_date is None:
+            raise HTTPException(status_code=422, detail="production_date_required_for_required_lot")
 
-        # read back to verify snapshot compatibility (historical freeze)
+        try:
+            lot_id = await ensure_lot_full(
+                db,
+                item_id=int(item_policy.item_id),
+                warehouse_id=int(warehouse_id),
+                lot_code=str(lot_code),
+                production_date=production_date,
+                expiry_date=expiry_date,
+            )
+        except ValueError as e:
+            detail = str(e)
+            if detail == "supplier_lot_legacy_key_conflict":
+                raise HTTPException(status_code=409, detail=detail) from e
+            raise HTTPException(status_code=422, detail=detail) from e
+
         stmt = select(Lot).where(Lot.id == int(lot_id))
         existing = (await db.execute(stmt)).scalars().first()
         if existing is None:
@@ -89,7 +98,6 @@ async def resolve_or_create_lot(
             raise HTTPException(status_code=409, detail="lot_snapshot_conflict")
         return int(existing.id)
 
-    # INTERNAL: singleton per (warehouse,item); provenance optional but paired
     try:
         lot_id2 = await ensure_internal_lot_singleton(
             db,
@@ -100,5 +108,4 @@ async def resolve_or_create_lot(
         )
         return int(lot_id2)
     except ValueError as e:
-        # internal provenance pair violated
         raise HTTPException(status_code=422, detail=str(e)) from e

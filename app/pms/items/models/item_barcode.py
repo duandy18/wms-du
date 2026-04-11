@@ -1,7 +1,7 @@
 # app/pms/items/models/item_barcode.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
@@ -17,6 +17,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class ItemBarcode(Base):
@@ -85,7 +89,7 @@ class ItemBarcode(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=_utcnow,
     )
 
     __table_args__ = (
