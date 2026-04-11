@@ -1,4 +1,4 @@
-# app/models/item_barcode.py
+# app/pms/items/models/item_barcode.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -94,14 +94,12 @@ class ItemBarcode(Base):
             ["item_uoms.id", "item_uoms.item_id"],
             name="fk_item_barcodes_item_uom_pair",
         ),
-        # 一个 item 只能有一个主条码（部分索引）
         Index(
             "uq_item_barcodes_primary",
             "item_id",
             unique=True,
             postgresql_where=text("is_primary = true"),
         ),
-        # 提示 Alembic 在 autogenerate 时跳过这个表（我们用手写迁移来保证结构）
         {"info": {"skip_autogen": True}},
     )
 

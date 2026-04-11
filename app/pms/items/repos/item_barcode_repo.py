@@ -6,9 +6,9 @@ from typing import Sequence
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.models.item import Item
+from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_uom import ItemUOM
 
 
 def get_item_barcode_by_id(db: Session, barcode_id: int) -> ItemBarcode | None:

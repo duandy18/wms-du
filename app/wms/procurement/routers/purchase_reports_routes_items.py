@@ -3,22 +3,75 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional, Literal
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, distinct, func, select, or_
+from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.procurement.helpers.purchase_reports import apply_common_filters, time_mode_query
 from app.db.session import get_session
 from app.models.inbound_receipt import InboundReceipt, InboundReceiptLine
-from app.models.item import Item
-from app.models.item_barcode import ItemBarcode
 from app.models.item_test_set import ItemTestSet
 from app.models.item_test_set_item import ItemTestSetItem
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
+from app.pms.public.items.services.item_read_service import ItemReadService
 from app.wms.procurement.contracts.purchase_report import ItemPurchaseReportItem
+from app.wms.procurement.helpers.purchase_reports import apply_common_filters, time_mode_query
+
+
+async def _resolve_report_item_ids(
+    session: AsyncSession,
+    *,
+    item_id: Optional[int],
+    item_keyword: Optional[str],
+) -> Optional[list[int]]:
+    """
+    返回：
+    - [item_id]：显式 item_id 过滤
+    - [ids...]：按 PMS public item 搜索出的 item_id 集合
+    - None：不加 item 过滤
+    """
+    if item_id is not None:
+        return [int(item_id)]
+
+    kw = str(item_keyword or "").strip()
+    if not kw:
+        return None
+
+    svc = ItemReadService(session)
+    return await svc.asearch_report_item_ids_by_keyword(keyword=kw)
+
+
+def _build_report_item(
+    *,
+    item_id_val: int,
+    supplier_name: str | None,
+    order_count: int,
+    total_units: int,
+    total_amount: Decimal | None,
+    avg_unit_price: Decimal | None,
+    meta,
+) -> ItemPurchaseReportItem:
+    item_sku = meta.sku if meta is not None else ""
+    item_name = meta.name if meta is not None else f"ITEM-{int(item_id_val)}"
+    barcode = meta.barcode if meta is not None else None
+    brand = meta.brand if meta is not None else None
+    category = meta.category if meta is not None else None
+
+    return ItemPurchaseReportItem(
+        item_id=int(item_id_val),
+        item_sku=item_sku,
+        item_name=item_name,
+        barcode=barcode,
+        brand=brand,
+        category=category,
+        supplier_name=supplier_name,
+        order_count=int(order_count or 0),
+        total_units=int(total_units or 0),
+        total_amount=total_amount,
+        avg_unit_price=avg_unit_price,
+    )
 
 
 def register(router: APIRouter) -> None:
@@ -40,44 +93,34 @@ def register(router: APIRouter) -> None:
             select(ItemTestSet.id).where(ItemTestSet.code == "DEFAULT").limit(1).scalar_subquery()
         )
 
-        main_barcode_expr = (
-            select(ItemBarcode.barcode)
-            .where(ItemBarcode.item_id == Item.id, ItemBarcode.active.is_(True))
-            .order_by(ItemBarcode.is_primary.desc(), ItemBarcode.id.asc())
-            .limit(1)
-            .scalar_subquery()
+        report_item_ids = await _resolve_report_item_ids(
+            session,
+            item_id=item_id,
+            item_keyword=item_keyword,
         )
+        if report_item_ids is not None and not report_item_ids:
+            return []
+
+        item_read_svc = ItemReadService(session)
 
         if mode == "fact":
-            supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label(
-                "supplier_name"
-            )
+            supplier_name_expr = func.coalesce(InboundReceipt.supplier_name, "").label("supplier_name")
 
             stmt = (
                 select(
                     InboundReceiptLine.item_id.label("item_id"),
-                    Item.sku.label("item_sku"),
-                    Item.name.label("item_name"),
-                    main_barcode_expr.label("barcode"),
-                    Item.brand.label("brand"),
-                    Item.category.label("category"),
                     supplier_name_expr,
                     func.count(distinct(InboundReceipt.source_id)).label("order_count"),
-                    func.coalesce(func.sum(InboundReceiptLine.qty_base), 0).label(
-                        "total_units"
-                    ),
-                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label(
-                        "total_amount"
-                    ),
+                    func.coalesce(func.sum(InboundReceiptLine.qty_base), 0).label("total_units"),
+                    func.coalesce(func.sum(InboundReceiptLine.line_amount), 0).label("total_amount"),
                 )
                 .select_from(InboundReceipt)
                 .join(InboundReceiptLine, InboundReceiptLine.receipt_id == InboundReceipt.id)
                 .join(PurchaseOrder, PurchaseOrder.id == InboundReceipt.source_id)
-                .join(Item, Item.id == InboundReceiptLine.item_id)
                 .outerjoin(
                     ItemTestSetItem,
                     and_(
-                        ItemTestSetItem.item_id == Item.id,
+                        ItemTestSetItem.item_id == InboundReceiptLine.item_id,
                         ItemTestSetItem.set_id == default_set_id_sq,
                     ),
                 )
@@ -96,45 +139,27 @@ def register(router: APIRouter) -> None:
                 time_mode=time_mode,
             )
 
-            if item_id is not None:
-                stmt = stmt.where(InboundReceiptLine.item_id == int(item_id))
-            elif item_keyword and str(item_keyword).strip():
-                kw = f"%{str(item_keyword).strip()}%"
-                stmt = stmt.where(
-                    or_(
-                        Item.name.ilike(kw),
-                        Item.sku.ilike(kw),
-                        main_barcode_expr.ilike(kw),
-                    )
-                )
+            if report_item_ids is not None:
+                stmt = stmt.where(InboundReceiptLine.item_id.in_(report_item_ids))
 
             stmt = stmt.group_by(
                 InboundReceiptLine.item_id,
-                Item.sku,
-                Item.name,
-                Item.brand,
-                Item.category,
                 supplier_name_expr,
-                main_barcode_expr,
             ).order_by(InboundReceiptLine.item_id.asc())
 
-            rows = (await session.execute(stmt)).all()
+            rows = (await session.execute(stmt)).mappings().all()
+            if not rows:
+                return []
+
+            meta_map = await item_read_svc.aget_report_meta_by_item_ids(
+                item_ids=[int(r["item_id"]) for r in rows]
+            )
 
             items: List[ItemPurchaseReportItem] = []
-            for (
-                item_id_val,
-                item_sku,
-                item_name,
-                barcode,
-                brand,
-                category,
-                supplier_name,
-                order_count,
-                total_units,
-                total_amount,
-            ) in rows:
-                total_units_int = int(total_units or 0)
-                total_amount_dec = Decimal(str(total_amount or 0))
+            for row in rows:
+                item_id_val = int(row["item_id"])
+                total_units_int = int(row["total_units"] or 0)
+                total_amount_dec = Decimal(str(row["total_amount"] or 0))
                 avg_unit_price = (
                     (total_amount_dec / total_units_int).quantize(Decimal("0.0001"))
                     if total_units_int > 0
@@ -142,62 +167,55 @@ def register(router: APIRouter) -> None:
                 )
 
                 items.append(
-                    ItemPurchaseReportItem(
-                        item_id=int(item_id_val),
-                        item_sku=item_sku,
-                        item_name=item_name,
-                        barcode=barcode,
-                        brand=brand,
-                        category=category,
-                        supplier_name=supplier_name,
-                        order_count=int(order_count or 0),
+                    _build_report_item(
+                        item_id_val=item_id_val,
+                        supplier_name=row["supplier_name"],
+                        order_count=int(row["order_count"] or 0),
                         total_units=total_units_int,
                         total_amount=total_amount_dec,
                         avg_unit_price=avg_unit_price,
+                        meta=meta_map.get(item_id_val),
                     )
                 )
             return items
 
-        # PLAN 模式（全部基于 base）
-        supplier_name_expr = func.coalesce(
-            PurchaseOrder.supplier_name, ""
-        ).label("supplier_name")
+        # PLAN 模式：本次仅收跨域 item/barcode ORM 直连；
+        # 不顺手改既有 plan 过滤语义。
+        supplier_name_expr = func.coalesce(PurchaseOrder.supplier_name, "").label("supplier_name")
 
         stmt = (
             select(
                 PurchaseOrderLine.item_id.label("item_id"),
-                Item.sku.label("item_sku"),
-                Item.name.label("item_name"),
                 supplier_name_expr,
                 func.count(distinct(PurchaseOrder.id)).label("order_count"),
-                func.coalesce(func.sum(PurchaseOrderLine.qty_ordered_base), 0).label(
-                    "total_units"
-                ),
+                func.coalesce(func.sum(PurchaseOrderLine.qty_ordered_base), 0).label("total_units"),
             )
             .select_from(PurchaseOrder)
             .join(PurchaseOrderLine, PurchaseOrderLine.po_id == PurchaseOrder.id)
-            .join(Item, Item.id == PurchaseOrderLine.item_id)
         )
 
         stmt = stmt.group_by(
             PurchaseOrderLine.item_id,
-            Item.sku,
-            Item.name,
             supplier_name_expr,
         )
 
-        rows = (await session.execute(stmt)).all()
+        rows = (await session.execute(stmt)).mappings().all()
+        if not rows:
+            return []
+
+        meta_map = await item_read_svc.aget_report_meta_by_item_ids(
+            item_ids=[int(r["item_id"]) for r in rows]
+        )
 
         return [
-            ItemPurchaseReportItem(
-                item_id=int(r[0]),
-                item_sku=r[1],
-                item_name=r[2],
-                supplier_name=r[3],
-                order_count=int(r[4] or 0),
-                total_units=int(r[5] or 0),
+            _build_report_item(
+                item_id_val=int(r["item_id"]),
+                supplier_name=r["supplier_name"],
+                order_count=int(r["order_count"] or 0),
+                total_units=int(r["total_units"] or 0),
                 total_amount=None,
                 avg_unit_price=None,
+                meta=meta_map.get(int(r["item_id"])),
             )
             for r in rows
         ]

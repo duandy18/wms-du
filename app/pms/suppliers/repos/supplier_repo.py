@@ -6,8 +6,8 @@ from typing import List, Optional
 from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.supplier import Supplier
-from app.models.supplier_contact import SupplierContact
+from app.pms.suppliers.models.supplier import Supplier
+from app.pms.suppliers.models.supplier_contact import SupplierContact
 
 
 def list_suppliers(

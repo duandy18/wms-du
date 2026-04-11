@@ -20,8 +20,8 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 主数据（必须最早加载，供其它模型 relationship 引用）
     # ------------------------------------------------------------------
-    ("app.models.supplier", "Supplier"),
-    ("app.models.supplier_contact", "SupplierContact"),
+    ("app.pms.suppliers.models.supplier", "Supplier"),
+    ("app.pms.suppliers.models.supplier_contact", "SupplierContact"),
     # ⚠️ 关键顺序：先加载 WarehouseShippingProvider
     # 再加载 ShippingProvider / Warehouse
     ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
@@ -33,9 +33,9 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     ("app.models.warehouse", "Warehouse"),
     # ✅ 旧“库位维度”已从主线移除（库存主链路仅使用 warehouse_id）
-    ("app.models.item", "Item"),
+    ("app.pms.items.models.item", "Item"),
     # ✅ Phase M-2：多包装/多单位结构化
-    ("app.models.item_uom", "ItemUOM"),
+    ("app.pms.items.models.item_uom", "ItemUOM"),
     ("app.models.item_test_set", "ItemTestSet"),
     ("app.models.item_test_set_item", "ItemTestSetItem"),
     ("app.wms.stock.models.lot", "Lot"),

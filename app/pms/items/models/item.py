@@ -1,4 +1,4 @@
-# app/models/item.py
+# app/pms/items/models/item.py
 from __future__ import annotations
 
 import enum
@@ -11,10 +11,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .item_uom import ItemUOM
-    from .order import Order
-    from .order_item import OrderItem
-    from .supplier import Supplier
+    from app.models.order import Order
+    from app.models.order_item import OrderItem
+    from app.pms.suppliers.models.supplier import Supplier
+    from app.pms.items.models.item_uom import ItemUOM
 
 
 class LotSourcePolicy(str, enum.Enum):

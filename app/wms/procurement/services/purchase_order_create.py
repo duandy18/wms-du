@@ -5,12 +5,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_line import PurchaseOrderLine
-from app.models.supplier import Supplier
 from app.pms.public.items.contracts.item_basic import ItemBasic
 from app.pms.public.items.services.item_read_service import ItemReadService
 
@@ -22,18 +21,45 @@ async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[in
     return await svc.aget_basics_by_item_ids(item_ids=item_ids)
 
 
-async def _require_supplier_for_po(session: AsyncSession, supplier_id: Optional[int]) -> Supplier:
+async def _require_supplier_snapshot_for_po(
+    session: AsyncSession,
+    supplier_id: Optional[int],
+) -> Tuple[int, str]:
+    """
+    当前阶段先去掉 WMS procurement 对 PMS Supplier ORM 的直接依赖。
+
+    返回：
+    - supplier_id
+    - supplier_name（用于 PO 快照）
+
+    说明：
+    - 这里只解决“跨域直接摸 Supplier ORM”问题
+    - 还没有把 supplier 校验完全提升为 PMS public/service 异步读面
+    """
     if supplier_id is None:
         raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
+
     sid = int(supplier_id)
     if sid <= 0:
         raise ValueError("supplier_id 非法：采购单必须绑定供应商")
 
-    supplier = ((await session.execute(select(Supplier).where(Supplier.id == sid))).scalars().first())
-    if supplier is None:
+    row = await session.execute(
+        text(
+            """
+            SELECT id, name
+            FROM suppliers
+            WHERE id = :supplier_id
+            LIMIT 1
+            """
+        ),
+        {"supplier_id": sid},
+    )
+    r = row.mappings().first()
+    if r is None:
         raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid})")
 
-    return supplier
+    supplier_name = str(r.get("name") or "").strip()
+    return int(r["id"]), supplier_name
 
 
 def _trim_or_none(v: Any) -> Optional[str]:
@@ -177,9 +203,7 @@ async def create_po_v2(
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
 
-    supplier_obj = await _require_supplier_for_po(session, supplier_id)
-    po_supplier_id = int(getattr(supplier_obj, "id"))
-    po_supplier_name = str(getattr(supplier_obj, "name") or "").strip()
+    po_supplier_id, po_supplier_name = await _require_supplier_snapshot_for_po(session, supplier_id)
 
     raw_item_ids = [int(raw["item_id"]) for raw in lines]
     items_map = await _load_items_map(session, raw_item_ids)

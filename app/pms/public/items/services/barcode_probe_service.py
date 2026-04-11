@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.models.item_barcode import ItemBarcode
-from app.models.item_uom import ItemUOM
+from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_uom import ItemUOM
 from app.pms.public.items.contracts.barcode_probe import (
     BarcodeProbeError,
     BarcodeProbeOut,

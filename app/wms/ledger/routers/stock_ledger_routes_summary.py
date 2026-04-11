@@ -8,14 +8,17 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
-from app.models.item import Item
 from app.models.item_test_set import ItemTestSet
 from app.models.item_test_set_item import ItemTestSetItem
 from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.ledger.contracts.stock_ledger import LedgerQuery, LedgerReasonStat, LedgerSummary
-from app.wms.ledger.helpers.stock_ledger import build_common_filters, normalize_time_range
+from app.wms.ledger.helpers.stock_ledger import (
+    ITEMS_TABLE,
+    build_common_filters,
+    normalize_time_range,
+)
+from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 
 
 def register(router: APIRouter) -> None:
@@ -57,11 +60,11 @@ def register(router: APIRouter) -> None:
 
         if payload.item_keyword:
             kw = f"%{payload.item_keyword.strip()}%"
-            stmt = stmt.join(Item, Item.id == StockLedger.item_id)
+            stmt = stmt.join(ITEMS_TABLE, ITEMS_TABLE.c.id == StockLedger.item_id)
             conditions.append(
                 sa.or_(
-                    Item.name.ilike(kw),
-                    Item.sku.ilike(kw),
+                    ITEMS_TABLE.c.name.ilike(kw),
+                    ITEMS_TABLE.c.sku.ilike(kw),
                 )
             )
 

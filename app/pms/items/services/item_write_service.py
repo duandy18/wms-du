@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
 from app.pms.items.repos.item_uom_repo import create_item_uom
 from app.pms.items.repos.item_write_repo import (
     add_item,

@@ -1,7 +1,7 @@
 # app/pms/items/services/item_rules.py
 from __future__ import annotations
 
-from app.models.item import Item
+from app.pms.items.models.item import Item
 
 NOEXP_BATCH_CODE = "NOEXP"
 
