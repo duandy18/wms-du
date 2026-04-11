@@ -104,7 +104,11 @@ def init_models(
 
     # ✅ 显式加载链：只放“主线真相表”的模型（避免把 legacy 表带进 metadata）
     explicit_chain = [
-        "app.models.item",
+        "app.pms.suppliers.models.supplier",
+        "app.pms.suppliers.models.supplier_contact",
+        "app.pms.items.models.item",
+        "app.pms.items.models.item_uom",
+        "app.pms.items.models.item_barcode",
         "app.wms.stock.models.lot",
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",
@@ -122,12 +126,12 @@ def init_models(
         if _safe_import(mod):
             loaded.append(mod)
 
-    # ✅ 递归补齐：仍然允许导入其它模型，但要尊重 ex（避免 legacy 被扫进来）
-    for mod in _iter_model_modules_recursive("app.models"):
-        if mod in ex or mod in loaded:
-            continue
-        if _safe_import(mod):
-            loaded.append(mod)
+    for pkg_name in ("app.models", "app.pms.items.models", "app.pms.suppliers.models"):
+        for mod in _iter_model_modules_recursive(pkg_name):
+            if mod in ex or mod in loaded:
+                continue
+            if _safe_import(mod):
+                loaded.append(mod)
 
     if extra_modules:
         for mod in extra_modules:
