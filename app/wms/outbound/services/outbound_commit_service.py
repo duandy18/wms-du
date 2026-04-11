@@ -112,13 +112,13 @@ async def _load_existing_order_id(session: AsyncSession, *, order_ref: str) -> i
     return 0
 
 
-def _norm_lot_code_key(v: str | None) -> str | None:
+def _norm_lot_code(v: str | None) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     if not s:
         return None
-    return s.upper()
+    return s
 
 
 def _requires_batch_from_expiry_policy(v: object) -> bool:
@@ -132,11 +132,11 @@ async def _resolve_lot_id_by_lot_code(
     item_id: int,
     lot_code: str,
 ) -> Optional[int]:
-    k = _norm_lot_code_key(lot_code)
-    if not k:
+    code = _norm_lot_code(lot_code)
+    if not code:
         return None
 
-    row = (
+    rows = (
         await session.execute(
             sa.text(
                 """
@@ -145,14 +145,21 @@ async def _resolve_lot_id_by_lot_code(
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code_key = :k
-                 LIMIT 1
+                   AND lot_code = :code
+                 ORDER BY id ASC
+                 LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
         )
-    ).first()
-    return int(row[0]) if row else None
+    ).all()
+
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise ValueError("supplier_lot_code_ambiguous")
+
+    return int(rows[0][0])
 
 
 class OutboundService:
@@ -294,7 +301,6 @@ class OutboundService:
 
             try:
                 if requires_batch and (batch_code is not None) and (lot_id is not None):
-                    # lot-only：adjust_lot 可能抛 ValueError(insufficient stock...)
                     res = await self.stock_svc.adjust_lot(
                         session=session,
                         item_id=item_id,
@@ -371,7 +377,19 @@ class OutboundService:
 
             except ValueError as e:
                 msg = str(e)
-                if "insufficient stock" in msg.lower():
+                if msg == "supplier_lot_code_ambiguous":
+                    results.append(
+                        {
+                            "item_id": item_id,
+                            "batch_code": batch_code,
+                            "warehouse_id": wh_id,
+                            "qty": need,
+                            "status": "REJECTED",
+                            "error_code": "supplier_lot_code_ambiguous",
+                            "error": msg,
+                        }
+                    )
+                elif "insufficient stock" in msg.lower():
                     results.append(
                         {
                             "item_id": item_id,

@@ -18,7 +18,7 @@ from app.wms.reconciliation.services.three_books_consistency import verify_recei
 async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:
     """
     尽量挑一个不需要有效期管理的商品（避免被业务校验噪音卡住）。
-    若找不到，则退回任意一个 item（expiry_policy=REQUIRED 也行，测试会显式填 expiry_date）。
+    若找不到，则退回任意一个 item（expiry_policy=REQUIRED 也行，测试会显式填写 production_date / expiry_date）。
     """
     row = (
         await session.execute(
@@ -107,24 +107,56 @@ async def _ensure_base_uom(session: AsyncSession, *, item_id: int) -> Tuple[int,
     return int(row2[0]), int(row2[1])
 
 
-async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item_id: int, lot_code: str) -> int:
+async def _is_required_item(session: AsyncSession, *, item_id: int) -> bool:
+    row = await session.execute(
+        text("SELECT expiry_policy::text FROM items WHERE id=:i LIMIT 1"),
+        {"i": int(item_id)},
+    )
+    policy = row.scalar_one_or_none()
+    if policy is None:
+        raise RuntimeError(f"item_not_found: {item_id}")
+    return str(policy).strip().upper() == "REQUIRED"
+
+
+async def _ensure_supplier_lot(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> int:
     """
     确保 SUPPLIER lot 存在，返回 lot_id。
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
     -> 统一走 app/services/stock/lots.py: ensure_lot_full
+
+    语义收口：
+    - REQUIRED 商品：lot 身份已切到 (warehouse_id, item_id, production_date)
+    - 因此在 REQUIRED 路径下，这里必须显式传入 production_date
     """
     code = str(lot_code).strip()
     if not code:
         raise ValueError("lot_code required for supplier lot")
+
+    if await _is_required_item(session, item_id=int(item_id)) and production_date is None:
+        raise AssertionError(
+            {
+                "msg": "REQUIRED supplier lot must carry production_date in test helper",
+                "item_id": int(item_id),
+                "lot_code": code,
+            }
+        )
 
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         lot_code=str(code),
-        production_date=None,
-        expiry_date=None,
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
     return int(lot_id)
 
@@ -220,7 +252,14 @@ async def _insert_confirmed_receipt_with_line(
     qty_base = int(qty_input) * int(ratio)
 
     if batch_code is not None:
-        lot_id = await _ensure_supplier_lot(session, warehouse_id=int(warehouse_id), item_id=int(item_id), lot_code=str(batch_code))
+        lot_id = await _ensure_supplier_lot(
+            session,
+            warehouse_id=int(warehouse_id),
+            item_id=int(item_id),
+            lot_code=str(batch_code),
+            production_date=production_date,
+            expiry_date=expiry_date,
+        )
         lot_code_input = str(batch_code)
     else:
         lot_id = await _ensure_internal_lot_for_receipt(session, warehouse_id=int(warehouse_id), item_id=int(item_id), receipt_id=int(receipt_id))

@@ -2,6 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 测试辅助：按项目实际路径导入
@@ -28,26 +29,33 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
       * 再用 StockService.adjust_lot 入库（写 stocks_lot + ledger(lot_id)）
       * 最终用 qty_by_code（lot-world 口径）断言 qty=6
 
-    Phase M-3：
-    - items.case_ratio/case_uom 已删除；lots 不再承载 item_case_*_snapshot / item_uom_snapshot 等历史残影列
-    - lots 也不再承载 production_date/expiry_date/expiry_source（日期事实在 receipt/ledger 侧表达）
+    当前终态：
+    - REQUIRED lot 身份 = (warehouse_id, item_id, production_date)
+    - 非 REQUIRED 商品不再允许新建 SUPPLIER lot
     """
     wh, loc, item, code = 1, 1, 5001, "INB-DEMO-BATCH"
 
     await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
+
+    # 当前主链：要创建新的 SUPPLIER lot，测试商品必须显式走 REQUIRED
+    await session.execute(
+        text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+        {"i": int(item)},
+    )
     await session.commit()
 
     ref = f"IN-{int(datetime.now(UTC).timestamp())}"
-    exp = date.today() + timedelta(days=365)
+    prod = date.today()
+    exp = prod + timedelta(days=365)
 
-    # ✅ 终态：supplier lot 必须走 ensure_lot_full（lot_code_key + partial unique index）
+    # 当前终态：supplier lot 必须走 ensure_lot_full，且 REQUIRED 商品必须给 production_date + expiry_date
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item),
         warehouse_id=int(wh),
         lot_code=str(code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
 
     await session.commit()
@@ -62,6 +70,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
             ref=ref,
             occurred_at=datetime.now(UTC),
             batch_code=code,
+            production_date=prod,
             expiry_date=exp,
         )
 

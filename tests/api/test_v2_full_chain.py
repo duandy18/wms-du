@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -66,17 +66,17 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
     """
-    Lot-World 终态：
-    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
-    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
-    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    当前终态：
+    - REQUIRED lot 身份 = (warehouse_id, item_id, production_date)
+    - lot_code 只保留为展示/输入/追溯属性
+    因此测试侧必须走统一入口 ensure_lot_full，并在 REQUIRED 商品下显式给 production_date。
     """
     return await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
+        production_date=date.today(),
         expiry_date=None,
     )
 

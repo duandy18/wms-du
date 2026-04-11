@@ -1,6 +1,6 @@
 # tests/ci/test_db_invariants.py
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -41,15 +41,26 @@ async def _seed_wh_item_lot_stock(
         {"wh_id": int(wh_id)},
     )
 
-    await ensure_item(session, id=int(item_id), sku=f"SKU-{int(item_id)}", name=f"Item-{int(item_id)}")
+    # 本测试要验证 SUPPLIER lot 与 ledger/stocks_lot 的维度一致性，
+    # 因此商品策略必须显式站到 REQUIRED 上。
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"SKU-{int(item_id)}",
+        name=f"Item-{int(item_id)}",
+        expiry_required=True,
+    )
+
+    prod = date(2030, 1, 1)
+    exp = prod + timedelta(days=365)
 
     lot_id = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
 
     # 用唯一写入器写一条 COUNT（delta=1 -> after=1），同时确保 stocks_lot 槽位存在且与 ledger 一致
@@ -65,8 +76,8 @@ async def _seed_wh_item_lot_stock(
         occurred_at=datetime.now(timezone.utc),
         meta=None,
         batch_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
         trace_id=None,
         utc_now=lambda: datetime.now(timezone.utc),
         shadow_write_stocks=False,

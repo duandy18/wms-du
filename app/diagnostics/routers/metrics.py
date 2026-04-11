@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -24,10 +24,11 @@ from app.tms.alerts.service import load_alerts
 from app.tms.quote.metrics.failures import load_shipping_quote_failures
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
+UTC = timezone.utc
 
 
 def _today_utc_date() -> date:
-    return datetime.utcnow().date()
+    return datetime.now(UTC).date()
 
 
 # ---------------------------------------------------------

@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.stock.models.lot import Lot
-from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.procurement.contracts.purchase_order_receive_workbench import WorkbenchBatchRowOut
 
 
@@ -20,13 +19,17 @@ async def fill_canonical_lot_dates(
     batches_map: Dict[int, List[WorkbenchBatchRowOut]],
 ) -> None:
     """
-    将 WorkbenchBatchRowOut.production_date/expiry_date 回填为 canonical
-    （来自 lots + stock_ledger(reason_canon='RECEIPT')）。
+    将 WorkbenchBatchRowOut.production_date / expiry_date 回填为 canonical。
 
     合同：
-    - lot_code=None => prod/exp 必须为 None
-    - lot_code!=None => 先按 (warehouse_id, item_id, lot_code) 定位 lots，
-      再从 stock_ledger 的 RECEIPT 时间事实回填 production_date/expiry_date
+    - lot_code=None => production_date / expiry_date 必须为 None
+    - lot_code!=None => 按 (warehouse_id, item_id, lot_code) 定位 lots，
+      从 lots.production_date / lots.expiry_date 读取 canonical snapshot
+
+    说明：
+    - 当前 workbench 仍以 (item_id, lot_code) 做批次聚合展示；
+      因此这里继续按该维度聚合 lots，并保持与现有展示合同一致。
+    - 这一步的目标，是让 workbench 的日期展示完全跟随 lot canonical snapshot。
     """
     need_pairs: set[tuple[int, str]] = set()
     for po_line_id, xs in batches_map.items():
@@ -45,19 +48,10 @@ async def fill_canonical_lot_dates(
             select(
                 Lot.item_id,
                 Lot.lot_code,
-                sa.func.max(StockLedger.production_date).label("production_date"),
-                sa.func.max(StockLedger.expiry_date).label("expiry_date"),
+                sa.func.max(Lot.production_date).label("production_date"),
+                sa.func.max(Lot.expiry_date).label("expiry_date"),
             )
             .select_from(Lot)
-            .join(
-                StockLedger,
-                sa.and_(
-                    StockLedger.lot_id == Lot.id,
-                    StockLedger.warehouse_id == Lot.warehouse_id,
-                    StockLedger.item_id == Lot.item_id,
-                    StockLedger.reason_canon == "RECEIPT",
-                ),
-            )
             .where(Lot.warehouse_id == int(warehouse_id))
             .where(sa.tuple_(Lot.item_id, Lot.lot_code).in_(list(need_pairs)))
             .group_by(Lot.item_id, Lot.lot_code)
@@ -76,6 +70,10 @@ async def fill_canonical_lot_dates(
                 b.production_date = None
                 b.expiry_date = None
                 continue
-            production_date, expiry_date = canon_map.get((int(item_id), str(lot_code)), (None, None))
+
+            production_date, expiry_date = canon_map.get(
+                (int(item_id), str(lot_code)),
+                (None, None),
+            )
             b.production_date = production_date
             b.expiry_date = expiry_date

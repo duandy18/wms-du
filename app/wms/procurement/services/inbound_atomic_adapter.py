@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from app.wms.inbound.contracts.inbound_atomic import InboundAtomicCreateIn
@@ -17,6 +17,8 @@ async def apply_receipt_line_via_atomic_inbound(
     item_id: int,
     qty_base: int,
     lot_code: str | None,
+    production_date: date | None,
+    expiry_date: date | None,
 ) -> dict[str, Any]:
     """
     procurement -> atomic inbound adapter（第一阶段）：
@@ -25,6 +27,7 @@ async def apply_receipt_line_via_atomic_inbound(
     - source_type 固定为 upstream
     - source_biz_type 固定为 purchase_receipt_confirm
     - source_ref 使用 receipt.ref，保持 ledger 关联稳定
+    - production_date / expiry_date 由 receipt line 作为唯一决策输入传入
     """
     _ = occurred_at
 
@@ -40,6 +43,8 @@ async def apply_receipt_line_via_atomic_inbound(
                     "qty": int(qty_base),
                     "ref_line": int(ref_line),
                     "lot_code": lot_code,
+                    "production_date": production_date,
+                    "expiry_date": expiry_date,
                 }
             ],
         }

@@ -26,20 +26,27 @@ async def _seed_minimal_order_for_outbound(
     - platform = 'PDD'
     - shop_id = 'UT-SHOP'
     - actual_warehouse_id = 1（写入 order_fulfillment）
-    - item_id = 1
+    - item_id 使用 fresh NONE item，避免命中 baseline 漂移
     - ext_order_no = 'LEDGER-OUT-1'
     - ref = ORD:{platform}:{shop_id}:{ext_order_no}
     """
     platform = "PDD"
     shop_id = "UT-SHOP"
     wh_id = 1
-    item_id = 1
+    item_id = 91001  # fresh NONE item，避免 baseline item 可能已被提升为 REQUIRED
     ext_order_no = "LEDGER-OUT-1"
     order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
     trace_id = "TRACE-LEDGER-OUT-1"
 
     # Phase M：items 有 NOT NULL policy 护栏，必须走合法插入（helper 统一兜底）
-    await ensure_item(session, id=int(item_id), sku="SKU-0001", name="UT-ITEM-1")
+    # 这里明确保持 NONE 语义，供 INTERNAL lot 场景使用。
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"SKU-{item_id}",
+        name="UT-ITEM-OUTBOUND-LEDGER-NONE",
+        expiry_required=False,
+    )
 
     store_id = await ensure_store(
         session,
@@ -128,6 +135,7 @@ async def _seed_minimal_order_for_outbound(
 async def _seed_positive_internal_stock(session: AsyncSession, *, warehouse_id: int, item_id: int, qty: int) -> None:
     """
     baseline 不再提供隐式 stocks_lot qty>0，因此显式 seed 一笔 INTERNAL 库存。
+    该 helper 只用于 NONE 商品。
     """
     await session.execute(
         text("INSERT INTO warehouses (id, name) VALUES (:w, 'WH-UT') ON CONFLICT (id) DO NOTHING"),
@@ -223,6 +231,7 @@ async def _pick_one_lot_slot_for_item(session: AsyncSession, *, warehouse_id: in
 async def test_outbound_commit_writes_consistent_ledger(session: AsyncSession) -> None:
     """
     验证：出库 commit 之后，台账中的 OUTBOUND_SHIP 记录在维度上与 lot-world 槽位一致。
+    本用例明确站在 NONE 商品 + INTERNAL lot 语义上。
     """
     order_ref, wh_id, item_id, trace_id = await _seed_minimal_order_for_outbound(session)
 

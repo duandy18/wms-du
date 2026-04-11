@@ -32,18 +32,37 @@ class StockService:
 
     def _classify_adjust_value_error(self, msg: str) -> str:
         m = (msg or "").strip()
+        ml = m.lower()
 
-        if "insufficient stock" in m.lower():
+        if "insufficient stock" in ml:
             return "insufficient_stock"
-        if "item_not_found" in m.lower():
+        if "item_not_found" in ml:
             return "item_not_found"
-        if "lot_not_found" in m.lower():
+        if "lot_not_found" in ml:
             return "lot_not_found"
-        if "lot_mismatch" in m.lower():
+        if "lot_mismatch" in ml:
             return "lot_mismatch"
+        if "supplier_lot_code_ambiguous" in ml:
+            return "supplier_lot_code_ambiguous"
 
-        if ("batch_code" in m.lower()) or ("批次" in m):
-            if ("必须" in m) or ("required" in m.lower()):
+        if "production_date_required_for_required_lot" in ml:
+            return "production_date_required_for_required_lot"
+        if "expiry_date_required_for_required_lot" in ml:
+            return "expiry_date_required_for_required_lot"
+
+        if ("production_date" in ml and "必须" in m) or ("生产日期" in m and "必须" in m):
+            return "production_date_required_for_required_lot"
+
+        if (
+            ("expiry_date" in ml and "必须" in m)
+            or ("到期日期" in m and "必须" in m)
+            or ("未提供到期日期" in m)
+            or ("canonical expiry_date" in ml)
+        ):
+            return "expiry_date_required_for_required_lot"
+
+        if ("batch_code" in ml) or ("批次" in m):
+            if ("必须" in m) or ("required" in ml):
                 return "batch_required"
             return "stock_adjust_reject"
 
@@ -127,6 +146,42 @@ class StockService:
             )
             return
 
+        if kind == "production_date_required_for_required_lot":
+            raise_problem(
+                status_code=422,
+                error_code="production_date_required_for_required_lot",
+                message="批次受控商品必须提供 production_date，或提供可结合保质期反推出 production_date 的 expiry_date。",
+                context=ctx,
+                details=[
+                    {
+                        "type": "date",
+                        "path": "stock_adjust",
+                        "item_id": int(item_id),
+                        "batch_code": bc_norm2,
+                        "reason": msg,
+                    }
+                ],
+            )
+            return
+
+        if kind == "expiry_date_required_for_required_lot":
+            raise_problem(
+                status_code=422,
+                error_code="expiry_date_required_for_required_lot",
+                message="批次受控商品必须提供 expiry_date，或提供可结合保质期正推出 expiry_date 的 production_date。",
+                context=ctx,
+                details=[
+                    {
+                        "type": "date",
+                        "path": "stock_adjust",
+                        "item_id": int(item_id),
+                        "batch_code": bc_norm2,
+                        "reason": msg,
+                    }
+                ],
+            )
+            return
+
         if kind == "batch_required":
             raise_problem(
                 status_code=422,
@@ -183,6 +238,25 @@ class StockService:
             )
             return
 
+        if kind == "supplier_lot_code_ambiguous":
+            raise_problem(
+                status_code=422,
+                error_code="supplier_lot_code_ambiguous",
+                message="同一展示批次码命中多个库存槽位，写入被拒绝。",
+                context=ctx,
+                details=[
+                    {
+                        "type": "lot",
+                        "path": "stock_adjust",
+                        "warehouse_id": int(warehouse_id),
+                        "item_id": int(item_id),
+                        "batch_code": bc_norm2,
+                        "reason": "supplier_lot_code_ambiguous",
+                    }
+                ],
+            )
+            return
+
         raise_problem(
             status_code=422,
             error_code="stock_adjust_reject",
@@ -223,6 +297,8 @@ class StockService:
                 lot_id=None,
                 ref=str(ref),
                 occurred_at=occurred_at,
+                production_date=production_date,
+                expiry_date=expiry_date,
             )
 
             return await adjust_lot_impl(

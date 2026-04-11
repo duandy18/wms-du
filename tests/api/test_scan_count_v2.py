@@ -1,4 +1,3 @@
-# tests/api/test_scan_count_v2.py
 from __future__ import annotations
 
 import pytest
@@ -20,6 +19,7 @@ async def test_scan_count_v2_adjusts_stock(client):
     # ✅ 用基线更稳的 item_id，避免依赖隐式 seed
     item_id = 1
     batch_code = "BATCH-COUNT-V2"
+    production_date = "2030-01-01"
     expiry_date = "2030-12-31"
 
     recv_payload = {
@@ -28,6 +28,7 @@ async def test_scan_count_v2_adjusts_stock(client):
         "qty": 5,
         "warehouse_id": warehouse_id,
         "batch_code": batch_code,
+        "production_date": production_date,
         "expiry_date": expiry_date,
         "ctx": {"device_id": "scan-count-v2-test"},
     }
@@ -43,6 +44,7 @@ async def test_scan_count_v2_adjusts_stock(client):
         "qty": 2,
         "warehouse_id": warehouse_id,
         "batch_code": batch_code,
+        "production_date": production_date,
         "expiry_date": expiry_date,
         "ctx": {"device_id": "scan-count-v2-test"},
     }

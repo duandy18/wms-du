@@ -45,9 +45,9 @@ def _build_inventory_where(
 
     if near_expiry is True:
         cond.append(
-            "rd.expiry_date IS NOT NULL "
-            "AND rd.expiry_date >= CURRENT_DATE "
-            "AND rd.expiry_date <= CURRENT_DATE + 30"
+            "l.expiry_date IS NOT NULL "
+            "AND l.expiry_date >= CURRENT_DATE "
+            "AND l.expiry_date <= CURRENT_DATE + 30"
         )
 
     return " AND ".join(cond), params
@@ -76,18 +76,7 @@ async def query_inventory_rows(
 
     count_sql = text(
         f"""
-        WITH receipt_dates AS (
-            SELECT
-                warehouse_id,
-                item_id,
-                lot_id,
-                MAX(production_date) AS production_date,
-                MAX(expiry_date) AS expiry_date
-            FROM stock_ledger
-            WHERE reason_canon = 'RECEIPT'
-            GROUP BY warehouse_id, item_id, lot_id
-        ),
-        base AS (
+        WITH base AS (
             SELECT
                 s.item_id,
                 i.name AS item_name,
@@ -97,9 +86,9 @@ async def query_inventory_rows(
                 i.category AS category,
                 s.warehouse_id,
                 l.lot_code AS lot_code,
+                l.production_date AS production_date,
+                l.expiry_date AS expiry_date,
                 s.qty,
-                rd.production_date,
-                rd.expiry_date,
                 (
                     SELECT ib.barcode
                     FROM item_barcodes AS ib
@@ -113,10 +102,6 @@ async def query_inventory_rows(
               ON i.id = s.item_id
             LEFT JOIN lots AS l
               ON l.id = s.lot_id
-            LEFT JOIN receipt_dates AS rd
-              ON rd.warehouse_id = s.warehouse_id
-             AND rd.item_id = s.item_id
-             AND rd.lot_id = s.lot_id
             WHERE {where_sql}
         )
         SELECT COUNT(*)::int AS total
@@ -128,17 +113,6 @@ async def query_inventory_rows(
 
     list_sql = text(
         f"""
-        WITH receipt_dates AS (
-            SELECT
-                warehouse_id,
-                item_id,
-                lot_id,
-                MAX(production_date) AS production_date,
-                MAX(expiry_date) AS expiry_date
-            FROM stock_ledger
-            WHERE reason_canon = 'RECEIPT'
-            GROUP BY warehouse_id, item_id, lot_id
-        )
         SELECT
             s.item_id,
             i.name AS item_name,
@@ -148,9 +122,9 @@ async def query_inventory_rows(
             i.category AS category,
             s.warehouse_id,
             l.lot_code AS lot_code,
+            l.production_date AS production_date,
+            l.expiry_date AS expiry_date,
             s.qty,
-            rd.production_date,
-            rd.expiry_date,
             (
                 SELECT ib.barcode
                 FROM item_barcodes AS ib
@@ -164,10 +138,6 @@ async def query_inventory_rows(
           ON i.id = s.item_id
         LEFT JOIN lots AS l
           ON l.id = s.lot_id
-        LEFT JOIN receipt_dates AS rd
-          ON rd.warehouse_id = s.warehouse_id
-         AND rd.item_id = s.item_id
-         AND rd.lot_id = s.lot_id
         WHERE {where_sql}
         ORDER BY i.name ASC, s.item_id ASC, s.warehouse_id ASC, l.lot_code NULLS FIRST
         OFFSET :offset
@@ -201,26 +171,15 @@ async def query_inventory_detail_rows(
 
     sql = text(
         f"""
-        WITH receipt_dates AS (
-            SELECT
-                warehouse_id,
-                item_id,
-                lot_id,
-                MAX(production_date) AS production_date,
-                MAX(expiry_date) AS expiry_date
-            FROM stock_ledger
-            WHERE reason_canon = 'RECEIPT'
-            GROUP BY warehouse_id, item_id, lot_id
-        )
         SELECT
             s.item_id,
             i.name AS item_name,
             s.warehouse_id,
             w.name AS warehouse_name,
             l.lot_code AS lot_code,
-            s.qty,
-            rd.production_date,
-            rd.expiry_date
+            l.production_date AS production_date,
+            l.expiry_date AS expiry_date,
+            s.qty
         FROM stocks_lot AS s
         JOIN items AS i
           ON i.id = s.item_id
@@ -228,10 +187,6 @@ async def query_inventory_detail_rows(
           ON w.id = s.warehouse_id
         LEFT JOIN lots AS l
           ON l.id = s.lot_id
-        LEFT JOIN receipt_dates AS rd
-          ON rd.warehouse_id = s.warehouse_id
-         AND rd.item_id = s.item_id
-         AND rd.lot_id = s.lot_id
         WHERE {" AND ".join(cond)}
         ORDER BY s.warehouse_id ASC, l.lot_code NULLS FIRST
         """

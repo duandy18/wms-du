@@ -1,7 +1,7 @@
 # tests/services/pick/test_pick_blueprint_commit_idempotency_contract.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,7 @@ async def test_blueprint_commit_is_only_judgment_point_and_idempotency_conflict(
 
     # ✅ 为 commit 造库存（否则会 409 insufficient_stock）
     now = datetime.now(timezone.utc)
+    exp = now.date() + timedelta(days=365)
     stock = StockService()
     await stock.adjust(
         session=db_session_like_pg,
@@ -63,7 +64,7 @@ async def test_blueprint_commit_is_only_judgment_point_and_idempotency_conflict(
         occurred_at=now,
         batch_code=bc_norm,
         production_date=now.date(),
-        expiry_date=None,
+        expiry_date=exp,
         trace_id="T-UT-SEED",
         meta={"sub_reason": "UT_BLUEPRINT_SEED"},
     )

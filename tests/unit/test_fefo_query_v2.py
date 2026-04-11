@@ -20,8 +20,8 @@ async def test_expiry_analytics_query_returns_sorted_not_enforcing(session: Asyn
     Expiry analytics 查询 smoke（lot-world）：
 
     终态事实：
-    - lots 只承载 identity（lot_code）
-    - 时间事实（production_date/expiry_date）在 stock_ledger（reason_canon='RECEIPT'）
+    - lots 承载 lot canonical snapshot（production_date / expiry_date）
+    - RECEIPT stock_ledger 保留事件快照（production_date / expiry_date）
     - 余额事实在 stocks_lot
 
     测试：
@@ -44,7 +44,7 @@ async def test_expiry_analytics_query_returns_sorted_not_enforcing(session: Asyn
     exp_near = prod + timedelta(days=1)
     exp_far = prod + timedelta(days=10)
 
-    # 用正路写入：reason_canon='RECEIPT' 的台账行允许携带 production/expiry
+    # 用正路写入：RECEIPT 路径写 lot canonical snapshot + RECEIPT ledger snapshot
     # ref 必须不同，避免 ledger 唯一键冲突
     await svc.adjust(
         session=session,

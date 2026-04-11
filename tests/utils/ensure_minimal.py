@@ -1,6 +1,7 @@
 # tests/utils/ensure_minimal.py
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -20,6 +21,21 @@ def _as_lot_id(v: object) -> int:
     tests 侧用这个函数统一兼容，避免类型漂移导致的 AttributeError。
     """
     return int(getattr(v, "id", v))
+
+
+def _stable_required_dates_from_code(code_raw: str, *, days: int) -> tuple[date, date]:
+    """
+    REQUIRED lot helper：按 lot_code 稳定生成日期，避免不同批次都撞到同一天 production_date。
+    """
+    code = str(code_raw).strip()
+    if not code:
+        raise ValueError("lot_code empty")
+
+    digest = hashlib.sha1(code.encode("utf-8")).hexdigest()
+    offset_days = int(digest[:8], 16) % 73000  # ~200 years range
+    production_date = date(2000, 1, 1) + timedelta(days=offset_days)
+    expiry_date = production_date + timedelta(days=int(days))
+    return production_date, expiry_date
 
 
 # ---------- warehouses ----------
@@ -55,8 +71,8 @@ async def ensure_item(
     - lot_source_policy / expiry_policy / derivation_allowed / uom_governance_enabled 均 NOT NULL 且无默认
 
     使用方式：
-    - 默认（无有效期）：expiry_required=False -> expiry_policy='NONE'
-    - 需要有效期：expiry_required=True  -> expiry_policy='REQUIRED'
+    - 默认（无有效期）：expiry_required=False -> 不得把已有 REQUIRED 商品刷回 NONE
+    - 需要有效期：expiry_required=True  -> 若商品已存在，也要单向提升到 REQUIRED
 
     参数 uom：历史兼容参数（已不再写入 DB），保留以避免旧测试调用报错。
     """
@@ -65,6 +81,7 @@ async def ensure_item(
     _ = uom  # deprecated (items.uom removed)
 
     expiry_policy = "REQUIRED" if expiry_required else "NONE"
+    lot_source_policy = "SUPPLIER_ONLY" if expiry_required else "INTERNAL_ONLY"
 
     await session.execute(
         text(
@@ -75,21 +92,41 @@ async def ensure_item(
             )
             VALUES (
               :id, :sku, :name,
-              'SUPPLIER_ONLY'::lot_source_policy, CAST(:expiry_policy AS expiry_policy), TRUE, TRUE
+              CAST(:lot_source_policy AS lot_source_policy),
+              CAST(:expiry_policy AS expiry_policy),
+              TRUE,
+              TRUE
             )
             ON CONFLICT (id) DO UPDATE
                SET sku = EXCLUDED.sku,
                    name = EXCLUDED.name,
-                   lot_source_policy = EXCLUDED.lot_source_policy,
-                   expiry_policy = EXCLUDED.expiry_policy,
-                   derivation_allowed = EXCLUDED.derivation_allowed,
-                   uom_governance_enabled = EXCLUDED.uom_governance_enabled
+                   lot_source_policy = CASE
+                     WHEN EXCLUDED.expiry_policy = 'REQUIRED'::expiry_policy
+                       THEN 'SUPPLIER_ONLY'::lot_source_policy
+                     ELSE items.lot_source_policy
+                   END,
+                   expiry_policy = CASE
+                     WHEN EXCLUDED.expiry_policy = 'REQUIRED'::expiry_policy
+                       THEN 'REQUIRED'::expiry_policy
+                     ELSE items.expiry_policy
+                   END,
+                   derivation_allowed = CASE
+                     WHEN EXCLUDED.expiry_policy = 'REQUIRED'::expiry_policy
+                       THEN TRUE
+                     ELSE items.derivation_allowed
+                   END,
+                   uom_governance_enabled = CASE
+                     WHEN EXCLUDED.expiry_policy = 'REQUIRED'::expiry_policy
+                       THEN TRUE
+                     ELSE items.uom_governance_enabled
+                   END
             """
         ),
         {
             "id": int(id),
             "sku": str(sku),
             "name": str(name),
+            "lot_source_policy": str(lot_source_policy),
             "expiry_policy": str(expiry_policy),
         },
     )
@@ -121,18 +158,31 @@ async def ensure_supplier_lot(
 
     ✅ 工程收口：禁止 tests 里直接 INSERT INTO lots
     -> 统一走 app.services.lot_service.ensure_lot_full
+
+    语义收口：
+    - helper 名字就叫 ensure_supplier_lot，因此它必须保证商品策略至少提升到 REQUIRED
+    - REQUIRED lot 身份已切到 (warehouse_id, item_id, production_date)，
+      因此这里必须显式给 production_date
     """
     code_raw = str(lot_code).strip()
     if not code_raw:
         raise ValueError("lot_code empty")
 
+    await ensure_item(
+        session,
+        id=int(item_id),
+        sku=f"SKU-{item_id}",
+        name=f"ITEM-{item_id}",
+        expiry_required=True,
+    )
+
     expiry_policy = await _load_item_expiry_policy(session, item_id=int(item_id))
-    if expiry_policy == "REQUIRED":
-        expiry_date: Optional[date] = date.today() + timedelta(days=365)
-        production_date: Optional[date] = None
-    else:
-        expiry_date = None
-        production_date = None
+    if expiry_policy != "REQUIRED":
+        raise RuntimeError(
+            f"ensure_supplier_lot expected REQUIRED expiry_policy, got: {expiry_policy}"
+        )
+
+    production_date, expiry_date = _stable_required_dates_from_code(code_raw, days=365)
 
     got = await ensure_lot_full_svc(
         session,
@@ -217,8 +267,11 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
 
     expiry_policy = await _load_item_expiry_policy(session, item_id=int(item_id))
     if expiry_policy == "REQUIRED" and int(delta) > 0:
-        expiry_date: Optional[date] = date.today() + timedelta(days=365)
-        production_date: Optional[date] = None
+        if bc_norm is None:
+            raise RuntimeError(
+                f"set_stock_qty requires batch_code for REQUIRED item: item_id={int(item_id)}"
+            )
+        production_date, expiry_date = _stable_required_dates_from_code(bc_norm, days=365)
     else:
         expiry_date = None
         production_date = None

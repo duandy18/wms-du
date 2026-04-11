@@ -1,4 +1,3 @@
-# tests/api/test_debug_trace_by_warehouse.py
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -33,9 +32,18 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     await ensure_wh_loc_item(session, wh=wh1, loc=wh1, item=item_id)
     await ensure_wh_loc_item(session, wh=wh2, loc=wh2, item=item_id)
 
-    # 终态合同：本测试要用 batch_code，所以必须把该 item 设为 REQUIRED
+    # 终态合同：本测试要用 batch_code，所以必须把该 item 设为 REQUIRED + SUPPLIER_ONLY
     await session.execute(
-        text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+        text(
+            """
+            UPDATE items
+               SET expiry_policy = 'REQUIRED'::expiry_policy,
+                   lot_source_policy = 'SUPPLIER_ONLY'::lot_source_policy,
+                   derivation_allowed = TRUE,
+                   uom_governance_enabled = TRUE
+             WHERE id = :i
+            """
+        ),
         {"i": int(item_id)},
     )
     await session.commit()
@@ -43,14 +51,19 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     stock_svc = StockService()
     now = datetime.now(UTC)
 
+    prod1 = now.date()
+    exp1 = prod1 + timedelta(days=30)
+    prod2 = (now + timedelta(days=1)).date()
+    exp2 = prod2 + timedelta(days=30)
+
     # ✅ 显式种 WH1 批次槽位库存
     lot1 = await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh1),
         lot_code=str(batch1),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod1,
+        expiry_date=exp1,
     )
     await stock_svc.adjust_lot(
         session=session,
@@ -63,8 +76,8 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         batch_code=str(batch1),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod1,
+        expiry_date=exp1,
         trace_id=trace_id,
     )
 
@@ -74,8 +87,8 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
         item_id=int(item_id),
         warehouse_id=int(wh2),
         lot_code=str(batch2),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod2,
+        expiry_date=exp2,
     )
     await stock_svc.adjust_lot(
         session=session,
@@ -88,8 +101,8 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         batch_code=str(batch2),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod2,
+        expiry_date=exp2,
         trace_id=trace_id,
     )
 

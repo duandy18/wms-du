@@ -23,15 +23,6 @@ def _norm_bc(v: Any) -> str | None:
     return s2
 
 
-def _norm_lot_code_key(v: str | None) -> str | None:
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    return s.upper()
-
-
 async def _resolve_lot_id_by_lot_code(
     session: AsyncSession,
     *,
@@ -42,18 +33,19 @@ async def _resolve_lot_id_by_lot_code(
     """
     兼容入口：用展示码 lot_code（旧名 batch_code）解析 lot_id。
 
-    终态：
-    - SUPPLIER 批次以 lot_code_key 唯一（防漂移）
-    - lot_code 为 NULL 时表示 INTERNAL，不参与此解析（应由上游显式给 lot_id）
+    当前阶段：
+    - REQUIRED lot 身份已切到 production_date
+    - lot_code 只作为展示 / 输入 / 追溯属性
+    - 若同一展示码命中多个 SUPPLIER lots，则返回 None，让上游显式报错
     """
     if lot_code is None:
         return None
 
-    k = _norm_lot_code_key(lot_code)
-    if not k:
+    code = _norm_bc(lot_code)
+    if not code:
         return None
 
-    row = (
+    rows = (
         await session.execute(
             text(
                 """
@@ -62,20 +54,20 @@ async def _resolve_lot_id_by_lot_code(
                  WHERE warehouse_id = :w
                    AND item_id      = :i
                    AND lot_code_source = 'SUPPLIER'
-                   AND lot_code_key = :k
+                   AND lot_code = :code
+                 ORDER BY id ASC
                  LIMIT 2
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "k": str(k)},
+            {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
         )
     ).fetchall()
 
-    if not row:
+    if not rows:
         return None
-    if len(row) > 1:
-        # uq_lots_wh_item_lot_code_key 应保证唯一，但这里仍做防御
+    if len(rows) > 1:
         return None
-    return int(row[0][0])
+    return int(rows[0][0])
 
 
 async def verify_commit_three_books(
@@ -116,7 +108,6 @@ async def verify_commit_three_books(
 
         lot_id = e.get("lot_id")
         if lot_id is None:
-            # 兼容：尝试用 batch_code(展示码) 唯一解析 lot_id（仅 SUPPLIER）
             bc = _norm_bc(e.get("batch_code"))
             lot_id = await _resolve_lot_id_by_lot_code(
                 session,

@@ -1,7 +1,7 @@
 # app/tms/alerts/service.py
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import text
@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.contracts.metrics_alerts import AlertItem, AlertsResponse
 
+UTC = timezone.utc
+
 
 def _today_utc_date() -> date:
-    return datetime.utcnow().date()
+    return datetime.now(UTC).date()
 
 
 def _severity_for_threshold(count: int, threshold: int, *, crit_factor: float = 3.0) -> str:

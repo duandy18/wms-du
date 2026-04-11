@@ -63,10 +63,14 @@ async def test_create_inbound_atomic_happy_path_with_repo_mocks(monkeypatch):
         warehouse_id: int,
         item_policy,
         lot_code: str | None,
+        production_date,
+        expiry_date,
     ):
         assert warehouse_id == 1
         assert item_policy.item_id == 101
         assert lot_code == "LOT-001"
+        assert production_date is None
+        assert expiry_date is None
         return 9001
 
     async def fake_apply_inbound_stock(
@@ -80,6 +84,8 @@ async def test_create_inbound_atomic_happy_path_with_repo_mocks(monkeypatch):
         ref_line: int,
         occurred_at,
         batch_code: str | None,
+        production_date,
+        expiry_date,
         trace_id: str,
         source_type: str,
         source_biz_type: str | None,
@@ -92,6 +98,8 @@ async def test_create_inbound_atomic_happy_path_with_repo_mocks(monkeypatch):
         assert qty == 2
         assert ref_line == 1
         assert batch_code == "LOT-001"
+        assert production_date is None
+        assert expiry_date is None
         assert source_type == "direct"
         assert source_biz_type == "manual_adjust"
         assert source_ref is None

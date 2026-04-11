@@ -1,3 +1,5 @@
+from datetime import date, timedelta, datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -23,8 +25,15 @@ async def _requires_batch(session: AsyncSession, item_id: int) -> bool:
 
 
 async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
-    # 批次受控 => 用 NEAR；非批次 => 强护栏口径用 NULL 槽位（lot_id IS NULL）
+    # 批次受控 => 用 NEAR；非批次 => 用无展示码内部槽位
     return "NEAR" if await _requires_batch(session, item_id) else None
+
+
+def _required_dates_for_code(code: str) -> tuple[date, date]:
+    # quick 测试里固定给一组稳定日期即可
+    prod = date(2030, 1, 1)
+    exp = prod + timedelta(days=365)
+    return prod, exp
 
 
 async def _ensure_order_ref_exists(session: AsyncSession, *, order_ref: str) -> None:
@@ -52,6 +61,7 @@ async def _ensure_order_ref_exists(session: AsyncSession, *, order_ref: str) -> 
             "sid": str(shop_id),
             "store_id": int(store_id),
             "ext": str(ext_order_no),
+            "created_at": datetime.now(timezone.utc),
         },
     )
     await session.commit()
@@ -66,7 +76,6 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
                   FROM stocks_lot
                  WHERE item_id=:i
                    AND warehouse_id=:w
-                   /* lot_id NOT NULL in DB: filter by lots.lot_code */
                  LIMIT 1
                 """
             ),
@@ -114,6 +123,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             batch_code=None,
         )
     else:
+        prod, exp = _required_dates_for_code(str(code))
         await svc.adjust(
             session=session,
             item_id=int(item_id),
@@ -124,8 +134,8 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             ref_line=1,
             occurred_at=None,
             batch_code=str(code),
-            production_date=None,  # allow auto fallback
-            expiry_date=None,
+            production_date=prod,
+            expiry_date=exp,
         )
     await session.commit()
 
@@ -141,8 +151,8 @@ async def test_outbound_idem_and_insufficient(session: AsyncSession):
       - 另一单 Q-OUT-2 请求超量，抛 409(outbound_commit_reject)，details.results 至少一条 INSUFFICIENT。
 
     槽位口径（与后端 requires_batch 派生一致）：
-      - 批次受控：batch_code='NEAR'（承载 lot_code 展示码）
-      - 非批次受控：batch_code=NULL（NULL 槽位：lot_id IS NULL）
+      - 批次受控：batch_code='NEAR'
+      - 非批次受控：batch_code=NULL（内部槽位）
     """
     item_id, wh = 3003, 1
     code = await _slot_code(session, item_id)

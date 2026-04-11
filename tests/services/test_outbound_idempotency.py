@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -53,6 +53,8 @@ async def _seed_stock(
 
     svc = StockService()
     ts = datetime.now(UTC)
+    prod = date.today()
+    exp = prod + timedelta(days=365)
 
     await svc.adjust(
         session=session,
@@ -64,8 +66,8 @@ async def _seed_stock(
         occurred_at=ts,
         warehouse_id=warehouse_id,
         batch_code=batch_code,
-        production_date=date.today(),
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
     await session.commit()
 

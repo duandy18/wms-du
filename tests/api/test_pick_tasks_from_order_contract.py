@@ -38,18 +38,20 @@ async def _item_requires_batch(session: AsyncSession, item_id: int) -> bool:
 
 async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: int, lot_code: str) -> int:
     """
-    Lot-World 终态：
-    - SUPPLIER lot identity = (warehouse_id,item_id,lot_code_key)
-    - partial unique index: UNIQUE(warehouse_id,item_id,lot_code_key) WHERE lot_code IS NOT NULL
-    因此测试侧必须走统一入口 ensure_lot_full（避免散装 ON CONFLICT 写错）。
+    当前终态：
+    - REQUIRED lot 身份 = (warehouse_id, item_id, production_date)
+    - lot_code 只保留为展示/输入/追溯属性
+    因此测试侧必须走统一入口 ensure_lot_full，并在 REQUIRED 商品下显式给 production_date + expiry_date。
     """
+    production_date = date.today() if await _item_requires_batch(session, int(item_id)) else None
+    expiry_date = (production_date + timedelta(days=365)) if production_date is not None else None
     return await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=production_date,
+        expiry_date=expiry_date,
     )
 
 

@@ -40,13 +40,16 @@ async def _ensure_supplier_lot(session: AsyncSession, *, wh_id: int, item_id: in
     """
     Lot-World 终态：SUPPLIER lot 必须走 ensure_lot_full（lot_code_key + partial unique index）。
     """
+    prod = date.today()
+    exp = prod + timedelta(days=365)
+
     return await ensure_lot_full(
         session,
         item_id=int(item_id),
         warehouse_id=int(wh_id),
         lot_code=str(lot_code),
-        production_date=None,
-        expiry_date=None,
+        production_date=prod,
+        expiry_date=exp,
     )
 
 

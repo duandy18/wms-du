@@ -63,6 +63,7 @@ class InventoryReadService:
                     category=r.get("category"),
                     warehouse_id=int(r["warehouse_id"]),
                     lot_code=r.get("lot_code"),
+                    production_date=r.get("production_date"),
                     qty=int(r["qty"] or 0),
                     expiry_date=expiry_date,
                     near_expiry=near_expiry,

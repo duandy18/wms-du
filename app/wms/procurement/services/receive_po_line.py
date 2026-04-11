@@ -23,6 +23,7 @@ from app.wms.procurement.repos.receipt_draft_repo import (
     sum_confirmed_received_base,
     sum_draft_received_base,
 )
+from app.wms.shared.services.expiry_resolver import normalize_batch_dates_for_item
 
 _PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
 
@@ -69,6 +70,15 @@ async def receive_po_line(
     - 输入：uom_id + qty（qty 是输入数量，按该 uom）
     - 事实：qty_base = qty * ratio_to_base（ratio 来自 item_uoms）
     - 禁止：units_per_case / 历史字段 fallback
+
+    日期语义：
+    - DRAFT line 现在直接写入 canonical 日期对
+    - REQUIRED 商品：允许 production-only / both / expiry-only 三种输入，但落库前必须先归一
+    - NONE 商品：统一不写日期
+
+    校验顺序：
+    - 先判标签层（lot_source_policy / lot_code）
+    - 再判日期层（expiry_policy / canonical dates）
     """
     _ = occurred_at
     _ = barcode
@@ -97,7 +107,7 @@ async def receive_po_line(
                 break
 
     if target is None:
-        raise ValueError(f"在采购单 {po_id} 中未找到匹配的行")
+        raise ValueError("在采购单 %s 中未找到匹配的行" % po_id)
 
     draft = await get_latest_po_draft_receipt(session, po_id=int(po.id))
     if draft is None:
@@ -126,27 +136,54 @@ async def receive_po_line(
 
     next_line_no = await next_receipt_line_no(session, receipt_id=int(draft.id))
 
+    lot_code = _normalize_lot_code(lot_code)
+    if _is_pseudo_lot_code(lot_code):
+        raise HTTPException(status_code=400, detail="lot_code 禁止伪码（NOEXP/NONE）")
+
+    # 先判标签层
+    lot_source_policy = await load_item_lot_source_policy(session, item_id=item_id_val)
+    if lot_source_policy == "SUPPLIER_ONLY" and lot_code is None:
+        raise HTTPException(status_code=400, detail="供应商 lot_code 必填（lot_source_policy=SUPPLIER_ONLY）")
+
+    # 再判日期层
     expiry_policy = await load_item_expiry_policy(session, item_id=item_id_val)
     if expiry_policy == "NONE":
         production_date = None
         expiry_date = None
+    else:
+        if production_date is None and expiry_date is None:
+            raise HTTPException(status_code=400, detail="该商品需要有效期管理：必须提供生产日期或到期日期（至少其一）")
+
+        try:
+            production_date, expiry_date, _resolution_mode = await normalize_batch_dates_for_item(
+                session,
+                item_id=item_id_val,
+                production_date=production_date,
+                expiry_date=expiry_date,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if production_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="批次受控商品必须提供 production_date，或提供可结合保质期反推出 production_date 的 expiry_date。",
+            )
+        if expiry_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="未提供到期日期，且商品未配置可用于推算的保质期，无法形成 canonical expiry_date。",
+            )
 
     try:
         _validate_dates_light(production_date=production_date, expiry_date=expiry_date)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    lot_code = _normalize_lot_code(lot_code)
-    if _is_pseudo_lot_code(lot_code):
-        raise HTTPException(status_code=400, detail="lot_code 禁止伪码（NOEXP/NONE）")
-
-    lot_source_policy = await load_item_lot_source_policy(session, item_id=item_id_val)
-    if lot_source_policy == "SUPPLIER_ONLY" and lot_code is None:
-        raise HTTPException(status_code=400, detail="供应商 lot_code 必填（lot_source_policy=SUPPLIER_ONLY）")
-
     # ✅ Route B：draft 不生成 lot_id；confirm 时填
     # ✅ 终态字段：
     # - lot_code_input 作为输入标签/展示码写入 lot_code_input
+    # - production_date / expiry_date 在 DRAFT 行上即保存 canonical 日期对
     # - receipt_status_snapshot NOT NULL（DRAFT/CONFIRMED）
     rl = InboundReceiptLine(
         receipt_id=int(draft.id),

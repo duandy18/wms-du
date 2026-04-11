@@ -1,19 +1,19 @@
 # app/models/lot.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
     String,
-    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,13 +27,15 @@ class Lot(Base):
 
     结构关键点：
       - lot_id（Lot.id）是库存身份锚点，独立于 lot_code
-      - lot_code == batch_code（展示/来源码），业务需防“输入漂移”
+      - lot_code 为展示/来源码，不再决定 lot 身份
       - lots 冻结 item 侧关键主数据（policy），防主数据漂移污染历史解释链
 
-    Phase M-5（结构治理：unit_governance 二阶段）：
-      - 单位真相源 = item_uoms（结构层）
-      - 冻结点 = PO/Receipt lines 的 *_ratio_to_base_snapshot + qty_base
-      - lots 的单位快照列已物理移除（通过 Alembic migration）
+    Phase lot identity redesign：
+      - REQUIRED 商品：lot 身份 = (warehouse_id, item_id, production_date)
+      - NONE 商品：lot 身份 = INTERNAL singleton (warehouse_id, item_id)
+      - lot_code 只保留为展示 / 输入 / 追溯属性
+      - lots.production_date / lots.expiry_date 形成 canonical snapshot
+      - stock_ledger.production_date / stock_ledger.expiry_date 继续保留为 RECEIPT event snapshot
     """
 
     __tablename__ = "lots"
@@ -57,9 +59,11 @@ class Lot(Base):
     # 展示/输入批次码（SUPPLIER lot 可填；INTERNAL lot 必须为 NULL）
     lot_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # 防批次漂移：lot_code 的归一化 key（至少 upper + trim）
-    # DB migration: lot_code_key = upper(btrim(lot_code))
-    lot_code_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # REQUIRED 商品 lot 身份快照
+    production_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    # lot canonical 到期日期快照
+    expiry_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
     source_receipt_id: Mapped[Optional[int]] = mapped_column(
         Integer,
@@ -114,14 +118,48 @@ class Lot(Base):
             ")",
             name="ck_lots_sl_params_by_policy_snap",
         ),
-        # SUPPLIER lot：按归一化 key 唯一，防 lot_code 输入漂移（trim/upper）
+        CheckConstraint(
+            "("
+            "(item_expiry_policy_snapshot = 'REQUIRED' AND production_date IS NOT NULL) OR "
+            "(item_expiry_policy_snapshot <> 'REQUIRED' AND production_date IS NULL)"
+            ")",
+            name="ck_lots_production_date_by_expiry_policy",
+        ),
+        CheckConstraint(
+            "("
+            "production_date IS NULL OR "
+            "expiry_date IS NULL OR "
+            "production_date <= expiry_date"
+            ")",
+            name="ck_lots_production_le_expiry",
+        ),
+        CheckConstraint(
+            "("
+            "item_expiry_policy_snapshot <> 'REQUIRED' OR "
+            "lot_code_source <> 'SUPPLIER' OR "
+            "expiry_date IS NOT NULL"
+            ")",
+            name="ck_lots_required_supplier_expiry_not_null",
+        ),
+        CheckConstraint(
+            "("
+            "item_expiry_policy_snapshot <> 'REQUIRED' OR "
+            "lot_code_source = 'SUPPLIER'"
+            ")",
+            name="ck_lots_required_supplier_source",
+        ),
+        # REQUIRED lot：按 (warehouse_id,item_id,production_date) 唯一
         Index(
-            "uq_lots_wh_item_lot_code_key",
+            "uq_lots_required_single_wh_item_prod",
             "warehouse_id",
             "item_id",
-            "lot_code_key",
+            "production_date",
             unique=True,
-            postgresql_where=text("lot_code IS NOT NULL"),
+            postgresql_where=text(
+                "lot_code_source = 'SUPPLIER' "
+                "AND item_expiry_policy_snapshot = 'REQUIRED' "
+                "AND production_date IS NOT NULL"
+            ),
         ),
         # INTERNAL lot：每 (warehouse,item) 单例（lot_code 必须为 NULL）
         Index(

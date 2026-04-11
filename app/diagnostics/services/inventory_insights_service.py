@@ -17,7 +17,7 @@ class InventoryInsightsService:
     Phase M-2 / Phase 3（lot-only）：
     - stock_rows 统计 stocks_lot
     - ledger vs stock 一致性：使用 lot_id 维度对齐
-    - 过期风险：从 stock_ledger(RECEIPT) 读取 expiry_date（lot 不承载日期真相）
+    - 过期风险：从 lots.expiry_date 读取 canonical 到期日期
 
     ✅ 运维口径（封板）：
     - 默认只统计 PROD（排除 DEFAULT Test Set 商品）
@@ -164,16 +164,18 @@ class InventoryInsightsService:
         )
         active_events_30d = int((await session.execute(active_sql)).scalar() or 0)
 
-        # 5) 过期风险：从 stock_ledger(RECEIPT) 读取 expiry_date（PROD-only）
+        # 5) 过期风险：从 lots.expiry_date 读取 canonical 到期日期（只统计仍有库存 lot）
         ageing_sql = text(
             default_set_cte
             + """
-            SELECT l.expiry_date
-            FROM stock_ledger l
+            SELECT DISTINCT l.expiry_date
+            FROM stocks_lot s
+            JOIN lots l
+              ON l.id = s.lot_id
             LEFT JOIN item_test_set_items its
-              ON its.item_id = l.item_id
+              ON its.item_id = s.item_id
              AND its.set_id  = (SELECT set_id FROM default_set)
-            WHERE l.reason_canon = 'RECEIPT'
+            WHERE s.qty > 0
               AND l.expiry_date IS NOT NULL
               AND its.id IS NULL
         """
@@ -215,7 +217,7 @@ class InventoryInsightsService:
         wh = (await session.execute(wh_sql)).mappings().first() or {}
         warehouse_efficiency = round((wh.get("outbound_events") or 0) / (wh.get("total_events") or 1), 4)
 
-        # ⚠️ 输出 key 维持历史命名（避免前端立刻炸），但语义已为 lot-only
+        # 输出 key 维持历史命名，避免前端立刻炸；但 expiry 口径已切为 lot canonical
         return {
             "inventory_health_score": inventory_health_score,
             "inventory_accuracy_score": inventory_accuracy_score,

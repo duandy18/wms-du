@@ -1,5 +1,5 @@
 # tests/unit/test_stock_service_v2.py
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -30,6 +30,13 @@ async def _slot_code(session: AsyncSession, item_id: int) -> str | None:
     return "NEAR" if await _requires_batch(session, item_id) else None
 
 
+def _required_lot_dates(requires_batch: bool) -> tuple[date | None, date | None]:
+    if not requires_batch:
+        return None, None
+    prod = date.today()
+    return prod, prod + timedelta(days=365)
+
+
 async def _ensure_supplier_lot(
     session: AsyncSession,
     *,
@@ -38,11 +45,17 @@ async def _ensure_supplier_lot(
     code: str,
 ) -> int:
     """
-    终态：SUPPLIER lot 创建必须走 ensure_lot_full（防漂移 + partial unique index 对齐）。
+    终态：SUPPLIER lot 创建必须走 ensure_lot_full。
+
+    当前 REQUIRED lot 身份已经切到 (warehouse_id, item_id, production_date)，
+    因此测试种子在 REQUIRED 商品下也必须显式给 production_date + expiry_date。
     """
     lot_code = str(code).strip()
     if not lot_code:
         raise ValueError("lot_code required")
+
+    requires_batch = await _requires_batch(session, int(item_id))
+    pd, ed = _required_lot_dates(requires_batch)
 
     return int(
         await ensure_lot_full(
@@ -50,8 +63,8 @@ async def _ensure_supplier_lot(
             item_id=int(item_id),
             warehouse_id=int(wh),
             lot_code=str(lot_code),
-            production_date=None,
-            expiry_date=None,
+            production_date=pd,
+            expiry_date=ed,
         )
     )
 
@@ -138,6 +151,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
         )
     else:
         lot_id = await _ensure_supplier_lot(session, wh=int(wh), item_id=int(item_id), code=str(code))
+        prod, exp = _required_lot_dates(True)
         await svc.adjust_lot(
             session=session,
             item_id=int(item_id),
@@ -149,7 +163,8 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             ref_line=1,
             occurred_at=now,
             batch_code=str(code),
-            production_date=date.today(),
+            production_date=prod,
+            expiry_date=exp,
         )
 
     await session.commit()
@@ -162,6 +177,7 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
     item_id = 3001
     wh = 1
     code = "B1"
+    prod, exp = _required_lot_dates(True)
 
     lot_id = await _ensure_supplier_lot(session, wh=wh, item_id=item_id, code=code)
     before = await _qty(session, item_id=item_id, wh=wh, code=code)
@@ -177,17 +193,17 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
         ref_line=1,
         occurred_at=datetime.now(UTC),
         batch_code=code,
+        production_date=prod,
+        expiry_date=exp,
     )
 
     after = await _qty(session, item_id=item_id, wh=wh, code=code)
     assert after == before + 1
 
-    prod = res.get("production_date")
-    exp = res.get("expiry_date")
-
-    assert isinstance(prod, date)
-    if exp is not None:
-        assert exp >= prod
+    res_prod = res.get("production_date")
+    res_exp = res.get("expiry_date")
+    assert res_prod == prod
+    assert res_exp == exp
 
 
 @pytest.mark.asyncio
@@ -220,6 +236,7 @@ async def test_adjust_idempotent(session: AsyncSession):
     wh = 1
     code = "NEAR"
     now = datetime.now(UTC)
+    prod, exp = _required_lot_dates(True)
 
     lot_id = await _ensure_supplier_lot(session, wh=wh, item_id=item_id, code=code)
 
@@ -234,7 +251,8 @@ async def test_adjust_idempotent(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         batch_code=code,
-        production_date=date.today(),
+        production_date=prod,
+        expiry_date=exp,
     )
 
     res = await svc.adjust_lot(
@@ -248,7 +266,8 @@ async def test_adjust_idempotent(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         batch_code=code,
-        production_date=date.today(),
+        production_date=prod,
+        expiry_date=exp,
     )
     assert res.get("applied") is False and res.get("idempotent") is True
 
@@ -327,14 +346,17 @@ async def _insert_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
     终态收口后不允许 tests 直接 INSERT INTO lots。
     这里通过 ensure_lot_full 造出一个合法 lot_id，再用于 mismatch 测试。
     """
+    requires_batch = await _requires_batch(session, int(item_id))
+    pd, ed = _required_lot_dates(requires_batch)
+
     return int(
         await ensure_lot_full(
             session,
             item_id=int(item_id),
             warehouse_id=int(warehouse_id),
             lot_code=str(lot_code),
-            production_date=None,
-            expiry_date=None,
+            production_date=pd,
+            expiry_date=ed,
         )
     )
 
@@ -348,6 +370,7 @@ async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
     """
     svc = StockService()
     wh = 1
+    prod, exp = _required_lot_dates(True)
 
     bad_lot_id = await _insert_supplier_lot(session, warehouse_id=wh, item_id=3003, lot_code="UT-LOT-BAD-1")
     await session.commit()
@@ -364,7 +387,8 @@ async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
             ref_line=1,
             occurred_at=datetime.now(UTC),
             batch_code="B-LOT",
-            production_date=date.today(),
+            production_date=prod,
+            expiry_date=exp,
         )
 
     assert "mismatch" in str(exc.value).lower() or "lot_mismatch" in str(exc.value).lower()
@@ -377,6 +401,7 @@ async def test_adjust_rejects_lot_not_found(session: AsyncSession):
     """
     svc = StockService()
     wh = 1
+    prod, exp = _required_lot_dates(True)
 
     with pytest.raises(ValueError) as exc:
         await svc.adjust_lot(
@@ -390,7 +415,8 @@ async def test_adjust_rejects_lot_not_found(session: AsyncSession):
             ref_line=1,
             occurred_at=datetime.now(UTC),
             batch_code="B-LOT2",
-            production_date=date.today(),
+            production_date=prod,
+            expiry_date=exp,
         )
 
     assert "not found" in str(exc.value).lower() or "lot_not_found" in str(exc.value).lower()

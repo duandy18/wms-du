@@ -18,6 +18,7 @@ from app.wms.procurement.repos.inbound_receipt_confirm_repo import (
 )
 from app.wms.procurement.services.inbound_receipt_explain import explain_receipt
 from app.wms.procurement.services.inbound_atomic_adapter import apply_receipt_line_via_atomic_inbound
+from app.wms.shared.services.expiry_resolver import normalize_batch_dates_for_item
 
 UTC = timezone.utc
 _PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
@@ -78,6 +79,37 @@ async def confirm_receipt(
                 message=f"商品不存在：item_id={item_id}",
             )
 
+        raw_production_date = getattr(rl, "production_date", None)
+        raw_expiry_date = getattr(rl, "expiry_date", None)
+
+        resolved_production_date, resolved_expiry_date, _resolution_mode = await normalize_batch_dates_for_item(
+            session,
+            item_id=item_id,
+            production_date=raw_production_date,
+            expiry_date=raw_expiry_date,
+        )
+
+        item_expiry_policy = str(getattr(item, "expiry_policy", "NONE") or "NONE").upper()
+        if item_expiry_policy == "REQUIRED":
+            if resolved_production_date is None:
+                raise_problem(
+                    status_code=422,
+                    error_code="RECEIPT_LINE_DATE_UNRESOLVED",
+                    message="批次受控商品必须提供 production_date，或提供可结合保质期反推出 production_date 的 expiry_date。",
+                    details=[{"line_no": int(getattr(rl, "line_no", idx)), "item_id": int(item_id)}],
+                )
+            if resolved_expiry_date is None:
+                raise_problem(
+                    status_code=422,
+                    error_code="RECEIPT_LINE_DATE_UNRESOLVED",
+                    message="未提供到期日期，且商品未配置可用于推算的保质期，无法形成 canonical expiry_date。",
+                    details=[{"line_no": int(getattr(rl, "line_no", idx)), "item_id": int(item_id)}],
+                )
+
+        # 把 line 上的日期更新成 canonical，避免确认后仍残留原始输入语义
+        rl.production_date = resolved_production_date
+        rl.expiry_date = resolved_expiry_date
+
         res = await apply_receipt_line_via_atomic_inbound(
             session,
             warehouse_id=warehouse_id,
@@ -87,6 +119,8 @@ async def confirm_receipt(
             item_id=item_id,
             qty_base=qty_delta,
             lot_code=getattr(rl, "lot_code_input", None),
+            production_date=resolved_production_date,
+            expiry_date=resolved_expiry_date,
         )
 
         row = res.get("row")

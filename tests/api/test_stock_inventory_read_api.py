@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.inventory import seed_batch_slot
+from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
 
 
 async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
@@ -94,6 +95,15 @@ async def test_stock_inventory_detail_returns_totals_and_slices(
     item_id = 910001
     warehouse_id = 1
     lot_code = "UT-STOCK-DETAIL-001"
+
+    # 先确保基础行存在；否则直接 UPDATE items 可能打空
+    await ensure_wh_loc_item(session, wh=warehouse_id, loc=warehouse_id, item=item_id)
+
+    # 当前主链：新建 SUPPLIER lot 前，测试商品必须显式走 REQUIRED
+    await session.execute(
+        text("UPDATE items SET expiry_policy='REQUIRED'::expiry_policy WHERE id=:i"),
+        {"i": int(item_id)},
+    )
 
     await seed_batch_slot(
         session,
