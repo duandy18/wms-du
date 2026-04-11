@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _norm_text(v: str | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _build_inventory_where(
+    *,
+    q: str | None,
+    item_id: int | None,
+    warehouse_id: int | None,
+    lot_code: str | None,
+    near_expiry: bool | None,
+) -> tuple[str, dict[str, Any]]:
+    cond = ["s.qty <> 0"]
+    params: dict[str, Any] = {}
+
+    q_norm = _norm_text(q)
+    lot_norm = _norm_text(lot_code)
+
+    if q_norm is not None:
+        cond.append("(i.name ILIKE :q OR i.sku ILIKE :q)")
+        params["q"] = f"%{q_norm}%"
+
+    if item_id is not None:
+        cond.append("s.item_id = :item_id")
+        params["item_id"] = int(item_id)
+
+    if warehouse_id is not None:
+        cond.append("s.warehouse_id = :warehouse_id")
+        params["warehouse_id"] = int(warehouse_id)
+
+    if lot_norm is not None:
+        cond.append("l.lot_code = :lot_code")
+        params["lot_code"] = lot_norm
+
+    if near_expiry is True:
+        cond.append(
+            "rd.expiry_date IS NOT NULL "
+            "AND rd.expiry_date >= CURRENT_DATE "
+            "AND rd.expiry_date <= CURRENT_DATE + 30"
+        )
+
+    return " AND ".join(cond), params
+
+
+async def query_inventory_rows(
+    session: AsyncSession,
+    *,
+    q: str | None,
+    item_id: int | None,
+    warehouse_id: int | None,
+    lot_code: str | None,
+    near_expiry: bool | None,
+    offset: int,
+    limit: int,
+) -> tuple[int, list[dict[str, Any]]]:
+    where_sql, params = _build_inventory_where(
+        q=q,
+        item_id=item_id,
+        warehouse_id=warehouse_id,
+        lot_code=lot_code,
+        near_expiry=near_expiry,
+    )
+    params["offset"] = int(offset)
+    params["limit"] = int(limit)
+
+    count_sql = text(
+        f"""
+        WITH receipt_dates AS (
+            SELECT
+                warehouse_id,
+                item_id,
+                lot_id,
+                MAX(production_date) AS production_date,
+                MAX(expiry_date) AS expiry_date
+            FROM stock_ledger
+            WHERE reason_canon = 'RECEIPT'
+            GROUP BY warehouse_id, item_id, lot_id
+        ),
+        base AS (
+            SELECT
+                s.item_id,
+                i.name AS item_name,
+                i.sku AS item_code,
+                i.spec AS spec,
+                i.brand AS brand,
+                i.category AS category,
+                s.warehouse_id,
+                l.lot_code AS lot_code,
+                s.qty,
+                rd.production_date,
+                rd.expiry_date,
+                (
+                    SELECT ib.barcode
+                    FROM item_barcodes AS ib
+                    WHERE ib.item_id = s.item_id
+                      AND ib.active = TRUE
+                    ORDER BY ib.is_primary DESC, ib.id ASC
+                    LIMIT 1
+                ) AS main_barcode
+            FROM stocks_lot AS s
+            JOIN items AS i
+              ON i.id = s.item_id
+            LEFT JOIN lots AS l
+              ON l.id = s.lot_id
+            LEFT JOIN receipt_dates AS rd
+              ON rd.warehouse_id = s.warehouse_id
+             AND rd.item_id = s.item_id
+             AND rd.lot_id = s.lot_id
+            WHERE {where_sql}
+        )
+        SELECT COUNT(*)::int AS total
+        FROM base
+        """
+    )
+    total_row = (await session.execute(count_sql, params)).mappings().first()
+    total = int((total_row or {}).get("total") or 0)
+
+    list_sql = text(
+        f"""
+        WITH receipt_dates AS (
+            SELECT
+                warehouse_id,
+                item_id,
+                lot_id,
+                MAX(production_date) AS production_date,
+                MAX(expiry_date) AS expiry_date
+            FROM stock_ledger
+            WHERE reason_canon = 'RECEIPT'
+            GROUP BY warehouse_id, item_id, lot_id
+        )
+        SELECT
+            s.item_id,
+            i.name AS item_name,
+            i.sku AS item_code,
+            i.spec AS spec,
+            i.brand AS brand,
+            i.category AS category,
+            s.warehouse_id,
+            l.lot_code AS lot_code,
+            s.qty,
+            rd.production_date,
+            rd.expiry_date,
+            (
+                SELECT ib.barcode
+                FROM item_barcodes AS ib
+                WHERE ib.item_id = s.item_id
+                  AND ib.active = TRUE
+                ORDER BY ib.is_primary DESC, ib.id ASC
+                LIMIT 1
+            ) AS main_barcode
+        FROM stocks_lot AS s
+        JOIN items AS i
+          ON i.id = s.item_id
+        LEFT JOIN lots AS l
+          ON l.id = s.lot_id
+        LEFT JOIN receipt_dates AS rd
+          ON rd.warehouse_id = s.warehouse_id
+         AND rd.item_id = s.item_id
+         AND rd.lot_id = s.lot_id
+        WHERE {where_sql}
+        ORDER BY i.name ASC, s.item_id ASC, s.warehouse_id ASC, l.lot_code NULLS FIRST
+        OFFSET :offset
+        LIMIT :limit
+        """
+    )
+    rows = (await session.execute(list_sql, params)).mappings().all()
+    return total, [dict(r) for r in rows]
+
+
+async def query_inventory_detail_rows(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    warehouse_id: int | None,
+    lot_code: str | None,
+) -> list[dict[str, Any]]:
+    cond = [
+        "s.item_id = :item_id",
+        "s.qty <> 0",
+    ]
+    params: dict[str, Any] = {"item_id": int(item_id)}
+
+    lot_norm = _norm_text(lot_code)
+    if warehouse_id is not None:
+        cond.append("s.warehouse_id = :warehouse_id")
+        params["warehouse_id"] = int(warehouse_id)
+    if lot_norm is not None:
+        cond.append("l.lot_code = :lot_code")
+        params["lot_code"] = lot_norm
+
+    sql = text(
+        f"""
+        WITH receipt_dates AS (
+            SELECT
+                warehouse_id,
+                item_id,
+                lot_id,
+                MAX(production_date) AS production_date,
+                MAX(expiry_date) AS expiry_date
+            FROM stock_ledger
+            WHERE reason_canon = 'RECEIPT'
+            GROUP BY warehouse_id, item_id, lot_id
+        )
+        SELECT
+            s.item_id,
+            i.name AS item_name,
+            s.warehouse_id,
+            w.name AS warehouse_name,
+            l.lot_code AS lot_code,
+            s.qty,
+            rd.production_date,
+            rd.expiry_date
+        FROM stocks_lot AS s
+        JOIN items AS i
+          ON i.id = s.item_id
+        JOIN warehouses AS w
+          ON w.id = s.warehouse_id
+        LEFT JOIN lots AS l
+          ON l.id = s.lot_id
+        LEFT JOIN receipt_dates AS rd
+          ON rd.warehouse_id = s.warehouse_id
+         AND rd.item_id = s.item_id
+         AND rd.lot_id = s.lot_id
+        WHERE {" AND ".join(cond)}
+        ORDER BY s.warehouse_id ASC, l.lot_code NULLS FIRST
+        """
+    )
+    rows = (await session.execute(sql, params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+__all__ = [
+    "query_inventory_rows",
+    "query_inventory_detail_rows",
+]

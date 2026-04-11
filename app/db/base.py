@@ -105,10 +105,10 @@ def init_models(
     # ✅ 显式加载链：只放“主线真相表”的模型（避免把 legacy 表带进 metadata）
     explicit_chain = [
         "app.models.item",
-        "app.models.lot",
-        "app.models.stock_lot",
-        "app.models.stock_ledger",
-        "app.models.stock_snapshot",
+        "app.wms.stock.models.lot",
+        "app.wms.stock.models.stock_lot",
+        "app.wms.ledger.models.stock_ledger",
+        "app.wms.stock.models.stock_snapshot",
         "app.models.order",
         "app.models.order_item",
         "app.models.order_address",

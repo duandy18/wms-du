@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.enums import MovementType
 from app.models.return_task import ReturnTask, ReturnTaskLine
-from app.models.stock_ledger import StockLedger
+from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.stock.services.stock_service import StockService
 from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
 
