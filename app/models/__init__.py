@@ -93,13 +93,13 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 采购系统
     # ------------------------------------------------------------------
-    ("app.models.purchase_order", "PurchaseOrder"),
-    ("app.models.purchase_order_line", "PurchaseOrderLine"),
+    ("app.procurement.models.purchase_order", "PurchaseOrder"),
+    ("app.procurement.models.purchase_order_line", "PurchaseOrderLine"),
     # ------------------------------------------------------------------
     # 收货事实（唯一模型）
     # ------------------------------------------------------------------
-    ("app.models.inbound_receipt", "InboundReceipt"),
-    ("app.models.inbound_receipt", "InboundReceiptLine"),
+    ("app.procurement.models.inbound_receipt", "InboundReceipt"),
+    ("app.procurement.models.inbound_receipt", "InboundReceiptLine"),
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------

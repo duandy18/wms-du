@@ -7,11 +7,11 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.inbound_receipt import InboundReceiptLine
+from app.procurement.models.inbound_receipt import InboundReceiptLine
 from app.pms.items.models.item import Item
 from app.pms.items.models.item_barcode import ItemBarcode
 from app.pms.items.models.item_uom import ItemUOM
-from app.models.purchase_order_line import PurchaseOrderLine
+from app.procurement.models.purchase_order_line import PurchaseOrderLine
 
 
 def get_item_uom_by_id(db: Session, item_uom_id: int) -> ItemUOM | None:

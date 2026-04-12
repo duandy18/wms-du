@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.pms.items.models.item import Item
 from app.pms.items.models.item_uom import ItemUOM
-from app.models.purchase_order import PurchaseOrder
-from app.models.purchase_order_line import PurchaseOrderLine
+from app.procurement.models.purchase_order import PurchaseOrder
+from app.procurement.models.purchase_order_line import PurchaseOrderLine
 
 
 def _is_required_expiry_policy(expiry_policy: str) -> bool:
