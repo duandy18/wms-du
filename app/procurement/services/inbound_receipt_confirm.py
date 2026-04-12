@@ -106,7 +106,6 @@ async def confirm_receipt(
                     details=[{"line_no": int(getattr(rl, "line_no", idx)), "item_id": int(item_id)}],
                 )
 
-        # 把 line 上的日期更新成 canonical，避免确认后仍残留原始输入语义
         rl.production_date = resolved_production_date
         rl.expiry_date = resolved_expiry_date
 
@@ -121,7 +120,6 @@ async def confirm_receipt(
             }
         )
 
-    # 整张 receipt 一次 atomic inbound => 一张 receipt 一个统一事件头
     atomic_res = await apply_receipt_via_atomic_inbound(
         session,
         warehouse_id=warehouse_id,
