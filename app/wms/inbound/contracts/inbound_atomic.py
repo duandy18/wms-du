@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -38,7 +38,7 @@ class InboundAtomicLineIn(_Base):
     item_id: Annotated[int | None, Field(default=None, ge=1, description="商品 ID")]
     barcode: Annotated[str | None, Field(default=None, min_length=1, max_length=128, description="条码")]
 
-    qty: Annotated[int, Field(gt=0, description="入库数量，必须为正整数")]
+    qty: Annotated[int, Field(gt=0, description="入库数量（当前按 base 数量解释）")]
     ref_line: Annotated[int | None, Field(default=None, ge=1, description="来源 ref 内顺序号（可选）")]
 
     lot_code: Annotated[str | None, Field(default=None, max_length=128, description="批次码 / lot_code（可选）")]
@@ -72,6 +72,7 @@ class InboundAtomicCreateIn(_Base):
     source_type: Annotated[SourceType, Field(description="来源大类：direct / upstream")]
     source_biz_type: Annotated[str | None, Field(default=None, max_length=64, description="来源业务类型，如 purchase / return / transfer")]
     source_ref: Annotated[str | None, Field(default=None, max_length=128, description="来源业务单号 / 外部引用号")]
+    occurred_at: datetime | None = Field(default=None, description="业务发生时间（可选；为空则服务层取当前时间）")
     remark: Annotated[str | None, Field(default=None, max_length=500, description="备注")]
 
     lines: Annotated[list[InboundAtomicLineIn], Field(min_length=1, description="入库行")]
@@ -95,7 +96,7 @@ class InboundAtomicResultRow(_Base):
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     barcode: Annotated[str | None, Field(default=None, max_length=128, description="条码（回显）")]
 
-    qty: Annotated[int, Field(gt=0, description="实际入库数量")]
+    qty: Annotated[int, Field(gt=0, description="实际入库数量（当前按 base 数量解释）")]
 
     lot_id: Annotated[int | None, Field(default=None, ge=1, description="实际落账 lot_id")]
     lot_code: Annotated[str | None, Field(default=None, max_length=128, description="实际落账 lot_code")]
@@ -113,6 +114,8 @@ class InboundAtomicCreateOut(_Base):
     source_biz_type: Annotated[str | None, Field(default=None, max_length=64, description="来源业务类型")]
     source_ref: Annotated[str | None, Field(default=None, max_length=128, description="来源业务单号 / 外部引用号")]
 
+    event_id: Annotated[int | None, Field(default=None, ge=1, description="统一事件头 ID")]
+    event_no: Annotated[str | None, Field(default=None, max_length=64, description="统一事件号")]
     trace_id: Annotated[str, Field(min_length=1, max_length=128, description="执行链 trace_id")]
 
     rows: list[InboundAtomicResultRow] = Field(default_factory=list, description="执行结果行")
