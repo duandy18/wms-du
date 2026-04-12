@@ -17,11 +17,10 @@ from app.procurement.repos.inbound_receipt_confirm_repo import (
     load_receipt_for_update,
 )
 from app.procurement.services.inbound_receipt_explain import explain_receipt
-from app.procurement.services.inbound_atomic_adapter import apply_receipt_line_via_atomic_inbound
+from app.procurement.services.inbound_atomic_adapter import apply_receipt_via_atomic_inbound
 from app.wms.shared.services.expiry_resolver import normalize_batch_dates_for_item
 
 UTC = timezone.utc
-_PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
 
 
 async def confirm_receipt(
@@ -62,12 +61,13 @@ async def confirm_receipt(
     occurred_at = getattr(receipt, "occurred_at", None) or datetime.now(UTC)
     warehouse_id = int(getattr(receipt, "warehouse_id"))
 
-    item_ids = [int(getattr(rl, "item_id")) for rl in (receipt.lines or [])]
+    receipt_lines = list(receipt.lines or [])
+    item_ids = [int(getattr(rl, "item_id")) for rl in receipt_lines]
     item_map = await load_items_by_ids(session, item_ids=item_ids)
 
-    ledger_refs: List[InboundReceiptConfirmLedgerRef] = []
+    atomic_lines: list[dict[str, object]] = []
 
-    for idx, rl in enumerate(receipt.lines or [], start=1):
+    for idx, rl in enumerate(receipt_lines, start=1):
         item_id = int(getattr(rl, "item_id"))
         qty_delta = int(getattr(rl, "qty_base", 0) or 0)
 
@@ -106,25 +106,53 @@ async def confirm_receipt(
                     details=[{"line_no": int(getattr(rl, "line_no", idx)), "item_id": int(item_id)}],
                 )
 
-        # 把 line 上的日期更新成 canonical，避免确认后仍残留原始输入语义
         rl.production_date = resolved_production_date
         rl.expiry_date = resolved_expiry_date
 
-        res = await apply_receipt_line_via_atomic_inbound(
-            session,
-            warehouse_id=warehouse_id,
-            receipt_ref=ref,
-            ref_line=idx,
-            occurred_at=occurred_at,
-            item_id=item_id,
-            qty_base=qty_delta,
-            lot_code=getattr(rl, "lot_code_input", None),
-            production_date=resolved_production_date,
-            expiry_date=resolved_expiry_date,
+        atomic_lines.append(
+            {
+                "item_id": int(item_id),
+                "qty": int(qty_delta),
+                "ref_line": int(idx),
+                "lot_code": getattr(rl, "lot_code_input", None),
+                "production_date": resolved_production_date,
+                "expiry_date": resolved_expiry_date,
+            }
         )
 
-        row = res.get("row")
-        if row is not None and getattr(row, "lot_id", None) is not None:
+    atomic_res = await apply_receipt_via_atomic_inbound(
+        session,
+        warehouse_id=warehouse_id,
+        receipt_ref=ref,
+        occurred_at=occurred_at,
+        remark=getattr(receipt, "remark", None),
+        lines=atomic_lines,
+    )
+
+    out_rows = list(atomic_res.get("rows") or [])
+    if len(out_rows) != len(receipt_lines):
+        raise_problem(
+            status_code=500,
+            error_code="RECEIPT_CONFIRM_ROW_MISMATCH",
+            message="确认收货后返回的结果行数与输入行数不一致。",
+            details=[
+                {
+                    "expected_rows": len(receipt_lines),
+                    "actual_rows": len(out_rows),
+                    "receipt_id": int(receipt_id),
+                    "receipt_ref": ref,
+                }
+            ],
+        )
+
+    ledger_refs: List[InboundReceiptConfirmLedgerRef] = []
+
+    for idx, rl in enumerate(receipt_lines, start=1):
+        item_id = int(getattr(rl, "item_id"))
+        qty_delta = int(getattr(rl, "qty_base", 0) or 0)
+
+        row = out_rows[idx - 1]
+        if getattr(row, "lot_id", None) is not None:
             rl.lot_id = int(row.lot_id)
 
         if getattr(rl, "receipt_status_snapshot", None) != "CONFIRMED":
@@ -132,11 +160,14 @@ async def confirm_receipt(
 
         ledger_refs.append(
             InboundReceiptConfirmLedgerRef(
-                source_line_key=f"LINE:{getattr(rl, 'line_no')}",
+                source_line_key=f"LINE:{getattr(rl, 'line_no', idx)}",
                 ref=ref,
                 ref_line=idx,
                 item_id=item_id,
                 qty_delta=qty_delta,
+                event_id=int(atomic_res["event_id"]) if atomic_res.get("event_id") is not None else None,
+                event_no=str(atomic_res["event_no"]) if atomic_res.get("event_no") else None,
+                trace_id=str(atomic_res["trace_id"]) if atomic_res.get("trace_id") else None,
                 idempotent=None,
                 applied=True,
             )

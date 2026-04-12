@@ -16,6 +16,9 @@ class InboundReceiptConfirmLedgerRef(BaseModel):
     ref_line: int = Field(..., description="落账 ref_line（在 ref 维度递增）")
     item_id: int
     qty_delta: int
+    event_id: Optional[int] = Field(default=None, description="本次确认对应的统一事件头 ID")
+    event_no: Optional[str] = Field(default=None, description="本次确认对应的统一事件号")
+    trace_id: Optional[str] = Field(default=None, description="本次确认对应的技术链路号")
     idempotent: Optional[bool] = None
     applied: Optional[bool] = None
 
