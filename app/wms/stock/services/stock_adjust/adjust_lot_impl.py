@@ -19,11 +19,19 @@ from app.wms.stock.services.stock_adjust.legacy_stocks_repo import (
 )
 from app.wms.stock.services.stock_adjust.lot_code_repo import load_lot_code_for_lot_id
 from app.wms.stock.services.stock_adjust.meta import meta_bool, meta_str
-from app.wms.stock.services.stock_adjust.stocks_lot_repo import (
-    apply_stocks_lot_set_qty,
-    ensure_stocks_lot_slot_exists,
-    lock_stocks_lot_slot_for_update,
-)
+
+
+def _meta_int(meta: Optional[Dict[str, Any]], key: str) -> Optional[int]:
+    if not meta:
+        return None
+    value = meta.get(key)
+    if value is None:
+        return None
+    try:
+        iv = int(value)
+    except Exception:
+        raise ValueError(f"meta.{key} must be int") from None
+    return iv if iv > 0 else None
 
 
 async def adjust_lot_impl(
@@ -52,6 +60,9 @@ async def adjust_lot_impl(
     - 台账：写 stock_ledger（必须带 lot_id）
     - 幂等：按 (warehouse_id, item_id, lot_id, reason, ref, ref_line) 命中
     - stocks：可选 shadow 写入（便于回滚/对账）
+
+    当前补充：
+    - 若 meta.event_id 存在，则继续向下传到 stock_ledger.event_id
     """
     reason_val = reason.value if isinstance(reason, MovementType) else str(reason)
     rl = int(ref_line) if ref_line is not None else 1
@@ -59,6 +70,7 @@ async def adjust_lot_impl(
 
     allow_zero = meta_bool(meta, "allow_zero_delta_ledger")
     sub_reason = meta_str(meta, "sub_reason")
+    event_id = _meta_int(meta, "event_id")
 
     if delta == 0 and not allow_zero:
         return {"idempotent": True, "applied": False}
@@ -105,6 +117,12 @@ async def adjust_lot_impl(
     ):
         return {"idempotent": True, "applied": False}
 
+    from app.wms.stock.services.stock_adjust.stocks_lot_repo import (
+        apply_stocks_lot_set_qty,
+        ensure_stocks_lot_slot_exists,
+        lock_stocks_lot_slot_for_update,
+    )
+
     await ensure_stocks_lot_slot_exists(
         session,
         item_id=int(item_id),
@@ -147,6 +165,7 @@ async def adjust_lot_impl(
         ref_line=int(rl),
         occurred_at=ts,
         trace_id=trace_id,
+        event_id=event_id,
         production_date=production_date,
         expiry_date=expiry_date,
         lot_id=int(lot_id),
@@ -173,6 +192,8 @@ async def adjust_lot_impl(
     meta_out: Dict[str, Any] = dict(meta or {})
     if trace_id:
         meta_out.setdefault("trace_id", trace_id)
+    if event_id is not None:
+        meta_out.setdefault("event_id", event_id)
 
     return {
         "lot_id": int(lot_id),

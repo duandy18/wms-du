@@ -22,6 +22,7 @@ async def apply_inbound_stock(
     batch_code: str | None,
     production_date: date | None,
     expiry_date: date | None,
+    event_id: int | None,
     trace_id: str,
     source_type: str,
     source_biz_type: str | None,
@@ -30,10 +31,12 @@ async def apply_inbound_stock(
 ) -> dict[str, Any]:
     """
     第一阶段 repo 仍临时包裹既有 StockService.adjust_lot。
-    这样 atomic service 不直接依赖旧 service 细节。
+    这样 inbound commit service 不直接依赖旧 service 细节。
 
     当前中心任务：
-    - receipt line 的 production_date / expiry_date 必须继续向下传，
+    - 业务事件 event_id 与技术链路 trace_id 都要继续向下传
+    - occurred_at 必须使用外部业务发生时间，不允许在此层被覆盖
+    - production_date / expiry_date 必须继续向下传，
       让 lot snapshot 与 RECEIPT ledger snapshot 使用同一决策输入
     """
     stock_svc = StockService()
@@ -51,6 +54,7 @@ async def apply_inbound_stock(
         batch_code=batch_code,
         meta={
             "sub_reason": "ATOMIC_INBOUND",
+            "event_id": int(event_id) if event_id is not None else None,
             "source_type": source_type,
             "source_biz_type": source_biz_type,
             "source_ref": source_ref,

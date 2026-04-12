@@ -21,7 +21,7 @@ async def test_full_trace_order_outbound(session: AsyncSession):
       订单 → 出库 commit → ledger → trace viewer
 
     目标：
-      - 同一个 trace_id 贯穿：
+      - 同一个 trace_id 贯穿技术链路：
           orders.trace_id
           stock_ledger.trace_id
 
@@ -29,6 +29,11 @@ async def test_full_trace_order_outbound(session: AsyncSession):
           source="order"
           source="ledger"
           source="outbound"（如实现已接入）
+
+    说明：
+      - 这条测试验证的是 trace 聚合链路，而不是统一业务事件头。
+      - 统一业务事件锚点是 event_id；但当前这条 outbound trace 用例不对
+        stock_ledger.event_id 做强断言。
     """
     # === 0) 准备基础数据：选一个已有 item + 仓库 ===
     row = await session.execute(text("SELECT id FROM items ORDER BY id ASC LIMIT 1"))
@@ -180,7 +185,7 @@ async def test_full_trace_order_outbound(session: AsyncSession):
         await session.execute(
             text(
                 """
-                SELECT id
+                SELECT id, event_id
                   FROM stock_ledger
                  WHERE trace_id = :tid
                  ORDER BY id DESC
@@ -189,5 +194,5 @@ async def test_full_trace_order_outbound(session: AsyncSession):
             ),
             {"tid": trace_id},
         )
-    ).first()
-    assert row_ledger
+    ).mappings().first()
+    assert row_ledger is not None

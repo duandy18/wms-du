@@ -116,6 +116,7 @@ def init_models(
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",
         "app.wms.stock.models.stock_snapshot",
+        "app.wms.inbound.models.inbound_event",
         "app.models.order",
         "app.models.order_item",
         "app.models.order_address",
@@ -129,7 +130,13 @@ def init_models(
         if _safe_import(mod):
             loaded.append(mod)
 
-    for pkg_name in ("app.models", "app.procurement.models", "app.pms.items.models", "app.pms.suppliers.models"):
+    for pkg_name in (
+        "app.models",
+        "app.procurement.models",
+        "app.pms.items.models",
+        "app.pms.suppliers.models",
+        "app.wms.inbound.models",
+    ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:
                 continue
