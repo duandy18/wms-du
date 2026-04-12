@@ -20,6 +20,10 @@ class StockLedger(Base):
     - batch_code 已从 stock_ledger 移除（不再展示/不再参与任何结构语义）
     - lot 维度一致性由复合外键强制：
       (lot_id, warehouse_id, item_id) -> lots(id, warehouse_id, item_id)
+
+    当前补充：
+    - event_id 为统一 WMS 业务事件锚点（wms_events.id）
+    - trace_id 为技术链路锚点
     """
 
     __tablename__ = "stock_ledger"
@@ -87,6 +91,11 @@ class StockLedger(Base):
         nullable=True,
     )
 
+    event_id: Mapped[int | None] = mapped_column(
+        sa.Integer,
+        nullable=True,
+    )
+
     production_date: Mapped[date | None] = mapped_column(
         sa.Date,
         nullable=True,
@@ -103,6 +112,12 @@ class StockLedger(Base):
             ["lot_id", "warehouse_id", "item_id"],
             ["lots.id", "lots.warehouse_id", "lots.item_id"],
             name="fk_stock_ledger_lot_dims",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["event_id"],
+            ["wms_events.id"],
+            name="fk_stock_ledger_event",
             ondelete="RESTRICT",
         ),
         # ✅ 幂等唯一键仅基于 lot 结构
@@ -122,9 +137,9 @@ class StockLedger(Base):
             "warehouse_id",
             "lot_id",
         ),
-        # ✅ occurred_at 单列索引：仅保留一个，与 DB 对齐（避免重复索引回潮）
         sa.Index("ix_stock_ledger_occurred_at", "occurred_at"),
         sa.Index("ix_stock_ledger_trace_id", "trace_id"),
+        sa.Index("ix_stock_ledger_event_id", "event_id"),
         sa.Index("ix_stock_ledger_sub_reason_time", "sub_reason", "occurred_at"),
         sa.Index("ix_stock_ledger_reason_canon_time", "reason_canon", "occurred_at"),
     )
@@ -136,5 +151,6 @@ class StockLedger(Base):
             f"lot={self.lot_id} "
             f"delta={self.delta} after={self.after_qty} "
             f"prod={self.production_date} exp={self.expiry_date} "
+            f"event_id={self.event_id} "
             f"trace_id={self.trace_id}>"
         )

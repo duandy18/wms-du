@@ -14,6 +14,11 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
     """
     验证 StockService.adjust 会把 trace_id 落在 stock_ledger.trace_id 上。
 
+    说明：
+      - 这是“技术链路锚点”测试，不是“业务事件锚点”测试。
+      - 当前 StockService.adjust 这条原语入口并不要求一定创建 wms_events 头，
+        因此这里不对 stock_ledger.event_id 做强断言，只确认 trace_id 可追踪。
+
     步骤：
       1) 从 items 表拿一条现有 item_id；
       2) 调用 adjust 做一次入库（delta>0），带上 trace_id='TR-UNIT-1'；
@@ -51,7 +56,7 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
     row = await session.execute(
         text(
             """
-            SELECT trace_id
+            SELECT trace_id, event_id
               FROM stock_ledger
              WHERE ref = :ref
              ORDER BY id DESC
@@ -60,6 +65,7 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
         ),
         {"ref": ref},
     )
-    result = row.scalar_one_or_none()
+    result = row.mappings().first()
 
-    assert result == trace_id
+    assert result is not None
+    assert str(result["trace_id"]) == trace_id

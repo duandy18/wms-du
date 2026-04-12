@@ -44,6 +44,11 @@ MODEL_SPECS = [
     ("app.wms.ledger.models.stock_ledger", "StockLedger"),
     ("app.wms.stock.models.stock_snapshot", "StockSnapshot"),
     # ------------------------------------------------------------------
+    # WMS 统一事件头 + 入库事件行
+    # ------------------------------------------------------------------
+    ("app.wms.inbound.models.inbound_event", "WmsEvent"),
+    ("app.wms.inbound.models.inbound_event", "InboundEventLine"),
+    # ------------------------------------------------------------------
     # 订单 & 出库
     # ------------------------------------------------------------------
     ("app.models.order", "Order"),
@@ -93,13 +98,13 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 采购系统
     # ------------------------------------------------------------------
-    ("app.models.purchase_order", "PurchaseOrder"),
-    ("app.models.purchase_order_line", "PurchaseOrderLine"),
+    ("app.procurement.models.purchase_order", "PurchaseOrder"),
+    ("app.procurement.models.purchase_order_line", "PurchaseOrderLine"),
     # ------------------------------------------------------------------
-    # 收货事实（唯一模型）
+    # 收货事实（兼容期保留，待旧主线退役）
     # ------------------------------------------------------------------
-    ("app.models.inbound_receipt", "InboundReceipt"),
-    ("app.models.inbound_receipt", "InboundReceiptLine"),
+    ("app.procurement.models.inbound_receipt", "InboundReceipt"),
+    ("app.procurement.models.inbound_receipt", "InboundReceiptLine"),
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------
@@ -174,6 +179,8 @@ __all__ = [
     "StockLot",
     "StockLedger",
     "StockSnapshot",
+    "WmsEvent",
+    "InboundEventLine",
     # ---- Orders ----
     "Order",
     "OrderItem",
@@ -215,7 +222,7 @@ __all__ = [
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",
-    # ---- Inbound ----
+    # ---- Inbound (legacy receipt compatibility) ----
     "InboundReceipt",
     "InboundReceiptLine",
     # ---- Return ----
@@ -224,19 +231,17 @@ __all__ = [
     # ---- Internal Outbound ----
     "InternalOutboundDoc",
     "InternalOutboundLine",
-    # ---- Shipment / Ledger / Billing ----
+    # ---- Shipping ----
     "TransportShipment",
     "ShippingRecord",
     "CarrierBillItem",
     "ShippingRecordReconciliation",
-    # ---- Pricing Templates ----
+    "ShippingProviderPricingTemplateSurchargeConfigCity",
+    "ShippingProviderPricingTemplateSurchargeConfig",
     "ShippingProviderPricingTemplate",
     "ShippingProviderPricingTemplateValidationRecord",
     "ShippingProviderPricingTemplateModuleRange",
     "ShippingProviderPricingTemplateDestinationGroup",
     "ShippingProviderPricingTemplateDestinationGroupMember",
     "ShippingProviderPricingTemplateMatrix",
-    "ShippingProviderPricingTemplateSurchargeConfig",
-    "ShippingProviderPricingTemplateSurchargeConfigCity",
-    # ---- Pricing Schemes ----
 ]

@@ -60,6 +60,7 @@ def _need_patch(
     reason_canon: Optional[str],
     sub_reason: Optional[str],
     trace_id: Optional[str],
+    event_id: Optional[int],
     production_date: Optional[date],
     expiry_date: Optional[date],
 ) -> bool:
@@ -68,6 +69,7 @@ def _need_patch(
             reason_canon is not None,
             sub_reason is not None,
             trace_id is not None,
+            event_id is not None,
             production_date is not None,
             expiry_date is not None,
         ]
@@ -107,6 +109,7 @@ async def write_ledger(
     ref_line: int = 1,
     occurred_at: Optional[datetime] = None,
     trace_id: Optional[str] = None,
+    event_id: Optional[int] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
     lot_id: int,
@@ -118,6 +121,10 @@ async def write_ledger(
     Phase 3 结构收口：
     - 只有 reason_canon='RECEIPT' 的台账行允许携带 production/expiry（canonical 快照）
     - 其他 reason 一律禁止携带日期（由 DB check + 这里的写入规范共同保证）
+
+    当前补充：
+    - event_id 为统一 WMS 业务事件锚点
+    - trace_id 为技术链路锚点
 
     注意：
     - batch_code 为历史兼容入参（展示码 lots.lot_code），stock_ledger 表终态不落 batch_code 列。
@@ -151,6 +158,7 @@ async def write_ledger(
         after_qty=int(after_qty),
         occurred_at=occurred_at,
         trace_id=trace_id,
+        event_id=event_id,
         production_date=production_date,
         expiry_date=expiry_date,
     )
@@ -173,6 +181,7 @@ async def write_ledger(
         reason_canon=reason_canon,
         sub_reason=sub_reason,
         trace_id=trace_id,
+        event_id=event_id,
         production_date=production_date,
         expiry_date=expiry_date,
     ):
@@ -182,6 +191,7 @@ async def write_ledger(
         "reason_canon": sa.func.coalesce(StockLedger.reason_canon, reason_canon),
         "sub_reason": sa.func.coalesce(StockLedger.sub_reason, sub_reason),
         "trace_id": sa.func.coalesce(StockLedger.trace_id, trace_id),
+        "event_id": sa.func.coalesce(StockLedger.event_id, event_id),
         # 日期快照不可变：只允许 NULL -> 值（coalesce 保证）
         "production_date": sa.func.coalesce(StockLedger.production_date, production_date),
         "expiry_date": sa.func.coalesce(StockLedger.expiry_date, expiry_date),

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.procurement.services.inbound_service import InboundService
+from app.procurement.services.inbound_service import InboundService
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc

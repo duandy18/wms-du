@@ -19,8 +19,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.analytics.routers.finance_overview import router as finance_overview_router
     from app.diagnostics.routers.flow_replay import router as flow_replay_router
     from app.tms.routers.geo_cn import router as geo_router
-    from app.wms.procurement.routers.purchase_orders_receive import po_receive_router as po_receive_router
-    from app.wms.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
+    from app.procurement.routers.purchase_orders_receive import po_receive_router as po_receive_router
+    from app.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
     from app.diagnostics.routers.intelligence import router as intelligence_router
     from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
@@ -44,12 +44,13 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     )
     from app.analytics.routers.orders_sla_stats_routes import router as orders_sla_stats_router
     from app.analytics.routers.orders_stats_routes import router as orders_stats_router
+    from app.wms.inbound.routers.inbound_commit import router as inbound_commit_router
     from app.wms.outbound.routers.outbound import router as outbound_router
     from app.wms.outbound.routers.pick import router as pick_router
     from app.wms.outbound.routers.pick_tasks import router as pick_tasks_router
     from app.wms.outbound.routers.print_jobs import router as print_jobs_router
-    from app.wms.procurement.routers.purchase_orders import router as purchase_orders_router
-    from app.wms.procurement.routers.purchase_reports import router as purchase_reports_router
+    from app.procurement.routers.purchase_orders import router as purchase_orders_router
+    from app.procurement.routers.purchase_reports import router as purchase_reports_router
     from app.wms.outbound.routers.return_tasks import router as return_tasks_router
     from app.wms.stock.routers.inventory import router as stock_inventory_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
@@ -116,6 +117,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
     app.include_router(inbound_receipts_router)
+    app.include_router(inbound_commit_router)
     app.include_router(po_receive_router)
     app.include_router(return_tasks_router)
     app.include_router(pick_tasks_router)

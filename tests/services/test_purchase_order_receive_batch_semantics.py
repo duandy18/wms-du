@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from app.wms.procurement.services.receive_po_line import receive_po_line
+from app.procurement.services.receive_po_line import receive_po_line
 from tests.helpers.po_testkit import create_po_with_line_and_draft_receipt
 
 
