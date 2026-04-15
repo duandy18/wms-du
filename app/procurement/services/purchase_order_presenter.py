@@ -1,63 +1,29 @@
 # app/wms/procurement/services/purchase_order_presenter.py
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.procurement.contracts.purchase_order import PurchaseOrderWithLinesOut
 from app.procurement.services.purchase_order_line_mapper import map_po_line_out
 
 
-async def _load_po_confirmed_received_base_map(
-    session: AsyncSession, *, po_id: int
-) -> Dict[int, int]:
-    sql = text(
-        """
-        SELECT rl.po_line_id AS po_line_id,
-               COALESCE(SUM(rl.qty_base), 0)::int AS qty
-          FROM inbound_receipt_lines rl
-          JOIN inbound_receipts r
-            ON r.id = rl.receipt_id
-         WHERE r.source_type = 'PO'
-           AND r.source_id = :po_id
-           AND r.status = 'CONFIRMED'
-           AND rl.po_line_id IS NOT NULL
-         GROUP BY rl.po_line_id
-        """
-    )
-    rows = (await session.execute(sql, {"po_id": int(po_id)})).mappings().all()
-    out: Dict[int, int] = {}
-    for r in rows:
-        pid = int(r.get("po_line_id") or 0)
-        if pid > 0:
-            out[pid] = int(r.get("qty") or 0)
-    return out
-
-
 async def build_po_with_lines_out(
     session: AsyncSession, po: Any
 ) -> PurchaseOrderWithLinesOut:
+    _ = session
+
     if getattr(po, "lines", None):
         po.lines.sort(key=lambda line: (line.line_no, line.id))
 
-    received_map = await _load_po_confirmed_received_base_map(
-        session, po_id=int(po.id)
-    )
-
     out_lines: List[Any] = []
     for ln in po.lines or []:
-        received_base = int(received_map.get(int(getattr(ln, "id")), 0) or 0)
-        out_lines.append(
-            map_po_line_out(
-                ln,
-                received_base=received_base,
-            )
-        )
+        out_lines.append(map_po_line_out(ln))
 
     return PurchaseOrderWithLinesOut(
         id=po.id,
+        po_no=str(getattr(po, "po_no") or ""),
         warehouse_id=po.warehouse_id,
         supplier_id=int(getattr(po, "supplier_id")),
         supplier_name=str(getattr(po, "supplier_name") or ""),

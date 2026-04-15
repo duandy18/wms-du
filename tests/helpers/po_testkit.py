@@ -115,6 +115,7 @@ async def create_po_with_line(
     - purchaser
     - purchase_time
     - status
+    - po_no
     - created_at/updated_at
 
     purchase_order_lines 必填（Phase M-5 结构化单位）：
@@ -143,10 +144,18 @@ async def create_po_with_line(
 
     now = datetime.now(tz=timezone.utc)
 
+    po_id_row = await session.execute(
+        text("SELECT nextval('purchase_orders_id_seq')")
+    )
+    po_id = int(po_id_row.scalar_one())
+    po_no = f"PO-{po_id}"
+
     po_row = await session.execute(
         text(
             """
             INSERT INTO purchase_orders (
+                id,
+                po_no,
                 warehouse_id,
                 supplier_id, supplier_name,
                 purchaser,
@@ -155,6 +164,8 @@ async def create_po_with_line(
                 created_at, updated_at
             )
             VALUES (
+                :po_id,
+                :po_no,
                 :wid,
                 :sid, :sname,
                 :purchaser,
@@ -166,6 +177,8 @@ async def create_po_with_line(
             """
         ),
         {
+            "po_id": po_id,
+            "po_no": po_no,
             "wid": wid,
             "sid": int(supplier_id),
             "sname": supplier_name_val,

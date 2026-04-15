@@ -23,6 +23,7 @@ class PurchaseOrder(Base):
     - 不再保存 item_id / qty_ordered / qty_received / unit_cost 等行级信息；
     - 所有数量与金额都以行表（purchase_order_lines）为事实来源；
     - 头表表达“计划合同”与“计划生命周期”信息：
+        * 采购业务单号（po_no）
         * 供应商（supplier_id + supplier_name 快照）
         * 仓库
         * 采购人 / 采购时间
@@ -33,13 +34,21 @@ class PurchaseOrder(Base):
         * 备注（可选）
 
     重要边界：
-    - 收货事实、批次、生产日期、库存写入等属于 Receipt（事实层）
+    - 收货事实、批次、生产日期、库存写入等属于 Receipt / Inbound Event（事实层）
     - PO 的执行进度/完成与否属于“派生聚合视图”，不应混入 status 语义
     """
 
     __tablename__ = "purchase_orders"
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+
+    # ✅ 新增：采购业务单号
+    po_no: Mapped[str] = mapped_column(
+        sa.String(64),
+        nullable=False,
+        unique=True,
+        comment="采购业务单号（如 PO-123）",
+    )
 
     # ✅ 供应商：只保留主数据 ID + 下单快照（废除 supplier 自由文本）
     supplier_id: Mapped[int] = mapped_column(
@@ -148,7 +157,8 @@ class PurchaseOrder(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PO id={self.id} supplier_id={self.supplier_id} supplier_name={self.supplier_name!r} "
+            f"<PO id={self.id} po_no={self.po_no!r} "
+            f"supplier_id={self.supplier_id} supplier_name={self.supplier_name!r} "
             f"wh={self.warehouse_id} purchaser={self.purchaser!r} "
             f"status={self.status} total_amount={self.total_amount}>"
         )

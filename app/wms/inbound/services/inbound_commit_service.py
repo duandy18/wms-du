@@ -9,12 +9,15 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.procurement.repos.purchase_order_line_completion_repo import (
+    apply_completion_delta_for_event,
+)
 from app.wms.inbound.contracts.inbound_commit import (
     InboundCommitIn,
     InboundCommitOut,
     InboundCommitResultRow,
 )
-from app.wms.inbound.models.inbound_event import WmsEvent, InboundEventLine
+from app.wms.inbound.models.inbound_event import InboundEventLine, WmsEvent
 from app.wms.inbound.repos.barcode_resolve_repo import resolve_inbound_barcode
 from app.wms.inbound.repos.inbound_stock_write_repo import apply_inbound_stock
 from app.wms.inbound.repos.item_lookup_repo import get_item_policy_by_id
@@ -183,7 +186,9 @@ async def _resolve_line(
         raise HTTPException(status_code=400, detail=f"lot_code 禁止伪码：line={line_no}")
 
     expiry_policy = str(getattr(item_policy, "expiry_policy", "NONE") or "NONE").upper()
-    lot_source_policy = str(getattr(item_policy, "lot_source_policy", "INTERNAL_ONLY") or "INTERNAL_ONLY").upper()
+    lot_source_policy = str(
+        getattr(item_policy, "lot_source_policy", "INTERNAL_ONLY") or "INTERNAL_ONLY"
+    ).upper()
 
     if lot_source_policy in {"SUPPLIER", "SUPPLIER_ONLY"} and lot_code_input is None:
         raise HTTPException(
@@ -348,6 +353,14 @@ async def commit_inbound(
         )
 
     await session.flush()
+
+    # 采购来源：把本次正式事件的增量同步到采购行 completion 读表
+    if str(payload.source_type) == "PURCHASE_ORDER":
+        await apply_completion_delta_for_event(
+            session,
+            event_id=int(event.id),
+            occurred_at=payload.occurred_at,
+        )
 
     return InboundCommitOut(
         ok=True,

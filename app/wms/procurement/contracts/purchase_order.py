@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PurchaseOrderLineListOut(BaseModel):
@@ -114,64 +114,28 @@ class PurchaseOrderWithLinesOut(BaseModel):
 
 class PurchaseOrderCreateLineV2(BaseModel):
     """
-    PO 创建行输入（V2）——终态合同
+    PO 创建行输入（V2）——终态合同（Phase M-5+）
 
-    严格合同：
-    - 必填：line_no / item_id / uom_id / qty_input
-    - 可选商业字段：supply_price / discount_amount / discount_note / remark
-    - 快照与派生字段（item_name / ratio_to_base / qty_ordered_base）不允许前端直传
+    ✅ 强约束（不做兼容）：
+    - 必填 uom_id + qty_input（输入单位+数量）
+    - qty_base/qty_ordered_base 由服务层通过 item_uoms.ratio_to_base 推导
     """
-
-    line_no: int = Field(gt=0)
-    item_id: int = Field(gt=0)
-    uom_id: int = Field(gt=0)
-    qty_input: int = Field(gt=0)
-
-    supply_price: Optional[Decimal] = Field(default=None, ge=0)
-    discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
-    discount_note: Optional[str] = None
-    remark: Optional[str] = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("discount_note", "remark")
-    @classmethod
-    def _blank_to_none(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        s = v.strip()
-        return s or None
+    line_no: int
+    item_id: int
+    uom_id: int
+    qty_input: int
 
 
 class PurchaseOrderCreateV2(BaseModel):
     """
     PO 创建输入（V2）
     """
-
-    supplier_id: int = Field(gt=0)
-    warehouse_id: int = Field(gt=0)
+    supplier_id: int
+    warehouse_id: int
     purchaser: str
     purchase_time: datetime
     remark: Optional[str] = None
-    lines: List[PurchaseOrderCreateLineV2] = Field(min_length=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("purchaser")
-    @classmethod
-    def _validate_purchaser(cls, v: str) -> str:
-        s = v.strip()
-        if not s:
-            raise ValueError("purchaser 不能为空")
-        return s
-
-    @field_validator("remark")
-    @classmethod
-    def _normalize_remark(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        s = v.strip()
-        return s or None
+    lines: List[PurchaseOrderCreateLineV2]
 
 
 class PurchaseOrderCloseIn(BaseModel):
@@ -180,23 +144,10 @@ class PurchaseOrderCloseIn(BaseModel):
 
     endpoints_core.py 只使用 note 字段。
     """
-
     note: Optional[str] = None
 
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("note")
-    @classmethod
-    def _normalize_note(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        s = v.strip()
-        return s or None
-
 
 # -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# 历史 receive-line 合同（兼容期保留）
 # -----------------------------------------------------------------------------
 
 
@@ -210,7 +161,6 @@ class PurchaseOrderReceiveLineIn(BaseModel):
     - 输入字段统一为 lot_code
     - 日期字段可选；是否必填由商品 policy 驱动
     """
-
     line_id: Optional[int] = None
     line_no: Optional[int] = None
 

@@ -33,6 +33,7 @@ class InboundAtomicLineIn(_Base):
     识别原则：
     - item_id 与 barcode 至少提供一个
     - 商品名称不作为核心合同主识别键，只适合作为前端搜索辅助
+    - 对于采购来源，允许显式携带 po_line_id，保持上游计划行与正式事实行的连接
     """
 
     item_id: Annotated[int | None, Field(default=None, ge=1, description="商品 ID")]
@@ -40,6 +41,7 @@ class InboundAtomicLineIn(_Base):
 
     qty: Annotated[int, Field(gt=0, description="入库数量（当前按 base 数量解释）")]
     ref_line: Annotated[int | None, Field(default=None, ge=1, description="来源 ref 内顺序号（可选）")]
+    po_line_id: Annotated[int | None, Field(default=None, ge=1, description="采购来源时的采购单行 ID（可选）")]
 
     lot_code: Annotated[str | None, Field(default=None, max_length=128, description="批次码 / lot_code（可选）")]
     production_date: date | None = Field(default=None, description="生产日期（可选）")

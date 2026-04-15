@@ -15,10 +15,8 @@ def _safe_int(v: object, default: int) -> int:
         return default
 
 
-def build_line_base_data(*, ln: Any, received_base: int) -> Dict[str, Any]:
+def build_line_base_data(*, ln: Any) -> Dict[str, Any]:
     ordered_base = get_qty_ordered_base(ln)
-    received_base_i = max(_safe_int(received_base or 0, 0), 0)
-    remaining_base = max(0, ordered_base - received_base_i)
 
     discount_amount = getattr(ln, "discount_amount", None)
     try:
@@ -42,18 +40,12 @@ def build_line_base_data(*, ln: Any, received_base: int) -> Dict[str, Any]:
             ln, "purchase_ratio_to_base_snapshot", 1
         ),
         "qty_ordered_base": ordered_base,
-        "qty_received_base": received_base_i,
-        "qty_remaining_base": remaining_base,
         "remark": getattr(ln, "remark", None),
         "created_at": getattr(ln, "created_at"),
         "updated_at": getattr(ln, "updated_at"),
     }
 
 
-def map_po_line_out(
-    ln: Any,
-    *,
-    received_base: int,
-) -> PurchaseOrderLineListOut:
-    data = build_line_base_data(ln=ln, received_base=received_base)
+def map_po_line_out(ln: Any) -> PurchaseOrderLineListOut:
+    data = build_line_base_data(ln=ln)
     return PurchaseOrderLineListOut.model_validate(data)
