@@ -1,4 +1,4 @@
-# app/wms/procurement/contracts/purchase_order.py
+# app/procurement/contracts/purchase_order.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,7 +17,9 @@ class PurchaseOrderLineListOut(BaseModel):
     # ✅ 后端快照：用于 PO 详情展示与契约校验（Phase M-5）
     item_name: Optional[str] = None
     item_sku: Optional[str] = None
+    spec_text: Optional[str] = None
 
+    purchase_uom_id_snapshot: int
     qty_ordered_input: int
     purchase_ratio_to_base_snapshot: int
     qty_ordered_base: int
@@ -88,6 +90,8 @@ class PurchaseOrderWithLinesOut(BaseModel):
 
     remark: Optional[str] = None
     status: str
+    editable: bool = False
+    edit_block_reason: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime
@@ -108,7 +112,7 @@ class PurchaseOrderWithLinesOut(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# V2 Create / Close inputs (required by purchase_orders_routes_core)
+# V2 Create / Update / Close inputs
 # -----------------------------------------------------------------------------
 
 
@@ -172,6 +176,18 @@ class PurchaseOrderCreateV2(BaseModel):
             return None
         s = v.strip()
         return s or None
+
+
+class PurchaseOrderUpdateLineV2(PurchaseOrderCreateLineV2):
+    """
+    PO 更新行输入（V2）——严格 full replace 合同
+    """
+
+
+class PurchaseOrderUpdateV2(PurchaseOrderCreateV2):
+    """
+    PO 更新输入（V2）——严格 full replace 合同
+    """
 
 
 class PurchaseOrderCloseIn(BaseModel):

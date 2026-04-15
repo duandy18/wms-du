@@ -1,16 +1,41 @@
-# app/wms/procurement/helpers/purchase_reports.py
+# app/procurement/helpers/purchase_reports.py
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.procurement.models.inbound_receipt import InboundReceipt
+from app.pms.public.items.services.item_read_service import ItemReadService
 from app.procurement.models.purchase_order import PurchaseOrder
+from app.procurement.models.purchase_order_line_completion import PurchaseOrderLineCompletion
 
 
-TimeMode = str  # "occurred" | "po_created" | "po_purchase_time"
+TimeMode = str  # "purchase_time" | "last_received"
+
+
+async def resolve_report_item_ids(
+    session: AsyncSession,
+    *,
+    item_id: Optional[int],
+    item_keyword: Optional[str],
+) -> Optional[list[int]]:
+    """
+    返回：
+    - [item_id]：显式 item_id 过滤
+    - [ids...]：按 PMS public item 搜索出的 item_id 集合
+    - None：不加 item 过滤
+    """
+    if item_id is not None:
+        return [int(item_id)]
+
+    kw = str(item_keyword or "").strip()
+    if not kw:
+        return None
+
+    svc = ItemReadService(session)
+    return await svc.asearch_report_item_ids_by_keyword(keyword=kw)
 
 
 def apply_common_filters(
@@ -24,80 +49,65 @@ def apply_common_filters(
     time_mode: TimeMode,
 ):
     """
-    采购报表通用过滤（Receipt 事实口径）：
+    采购报表通用过滤（completion 统一口径）：
 
-    - 统计事实来源：InboundReceipt / InboundReceiptLine
-    - 时间维度（time_mode）：
-        * occurred（默认）：按 InboundReceipt.occurred_at 过滤
-        * po_created：按 PurchaseOrder.created_at 过滤（仅作为维度，不作为统计来源）
-        * po_purchase_time：按 PurchaseOrder.purchase_time 过滤（仅作为维度，不作为统计来源）
-    - warehouse_id / supplier_id：按 InboundReceipt 字段过滤（事实维度）
-    - status：按 PurchaseOrder.status 过滤（仅作为维度；若不关心可不传）
-      注意：调用方应当已经 outer join 了 PurchaseOrder（通过 source_type/source_id 的链路），否则 SQL 会无 PurchaseOrder 表引用。
+    - 统计来源：PurchaseOrderLineCompletion
+    - 时间口径（time_mode）：
+        * purchase_time（默认）：按 completion.purchase_time 过滤
+        * last_received：按 completion.last_received_at 过滤
+    - warehouse_id / supplier_id：按 completion 快照字段过滤
+    - status：按 PurchaseOrder.status 过滤
+    - DRAFT 永远不进采购报表主口径
     """
 
-    # 时间范围：默认按收货发生时间（事实时间）
-    if time_mode == "occurred":
-        if date_from is not None:
-            stmt = stmt.where(
-                InboundReceipt.occurred_at >= datetime.combine(date_from, datetime.min.time())
-            )
-        if date_to is not None:
-            stmt = stmt.where(
-                InboundReceipt.occurred_at <= datetime.combine(date_to, datetime.max.time())
-            )
+    normalized_time_mode = str(time_mode or "purchase_time").strip().lower()
 
-    # 维度时间：按 PO 创建时间 / PO 采购时间切片（统计仍来自 Receipt）
-    elif time_mode == "po_created":
+    stmt = stmt.where(PurchaseOrder.status != "DRAFT")
+
+    if normalized_time_mode == "last_received":
         if date_from is not None:
             stmt = stmt.where(
-                PurchaseOrder.created_at >= datetime.combine(date_from, datetime.min.time())
+                PurchaseOrderLineCompletion.last_received_at
+                >= datetime.combine(date_from, datetime.min.time())
             )
         if date_to is not None:
             stmt = stmt.where(
-                PurchaseOrder.created_at <= datetime.combine(date_to, datetime.max.time())
-            )
-    elif time_mode == "po_purchase_time":
-        if date_from is not None:
-            stmt = stmt.where(
-                PurchaseOrder.purchase_time >= datetime.combine(date_from, datetime.min.time())
-            )
-        if date_to is not None:
-            stmt = stmt.where(
-                PurchaseOrder.purchase_time <= datetime.combine(date_to, datetime.max.time())
+                PurchaseOrderLineCompletion.last_received_at
+                <= datetime.combine(date_to, datetime.max.time())
             )
     else:
-        # 防御：未知 time_mode 时退回事实时间（不允许报表口径漂移）
         if date_from is not None:
             stmt = stmt.where(
-                InboundReceipt.occurred_at >= datetime.combine(date_from, datetime.min.time())
+                PurchaseOrderLineCompletion.purchase_time
+                >= datetime.combine(date_from, datetime.min.time())
             )
         if date_to is not None:
             stmt = stmt.where(
-                InboundReceipt.occurred_at <= datetime.combine(date_to, datetime.max.time())
+                PurchaseOrderLineCompletion.purchase_time
+                <= datetime.combine(date_to, datetime.max.time())
             )
 
     if warehouse_id is not None:
-        stmt = stmt.where(InboundReceipt.warehouse_id == warehouse_id)
+        stmt = stmt.where(PurchaseOrderLineCompletion.warehouse_id == warehouse_id)
 
     if supplier_id is not None:
-        stmt = stmt.where(InboundReceipt.supplier_id == supplier_id)
+        stmt = stmt.where(PurchaseOrderLineCompletion.supplier_id == supplier_id)
 
-    if status:
-        stmt = stmt.where(PurchaseOrder.status == status.strip().upper())
+    normalized_status = str(status or "").strip().upper()
+    if normalized_status:
+        stmt = stmt.where(PurchaseOrder.status == normalized_status)
 
     return stmt
 
 
-def time_mode_query(default: str = "occurred"):
+def time_mode_query(default: str = "purchase_time"):
     """
     统一 Query 定义，避免每个路由散落文案。
 
-    occurred: 按收货发生时间（事实时间，默认）
-    po_created: 按 PO 创建时间（维度时间）
-    po_purchase_time: 按 PO 采购时间（维度时间）
+    purchase_time: 按采购时间（默认）
+    last_received: 按最后收货时间
     """
     return Query(
         default,
-        description="时间口径：occurred=按收货发生时间（事实，默认）；po_created=按PO创建时间（维度）；po_purchase_time=按PO采购时间（维度）",
+        description="时间口径：purchase_time=按采购时间（默认）；last_received=按最后收货时间",
     )

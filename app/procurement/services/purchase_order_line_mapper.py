@@ -1,4 +1,4 @@
-# app/wms/procurement/services/purchase_order_line_mapper.py
+# app/procurement/services/purchase_order_line_mapper.py
 from __future__ import annotations
 
 from decimal import Decimal
@@ -32,6 +32,7 @@ def build_line_base_data(*, ln: Any) -> Dict[str, Any]:
         "item_name": getattr(ln, "item_name", None),
         "item_sku": getattr(ln, "item_sku", None),
         "spec_text": getattr(ln, "spec_text", None),
+        "purchase_uom_id_snapshot": _safe_int(getattr(ln, "purchase_uom_id_snapshot"), 0),
         "supply_price": getattr(ln, "supply_price", None),
         "discount_amount": discount_amount_val,
         "discount_note": getattr(ln, "discount_note", None),

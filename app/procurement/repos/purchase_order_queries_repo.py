@@ -1,4 +1,4 @@
-# app/wms/procurement/repos/purchase_order_queries_repo.py
+# app/procurement/repos/purchase_order_queries_repo.py
 from __future__ import annotations
 
 from typing import Optional
@@ -22,7 +22,8 @@ async def get_po_with_lines(
     stmt = (
         select(PurchaseOrder)
         .options(selectinload(PurchaseOrder.lines))
-        .where(PurchaseOrder.id == po_id)
+        .execution_options(populate_existing=True)
+        .where(PurchaseOrder.id == int(po_id))
     )
     if for_update:
         stmt = stmt.with_for_update()

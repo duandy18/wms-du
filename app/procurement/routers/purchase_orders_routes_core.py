@@ -1,4 +1,4 @@
-# app/wms/procurement/routers/purchase_orders_routes_core.py
+# app/procurement/routers/purchase_orders_routes_core.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -13,6 +13,7 @@ from app.procurement.models.purchase_order import PurchaseOrder
 from app.procurement.contracts.purchase_order import (
     PurchaseOrderCloseIn,
     PurchaseOrderCreateV2,
+    PurchaseOrderUpdateV2,
     PurchaseOrderWithLinesOut,
 )
 from app.procurement.services.purchase_order_service import PurchaseOrderService
@@ -54,6 +55,36 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         po_out = await svc.get_po_with_lines(session, po_id)
         if po_out is None:
             raise HTTPException(status_code=404, detail="PurchaseOrder not found")
+        return po_out
+
+    @router.put("/{po_id}", response_model=PurchaseOrderWithLinesOut)
+    async def update_purchase_order(
+        po_id: int,
+        payload: PurchaseOrderUpdateV2,
+        session: AsyncSession = Depends(get_session),
+    ) -> PurchaseOrderWithLinesOut:
+        try:
+            await svc.update_po_v2(
+                session,
+                po_id=int(po_id),
+                supplier_id=payload.supplier_id,
+                warehouse_id=payload.warehouse_id,
+                purchaser=payload.purchaser,
+                purchase_time=payload.purchase_time,
+                remark=payload.remark,
+                lines=[line.model_dump() for line in payload.lines],
+            )
+            await session.commit()
+        except HTTPException:
+            await session.rollback()
+            raise
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        po_out = await svc.get_po_with_lines(session, int(po_id))
+        if po_out is None:
+            raise HTTPException(status_code=500, detail="Failed to load updated PurchaseOrder with lines")
         return po_out
 
     @router.post("/{po_id}/close", response_model=PurchaseOrderWithLinesOut)
