@@ -1,4 +1,4 @@
-# app/wms/procurement/services/purchase_order_create.py
+# app/procurement/services/purchase_order_create.py
 from __future__ import annotations
 
 from datetime import datetime

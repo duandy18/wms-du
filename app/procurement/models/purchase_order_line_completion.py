@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, text
@@ -28,6 +29,7 @@ class PurchaseOrderLineCompletion(Base):
         CheckConstraint("qty_received_base >= 0", name="ck_polc_qty_received_base_nonneg"),
         CheckConstraint("qty_remaining_base >= 0", name="ck_polc_qty_remaining_base_nonneg"),
         CheckConstraint("purchase_ratio_to_base_snapshot >= 1", name="ck_polc_ratio_positive"),
+        CheckConstraint("discount_amount_snapshot >= 0", name="ck_polc_discount_amount_snapshot_nonneg"),
         CheckConstraint(
             "qty_remaining_base = GREATEST(qty_ordered_base - qty_received_base, 0)",
             name="ck_polc_qty_remaining_consistent",
@@ -80,6 +82,21 @@ class PurchaseOrderLineCompletion(Base):
 
     qty_ordered_input: Mapped[int] = mapped_column(Integer, nullable=False)
     qty_ordered_base: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    supply_price_snapshot: Mapped[Decimal | None] = mapped_column(
+        sa.Numeric(12, 2),
+        nullable=True,
+    )
+    discount_amount_snapshot: Mapped[Decimal] = mapped_column(
+        sa.Numeric(14, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    planned_line_amount: Mapped[Decimal] = mapped_column(
+        sa.Numeric(14, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
 
     qty_received_base: Mapped[int] = mapped_column(
         Integer,

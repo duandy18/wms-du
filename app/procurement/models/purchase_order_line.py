@@ -1,4 +1,4 @@
-# app/models/purchase_order_line.py
+# app/procurement/models/purchase_order_line.py
 from __future__ import annotations
 
 from datetime import datetime
