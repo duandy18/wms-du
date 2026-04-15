@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,36 +13,6 @@ from app.procurement.models.purchase_order import PurchaseOrder
 from app.procurement.contracts.purchase_order import PurchaseOrderLineListOut, PurchaseOrderListItemOut
 from app.procurement.services.purchase_order_line_mapper import build_line_base_data
 from app.procurement.services.purchase_order_service import PurchaseOrderService
-
-
-async def _load_confirmed_received_base_map(
-    session: AsyncSession, *, po_line_ids: list[int]
-) -> dict[int, int]:
-    if not po_line_ids:
-        return {}
-
-    sql = text(
-        """
-        SELECT rl.po_line_id AS po_line_id,
-               COALESCE(SUM(rl.qty_base), 0)::int AS qty
-          FROM inbound_receipt_lines rl
-          JOIN inbound_receipts r
-            ON r.id = rl.receipt_id
-         WHERE r.source_type = 'PO'
-           AND r.status = 'CONFIRMED'
-           AND rl.po_line_id = ANY(:ids)
-         GROUP BY rl.po_line_id
-        """
-    )
-
-    rows = (await session.execute(sql, {"ids": [int(x) for x in po_line_ids]})).mappings().all()
-
-    out: dict[int, int] = {}
-    for r in rows:
-        pid = int(r.get("po_line_id") or 0)
-        if pid > 0:
-            out[pid] = int(r.get("qty") or 0)
-    return out
 
 
 def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
@@ -70,17 +40,6 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
         res = await session.execute(stmt)
         rows = list(res.scalars())
 
-        po_line_ids: list[int] = []
-        for po in rows:
-            for ln in po.lines or []:
-                lid = getattr(ln, "id", None)
-                if lid is not None:
-                    po_line_ids.append(int(lid))
-
-        received_map = await _load_confirmed_received_base_map(
-            session, po_line_ids=po_line_ids
-        )
-
         out: List[PurchaseOrderListItemOut] = []
 
         for po in rows:
@@ -90,11 +49,7 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
             line_out: List[PurchaseOrderLineListOut] = []
 
             for ln in po.lines or []:
-                ln_id = int(getattr(ln, "id"))
-                received_base = int(received_map.get(ln_id, 0) or 0)
-
-                data = build_line_base_data(ln=ln, received_base=received_base)
-
+                data = build_line_base_data(ln=ln)
                 line_out.append(
                     PurchaseOrderLineListOut.model_validate(data)
                 )
@@ -102,6 +57,7 @@ def register(router: APIRouter, _svc: PurchaseOrderService) -> None:
             out.append(
                 PurchaseOrderListItemOut(
                     id=int(getattr(po, "id")),
+                    po_no=str(getattr(po, "po_no") or ""),
                     warehouse_id=int(getattr(po, "warehouse_id")),
                     supplier_id=int(getattr(po, "supplier_id")),
                     supplier_name=str(getattr(po, "supplier_name") or ""),

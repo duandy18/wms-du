@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -16,8 +15,6 @@ from app.procurement.contracts.purchase_order import (
     PurchaseOrderCreateV2,
     PurchaseOrderWithLinesOut,
 )
-from app.procurement.contracts.purchase_order_receipts import PurchaseOrderReceiptEventOut
-from app.procurement.services.purchase_order_receipts import list_po_receipt_events
 from app.procurement.services.purchase_order_service import PurchaseOrderService
 
 UTC = timezone.utc
@@ -103,13 +100,3 @@ def register(router: APIRouter, svc: PurchaseOrderService) -> None:
         except Exception as e:
             await session.rollback()
             raise HTTPException(status_code=400, detail=str(e))
-
-    @router.get("/{po_id}/receipts", response_model=List[PurchaseOrderReceiptEventOut])
-    async def get_purchase_order_receipts(
-        po_id: int,
-        session: AsyncSession = Depends(get_session),
-    ) -> List[PurchaseOrderReceiptEventOut]:
-        try:
-            return await list_po_receipt_events(session, po_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e

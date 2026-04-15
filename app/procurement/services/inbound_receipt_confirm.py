@@ -70,6 +70,7 @@ async def confirm_receipt(
     for idx, rl in enumerate(receipt_lines, start=1):
         item_id = int(getattr(rl, "item_id"))
         qty_delta = int(getattr(rl, "qty_base", 0) or 0)
+        po_line_id = getattr(rl, "po_line_id", None)
 
         item = item_map.get(item_id)
         if item is None:
@@ -77,6 +78,19 @@ async def confirm_receipt(
                 status_code=422,
                 error_code="ITEM_NOT_FOUND",
                 message=f"商品不存在：item_id={item_id}",
+            )
+
+        if po_line_id is None:
+            raise_problem(
+                status_code=422,
+                error_code="RECEIPT_LINE_PO_LINE_REQUIRED",
+                message="采购收货确认必须携带 po_line_id。",
+                details=[
+                    {
+                        "line_no": int(getattr(rl, "line_no", idx) or idx),
+                        "item_id": int(item_id),
+                    }
+                ],
             )
 
         raw_production_date = getattr(rl, "production_date", None)
@@ -114,6 +128,7 @@ async def confirm_receipt(
                 "item_id": int(item_id),
                 "qty": int(qty_delta),
                 "ref_line": int(idx),
+                "po_line_id": int(po_line_id),
                 "lot_code": getattr(rl, "lot_code_input", None),
                 "production_date": resolved_production_date,
                 "expiry_date": resolved_expiry_date,

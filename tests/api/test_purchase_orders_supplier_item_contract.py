@@ -69,18 +69,26 @@ async def _pick_any_uom_id(session: AsyncSession, *, item_id: int) -> int:
     return int(got2)
 
 
-def _assert_po_line_contract_m5(line: Dict[str, Any]) -> None:
+def _assert_po_head_contract(data: Dict[str, Any]) -> None:
+    assert "id" in data, data
+    assert isinstance(data["id"], int), data
+
+    assert "po_no" in data, data
+    po_no = str(data.get("po_no") or "").strip()
+    assert po_no, data
+    assert po_no.startswith("PO-"), data
+
+
+def _assert_po_line_plan_contract_m5(line: Dict[str, Any]) -> None:
     """
     Phase M-5：PO 行单位合同（结构化）
-    - qty_ordered_base（唯一事实口径）
-    - qty_ordered_input + purchase_ratio_to_base_snapshot（解释器）
+    - qty_ordered_base（唯一计划事实口径）
+    - qty_ordered_input + purchase_ratio_to_base_snapshot（计划解释器）
     """
     for k in (
         "qty_ordered_base",
         "qty_ordered_input",
         "purchase_ratio_to_base_snapshot",
-        "qty_received_base",
-        "qty_remaining_base",
     ):
         assert k in line, line
         assert isinstance(line[k], int), line
@@ -125,10 +133,8 @@ async def test_create_po_rejects_nonexistent_item(client: httpx.AsyncClient) -> 
     headers = await _login_admin_headers(client)
 
     payload = {
-        "supplier": "S1",
         "warehouse_id": 1,
         "supplier_id": 1,
-        "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
         "lines": [{"line_no": 1, "item_id": 9999, "uom_id": 1, "qty_input": 1}],
@@ -149,10 +155,8 @@ async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClien
     headers = await _login_admin_headers(client)
 
     payload = {
-        "supplier": "S1",
         "warehouse_id": 1,
         "supplier_id": 1,
-        "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
         "lines": [{"line_no": 1, "item_id": 1, "uom_id": 1, "qty_input": 1}],
@@ -179,10 +183,8 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient, 
     uom_id = await _pick_any_uom_id(session, item_id=item_id)
 
     payload = {
-        "supplier": "S1",
         "warehouse_id": 1,
         "supplier_id": 1,
-        "supplier_name": "S1",
         "purchaser": "UT",
         "purchase_time": "2026-01-14T10:00:00Z",
         "lines": [{"line_no": 1, "item_id": item_id, "uom_id": int(uom_id), "qty_input": 2}],
@@ -191,6 +193,8 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient, 
     assert r.status_code == 200, r.text
 
     data = r.json()
+    _assert_po_head_contract(data)
+
     assert data.get("supplier_id") == 1
     assert isinstance(data.get("lines"), list)
     assert len(data["lines"]) == 1
@@ -198,5 +202,5 @@ async def test_create_po_success_with_supplier_items(client: httpx.AsyncClient, 
     line = data["lines"][0]
     assert int(line["item_id"]) == item_id
 
-    _assert_po_line_contract_m5(line)
+    _assert_po_line_plan_contract_m5(line)
     assert int(line["qty_ordered_base"]) == 2 * int(line["purchase_ratio_to_base_snapshot"])

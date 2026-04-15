@@ -5,13 +5,19 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.procurement.models.purchase_order import PurchaseOrder
-from app.procurement.models.purchase_order_line import PurchaseOrderLine
 from app.pms.public.items.contracts.item_basic import ItemBasic
 from app.pms.public.items.services.item_read_service import ItemReadService
+from app.pms.public.suppliers.services.supplier_read_service import SupplierReadService
+from app.procurement.repos.purchase_order_create_repo import (
+    insert_purchase_order_head,
+    insert_purchase_order_lines,
+    pick_default_purchase_uom,
+    require_item_uom_ratio_to_base,
+    reserve_purchase_order_id,
+)
 
 
 async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[int, ItemBasic]:
@@ -21,20 +27,15 @@ async def _load_items_map(session: AsyncSession, item_ids: List[int]) -> Dict[in
     return await svc.aget_basics_by_item_ids(item_ids=item_ids)
 
 
-async def _require_supplier_snapshot_for_po(
+async def _require_supplier_snapshot_via_pms(
     session: AsyncSession,
     supplier_id: Optional[int],
 ) -> Tuple[int, str]:
     """
-    当前阶段先去掉 WMS procurement 对 PMS Supplier ORM 的直接依赖。
-
+    供应商真相直接来自 PMS public/service。
     返回：
     - supplier_id
     - supplier_name（用于 PO 快照）
-
-    说明：
-    - 这里只解决“跨域直接摸 Supplier ORM”问题
-    - 还没有把 supplier 校验完全提升为 PMS public/service 异步读面
     """
     if supplier_id is None:
         raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
@@ -43,23 +44,12 @@ async def _require_supplier_snapshot_for_po(
     if sid <= 0:
         raise ValueError("supplier_id 非法：采购单必须绑定供应商")
 
-    row = await session.execute(
-        text(
-            """
-            SELECT id, name
-            FROM suppliers
-            WHERE id = :supplier_id
-            LIMIT 1
-            """
-        ),
-        {"supplier_id": sid},
-    )
-    r = row.mappings().first()
-    if r is None:
-        raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid})")
+    svc = SupplierReadService(session)
+    supplier = await svc.aget_basic_by_id(supplier_id=sid)
+    if supplier is None:
+        raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid}）")
 
-    supplier_name = str(r.get("name") or "").strip()
-    return int(r["id"]), supplier_name
+    return int(supplier.id), str(supplier.name).strip()
 
 
 def _trim_or_none(v: Any) -> Optional[str]:
@@ -79,33 +69,6 @@ def _parse_discount_amount(v: Any) -> Decimal:
     if d < 0:
         raise ValueError("discount_amount 必须 >= 0")
     return d
-
-
-async def _require_item_uom_ratio_to_base(
-    session: AsyncSession,
-    *,
-    item_id: int,
-    uom_id: int,
-) -> int:
-    row = await session.execute(
-        text(
-            """
-            SELECT ratio_to_base
-            FROM item_uoms
-            WHERE id = :uom_id AND item_id = :item_id
-            """
-        ),
-        {"uom_id": int(uom_id), "item_id": int(item_id)},
-    )
-    r = row.mappings().first()
-    if r is None:
-        raise ValueError(f"uom_id 不存在或不属于该商品：item_id={int(item_id)} uom_id={int(uom_id)}")
-
-    ratio = int(r.get("ratio_to_base") or 0)
-    if ratio <= 0:
-        raise ValueError("item_uoms.ratio_to_base 必须 >= 1")
-
-    return ratio
 
 
 def _require_qty_input_from_raw(raw: Dict[str, Any]) -> int:
@@ -132,61 +95,8 @@ def _maybe_uom_id_from_raw(raw: Dict[str, Any]) -> Optional[int]:
     return int(v)
 
 
-async def _pick_default_purchase_uom(session: AsyncSession, *, item_id: int) -> Tuple[int, int]:
-    """
-    Choose a deterministic purchase uom for an item (unit governance phase 2):
-    1) is_purchase_default = true
-    2) is_base = true
-    3) smallest id (any)
-    Returns: (uom_id, ratio_to_base)
-    """
-    r1 = await session.execute(
-        text(
-            """
-            SELECT id, ratio_to_base
-              FROM item_uoms
-             WHERE item_id = :i AND is_purchase_default = true
-             LIMIT 1
-            """
-        ),
-        {"i": int(item_id)},
-    )
-    m1 = r1.mappings().first()
-    if m1 is not None:
-        return int(m1["id"]), int(m1["ratio_to_base"])
-
-    r2 = await session.execute(
-        text(
-            """
-            SELECT id, ratio_to_base
-              FROM item_uoms
-             WHERE item_id = :i AND is_base = true
-             LIMIT 1
-            """
-        ),
-        {"i": int(item_id)},
-    )
-    m2 = r2.mappings().first()
-    if m2 is not None:
-        return int(m2["id"]), int(m2["ratio_to_base"])
-
-    r3 = await session.execute(
-        text(
-            """
-            SELECT id, ratio_to_base
-              FROM item_uoms
-             WHERE item_id = :i
-             ORDER BY id
-             LIMIT 1
-            """
-        ),
-        {"i": int(item_id)},
-    )
-    m3 = r3.mappings().first()
-    if m3 is not None:
-        return int(m3["id"]), int(m3["ratio_to_base"])
-
-    raise ValueError(f"商品缺少 item_uoms：item_id={int(item_id)}")
+def _build_po_no(*, po_id: int) -> str:
+    return f"PO-{int(po_id)}"
 
 
 async def create_po_v2(
@@ -199,11 +109,17 @@ async def create_po_v2(
     remark: Optional[str] = None,
     lines: List[Dict[str, Any]],
 ) -> PurchaseOrder:
-
     if not lines:
         raise ValueError("create_po_v2 需要至少一行行项目（lines 不可为空）")
 
-    po_supplier_id, po_supplier_name = await _require_supplier_snapshot_for_po(session, supplier_id)
+    purchaser_text = (purchaser or "").strip()
+    if not purchaser_text:
+        raise ValueError("purchaser 不能为空：采购单必须填写采购人")
+
+    po_supplier_id, po_supplier_name = await _require_supplier_snapshot_via_pms(
+        session,
+        supplier_id,
+    )
 
     raw_item_ids = [int(raw["item_id"]) for raw in lines]
     items_map = await _load_items_map(session, raw_item_ids)
@@ -225,9 +141,13 @@ async def create_po_v2(
 
         uom_id = _maybe_uom_id_from_raw(raw)
         if uom_id is None:
-            uom_id, ratio_to_base = await _pick_default_purchase_uom(session, item_id=item_id)
+            uom_id, ratio_to_base = await pick_default_purchase_uom(session, item_id=item_id)
         else:
-            ratio_to_base = await _require_item_uom_ratio_to_base(session, item_id=item_id, uom_id=uom_id)
+            ratio_to_base = await require_item_uom_ratio_to_base(
+                session,
+                item_id=item_id,
+                uom_id=uom_id,
+            )
 
         qty_ordered_base = qty_input * ratio_to_base
         if qty_ordered_base <= 0:
@@ -258,25 +178,30 @@ async def create_po_v2(
                 "supply_price": supply_price,
                 "discount_amount": discount_amount,
                 "discount_note": raw.get("discount_note"),
-                "remark": raw.get("remark"),
+                "remark": _trim_or_none(raw.get("remark")),
             }
         )
 
-    po = PurchaseOrder(
+    po_id = await reserve_purchase_order_id(session)
+    po_no = _build_po_no(po_id=po_id)
+
+    po = await insert_purchase_order_head(
+        session,
+        po_id=po_id,
+        po_no=po_no,
         supplier_id=po_supplier_id,
         supplier_name=po_supplier_name,
-        warehouse_id=warehouse_id,
-        purchaser=purchaser.strip(),
+        warehouse_id=int(warehouse_id),
+        purchaser=purchaser_text,
         purchase_time=purchase_time,
         total_amount=total_amount,
-        status="CREATED",
-        remark=remark,
+        remark=_trim_or_none(remark),
     )
-    session.add(po)
-    await session.flush()
 
-    for nl in norm_lines:
-        session.add(PurchaseOrderLine(po_id=po.id, **nl))
+    await insert_purchase_order_lines(
+        session,
+        po_id=int(po.id),
+        lines=norm_lines,
+    )
 
-    await session.flush()
     return po

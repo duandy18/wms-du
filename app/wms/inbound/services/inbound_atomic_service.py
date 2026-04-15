@@ -33,6 +33,7 @@ class ResolvedInboundLine:
     barcode: str | None
     qty: int
     ref_line: int | None = None
+    po_line_id: int | None = None
     lot_code: str | None = None
     production_date: date | None = None
     expiry_date: date | None = None
@@ -212,6 +213,7 @@ async def _resolve_lines(
                 barcode=line.barcode,
                 qty=int(line.qty),
                 ref_line=int(line.ref_line) if line.ref_line is not None else None,
+                po_line_id=int(line.po_line_id) if line.po_line_id is not None else None,
                 lot_code=line.lot_code,
                 production_date=line.production_date,
                 expiry_date=line.expiry_date,
@@ -242,6 +244,10 @@ async def _apply_inbound_lines(
     - mock 路径（session is None）：只做单测兼容，不持久化事件头/事件行
     """
     rows: list[InboundAtomicResultRow] = []
+    event_source_type = _map_atomic_source_to_event_source_type(
+        source_type=source_type,
+        source_biz_type=source_biz_type,
+    )
 
     for idx, line in enumerate(lines, start=1):
         item_policy = await get_item_policy_by_id(session, item_id=int(line.item_id))
@@ -259,6 +265,12 @@ async def _apply_inbound_lines(
 
         ref = source_ref or trace_id
         ref_line = int(line.ref_line) if line.ref_line is not None else int(idx)
+
+        if event_source_type == "PURCHASE_ORDER" and line.po_line_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"purchase_po_line_required:ref_line={int(ref_line)}",
+            )
 
         if session is not None:
             uom_id, ratio_to_base_snapshot = await _require_base_uom_snapshot(
@@ -279,7 +291,7 @@ async def _apply_inbound_lines(
                 production_date=line.production_date,
                 expiry_date=line.expiry_date,
                 lot_id=int(lot_id),
-                po_line_id=None,
+                po_line_id=int(line.po_line_id) if line.po_line_id is not None else None,
                 remark=remark,
             )
             session.add(event_line)

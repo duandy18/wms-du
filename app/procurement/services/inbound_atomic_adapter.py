@@ -24,6 +24,7 @@ async def apply_receipt_via_atomic_inbound(
     - source_biz_type 固定为 purchase_receipt_confirm
     - source_ref 使用 receipt.ref，保持 ledger 关联稳定
     - production_date / expiry_date 由 receipt lines 作为唯一决策输入传入
+    - po_line_id 必须一并带入，保持采购计划行与正式入库事实的硬连接
 
     当前目标：
     - 把 receipt confirm 从“一行一个事件头”
@@ -42,6 +43,7 @@ async def apply_receipt_via_atomic_inbound(
                     "item_id": int(line["item_id"]),
                     "qty": int(line["qty"]),
                     "ref_line": int(line["ref_line"]),
+                    "po_line_id": int(line["po_line_id"]) if line.get("po_line_id") is not None else None,
                     "lot_code": line.get("lot_code"),
                     "production_date": line.get("production_date"),
                     "expiry_date": line.get("expiry_date"),
