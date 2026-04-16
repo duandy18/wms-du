@@ -1,4 +1,4 @@
-# app/wms/procurement/routers/purchase_orders_routes_list.py
+# app/procurement/routers/purchase_orders_routes_list.py
 from __future__ import annotations
 
 from typing import List, Optional

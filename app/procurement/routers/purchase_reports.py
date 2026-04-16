@@ -1,4 +1,4 @@
-# app/wms/procurement/routers/purchase_reports.py
+# app/procurement/routers/purchase_reports.py
 from __future__ import annotations
 
 from fastapi import APIRouter

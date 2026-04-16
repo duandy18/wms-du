@@ -5,13 +5,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
-from app.procurement.models.inbound_receipt import InboundReceipt, InboundReceiptLine
 from app.wms.stock.models.lot import Lot
 from app.procurement.models.purchase_order import PurchaseOrder
 from app.wms.ledger.models.stock_ledger import StockLedger
@@ -84,6 +83,85 @@ async def _load_po_with_lines(session: AsyncSession, po_id: int) -> Optional[Pur
     return po
 
 
+async def _load_receipt_row(
+    session: AsyncSession,
+    *,
+    ref: str,
+    trace_id: Optional[str],
+) -> Optional[dict]:
+    sql = text(
+        """
+        SELECT
+            id,
+            warehouse_id,
+            supplier_id,
+            supplier_name,
+            source_type,
+            source_id,
+            ref,
+            trace_id,
+            status,
+            remark,
+            occurred_at,
+            created_at,
+            updated_at
+          FROM inbound_receipts
+         WHERE ref = :ref
+           AND (:trace_id IS NULL OR trace_id = :trace_id)
+         ORDER BY id DESC
+         LIMIT 1
+        """
+    )
+    row = await session.execute(
+        sql,
+        {
+            "ref": str(ref),
+            "trace_id": (str(trace_id).strip() if trace_id else None),
+        },
+    )
+    mapped = row.mappings().first()
+    return dict(mapped) if mapped is not None else None
+
+
+async def _load_receipt_line_rows(
+    session: AsyncSession,
+    *,
+    receipt_id: int,
+) -> list[dict]:
+    sql = text(
+        """
+        SELECT
+            rl.id,
+            rl.receipt_id,
+            rl.line_no,
+            rl.po_line_id,
+            rl.item_id,
+            pol.item_name AS item_name,
+            pol.item_sku AS item_sku,
+            NULL::varchar AS category,
+            pol.spec_text AS spec_text,
+            COALESCE(lo.lot_code, rl.lot_code_input, '') AS batch_code,
+            rl.production_date,
+            rl.expiry_date,
+            COALESCE(rl.qty_base, 0) AS qty_received,
+            rl.unit_cost,
+            rl.line_amount,
+            rl.remark,
+            rl.created_at,
+            rl.updated_at
+          FROM inbound_receipt_lines AS rl
+          LEFT JOIN purchase_order_lines AS pol
+            ON pol.id = rl.po_line_id
+          LEFT JOIN lots AS lo
+            ON lo.id = rl.lot_id
+         WHERE rl.receipt_id = :receipt_id
+         ORDER BY rl.line_no ASC, rl.id ASC
+        """
+    )
+    rows = await session.execute(sql, {"receipt_id": int(receipt_id)})
+    return [dict(r) for r in rows.mappings().all()]
+
+
 def register(router: APIRouter) -> None:
     @router.get("/explain", response_model=LedgerExplainOut)
     async def explain_ledger_ref(
@@ -96,23 +174,24 @@ def register(router: APIRouter) -> None:
         if not ref:
             raise HTTPException(status_code=400, detail="ref 不能为空。")
 
-        receipt_stmt = select(InboundReceipt).where(InboundReceipt.ref == ref)
-        if trace_id and trace_id.strip():
-            receipt_stmt = receipt_stmt.where(InboundReceipt.trace_id == trace_id.strip())
-        receipt = (await session.execute(receipt_stmt.order_by(InboundReceipt.id.desc()).limit(1))).scalars().first()
-        if receipt is None:
+        normalized_trace_id = trace_id.strip() if trace_id else None
+
+        receipt_row = await _load_receipt_row(
+            session,
+            ref=ref,
+            trace_id=normalized_trace_id,
+        )
+        if receipt_row is None:
             raise HTTPException(status_code=404, detail="未找到对应的收货事实（Receipt）。")
 
-        lines_stmt = (
-            select(InboundReceiptLine)
-            .where(InboundReceiptLine.receipt_id == receipt.id)
-            .order_by(InboundReceiptLine.line_no.asc(), InboundReceiptLine.id.asc())
+        receipt_lines = await _load_receipt_line_rows(
+            session,
+            receipt_id=int(receipt_row["id"]),
         )
-        receipt_lines = (await session.execute(lines_stmt)).scalars().all()
 
         ledger_stmt = select(StockLedger).where(StockLedger.ref == ref)
-        if trace_id and trace_id.strip():
-            ledger_stmt = ledger_stmt.where(StockLedger.trace_id == trace_id.strip())
+        if normalized_trace_id:
+            ledger_stmt = ledger_stmt.where(StockLedger.trace_id == normalized_trace_id)
         ledger_stmt = (
             ledger_stmt.order_by(StockLedger.occurred_at.asc(), StockLedger.ref_line.asc(), StockLedger.id.asc())
             .limit(limit)
@@ -120,13 +199,13 @@ def register(router: APIRouter) -> None:
         ledger_rows = (await session.execute(ledger_stmt)).scalars().all()
 
         po_obj: Optional[PurchaseOrder] = None
-        if getattr(receipt, "source_type", None) == "PO" and getattr(receipt, "source_id", None) is not None:
-            po_obj = await _load_po_with_lines(session, int(receipt.source_id))
+        if str(receipt_row.get("source_type") or "") == "PO" and receipt_row.get("source_id") is not None:
+            po_obj = await _load_po_with_lines(session, int(receipt_row["source_id"]))
 
         return LedgerExplainOut(
-            anchor=ExplainAnchor(ref=ref, trace_id=trace_id.strip() if trace_id else None),
+            anchor=ExplainAnchor(ref=ref, trace_id=normalized_trace_id),
             ledger=[ExplainLedgerRow.model_validate(r) for r in ledger_rows],
-            receipt=ExplainReceipt.model_validate(receipt),
+            receipt=ExplainReceipt.model_validate(receipt_row),
             receipt_lines=[ExplainReceiptLine.model_validate(ln) for ln in receipt_lines],
             purchase_order=(
                 ExplainPurchaseOrder(

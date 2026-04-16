@@ -1,4 +1,4 @@
-# app/wms/procurement/services/qty_base.py
+# app/procurement/services/qty_base.py
 from __future__ import annotations
 
 from typing import Any

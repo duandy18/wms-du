@@ -1,4 +1,4 @@
-# app/wms/procurement/services/receive_batch_semantics.py
+# app/procurement/services/receive_batch_semantics.py
 from __future__ import annotations
 
 from typing import Literal, Optional

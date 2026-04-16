@@ -4,10 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.procurement.models.inbound_receipt import InboundReceiptLine
 from app.pms.items.models.item import Item
 from app.pms.items.models.item_barcode import ItemBarcode
 from app.pms.items.models.item_uom import ItemUOM
@@ -173,12 +172,18 @@ def has_po_line_refs_for_item_uom(db: Session, *, item_uom_id: int) -> bool:
 
 
 def has_receipt_line_refs_for_item_uom(db: Session, *, item_uom_id: int) -> bool:
-    stmt = (
-        select(InboundReceiptLine.id)
-        .where(InboundReceiptLine.uom_id == int(item_uom_id))
-        .limit(1)
-    )
-    return db.execute(stmt).scalar_one_or_none() is not None
+    row = db.execute(
+        text(
+            """
+            SELECT 1
+              FROM inbound_receipt_lines
+             WHERE uom_id = :item_uom_id
+             LIMIT 1
+            """
+        ),
+        {"item_uom_id": int(item_uom_id)},
+    ).first()
+    return row is not None
 
 
 def find_other_base_item_uom(

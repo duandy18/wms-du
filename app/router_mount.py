@@ -19,7 +19,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.analytics.routers.finance_overview import router as finance_overview_router
     from app.diagnostics.routers.flow_replay import router as flow_replay_router
     from app.tms.routers.geo_cn import router as geo_router
-    from app.procurement.routers.inbound_receipts_routes import router as inbound_receipts_router
     from app.diagnostics.routers.intelligence import router as intelligence_router
     from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
@@ -115,7 +114,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
-    app.include_router(inbound_receipts_router)
     app.include_router(inbound_commit_router)
     app.include_router(return_tasks_router)
     app.include_router(pick_tasks_router)

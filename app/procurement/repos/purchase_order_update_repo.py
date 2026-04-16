@@ -34,14 +34,6 @@ async def _has_po_receipt_in_status(
     return row.first() is not None
 
 
-async def has_po_draft_receipt(
-    session: AsyncSession,
-    *,
-    po_id: int,
-) -> bool:
-    return await _has_po_receipt_in_status(session, po_id=po_id, receipt_status="DRAFT")
-
-
 async def has_po_confirmed_receipt(
     session: AsyncSession,
     *,
@@ -95,7 +87,6 @@ async def replace_purchase_order_lines(
 
 
 __all__ = [
-    "has_po_draft_receipt",
     "has_po_confirmed_receipt",
     "has_po_committed_inbound_facts",
     "replace_purchase_order_lines",
