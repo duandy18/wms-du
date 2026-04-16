@@ -42,6 +42,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     )
     from app.analytics.routers.orders_sla_stats_routes import router as orders_sla_stats_router
     from app.analytics.routers.orders_stats_routes import router as orders_stats_router
+    from app.wms.inbound.routers.inbound_events import router as inbound_events_router
     from app.wms.inbound.routers.inbound_commit import router as inbound_commit_router
     from app.wms.outbound.routers.outbound import router as outbound_router
     from app.wms.outbound.routers.pick import router as pick_router
@@ -114,6 +115,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
+    app.include_router(inbound_events_router)
     app.include_router(inbound_commit_router)
     app.include_router(return_tasks_router)
     app.include_router(pick_tasks_router)
