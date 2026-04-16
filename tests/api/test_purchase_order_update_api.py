@@ -9,8 +9,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.po_testkit import create_po_with_line_and_draft_receipt
-
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     r = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
@@ -278,40 +276,6 @@ async def test_purchase_order_update_replaces_head_and_lines_and_rebuilds_comple
     assert int(c2["qty_received_base"]) == 0, c2
     assert int(c2["qty_remaining_base"]) == 5, c2
     assert str(c2["line_completion_status"]) == "NOT_RECEIVED", c2
-
-
-@pytest.mark.asyncio
-async def test_purchase_order_update_rejects_when_draft_receipt_exists(
-    client: httpx.AsyncClient,
-    session: AsyncSession,
-) -> None:
-    headers = await _login_admin_headers(client)
-
-    item_id = await _insert_item_internal_none(session, sku_prefix="UT-UPD-DRAFT")
-    await session.commit()
-
-    world = await create_po_with_line_and_draft_receipt(session, item_id=int(item_id))
-    await session.commit()
-
-    uom_id = await _pick_any_uom_id(session, item_id=int(item_id))
-    payload = {
-        "supplier_id": 1,
-        "warehouse_id": int(world.warehouse_id),
-        "purchaser": "UT-DRAFT-BLOCK",
-        "purchase_time": "2026-01-16T10:00:00Z",
-        "lines": [
-            {
-                "line_no": 1,
-                "item_id": int(item_id),
-                "uom_id": int(uom_id),
-                "qty_input": 11,
-            }
-        ],
-    }
-
-    r = await client.put(f"/purchase-orders/{int(world.po_id)}", json=payload, headers=headers)
-    assert r.status_code == 409, r.text
-    assert "DRAFT" in r.text, r.text
 
 
 @pytest.mark.asyncio

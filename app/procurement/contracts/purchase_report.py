@@ -1,4 +1,4 @@
-# app/wms/procurement/contracts/purchase_report.py
+# app/procurement/contracts/purchase_report.py
 from __future__ import annotations
 
 from datetime import date, datetime

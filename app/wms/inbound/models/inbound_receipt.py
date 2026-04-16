@@ -1,4 +1,4 @@
-# app/models/inbound_receipt.py
+# app/procurement/models/inbound_receipt.py
 from __future__ import annotations
 
 from datetime import datetime, date as date_type

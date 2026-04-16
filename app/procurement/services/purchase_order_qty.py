@@ -1,4 +1,4 @@
-# app/wms/procurement/services/purchase_order_qty.py
+# app/procurement/services/purchase_order_qty.py
 from __future__ import annotations
 
 from typing import Any

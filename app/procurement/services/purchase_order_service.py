@@ -1,21 +1,17 @@
 # app/procurement/services/purchase_order_service.py
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.procurement.contracts.purchase_order import PurchaseOrderWithLinesOut
-from app.procurement.contracts.purchase_order_receive_workbench import PurchaseOrderReceiveWorkbenchOut
 from app.procurement.services.purchase_order_create import create_po_v2 as _create_po_v2
 from app.procurement.services.purchase_order_update import update_po_v2 as _update_po_v2
 from app.procurement.services.purchase_order_presenter import build_po_with_lines_out
 from app.procurement.repos.purchase_order_queries_repo import get_po_with_lines as _get_po_with_lines
-from app.procurement.services.receive_po_line import receive_po_line as _receive_po_line
-from app.procurement.services.purchase_order_receive_workbench import get_receive_workbench
 
-UTC = timezone.utc
 
 
 class PurchaseOrderService:
@@ -100,63 +96,3 @@ class PurchaseOrderService:
             pass
 
         return await build_po_with_lines_out(session, po)
-
-    async def receive_po_line(
-        self,
-        session: AsyncSession,
-        *,
-        po_id: int,
-        line_id: Optional[int] = None,
-        line_no: Optional[int] = None,
-        uom_id: int,
-        qty: int,
-        occurred_at: Optional[datetime] = None,
-        production_date: Optional[date] = None,
-        expiry_date: Optional[date] = None,
-        lot_code: Optional[str] = None,
-        barcode: Optional[str] = None,
-    ):
-        return await _receive_po_line(
-            session,
-            po_id=po_id,
-            line_id=line_id,
-            line_no=line_no,
-            uom_id=int(uom_id),
-            qty=qty,
-            occurred_at=occurred_at,
-            production_date=production_date,
-            expiry_date=expiry_date,
-            lot_code=lot_code,
-            barcode=barcode,
-        )
-
-    async def receive_po_line_workbench(
-        self,
-        session: AsyncSession,
-        *,
-        po_id: int,
-        line_id: Optional[int] = None,
-        line_no: Optional[int] = None,
-        uom_id: int,
-        qty: int,
-        occurred_at: Optional[datetime] = None,
-        production_date: Optional[date] = None,
-        expiry_date: Optional[date] = None,
-        lot_code: Optional[str] = None,
-        barcode: Optional[str] = None,
-    ) -> PurchaseOrderReceiveWorkbenchOut:
-        await _receive_po_line(
-            session,
-            po_id=po_id,
-            line_id=line_id,
-            line_no=line_no,
-            uom_id=int(uom_id),
-            qty=qty,
-            occurred_at=occurred_at,
-            production_date=production_date,
-            expiry_date=expiry_date,
-            lot_code=lot_code,
-            barcode=barcode,
-        )
-
-        return await get_receive_workbench(session, po_id=int(po_id))

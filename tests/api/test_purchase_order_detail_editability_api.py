@@ -9,8 +9,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.po_testkit import create_po_with_line_and_draft_receipt
-
 
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     r = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
@@ -181,27 +179,6 @@ async def test_purchase_order_detail_returns_editable_true_when_clean(
 
     assert detail["editable"] is True, detail
     assert detail["edit_block_reason"] is None, detail
-
-
-@pytest.mark.asyncio
-async def test_purchase_order_detail_returns_not_editable_when_draft_receipt_exists(
-    client: httpx.AsyncClient,
-    session: AsyncSession,
-) -> None:
-    headers = await _login_admin_headers(client)
-
-    item_id = await _insert_item_internal_none(session, sku_prefix="UT-EDITABLE-DRAFT")
-    await session.commit()
-
-    world = await create_po_with_line_and_draft_receipt(session, item_id=int(item_id))
-    await session.commit()
-
-    r = await client.get(f"/purchase-orders/{int(world.po_id)}", headers=headers)
-    assert r.status_code == 200, r.text
-    detail = r.json()
-
-    assert detail["editable"] is False, detail
-    assert "DRAFT" in str(detail["edit_block_reason"] or ""), detail
 
 
 @pytest.mark.asyncio

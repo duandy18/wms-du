@@ -1,4 +1,4 @@
-# app/wms/procurement/services/purchase_order_receipts.py
+# app/procurement/services/purchase_order_receipts.py
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple

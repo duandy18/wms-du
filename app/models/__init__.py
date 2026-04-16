@@ -103,8 +103,8 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 收货事实（兼容期保留，待旧主线退役）
     # ------------------------------------------------------------------
-    ("app.procurement.models.inbound_receipt", "InboundReceipt"),
-    ("app.procurement.models.inbound_receipt", "InboundReceiptLine"),
+    ("app.wms.inbound.models.inbound_receipt", "InboundReceipt"),
+    ("app.wms.inbound.models.inbound_receipt", "InboundReceiptLine"),
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------
@@ -222,7 +222,7 @@ __all__ = [
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",
-    # ---- Inbound (legacy receipt compatibility) ----
+    # ---- Inbound receipt facts (WMS-owned) ----
     "InboundReceipt",
     "InboundReceiptLine",
     # ---- Return ----

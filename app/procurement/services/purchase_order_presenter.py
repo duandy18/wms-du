@@ -9,7 +9,6 @@ from app.procurement.contracts.purchase_order import PurchaseOrderWithLinesOut
 from app.procurement.repos.purchase_order_update_repo import (
     has_po_committed_inbound_facts,
     has_po_confirmed_receipt,
-    has_po_draft_receipt,
 )
 from app.procurement.services.purchase_order_line_mapper import map_po_line_out
 
@@ -23,9 +22,6 @@ async def _resolve_po_editability(
         return False, f"PO 状态不允许编辑：status={st}"
 
     po_id = int(getattr(po, "id"))
-
-    if await has_po_draft_receipt(session, po_id=po_id):
-        return False, "当前采购单存在 DRAFT 收货单，禁止编辑"
 
     if await has_po_confirmed_receipt(session, po_id=po_id):
         return False, "当前采购单已存在 CONFIRMED 收货单，禁止编辑"

@@ -17,7 +17,6 @@ class PoLineWorld:
     purchaser: str
     po_id: int
     po_line_id: int
-    receipt_draft_id: int
 
 
 async def get_any_warehouse_id(session: AsyncSession) -> int:
@@ -247,60 +246,4 @@ async def create_po_with_line(
         purchaser=purchaser_val,
         po_id=po_id,
         po_line_id=po_line_id,
-        receipt_draft_id=0,
-    )
-
-
-async def create_po_with_line_and_draft_receipt(
-    session: AsyncSession,
-    *,
-    item_id: int,
-    qty_ordered_base: int = 10,
-) -> PoLineWorld:
-    """
-    一步到位：创建 PO + 单行 + inbound_receipts(DRAFT)
-    （receive_po_line 的硬前置条件）。
-    """
-    world = await create_po_with_line(
-        session,
-        item_id=item_id,
-        qty_ordered_base=qty_ordered_base,
-    )
-
-    now = datetime.now(tz=timezone.utc)
-    r_row = await session.execute(
-        text(
-            """
-            INSERT INTO inbound_receipts (
-                warehouse_id,
-                source_type, source_id,
-                ref, status,
-                occurred_at, created_at, updated_at
-            )
-            VALUES (
-                :wid,
-                'PO', :po_id,
-                :ref, 'DRAFT',
-                :now, :now, :now
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "wid": int(world.warehouse_id),
-            "po_id": int(world.po_id),
-            "ref": f"UT-DRFT-PO-{int(world.po_id)}",
-            "now": now,
-        },
-    )
-    rid = int(r_row.scalar_one())
-
-    return PoLineWorld(
-        warehouse_id=world.warehouse_id,
-        supplier_id=world.supplier_id,
-        supplier_name=world.supplier_name,
-        purchaser=world.purchaser,
-        po_id=world.po_id,
-        po_line_id=world.po_line_id,
-        receipt_draft_id=rid,
     )

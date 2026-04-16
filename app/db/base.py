@@ -111,7 +111,7 @@ def init_models(
         "app.pms.items.models.item_barcode",
         "app.procurement.models.purchase_order",
         "app.procurement.models.purchase_order_line",
-        "app.procurement.models.inbound_receipt",
+        "app.wms.inbound.models.inbound_receipt",
         "app.wms.stock.models.lot",
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",

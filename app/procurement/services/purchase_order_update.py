@@ -21,7 +21,6 @@ from app.procurement.repos.purchase_order_queries_repo import get_po_with_lines
 from app.procurement.repos.purchase_order_update_repo import (
     has_po_committed_inbound_facts,
     has_po_confirmed_receipt,
-    has_po_draft_receipt,
     replace_purchase_order_lines,
 )
 from app.procurement.services.purchase_order_create import (
@@ -140,9 +139,6 @@ async def _require_po_editable(
         raise HTTPException(status_code=409, detail=f"PO 状态不允许编辑：status={st}")
 
     po_id = int(getattr(po, "id"))
-
-    if await has_po_draft_receipt(session, po_id=po_id):
-        raise HTTPException(status_code=409, detail="PO 存在 DRAFT 收货单，禁止编辑")
 
     if await has_po_confirmed_receipt(session, po_id=po_id):
         raise HTTPException(status_code=409, detail="PO 已存在 CONFIRMED 收货单，禁止编辑")
