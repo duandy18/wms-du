@@ -177,7 +177,7 @@ def has_receipt_line_refs_for_item_uom(db: Session, *, item_uom_id: int) -> bool
             """
             SELECT 1
               FROM inbound_receipt_lines
-             WHERE uom_id = :item_uom_id
+             WHERE item_uom_id = :item_uom_id
              LIMIT 1
             """
         ),

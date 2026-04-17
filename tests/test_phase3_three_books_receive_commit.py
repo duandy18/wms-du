@@ -209,30 +209,34 @@ async def _insert_confirmed_receipt_with_line(
                     INSERT INTO inbound_receipts (
                         warehouse_id,
                         supplier_id,
-                        supplier_name,
+                        counterparty_name_snapshot,
                         source_type,
-                        source_id,
-                        ref,
-                        trace_id,
+                        source_doc_id,
+                        source_doc_no_snapshot,
+                        receipt_no,
                         status,
                         remark,
-                        occurred_at,
+                        created_by,
+                        released_at,
                         created_at,
-                        updated_at
+                        updated_at,
+                        warehouse_name_snapshot
                     )
                     VALUES (
                         :warehouse_id,
                         NULL,
                         NULL,
-                        'PO',
+                        'MANUAL',
+                        NULL,
                         NULL,
                         :ref,
-                        :trace_id,
-                        'CONFIRMED',
+                        'RELEASED',
                         'UT-PH3',
+                        NULL,
                         :occurred_at,
                         NOW(),
-                        NOW()
+                        NOW(),
+                        'WH-1'
                     )
                     RETURNING id
                     """
@@ -269,46 +273,34 @@ async def _insert_confirmed_receipt_with_line(
         text(
             """
             INSERT INTO inbound_receipt_lines (
-                receipt_id,
+                inbound_receipt_id,
                 line_no,
-                po_line_id,
+                source_line_id,
                 item_id,
-                production_date,
-                expiry_date,
-                unit_cost,
-                line_amount,
+                item_uom_id,
+                planned_qty,
+                item_name_snapshot,
+                item_spec_snapshot,
+                uom_name_snapshot,
+                ratio_to_base_snapshot,
                 remark,
                 created_at,
-                updated_at,
-                lot_id,
-                warehouse_id,
-                uom_id,
-                qty_input,
-                ratio_to_base_snapshot,
-                qty_base,
-                receipt_status_snapshot,
-                lot_code_input
+                updated_at
             )
             VALUES (
                 :rid,
                 1,
                 NULL,
                 :iid,
-                :pd,
-                :ed,
-                NULL,
-                NULL,
-                'UT-PH3-LINE',
-                NOW(),
-                NOW(),
-                :lot_id,
-                :warehouse_id,
                 :uom_id,
                 :qty_input,
+                (SELECT name FROM items WHERE id = :iid),
+                (SELECT spec FROM items WHERE id = :iid),
+                (SELECT COALESCE(NULLIF(display_name, ''), NULLIF(uom, '')) FROM item_uoms WHERE id = :uom_id),
                 :ratio,
-                :qty_base,
-                'CONFIRMED',
-                :lot_code_input
+                'UT-PH3-LINE',
+                NOW(),
+                NOW()
             )
             """
         ),

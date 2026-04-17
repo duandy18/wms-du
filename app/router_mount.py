@@ -50,6 +50,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.outbound.routers.print_jobs import router as print_jobs_router
     from app.procurement.routers.purchase_orders import router as purchase_orders_router
     from app.procurement.routers.purchase_reports import router as purchase_reports_router
+    from app.inbound_receipts.routers.inbound_receipts import router as inbound_receipts_router
+    from app.wms.inbound_operations.routers.inbound_operations import router as inbound_operations_router
     from app.wms.outbound.routers.return_tasks import router as return_tasks_router
     from app.wms.stock.routers.inventory import router as stock_inventory_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
@@ -115,6 +117,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
 
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
+    app.include_router(inbound_receipts_router)
+    app.include_router(inbound_operations_router)
     app.include_router(inbound_events_router)
     app.include_router(inbound_commit_router)
     app.include_router(return_tasks_router)

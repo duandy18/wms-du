@@ -101,10 +101,10 @@ MODEL_SPECS = [
     ("app.procurement.models.purchase_order", "PurchaseOrder"),
     ("app.procurement.models.purchase_order_line", "PurchaseOrderLine"),
     # ------------------------------------------------------------------
-    # 收货事实（兼容期保留，待旧主线退役）
+    # 入库任务（新主线 owner）
     # ------------------------------------------------------------------
-    ("app.wms.inbound.models.inbound_receipt", "InboundReceipt"),
-    ("app.wms.inbound.models.inbound_receipt", "InboundReceiptLine"),
+    ("app.inbound_receipts.models.inbound_receipt", "InboundReceipt"),
+    ("app.inbound_receipts.models.inbound_receipt", "InboundReceiptLine"),
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------
@@ -222,7 +222,7 @@ __all__ = [
     # ---- Purchase ----
     "PurchaseOrder",
     "PurchaseOrderLine",
-    # ---- Inbound receipt facts (WMS-owned) ----
+    # ---- Inbound receipts (new task-layer owner) ----
     "InboundReceipt",
     "InboundReceiptLine",
     # ---- Return ----

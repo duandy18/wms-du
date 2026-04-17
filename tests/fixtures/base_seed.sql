@@ -257,16 +257,41 @@ WHERE NOT EXISTS (
 -- ===== inbound_receipts (compat placeholder) =====
 -- 注意：当前 INTERNAL lot 的终态 identity 不应依赖 inbound_receipts。
 -- 但某些历史路径/测试可能仍假设有一条 receipt seed，因此保留这条 placeholder。
+-- 新任务模型下，这条 seed 只作为“手工来源的已发布任务单占位”，不再使用旧事实层列。
 INSERT INTO inbound_receipts (
-  id, warehouse_id, supplier_id, supplier_name,
-  source_type, source_id, ref, trace_id,
-  status, remark, occurred_at, created_at, updated_at
+  id,
+  warehouse_id,
+  supplier_id,
+  counterparty_name_snapshot,
+  source_type,
+  source_doc_id,
+  source_doc_no_snapshot,
+  receipt_no,
+  status,
+  remark,
+  created_at,
+  updated_at,
+  warehouse_name_snapshot,
+  created_by,
+  released_at
 )
 VALUES
   (
-    9000001, 1, NULL, NULL,
-    'SEED', NULL, 'UT-INTERNAL-LOT-SEED-9000001', NULL,
-    'CONFIRMED', 'seed placeholder', now(), now(), now()
+    9000001,
+    1,
+    NULL,
+    NULL,
+    'MANUAL',
+    NULL,
+    NULL,
+    'UT-INTERNAL-LOT-SEED-9000001',
+    'RELEASED',
+    'seed placeholder',
+    now(),
+    now(),
+    'WH-1',
+    NULL,
+    now()
   )
 ON CONFLICT (id) DO NOTHING;
 

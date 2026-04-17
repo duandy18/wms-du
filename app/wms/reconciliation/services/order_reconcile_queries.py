@@ -138,15 +138,17 @@ async def load_returned(session: AsyncSession, order_id: int) -> Dict[int, int]:
                 text(
                     """
                     SELECT
-                        rl.item_id,
-                        SUM(COALESCE(rl.qty_base, 0)) AS returned_qty
-                      FROM inbound_receipt_lines AS rl
-                      JOIN inbound_receipts AS r
-                        ON r.id = rl.receipt_id
-                     WHERE r.source_type = 'ORDER'
-                       AND r.source_id = :oid
-                       AND r.status = 'CONFIRMED'
-                     GROUP BY rl.item_id
+                        ol.item_id,
+                        SUM(COALESCE(ol.qty_base, 0)) AS returned_qty
+                      FROM inbound_receipts AS r
+                      JOIN wms_inbound_operations AS o
+                        ON o.receipt_no_snapshot = r.receipt_no
+                      JOIN wms_inbound_operation_lines AS ol
+                        ON ol.wms_inbound_operation_id = o.id
+                     WHERE r.source_type = 'RETURN_ORDER'
+                       AND r.source_doc_id = :oid
+                       AND r.status = 'RELEASED'
+                     GROUP BY ol.item_id
                     """
                 ),
                 {"oid": order_id},
