@@ -71,9 +71,6 @@ class ItemPurchaseReportLineItem(_Base):
     discount_amount_snapshot: Decimal
     planned_line_amount: Decimal
 
-    line_completion_status: str
-    last_received_at: datetime | None = None
-
 
 class DailyPurchaseReportItem(_Base):
     day: date

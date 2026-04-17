@@ -1,7 +1,7 @@
 # app/procurement/routers/purchase_reports_routes_items.py
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -12,13 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.pms.public.items.services.item_read_service import ItemReadService
 from app.procurement.contracts.purchase_report import ItemPurchaseReportItem
-from app.procurement.helpers.purchase_reports import (
-    apply_common_filters,
-    resolve_report_item_ids,
-    time_mode_query,
-)
+from app.procurement.helpers.purchase_reports import resolve_report_item_ids
 from app.procurement.models.purchase_order import PurchaseOrder
-from app.procurement.models.purchase_order_line_completion import PurchaseOrderLineCompletion
+from app.procurement.models.purchase_order_line import PurchaseOrderLine
 
 
 def _build_report_item(
@@ -67,7 +63,6 @@ def register(router: APIRouter) -> None:
         status: Optional[str] = Query(None),
         item_id: Optional[int] = Query(None),
         item_keyword: Optional[str] = Query(None),
-        time_mode: str = time_mode_query("purchase_time"),
     ) -> List[ItemPurchaseReportItem]:
         report_item_ids = await resolve_report_item_ids(
             session,
@@ -78,48 +73,59 @@ def register(router: APIRouter) -> None:
             return []
 
         item_read_svc = ItemReadService(session)
+        planned_line_amount_expr = (
+            func.coalesce(PurchaseOrderLine.supply_price, 0)
+            * PurchaseOrderLine.qty_ordered_base
+            - func.coalesce(PurchaseOrderLine.discount_amount, 0)
+        )
 
         stmt = (
             select(
-                PurchaseOrderLineCompletion.item_id.label("item_id"),
-                func.count(distinct(PurchaseOrderLineCompletion.po_id)).label("order_count"),
+                PurchaseOrderLine.item_id.label("item_id"),
+                func.count(distinct(PurchaseOrderLine.po_id)).label("order_count"),
                 func.coalesce(
-                    func.sum(PurchaseOrderLineCompletion.qty_ordered_input),
+                    func.sum(PurchaseOrderLine.qty_ordered_input),
                     0,
                 ).label("total_qty_cases"),
                 func.coalesce(
-                    func.sum(PurchaseOrderLineCompletion.qty_ordered_base),
+                    func.sum(PurchaseOrderLine.qty_ordered_base),
                     0,
                 ).label("total_units"),
                 func.coalesce(
-                    func.sum(PurchaseOrderLineCompletion.planned_line_amount),
+                    func.sum(planned_line_amount_expr),
                     0,
                 ).label("total_amount"),
-                func.min(PurchaseOrderLineCompletion.supplier_id).label("supplier_id_for_filtered"),
+                func.min(PurchaseOrder.supplier_id).label("supplier_id_for_filtered"),
                 func.min(
-                    func.coalesce(PurchaseOrderLineCompletion.supplier_name, "")
+                    func.coalesce(PurchaseOrder.supplier_name, "")
                 ).label("supplier_name_for_filtered"),
             )
-            .select_from(PurchaseOrderLineCompletion)
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLineCompletion.po_id)
+            .select_from(PurchaseOrderLine)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.po_id)
         )
 
-        stmt = apply_common_filters(
-            stmt,
-            date_from=date_from,
-            date_to=date_to,
-            warehouse_id=warehouse_id,
-            supplier_id=supplier_id,
-            status=status,
-            time_mode=time_mode,
-        )
+        normalized_status = str(status or "").strip().upper()
+        if normalized_status:
+            stmt = stmt.where(PurchaseOrder.status == normalized_status)
 
+        if date_from is not None:
+            stmt = stmt.where(
+                PurchaseOrder.purchase_time >= datetime.combine(date_from, datetime.min.time())
+            )
+        if date_to is not None:
+            stmt = stmt.where(
+                PurchaseOrder.purchase_time <= datetime.combine(date_to, datetime.max.time())
+            )
+        if warehouse_id is not None:
+            stmt = stmt.where(PurchaseOrder.warehouse_id == warehouse_id)
+        if supplier_id is not None:
+            stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
         if report_item_ids is not None:
-            stmt = stmt.where(PurchaseOrderLineCompletion.item_id.in_(report_item_ids))
+            stmt = stmt.where(PurchaseOrderLine.item_id.in_(report_item_ids))
 
         stmt = stmt.group_by(
-            PurchaseOrderLineCompletion.item_id,
-        ).order_by(PurchaseOrderLineCompletion.item_id.asc())
+            PurchaseOrderLine.item_id,
+        ).order_by(PurchaseOrderLine.item_id.asc())
 
         rows = (await session.execute(stmt)).mappings().all()
         if not rows:
