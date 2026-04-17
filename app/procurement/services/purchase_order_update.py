@@ -85,9 +85,13 @@ async def _normalize_update_payload(
 
         uom_id = _maybe_uom_id_from_raw(raw)
         if uom_id is None:
-            uom_id, ratio_to_base = await pick_default_purchase_uom(session, item_id=item_id)
+            (
+                uom_id,
+                ratio_to_base,
+                purchase_uom_name_snapshot,
+            ) = await pick_default_purchase_uom(session, item_id=item_id)
         else:
-            ratio_to_base = await require_item_uom_ratio_to_base(
+            ratio_to_base, purchase_uom_name_snapshot = await require_item_uom_ratio_to_base(
                 session,
                 item_id=item_id,
                 uom_id=uom_id,
@@ -116,6 +120,7 @@ async def _normalize_update_payload(
                 "item_sku": it.sku,
                 "spec_text": raw.get("spec_text"),
                 "purchase_uom_id_snapshot": int(uom_id),
+                "purchase_uom_name_snapshot": purchase_uom_name_snapshot,
                 "purchase_ratio_to_base_snapshot": int(ratio_to_base),
                 "qty_ordered_input": int(qty_input),
                 "qty_ordered_base": int(qty_ordered_base),

@@ -28,11 +28,11 @@ async def require_item_uom_ratio_to_base(
     *,
     item_id: int,
     uom_id: int,
-) -> int:
+) -> tuple[int, str]:
     row = await session.execute(
         text(
             """
-            SELECT ratio_to_base
+            SELECT ratio_to_base, display_name, uom
             FROM item_uoms
             WHERE id = :uom_id AND item_id = :item_id
             """
@@ -49,25 +49,29 @@ async def require_item_uom_ratio_to_base(
     if ratio <= 0:
         raise ValueError("item_uoms.ratio_to_base 必须 >= 1")
 
-    return ratio
+    uom_name = str(r.get("display_name") or r.get("uom") or "").strip()
+    if not uom_name:
+        raise ValueError("item_uoms.display_name/uom 不能为空")
+
+    return ratio, uom_name
 
 
 async def pick_default_purchase_uom(
     session: AsyncSession,
     *,
     item_id: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, str]:
     """
     选择商品默认采购单位：
     1) is_purchase_default = true
     2) is_base = true
     3) 最小 id
-    返回：(uom_id, ratio_to_base)
+    返回：(uom_id, ratio_to_base, uom_name_snapshot)
     """
     r1 = await session.execute(
         text(
             """
-            SELECT id, ratio_to_base
+            SELECT id, ratio_to_base, display_name, uom
               FROM item_uoms
              WHERE item_id = :i AND is_purchase_default = true
              LIMIT 1
@@ -77,12 +81,16 @@ async def pick_default_purchase_uom(
     )
     m1 = r1.mappings().first()
     if m1 is not None:
-        return int(m1["id"]), int(m1["ratio_to_base"])
+        return (
+            int(m1["id"]),
+            int(m1["ratio_to_base"]),
+            str(m1.get("display_name") or m1.get("uom") or "").strip(),
+        )
 
     r2 = await session.execute(
         text(
             """
-            SELECT id, ratio_to_base
+            SELECT id, ratio_to_base, display_name, uom
               FROM item_uoms
              WHERE item_id = :i AND is_base = true
              LIMIT 1
@@ -92,12 +100,16 @@ async def pick_default_purchase_uom(
     )
     m2 = r2.mappings().first()
     if m2 is not None:
-        return int(m2["id"]), int(m2["ratio_to_base"])
+        return (
+            int(m2["id"]),
+            int(m2["ratio_to_base"]),
+            str(m2.get("display_name") or m2.get("uom") or "").strip(),
+        )
 
     r3 = await session.execute(
         text(
             """
-            SELECT id, ratio_to_base
+            SELECT id, ratio_to_base, display_name, uom
               FROM item_uoms
              WHERE item_id = :i
              ORDER BY id
@@ -108,7 +120,11 @@ async def pick_default_purchase_uom(
     )
     m3 = r3.mappings().first()
     if m3 is not None:
-        return int(m3["id"]), int(m3["ratio_to_base"])
+        return (
+            int(m3["id"]),
+            int(m3["ratio_to_base"]),
+            str(m3.get("display_name") or m3.get("uom") or "").strip(),
+        )
 
     raise ValueError(f"商品缺少 item_uoms：item_id={int(item_id)}")
 

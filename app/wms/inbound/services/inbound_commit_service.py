@@ -9,8 +9,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.procurement.repos.purchase_order_line_completion_repo import (
-    apply_completion_delta_for_event,
+from app.procurement.services.purchase_order_completion_sync import (
+    sync_purchase_completion_for_inbound_event,
 )
 from app.wms.inbound.contracts.inbound_commit import (
     InboundCommitIn,
@@ -354,9 +354,10 @@ async def commit_inbound(
 
     await session.flush()
 
-    # 采购来源：把本次正式事件的增量同步到采购行 completion 读表
+    # 采购来源：由 procurement service 边界消费本次正式事件，
+    # 同步其 completion 读模型；WMS 不再直接 import procurement repo。
     if str(payload.source_type) == "PURCHASE_ORDER":
-        await apply_completion_delta_for_event(
+        await sync_purchase_completion_for_inbound_event(
             session,
             event_id=int(event.id),
             occurred_at=payload.occurred_at,

@@ -60,6 +60,10 @@ class PurchaseOrderLine(Base):
         sa.ForeignKey("item_uoms.id", name="fk_po_line_purchase_uom"),
         nullable=False,
     )
+    purchase_uom_name_snapshot: Mapped[str] = mapped_column(
+        sa.String(64),
+        nullable=False,
+    )
 
     purchase_ratio_to_base_snapshot: Mapped[int] = mapped_column(
         sa.Integer,
