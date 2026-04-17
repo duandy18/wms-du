@@ -139,30 +139,34 @@ async def _insert_confirmed_order_return_receipt(
                     INSERT INTO inbound_receipts (
                         warehouse_id,
                         supplier_id,
-                        supplier_name,
+                        counterparty_name_snapshot,
                         source_type,
-                        source_id,
-                        ref,
-                        trace_id,
+                        source_doc_id,
+                        source_doc_no_snapshot,
+                        receipt_no,
                         status,
                         remark,
-                        occurred_at,
+                        created_by,
+                        released_at,
                         created_at,
-                        updated_at
+                        updated_at,
+                        warehouse_name_snapshot
                     )
                     VALUES (
                         :warehouse_id,
                         NULL,
                         NULL,
-                        'ORDER',
+                        'RETURN_ORDER',
                         :order_id,
+                        NULL,
                         :ref,
-                        :trace_id,
-                        'CONFIRMED',
+                        'RELEASED',
                         'UT-RMA',
+                        NULL,
                         :occurred_at,
                         NOW(),
-                        NOW()
+                        NOW(),
+                        'WH-1'
                     )
                     RETURNING id
                     """
@@ -195,46 +199,34 @@ async def _insert_confirmed_order_return_receipt(
         text(
             """
             INSERT INTO inbound_receipt_lines (
-                receipt_id,
+                inbound_receipt_id,
                 line_no,
-                po_line_id,
+                source_line_id,
                 item_id,
-                production_date,
-                expiry_date,
-                unit_cost,
-                line_amount,
+                item_uom_id,
+                planned_qty,
+                item_name_snapshot,
+                item_spec_snapshot,
+                uom_name_snapshot,
+                ratio_to_base_snapshot,
                 remark,
                 created_at,
-                updated_at,
-                lot_id,
-                warehouse_id,
-                uom_id,
-                qty_input,
-                ratio_to_base_snapshot,
-                qty_base,
-                receipt_status_snapshot,
-                lot_code_input
+                updated_at
             )
             VALUES (
                 :rid,
                 1,
                 NULL,
                 :item_id,
-                :production_date,
-                :expiry_date,
-                NULL,
-                NULL,
-                'UT-RMA-LINE',
-                NOW(),
-                NOW(),
-                :lot_id,
-                :warehouse_id,
                 :uom_id,
                 :qty_input,
+                (SELECT name FROM items WHERE id = :item_id),
+                (SELECT spec FROM items WHERE id = :item_id),
+                (SELECT COALESCE(NULLIF(display_name, ''), NULLIF(uom, '')) FROM item_uoms WHERE id = :uom_id),
                 :ratio,
-                :qty_base,
-                'CONFIRMED',
-                :lot_code_input
+                'UT-RMA-LINE',
+                NOW(),
+                NOW()
             )
             """
         ),
@@ -250,6 +242,98 @@ async def _insert_confirmed_order_return_receipt(
             "ratio": int(ratio),
             "qty_base": int(qty_base),
             "lot_code_input": lot_code_input,
+        },
+    )
+
+    op_id = int(
+        (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO wms_inbound_operations (
+                        receipt_no_snapshot,
+                        warehouse_id,
+                        warehouse_name_snapshot,
+                        supplier_id,
+                        supplier_name_snapshot,
+                        operator_id,
+                        operator_name_snapshot,
+                        operated_at,
+                        remark
+                    )
+                    VALUES (
+                        :receipt_no,
+                        :warehouse_id,
+                        'WH-1',
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        :occurred_at,
+                        'UT-RMA'
+                    )
+                    RETURNING id
+                    """
+                ),
+                {
+                    "receipt_no": str(ref),
+                    "warehouse_id": int(warehouse_id),
+                    "occurred_at": occurred_at,
+                },
+            )
+        ).scalar_one()
+    )
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO wms_inbound_operation_lines (
+                wms_inbound_operation_id,
+                receipt_line_no_snapshot,
+                item_id,
+                item_name_snapshot,
+                item_spec_snapshot,
+                item_uom_id,
+                uom_name_snapshot,
+                ratio_to_base_snapshot,
+                qty_inbound,
+                qty_base,
+                batch_no,
+                production_date,
+                expiry_date,
+                lot_id,
+                remark
+            )
+            VALUES (
+                :op_id,
+                1,
+                :item_id,
+                (SELECT name FROM items WHERE id = :item_id),
+                (SELECT spec FROM items WHERE id = :item_id),
+                :uom_id,
+                (SELECT COALESCE(NULLIF(display_name, ''), NULLIF(uom, '')) FROM item_uoms WHERE id = :uom_id),
+                :ratio,
+                :qty_input,
+                :qty_base,
+                :lot_code_input,
+                :production_date,
+                :expiry_date,
+                :lot_id,
+                'UT-RMA-OP-LINE'
+            )
+            """
+        ),
+        {
+            "op_id": int(op_id),
+            "item_id": int(item_id),
+            "uom_id": int(uom_id),
+            "ratio": int(ratio),
+            "qty_input": int(qty_input),
+            "qty_base": int(qty_base),
+            "lot_code_input": lot_code_input,
+            "production_date": production_date,
+            "expiry_date": expiry_date,
+            "lot_id": int(lot_id),
         },
     )
 

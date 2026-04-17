@@ -24,6 +24,7 @@ _INITIALIZED: bool = False  # 防重复初始化
 # ✅ 规则：主线 metadata 禁止加载它们（不允许双真相 / 不复活旧表）。
 _DEFAULT_EXCLUDE: Set[str] = {
     "app.models.batch",
+    "app.wms.inbound.models.inbound_receipt",
 }
 
 # Phase M-5：表名级别的 legacy 黑名单（防止未来模块改名/移动导致 ex 失效）
@@ -111,7 +112,8 @@ def init_models(
         "app.pms.items.models.item_barcode",
         "app.procurement.models.purchase_order",
         "app.procurement.models.purchase_order_line",
-        "app.wms.inbound.models.inbound_receipt",
+        "app.inbound_receipts.models.inbound_receipt",
+        "app.wms.inbound_operations.models.inbound_operation",
         "app.wms.stock.models.lot",
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",
@@ -135,6 +137,8 @@ def init_models(
         "app.procurement.models",
         "app.pms.items.models",
         "app.pms.suppliers.models",
+        "app.inbound_receipts.models",
+        "app.wms.inbound_operations.models",
         "app.wms.inbound.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
