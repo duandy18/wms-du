@@ -191,6 +191,7 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
         "wms.inbound.atomic",
         "wms.inbound.purchase",
         "wms.inbound.returns",
+        "wms.inbound.operations",
     ]
     assert _child_codes(nodes["wms.outbound"]) == [
         "wms.outbound.atomic",
