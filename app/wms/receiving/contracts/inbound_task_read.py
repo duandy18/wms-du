@@ -60,8 +60,9 @@ class InboundTaskListOut(_Base):
 class InboundTaskLineOut(_Base):
     line_no: Annotated[int, Field(ge=1, description="任务行号")]
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
-    item_uom_id: Annotated[int, Field(ge=1, description="包装单位 ID")]
-    planned_qty: Annotated[Decimal, Field(ge=0, description="任务数量")]
+    item_uom_id: Annotated[int, Field(ge=1, description="计划包装单位 ID")]
+    planned_qty: Annotated[Decimal, Field(ge=0, description="计划包装数量")]
+    planned_qty_base: Annotated[Decimal, Field(ge=0, description="计划基础数量")]
     item_name_snapshot: Annotated[
         str | None,
         Field(default=None, max_length=255, description="商品名快照"),
@@ -72,11 +73,11 @@ class InboundTaskLineOut(_Base):
     ]
     uom_name_snapshot: Annotated[
         str | None,
-        Field(default=None, max_length=64, description="单位名快照"),
+        Field(default=None, max_length=64, description="计划单位名快照"),
     ]
-    ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="倍率快照")]
+    ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="计划倍率快照")]
 
-    # PMS 执行策略投影：前端必须按这些字段决定是否显示日期/后续扫码如何回填
+    # PMS 执行策略投影
     expiry_policy: ExpiryPolicy = Field(description="有效期策略")
     lot_source_policy: LotSourcePolicy = Field(description="批次来源策略")
     derivation_allowed: bool = Field(description="是否允许按保质期推导日期")
@@ -86,8 +87,14 @@ class InboundTaskLineOut(_Base):
     ]
     shelf_life_unit: ShelfLifeUnit | None = Field(default=None, description="保质期单位")
 
-    received_qty: Annotated[Decimal, Field(ge=0, description="累计已收")]
-    remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收")]
+    # 兼容前端当前展示：把累计已收/待收折回计划包装单位
+    received_qty: Annotated[Decimal, Field(ge=0, description="累计已收（按计划包装折算）")]
+    remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收（按计划包装折算）")]
+
+    # 真正比较口径：统一按基础数量
+    received_qty_base: Annotated[Decimal, Field(ge=0, description="累计已收基础数量")]
+    remaining_qty_base: Annotated[Decimal, Field(ge=0, description="剩余待收基础数量")]
+
     remark: Annotated[str | None, Field(default=None, max_length=500, description="行备注")]
 
 

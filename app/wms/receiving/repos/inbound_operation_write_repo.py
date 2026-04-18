@@ -43,6 +43,92 @@ def _map_event_source_type(task_source_type: str) -> str:
     return task_source_type
 
 
+async def _load_item_uom_snapshot(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    item_uom_id: int,
+) -> tuple[int, str | None, Decimal]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  iu.id AS actual_item_uom_id,
+                  COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS actual_uom_name_snapshot,
+                  iu.ratio_to_base AS actual_ratio_to_base_snapshot
+                FROM item_uoms iu
+                WHERE iu.id = :item_uom_id
+                  AND iu.item_id = :item_id
+                LIMIT 1
+                """
+            ),
+            {
+                "item_uom_id": int(item_uom_id),
+                "item_id": int(item_id),
+            },
+        )
+    ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"actual_item_uom_not_found_or_item_mismatch:{item_id}:{item_uom_id}",
+        )
+
+    return (
+        int(row["actual_item_uom_id"]),
+        row["actual_uom_name_snapshot"],
+        Decimal(str(row["actual_ratio_to_base_snapshot"])),
+    )
+
+
+async def _resolve_barcode_uom_snapshot(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    barcode: str,
+) -> tuple[int, str | None, Decimal]:
+    code = (barcode or "").strip()
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  iu.id AS actual_item_uom_id,
+                  COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS actual_uom_name_snapshot,
+                  iu.ratio_to_base AS actual_ratio_to_base_snapshot
+                FROM item_barcodes ib
+                JOIN item_uoms iu
+                  ON iu.id = ib.item_uom_id
+                 AND iu.item_id = ib.item_id
+                WHERE ib.barcode = :barcode
+                  AND ib.active = TRUE
+                  AND ib.item_id = :item_id
+                ORDER BY ib.is_primary DESC, ib.id ASC
+                LIMIT 1
+                """
+            ),
+            {
+                "barcode": code,
+                "item_id": int(item_id),
+            },
+        )
+    ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"barcode_unbound_or_item_mismatch:{code}",
+        )
+
+    return (
+        int(row["actual_item_uom_id"]),
+        row["actual_uom_name_snapshot"],
+        Decimal(str(row["actual_ratio_to_base_snapshot"])),
+    )
+
+
 async def submit_inbound_operation_repo(
     session: AsyncSession,
     *,
@@ -86,21 +172,41 @@ async def submit_inbound_operation_repo(
             text(
                 """
                 SELECT
-                  line_no,
-                  source_line_id,
-                  item_id,
-                  item_name_snapshot,
-                  item_spec_snapshot,
-                  item_uom_id,
-                  uom_name_snapshot,
-                  ratio_to_base_snapshot,
-                  planned_qty
-                FROM inbound_receipt_lines
-                WHERE inbound_receipt_id = :receipt_id
-                ORDER BY line_no ASC
+                  l.line_no,
+                  l.source_line_id,
+                  l.item_id,
+                  l.item_name_snapshot,
+                  l.item_spec_snapshot,
+                  l.item_uom_id,
+                  l.uom_name_snapshot,
+                  l.ratio_to_base_snapshot,
+                  l.planned_qty,
+                  (l.planned_qty * l.ratio_to_base_snapshot) AS planned_qty_base,
+                  COALESCE(SUM(ol.qty_base), 0) AS received_qty_base
+                FROM inbound_receipt_lines l
+                LEFT JOIN wms_inbound_operations o
+                  ON o.receipt_no_snapshot = :receipt_no
+                LEFT JOIN wms_inbound_operation_lines ol
+                  ON ol.wms_inbound_operation_id = o.id
+                 AND ol.receipt_line_no_snapshot = l.line_no
+                WHERE l.inbound_receipt_id = :receipt_id
+                GROUP BY
+                  l.line_no,
+                  l.source_line_id,
+                  l.item_id,
+                  l.item_name_snapshot,
+                  l.item_spec_snapshot,
+                  l.item_uom_id,
+                  l.uom_name_snapshot,
+                  l.ratio_to_base_snapshot,
+                  l.planned_qty
+                ORDER BY l.line_no ASC
                 """
             ),
-            {"receipt_id": int(task["id"])},
+            {
+                "receipt_no": str(payload.receipt_no),
+                "receipt_id": int(task["id"]),
+            },
         )
     ).mappings().all()
 
@@ -216,25 +322,86 @@ async def submit_inbound_operation_repo(
                 detail=f"inbound_task_line_not_found:{line.receipt_line_no}",
             )
 
+        task_item_id = int(task_line["item_id"])
+        task_item_uom_id = int(task_line["item_uom_id"])
+        task_uom_name_snapshot = task_line["uom_name_snapshot"]
+        task_ratio = Decimal(str(task_line["ratio_to_base_snapshot"]))
+        planned_qty_base = Decimal(str(task_line["planned_qty_base"]))
+        received_qty_base_running = Decimal(str(task_line["received_qty_base"]))
+
         item_policy = await get_item_policy_by_id(
             session,
-            item_id=int(task_line["item_id"]),
+            item_id=task_item_id,
         )
         if item_policy is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"item_policy_not_found:{task_line['item_id']}",
+                detail=f"item_policy_not_found:{task_item_id}",
             )
-
-        ratio = Decimal(str(task_line["ratio_to_base_snapshot"]))
 
         for entry in line.entries:
             qty_inbound = Decimal(str(entry.qty_inbound))
-            qty_base = qty_inbound * ratio
+            barcode_input = (
+                str(entry.barcode_input).strip()
+                if entry.barcode_input is not None
+                else None
+            ) or None
+            explicit_actual_item_uom_id = (
+                int(entry.actual_item_uom_id)
+                if entry.actual_item_uom_id is not None
+                else None
+            )
+
+            if barcode_input is not None:
+                (
+                    actual_item_uom_id,
+                    actual_uom_name_snapshot,
+                    actual_ratio,
+                ) = await _resolve_barcode_uom_snapshot(
+                    session,
+                    item_id=task_item_id,
+                    barcode=barcode_input,
+                )
+                if (
+                    explicit_actual_item_uom_id is not None
+                    and explicit_actual_item_uom_id != actual_item_uom_id
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"barcode_actual_item_uom_mismatch:{line.receipt_line_no}",
+                    )
+            elif explicit_actual_item_uom_id is not None:
+                (
+                    actual_item_uom_id,
+                    actual_uom_name_snapshot,
+                    actual_ratio,
+                ) = await _load_item_uom_snapshot(
+                    session,
+                    item_id=task_item_id,
+                    item_uom_id=explicit_actual_item_uom_id,
+                )
+            else:
+                actual_item_uom_id = task_item_uom_id
+                actual_uom_name_snapshot = task_uom_name_snapshot
+                actual_ratio = task_ratio
+
+            qty_base = qty_inbound * actual_ratio
+
+            if received_qty_base_running + qty_base > planned_qty_base:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"received_qty_base_exceeds_planned:"
+                        f"line={line.receipt_line_no}:"
+                        f"planned_base={planned_qty_base}:"
+                        f"received_base={received_qty_base_running}:"
+                        f"incoming_base={qty_base}"
+                    ),
+                )
 
             qty_base_int = _to_int_exact(qty_base, label="qty_base")
-            qty_input_int = _to_int_exact(qty_inbound, label="qty_input")
-            ratio_int = _to_int_exact(ratio, label="ratio_to_base_snapshot")
+            qty_input_int = _to_int_exact(qty_inbound, label="actual_qty_input")
+            actual_ratio_int = _to_int_exact(actual_ratio, label="actual_ratio_to_base")
 
             lot_id = await resolve_inbound_lot(
                 session,
@@ -255,10 +422,10 @@ async def submit_inbound_operation_repo(
                           item_id,
                           item_name_snapshot,
                           item_spec_snapshot,
-                          item_uom_id,
-                          uom_name_snapshot,
-                          ratio_to_base_snapshot,
-                          qty_inbound,
+                          actual_item_uom_id,
+                          actual_uom_name_snapshot,
+                          actual_ratio_to_base_snapshot,
+                          actual_qty_input,
                           qty_base,
                           batch_no,
                           production_date,
@@ -272,10 +439,10 @@ async def submit_inbound_operation_repo(
                           :item_id,
                           :item_name_snapshot,
                           :item_spec_snapshot,
-                          :item_uom_id,
-                          :uom_name_snapshot,
-                          :ratio_to_base_snapshot,
-                          :qty_inbound,
+                          :actual_item_uom_id,
+                          :actual_uom_name_snapshot,
+                          :actual_ratio_to_base_snapshot,
+                          :actual_qty_input,
                           :qty_base,
                           :batch_no,
                           :production_date,
@@ -289,13 +456,13 @@ async def submit_inbound_operation_repo(
                     {
                         "wms_inbound_operation_id": operation_id,
                         "receipt_line_no_snapshot": int(line.receipt_line_no),
-                        "item_id": int(task_line["item_id"]),
+                        "item_id": task_item_id,
                         "item_name_snapshot": task_line["item_name_snapshot"],
                         "item_spec_snapshot": task_line["item_spec_snapshot"],
-                        "item_uom_id": int(task_line["item_uom_id"]),
-                        "uom_name_snapshot": task_line["uom_name_snapshot"],
-                        "ratio_to_base_snapshot": ratio,
-                        "qty_inbound": qty_inbound,
+                        "actual_item_uom_id": actual_item_uom_id,
+                        "actual_uom_name_snapshot": actual_uom_name_snapshot,
+                        "actual_ratio_to_base_snapshot": actual_ratio,
+                        "actual_qty_input": qty_inbound,
                         "qty_base": qty_base,
                         "batch_no": entry.batch_no,
                         "production_date": entry.production_date,
@@ -320,10 +487,10 @@ async def submit_inbound_operation_repo(
                       event_id,
                       line_no,
                       item_id,
-                      uom_id,
+                      actual_uom_id,
                       barcode_input,
-                      qty_input,
-                      ratio_to_base_snapshot,
+                      actual_qty_input,
+                      actual_ratio_to_base_snapshot,
                       qty_base,
                       lot_code_input,
                       production_date,
@@ -336,10 +503,10 @@ async def submit_inbound_operation_repo(
                       :event_id,
                       :line_no,
                       :item_id,
-                      :uom_id,
+                      :actual_uom_id,
                       :barcode_input,
-                      :qty_input,
-                      :ratio_to_base_snapshot,
+                      :actual_qty_input,
+                      :actual_ratio_to_base_snapshot,
                       :qty_base,
                       :lot_code_input,
                       :production_date,
@@ -353,11 +520,11 @@ async def submit_inbound_operation_repo(
                 {
                     "event_id": event_id,
                     "line_no": event_line_no,
-                    "item_id": int(task_line["item_id"]),
-                    "uom_id": int(task_line["item_uom_id"]),
-                    "barcode_input": entry.barcode_input,
-                    "qty_input": qty_input_int,
-                    "ratio_to_base_snapshot": ratio_int,
+                    "item_id": task_item_id,
+                    "actual_uom_id": actual_item_uom_id,
+                    "barcode_input": barcode_input,
+                    "actual_qty_input": qty_input_int,
+                    "actual_ratio_to_base_snapshot": actual_ratio_int,
                     "qty_base": qty_base_int,
                     "lot_code_input": entry.batch_no,
                     "production_date": entry.production_date,
@@ -391,7 +558,7 @@ async def submit_inbound_operation_repo(
                         """
                     ),
                     {
-                        "item_id": int(task_line["item_id"]),
+                        "item_id": task_item_id,
                         "warehouse_id": int(task["warehouse_id"]),
                         "lot_id": int(lot_id),
                         "delta": qty_base_int,
@@ -446,7 +613,7 @@ async def submit_inbound_operation_repo(
                     "occurred_at": operated_at,
                     "ref": event_no,
                     "ref_line": event_line_no,
-                    "item_id": int(task_line["item_id"]),
+                    "item_id": task_item_id,
                     "warehouse_id": int(task["warehouse_id"]),
                     "trace_id": trace_id,
                     "production_date": entry.production_date,
@@ -460,13 +627,13 @@ async def submit_inbound_operation_repo(
                 InboundOperationLineOut(
                     id=int(inserted["id"]),
                     receipt_line_no_snapshot=int(line.receipt_line_no),
-                    item_id=int(task_line["item_id"]),
+                    item_id=task_item_id,
                     item_name_snapshot=task_line["item_name_snapshot"],
                     item_spec_snapshot=task_line["item_spec_snapshot"],
-                    item_uom_id=int(task_line["item_uom_id"]),
-                    uom_name_snapshot=task_line["uom_name_snapshot"],
-                    ratio_to_base_snapshot=ratio,
-                    qty_inbound=qty_inbound,
+                    actual_item_uom_id=actual_item_uom_id,
+                    actual_uom_name_snapshot=actual_uom_name_snapshot,
+                    actual_ratio_to_base_snapshot=actual_ratio,
+                    actual_qty_input=qty_inbound,
                     qty_base=qty_base,
                     batch_no=entry.batch_no,
                     production_date=entry.production_date,
@@ -475,6 +642,8 @@ async def submit_inbound_operation_repo(
                     remark=entry.remark,
                 )
             )
+
+            received_qty_base_running += qty_base
 
     return InboundOperationSubmitOut(
         id=operation_id,

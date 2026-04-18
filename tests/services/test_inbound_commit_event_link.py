@@ -85,9 +85,9 @@ async def _load_event_line(session, *, event_id: int):
               event_id,
               line_no,
               item_id,
-              uom_id,
-              qty_input,
-              ratio_to_base_snapshot,
+              actual_uom_id,
+              actual_qty_input,
+              actual_ratio_to_base_snapshot,
               qty_base,
               lot_id,
               lot_code_input
@@ -198,8 +198,8 @@ async def test_inbound_commit_links_wms_event_and_stock_ledger(session):
     assert int(event_line["event_id"]) == int(out.event_id)
     assert int(event_line["line_no"]) == 1
     assert int(event_line["item_id"]) == item_id
-    assert int(event_line["uom_id"]) == uom_id
-    assert int(event_line["qty_input"]) == qty_input
+    assert int(event_line["actual_uom_id"]) == uom_id
+    assert int(event_line["actual_qty_input"]) == qty_input
     assert int(event_line["qty_base"]) == int(out_row.qty_base)
     assert int(event_line["lot_id"]) == int(out_row.lot_id)
 

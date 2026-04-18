@@ -85,7 +85,7 @@ class AuditWriter:
 
         if trace_id:
             try:
-                # event_store.topic = source（例如 scan_receive_path）
+                # event_store.topic = source（例如 scan_pick_probe）
                 # key = trace_id（便于查询）
                 await writer.write_store(
                     session,

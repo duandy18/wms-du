@@ -86,14 +86,6 @@ async def list_inbound_events(
     limit: int | None = 20,
     offset: int | None = 0,
 ) -> InboundEventListOut:
-    """
-    入库事件列表。
-
-    当前目标：
-    - 直接以 wms_events 为真相源
-    - 不混入旧 receipt/task 语义
-    - 仅返回前端工作台下卡所需的事件头摘要
-    """
     limit_n = _normalize_limit(limit)
     offset_n = _normalize_offset(offset)
 
@@ -162,14 +154,6 @@ async def get_inbound_event_detail(
     *,
     event_id: int,
 ) -> InboundEventDetailOut:
-    """
-    入库事件详情。
-
-    当前目标：
-    - event 头来自 wms_events
-    - line 明细来自 inbound_event_lines
-    - 展示字段通过 items / item_uoms / lots 补齐
-    """
     event_sql = text(
         """
         SELECT
@@ -206,11 +190,11 @@ async def get_inbound_event_detail(
             iel.item_id,
             it.name AS item_name,
             it.sku AS item_sku,
-            iel.uom_id,
-            COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS uom_name,
+            iel.actual_uom_id,
+            COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS actual_uom_name,
             iel.barcode_input,
-            iel.qty_input,
-            iel.ratio_to_base_snapshot,
+            iel.actual_qty_input,
+            iel.actual_ratio_to_base_snapshot,
             iel.qty_base,
             iel.lot_id,
             iel.lot_code_input,
@@ -223,7 +207,7 @@ async def get_inbound_event_detail(
           LEFT JOIN items AS it
             ON it.id = iel.item_id
           LEFT JOIN item_uoms AS iu
-            ON iu.id = iel.uom_id
+            ON iu.id = iel.actual_uom_id
           LEFT JOIN lots AS lo
             ON lo.id = iel.lot_id
          WHERE iel.event_id = :event_id

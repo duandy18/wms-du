@@ -10,7 +10,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     from app.admin.router import router as admin_router
     from app.diagnostics.routers.autoheal_execute import router as autoheal_execute_router
-    from app.wms.reconciliation.routers.count import router as count_router
+    from app.wms.count.routers.count import router as count_router
     from app.wms.reconciliation.routers.stock_inventory_recount import router as stock_inventory_recount_router
     from app.diagnostics.routers.debug_trace import router as debug_trace_router
     from app.devtools.routers.dev_seed_ledger import router as dev_seed_ledger_router

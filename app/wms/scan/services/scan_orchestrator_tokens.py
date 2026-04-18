@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
-# v2 只允许这三种 scan 模式（历史 putaway 已下线）
-ALLOWED_SCAN_MODES = {"receive", "pick", "count"}
+# /scan 已收口为 pick probe 工具层；不再承接 receive / count 主链
+ALLOWED_SCAN_MODES = {"pick"}
 
 # ---------------- token parsing ----------------
 _TOKEN_MAP = {

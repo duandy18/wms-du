@@ -399,8 +399,17 @@ async def get_inbound_receipt_progress_repo(
                 SELECT
                   l.line_no,
                   l.planned_qty,
-                  COALESCE(SUM(ol.qty_inbound), 0) AS received_qty,
-                  GREATEST(l.planned_qty - COALESCE(SUM(ol.qty_inbound), 0), 0) AS remaining_qty
+                  COALESCE(
+                    SUM(COALESCE(ol.qty_base, 0) / l.ratio_to_base_snapshot),
+                    0
+                  ) AS received_qty,
+                  COALESCE(
+                    GREATEST(
+                      (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),
+                      0
+                    ) / l.ratio_to_base_snapshot,
+                    0
+                  ) AS remaining_qty
                 FROM inbound_receipt_lines l
                 LEFT JOIN wms_inbound_operations o
                   ON o.receipt_no_snapshot = :receipt_no
@@ -408,7 +417,7 @@ async def get_inbound_receipt_progress_repo(
                   ON ol.wms_inbound_operation_id = o.id
                  AND ol.receipt_line_no_snapshot = l.line_no
                 WHERE l.inbound_receipt_id = :receipt_id
-                GROUP BY l.line_no, l.planned_qty
+                GROUP BY l.line_no, l.planned_qty, l.ratio_to_base_snapshot
                 ORDER BY l.line_no ASC
                 """
             ),

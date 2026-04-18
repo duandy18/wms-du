@@ -46,17 +46,6 @@ _EVENT_STATUSES = (
 
 
 class WmsEvent(Base):
-    """
-    WMS 统一事件头表。
-
-    设计原则：
-    - 一次业务提交 = 一条统一事件头 + 多条领域明细行
-    - 共享台账 stock_ledger 通过 event_id 指向这里
-    - event_type 区分大类：INBOUND / OUTBOUND / COUNT
-    - source_type 区分具体来源：PURCHASE_ORDER / MANUAL / ORDER_SHIP / ...
-    - 已提交后不直接改原事件；错单通过 REVERSAL / CORRECTION 新事件表达
-    """
-
     __tablename__ = "wms_events"
 
     __table_args__ = (
@@ -87,9 +76,7 @@ class WmsEvent(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
     event_no: Mapped[str] = mapped_column(String(64), nullable=False)
-
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
 
     warehouse_id: Mapped[int] = mapped_column(
@@ -160,16 +147,6 @@ class WmsEvent(Base):
 
 
 class InboundEventLine(Base):
-    """
-    入库事件明细行。
-
-    设计原则：
-    - event_id 指向统一事件头表 wms_events
-    - qty_base / ratio_to_base_snapshot 为交易快照，不是主数据真相
-    - lot_id 是库存结构锚点
-    - po_line_id 仅采购来源使用；不引入 source_line_ref 这类泛字段
-    """
-
     __tablename__ = "inbound_event_lines"
 
     __table_args__ = (
@@ -178,16 +155,16 @@ class InboundEventLine(Base):
             name="ck_inbound_event_lines_prod_le_exp",
         ),
         CheckConstraint(
-            "ratio_to_base_snapshot >= 1",
-            name="ck_inbound_event_lines_ratio_positive",
+            "actual_ratio_to_base_snapshot >= 1",
+            name="ck_inbound_event_lines_actual_ratio_positive",
         ),
         CheckConstraint(
-            "qty_input >= 1",
-            name="ck_inbound_event_lines_qty_input_positive",
+            "actual_qty_input >= 1",
+            name="ck_inbound_event_lines_actual_qty_input_positive",
         ),
         CheckConstraint(
-            "qty_base = (qty_input * ratio_to_base_snapshot)",
-            name="ck_inbound_event_lines_qty_base_consistent",
+            "qty_base = (actual_qty_input * actual_ratio_to_base_snapshot)",
+            name="ck_inbound_event_lines_actual_qty_base_consistent",
         ),
         UniqueConstraint(
             "event_id",
@@ -212,16 +189,16 @@ class InboundEventLine(Base):
         nullable=False,
     )
 
-    uom_id: Mapped[int] = mapped_column(
+    actual_uom_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("item_uoms.id", name="fk_inbound_event_lines_uom", ondelete="RESTRICT"),
+        ForeignKey("item_uoms.id", name="fk_inbound_event_lines_actual_uom", ondelete="RESTRICT"),
         nullable=False,
     )
 
     barcode_input: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
-    qty_input: Mapped[int] = mapped_column(Integer, nullable=False)
-    ratio_to_base_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_qty_input: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_ratio_to_base_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
     qty_base: Mapped[int] = mapped_column(Integer, nullable=False)
 
     lot_code_input: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

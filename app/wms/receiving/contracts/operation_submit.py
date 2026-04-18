@@ -16,10 +16,14 @@ class _Base(BaseModel):
 
 
 class InboundOperationEntryIn(_Base):
-    qty_inbound: Annotated[Decimal, Field(gt=0, description="本次收货数量")]
+    qty_inbound: Annotated[Decimal, Field(gt=0, description="本次收货数量（按实际包装）")]
     barcode_input: Annotated[
         str | None,
         Field(default=None, max_length=128, description="扫码原始条码（可选）"),
+    ]
+    actual_item_uom_id: Annotated[
+        int | None,
+        Field(default=None, ge=1, description="实际收货包装单位 ID（可选；扫码时可由条码反解）"),
     ]
     batch_no: Annotated[str | None, Field(default=None, max_length=128, description="批次号")]
     production_date: date | None = Field(default=None, description="生产日期")
@@ -39,7 +43,7 @@ class InboundOperationEntryIn(_Base):
 
 class InboundOperationLineIn(_Base):
     receipt_line_no: Annotated[int, Field(ge=1, description="任务行号")]
-    entries: Annotated[list[InboundOperationEntryIn], Field(min_length=1, description="本次批次子行")]
+    entries: Annotated[list[InboundOperationEntryIn], Field(min_length=1, description="本次实际收货子行")]
 
 
 class InboundOperationSubmitIn(_Base):
@@ -51,9 +55,9 @@ class InboundOperationSubmitIn(_Base):
     def validate_unique_receipt_line_no(self) -> "InboundOperationSubmitIn":
         seen: set[int] = set()
         for line in self.lines:
-          if line.receipt_line_no in seen:
-              raise ValueError(f"duplicate receipt_line_no: {line.receipt_line_no}")
-          seen.add(line.receipt_line_no)
+            if line.receipt_line_no in seen:
+                raise ValueError(f"duplicate receipt_line_no: {line.receipt_line_no}")
+            seen.add(line.receipt_line_no)
         return self
 
 
@@ -63,10 +67,10 @@ class InboundOperationLineOut(_Base):
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     item_name_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="商品名快照")]
     item_spec_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="规格快照")]
-    item_uom_id: Annotated[int, Field(ge=1, description="包装单位 ID")]
-    uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="单位名快照")]
-    ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="倍率快照")]
-    qty_inbound: Annotated[Decimal, Field(gt=0, description="本次收货数量")]
+    actual_item_uom_id: Annotated[int, Field(ge=1, description="实际包装单位 ID")]
+    actual_uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="实际单位名快照")]
+    actual_ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="实际倍率快照")]
+    actual_qty_input: Annotated[Decimal, Field(gt=0, description="本次实际包装数量")]
     qty_base: Annotated[Decimal, Field(gt=0, description="折算 base 数量")]
     batch_no: Annotated[str | None, Field(default=None, max_length=128, description="批次号")]
     production_date: date | None = Field(default=None, description="生产日期")
