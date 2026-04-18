@@ -17,6 +17,10 @@ class _Base(BaseModel):
 
 class InboundOperationEntryIn(_Base):
     qty_inbound: Annotated[Decimal, Field(gt=0, description="本次收货数量")]
+    barcode_input: Annotated[
+        str | None,
+        Field(default=None, max_length=128, description="扫码原始条码（可选）"),
+    ]
     batch_no: Annotated[str | None, Field(default=None, max_length=128, description="批次号")]
     production_date: date | None = Field(default=None, description="生产日期")
     expiry_date: date | None = Field(default=None, description="到期日期")
@@ -47,9 +51,9 @@ class InboundOperationSubmitIn(_Base):
     def validate_unique_receipt_line_no(self) -> "InboundOperationSubmitIn":
         seen: set[int] = set()
         for line in self.lines:
-            if line.receipt_line_no in seen:
-                raise ValueError(f"duplicate receipt_line_no: {line.receipt_line_no}")
-            seen.add(line.receipt_line_no)
+          if line.receipt_line_no in seen:
+              raise ValueError(f"duplicate receipt_line_no: {line.receipt_line_no}")
+          seen.add(line.receipt_line_no)
         return self
 
 

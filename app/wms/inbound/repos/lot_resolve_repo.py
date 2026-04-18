@@ -10,12 +10,13 @@ from app.wms.stock.services.lot_service import resolve_or_create_lot
 
 def infer_lot_code_source_from_policy(item_policy: ItemPolicy) -> str:
     """
-    当前中心任务收口：
+    lot 来源必须以后端 PMS 策略真相为准，不再把 expiry_policy 和 lot_source_policy 混为一谈。
 
-    - REQUIRED 商品：走 SUPPLIER lot 路径，由 production_date 决定 lot 身份
-    - 其他商品：统一走 INTERNAL singleton
+    - lot_source_policy=SUPPLIER_ONLY：走 SUPPLIER lot 路径
+    - 其他情况：统一走 INTERNAL singleton
     """
-    if str(item_policy.expiry_policy or "").upper() == "REQUIRED":
+    lot_source_policy = str(getattr(item_policy, "lot_source_policy", "") or "").upper()
+    if lot_source_policy == "SUPPLIER_ONLY":
         return "SUPPLIER"
     return "INTERNAL"
 

@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/count_handler.py
+# app/wms/scan/services/count_handler.py
 from __future__ import annotations
 
 from datetime import date, datetime, timezone

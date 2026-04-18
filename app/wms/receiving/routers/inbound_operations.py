@@ -13,8 +13,15 @@ from app.wms.receiving.contracts.operation_submit import (
     InboundOperationSubmitIn,
     InboundOperationSubmitOut,
 )
+from app.wms.receiving.contracts.probe import (
+    InboundTaskProbeIn,
+    InboundTaskProbeOut,
+)
 from app.wms.receiving.services.inbound_operation_submit_service import (
     submit_inbound_operation,
+)
+from app.wms.receiving.services.inbound_task_probe_service import (
+    probe_inbound_task_barcode,
 )
 from app.wms.receiving.services.inbound_task_read_service import (
     get_inbound_task,
@@ -45,6 +52,26 @@ async def get_inbound_task_endpoint(
 ) -> InboundTaskReadOut:
     try:
         return await get_inbound_task(session, receipt_no=receipt_no)
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/tasks/{receipt_no}/probe", response_model=InboundTaskProbeOut)
+async def probe_inbound_task_barcode_endpoint(
+    receipt_no: str,
+    payload: InboundTaskProbeIn,
+    session: AsyncSession = Depends(get_session),
+) -> InboundTaskProbeOut:
+    try:
+        return await probe_inbound_task_barcode(
+            session,
+            receipt_no=receipt_no,
+            barcode=payload.barcode,
+        )
     except NotImplementedError as e:
         raise HTTPException(status_code=501, detail=str(e)) from e
     except HTTPException:

@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/scan_orchestrator_item_resolver.py
+# app/wms/scan/services/scan_orchestrator_item_resolver.py
 from __future__ import annotations
 
 from dataclasses import dataclass

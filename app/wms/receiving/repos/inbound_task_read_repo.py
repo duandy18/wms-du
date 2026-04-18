@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.wms.inbound.repos.item_lookup_repo import get_item_policy_by_id
 from app.wms.receiving.contracts.inbound_task_read import (
     InboundTaskLineOut,
     InboundTaskListItemOut,
@@ -181,6 +182,56 @@ async def get_inbound_task_repo(
         )
     ).mappings().all()
 
+    policy_cache: dict[int, object] = {}
+    lines: list[InboundTaskLineOut] = []
+
+    for r in rows:
+        item_id = int(r["item_id"])
+        policy = policy_cache.get(item_id)
+        if policy is None:
+            policy = await get_item_policy_by_id(
+                session,
+                item_id=item_id,
+            )
+            if policy is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"item_policy_not_found:{item_id}",
+                )
+            policy_cache[item_id] = policy
+
+        shelf_life_value_raw = getattr(policy, "shelf_life_value", None)
+        shelf_life_unit_raw = getattr(policy, "shelf_life_unit", None)
+
+        lines.append(
+            InboundTaskLineOut(
+                line_no=int(r["line_no"]),
+                item_id=item_id,
+                item_uom_id=int(r["item_uom_id"]),
+                planned_qty=r["planned_qty"],
+                item_name_snapshot=r["item_name_snapshot"],
+                item_spec_snapshot=r["item_spec_snapshot"],
+                uom_name_snapshot=r["uom_name_snapshot"],
+                ratio_to_base_snapshot=r["ratio_to_base_snapshot"],
+                expiry_policy=str(getattr(policy, "expiry_policy")),
+                lot_source_policy=str(getattr(policy, "lot_source_policy")),
+                derivation_allowed=bool(getattr(policy, "derivation_allowed")),
+                shelf_life_value=(
+                    int(shelf_life_value_raw)
+                    if shelf_life_value_raw is not None
+                    else None
+                ),
+                shelf_life_unit=(
+                    str(shelf_life_unit_raw)
+                    if shelf_life_unit_raw is not None
+                    else None
+                ),
+                received_qty=r["received_qty"],
+                remaining_qty=r["remaining_qty"],
+                remark=r["remark"],
+            )
+        )
+
     return InboundTaskReadOut(
         receipt_id=int(header["receipt_id"]),
         receipt_no=str(header["receipt_no"]),
@@ -192,22 +243,7 @@ async def get_inbound_task_repo(
         counterparty_name_snapshot=header["counterparty_name_snapshot"],
         status=str(header["status"]),
         remark=header["remark"],
-        lines=[
-            InboundTaskLineOut(
-                line_no=int(r["line_no"]),
-                item_id=int(r["item_id"]),
-                item_uom_id=int(r["item_uom_id"]),
-                planned_qty=r["planned_qty"],
-                item_name_snapshot=r["item_name_snapshot"],
-                item_spec_snapshot=r["item_spec_snapshot"],
-                uom_name_snapshot=r["uom_name_snapshot"],
-                ratio_to_base_snapshot=r["ratio_to_base_snapshot"],
-                received_qty=r["received_qty"],
-                remaining_qty=r["remaining_qty"],
-                remark=r["remark"],
-            )
-            for r in rows
-        ],
+        lines=lines,
     )
 
 

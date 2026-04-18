@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/scan_orchestrator_ingest_count.py
+# app/wms/scan/services/scan_orchestrator_ingest_count.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditWriter
 from app.core.tx import TxManager
-from app.wms.reconciliation.services.count_handler import handle_count
+from app.wms.scan.services.count_handler import handle_count
 
-from app.wms.reconciliation.services.scan_orchestrator_dates import date_to_json
+from app.wms.scan.services.scan_orchestrator_dates import date_to_json
 
 
 async def run_count_flow(
