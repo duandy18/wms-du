@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.inbound_operations.contracts.operation_submit import (
+from app.wms.receiving.contracts.operation_submit import (
     InboundOperationSubmitIn,
     InboundOperationSubmitOut,
 )
-from app.wms.inbound_operations.repos.inbound_operation_write_repo import (
+from app.wms.receiving.repos.inbound_operation_write_repo import (
     submit_inbound_operation_repo,
 )
 

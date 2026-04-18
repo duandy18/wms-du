@@ -4,10 +4,100 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.inbound_operations.contracts.inbound_task_read import (
+from app.wms.receiving.contracts.inbound_task_read import (
     InboundTaskLineOut,
+    InboundTaskListItemOut,
+    InboundTaskListOut,
     InboundTaskReadOut,
 )
+
+
+async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
+    rows = (
+        await session.execute(
+            text(
+                """
+                WITH line_received AS (
+                  SELECT
+                    o.receipt_no_snapshot AS receipt_no,
+                    ol.receipt_line_no_snapshot AS line_no,
+                    COALESCE(SUM(ol.qty_inbound), 0) AS received_qty
+                  FROM wms_inbound_operations o
+                  JOIN wms_inbound_operation_lines ol
+                    ON ol.wms_inbound_operation_id = o.id
+                  GROUP BY
+                    o.receipt_no_snapshot,
+                    ol.receipt_line_no_snapshot
+                )
+                SELECT
+                  r.id AS receipt_id,
+                  r.receipt_no,
+                  r.source_type,
+                  r.source_doc_no_snapshot,
+                  r.warehouse_id,
+                  r.warehouse_name_snapshot,
+                  r.supplier_id,
+                  r.counterparty_name_snapshot,
+                  r.status,
+                  r.released_at,
+                  r.remark,
+                  COUNT(l.id) AS line_count,
+                  COALESCE(SUM(l.planned_qty), 0) AS total_planned_qty,
+                  COALESCE(SUM(COALESCE(lr.received_qty, 0)), 0) AS total_received_qty,
+                  COALESCE(
+                    SUM(GREATEST(l.planned_qty - COALESCE(lr.received_qty, 0), 0)),
+                    0
+                  ) AS total_remaining_qty
+                FROM inbound_receipts r
+                JOIN inbound_receipt_lines l
+                  ON l.inbound_receipt_id = r.id
+                LEFT JOIN line_received lr
+                  ON lr.receipt_no = r.receipt_no
+                 AND lr.line_no = l.line_no
+                WHERE r.status = 'RELEASED'
+                GROUP BY
+                  r.id,
+                  r.receipt_no,
+                  r.source_type,
+                  r.source_doc_no_snapshot,
+                  r.warehouse_id,
+                  r.warehouse_name_snapshot,
+                  r.supplier_id,
+                  r.counterparty_name_snapshot,
+                  r.status,
+                  r.released_at,
+                  r.remark
+                ORDER BY
+                  r.released_at DESC NULLS LAST,
+                  r.id DESC
+                """
+            )
+        )
+    ).mappings().all()
+
+    return InboundTaskListOut(
+        items=[
+            InboundTaskListItemOut(
+                receipt_id=int(r["receipt_id"]),
+                receipt_no=str(r["receipt_no"]),
+                source_type=str(r["source_type"]),
+                source_doc_no_snapshot=r["source_doc_no_snapshot"],
+                warehouse_id=int(r["warehouse_id"]),
+                warehouse_name_snapshot=r["warehouse_name_snapshot"],
+                supplier_id=r["supplier_id"],
+                counterparty_name_snapshot=r["counterparty_name_snapshot"],
+                status=str(r["status"]),
+                released_at=r["released_at"],
+                line_count=int(r["line_count"]),
+                total_planned_qty=r["total_planned_qty"],
+                total_received_qty=r["total_received_qty"],
+                total_remaining_qty=r["total_remaining_qty"],
+                remark=r["remark"],
+            )
+            for r in rows
+        ],
+        total=len(rows),
+    )
 
 
 async def get_inbound_task_repo(
@@ -122,5 +212,6 @@ async def get_inbound_task_repo(
 
 
 __all__ = [
+    "list_inbound_tasks_repo",
     "get_inbound_task_repo",
 ]

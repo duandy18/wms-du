@@ -243,7 +243,7 @@ def upgrade() -> None:
         )
         VALUES (
           'wms.inbound.operations',
-          '收货操作',
+          '收货作业',
           'wms.inbound',
           3,
           'wms',
@@ -289,8 +289,8 @@ def upgrade() -> None:
           ('inbound.purchase', '/inbound-receipts/purchase', 20, TRUE),
           ('inbound.returns', '/inbound-receipts/returns', 30, TRUE),
           ('inbound.manual', '/inbound-receipts/manual', 40, TRUE),
-          ('wms.inbound.operations', '/inbound-operations', 40, TRUE),
-          ('wms.inbound.operations', '/inbound-operations/\\:receiptNo', 41, TRUE)
+          ('wms.inbound.operations', '/receiving', 40, TRUE),
+          ('wms.inbound.operations', '/receiving/\\:receiptNo', 41, TRUE)
         ON CONFLICT (route_prefix) DO UPDATE
         SET
           page_code = EXCLUDED.page_code,
