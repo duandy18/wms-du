@@ -1,4 +1,4 @@
-# app/wms/inbound_operations/models/inbound_operation.py
+# app/wms/receiving/models/inbound_operation.py
 # 拆分说明：
 # 本文件承接“WMS 收货操作事实层”ORM 模型，只负责
 # wms_inbound_operations / wms_inbound_operation_lines。

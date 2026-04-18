@@ -113,7 +113,7 @@ def init_models(
         "app.procurement.models.purchase_order",
         "app.procurement.models.purchase_order_line",
         "app.inbound_receipts.models.inbound_receipt",
-        "app.wms.inbound_operations.models.inbound_operation",
+        "app.wms.receiving.models.inbound_operation",
         "app.wms.stock.models.lot",
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",
@@ -138,7 +138,7 @@ def init_models(
         "app.pms.items.models",
         "app.pms.suppliers.models",
         "app.inbound_receipts.models",
-        "app.wms.inbound_operations.models",
+        "app.wms.receiving.models",
         "app.wms.inbound.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):

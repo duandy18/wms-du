@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.inbound.repos.item_lookup_repo import get_item_policy_by_id
 from app.wms.inbound.repos.lot_resolve_repo import resolve_inbound_lot
-from app.wms.inbound_operations.contracts.operation_submit import (
+from app.wms.receiving.contracts.operation_submit import (
     InboundOperationLineOut,
     InboundOperationSubmitIn,
     InboundOperationSubmitOut,
