@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/scan_orchestrator_ingest.py
+# app/wms/scan/services/scan_orchestrator_ingest.py
 from __future__ import annotations
 
 from datetime import timezone
@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditWriter
 
-from app.wms.reconciliation.services.scan_orchestrator_parse import parse_scan
-from app.wms.reconciliation.services.scan_orchestrator_refs import normalize_ref
-from app.wms.reconciliation.services.scan_orchestrator_tokens import ALLOWED_SCAN_MODES
+from app.wms.scan.services.scan_orchestrator_parse import parse_scan
+from app.wms.scan.services.scan_orchestrator_refs import normalize_ref
+from app.wms.scan.services.scan_orchestrator_tokens import ALLOWED_SCAN_MODES
 
-from app.wms.reconciliation.services.scan_orchestrator_ingest_count import run_count_flow
-from app.wms.reconciliation.services.scan_orchestrator_ingest_receive import run_receive_flow
-from app.wms.reconciliation.services.scan_orchestrator_ingest_pick import run_pick_flow
+from app.wms.scan.services.scan_orchestrator_ingest_count import run_count_flow
+from app.wms.scan.services.scan_orchestrator_ingest_receive import run_receive_flow
+from app.wms.scan.services.scan_orchestrator_ingest_pick import run_pick_flow
 
 UTC = timezone.utc
 AUDIT = AuditWriter()
@@ -194,6 +194,21 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
 
     try:
         if mode == "count":
+            if not probe:
+                ev = await AUDIT.other(session, scan_ref_norm)
+                return {
+                    "ok": False,
+                    "committed": False,
+                    "scan_ref": scan_ref_norm,
+                    "event_id": ev,
+                    "source": "scan_feature_disabled",
+                    "evidence": [{"source": "scan_feature_disabled", "db": True}],
+                    "errors": [{"stage": "ingest", "error": "FEATURE_DISABLED: count_commit_disabled_use_/count"}],
+                    "item_id": item_id,
+                    "item_uom_id": item_uom_id,
+                    "ratio_to_base": ratio_to_base,
+                    "qty_base": qty_base,
+                }
             result = await run_count_flow(
                 session=session,
                 audit=AUDIT,
@@ -235,6 +250,22 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
             )
 
         # pick
+        if not probe:
+            ev = await AUDIT.other(session, scan_ref_norm)
+            return {
+                "ok": False,
+                "committed": False,
+                "scan_ref": scan_ref_norm,
+                "event_id": ev,
+                "source": "scan_feature_disabled",
+                "evidence": [{"source": "scan_feature_disabled", "db": True}],
+                "errors": [{"stage": "ingest", "error": "FEATURE_DISABLED: pick_commit_disabled_use_/pick-tasks/{task_id}/scan"}],
+                "item_id": item_id,
+                "item_uom_id": item_uom_id,
+                "ratio_to_base": ratio_to_base,
+                "qty_base": qty_base,
+            }
+
         exec_qty = int(qty_base if qty_base is not None else qty)
         result = await run_pick_flow(
             session=session,

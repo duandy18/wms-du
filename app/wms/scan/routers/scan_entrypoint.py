@@ -1,13 +1,13 @@
-# app/wms/reconciliation/routers/scan_entrypoint.py
+# app/wms/scan/routers/scan_entrypoint.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.deps import get_async_session as get_session
-from app.wms.reconciliation.services.scan_helpers import to_date_str
-from app.wms.reconciliation.contracts.scan import ScanRequest, ScanResponse
-from app.wms.reconciliation.services.scan_orchestrator_ingest import ingest as ingest_scan
+from app.wms.scan.services.scan_helpers import to_date_str
+from app.wms.scan.contracts.scan import ScanRequest, ScanResponse
+from app.wms.scan.services.scan_orchestrator_ingest import ingest as ingest_scan
 
 
 def register(router: APIRouter) -> None:

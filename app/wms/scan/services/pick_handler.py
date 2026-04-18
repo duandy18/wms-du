@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/pick_handler.py
+# app/wms/scan/services/pick_handler.py
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType

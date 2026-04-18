@@ -337,7 +337,7 @@ async def submit_inbound_operation_repo(
                       :line_no,
                       :item_id,
                       :uom_id,
-                      NULL,
+                      :barcode_input,
                       :qty_input,
                       :ratio_to_base_snapshot,
                       :qty_base,
@@ -355,6 +355,7 @@ async def submit_inbound_operation_repo(
                     "line_no": event_line_no,
                     "item_id": int(task_line["item_id"]),
                     "uom_id": int(task_line["item_uom_id"]),
+                    "barcode_input": entry.barcode_input,
                     "qty_input": qty_input_int,
                     "ratio_to_base_snapshot": ratio_int,
                     "qty_base": qty_base_int,
@@ -367,7 +368,6 @@ async def submit_inbound_operation_repo(
                 },
             )
 
-            # stocks_lot：在线余额真相
             qty_row = (
                 await session.execute(
                     text(
@@ -401,7 +401,6 @@ async def submit_inbound_operation_repo(
 
             after_qty = int(qty_row["qty"])
 
-            # stock_ledger：只增不改台账
             await session.execute(
                 text(
                     """

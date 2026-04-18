@@ -78,12 +78,10 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     # scan routes
     # ---------------------------------------------------------------------------
-    from app.wms.reconciliation.routers.scan_entrypoint import register as register_scan_entrypoint
-    from app.wms.reconciliation.routers.scan_routes_count_commit import register as register_scan_routes_count_commit
+    from app.wms.scan.routers.scan_entrypoint import register as register_scan_entrypoint
 
     scan_router = APIRouter(tags=["scan"])
     register_scan_entrypoint(scan_router)
-    register_scan_routes_count_commit(scan_router)
 
     # ---------------------------------------------------------------------------
     # orders_fulfillment_v2 routes

@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/receive_handler.py
+# app/wms/scan/services/receive_handler.py
 from __future__ import annotations
 
 from datetime import date

@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/scan_orchestrator_dates.py
+# app/wms/scan/services/scan_orchestrator_dates.py
 from __future__ import annotations
 
 from datetime import date, datetime

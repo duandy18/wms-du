@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/scan_orchestrator_ingest_pick.py
+# app/wms/scan/services/scan_orchestrator_ingest_pick.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditWriter
 from app.core.tx import TxManager
-from app.wms.reconciliation.services.pick_handler import handle_pick
+from app.wms.scan.services.pick_handler import handle_pick
 
-from app.wms.reconciliation.services.scan_orchestrator_dates import date_to_json
+from app.wms.scan.services.scan_orchestrator_dates import date_to_json
 
 
 async def run_pick_flow(

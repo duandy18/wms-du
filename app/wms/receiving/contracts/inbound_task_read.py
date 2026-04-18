@@ -10,6 +10,11 @@ from app.inbound_receipts.contracts.enums import (
     InboundReceiptSourceType,
     InboundReceiptStatus,
 )
+from app.pms.public.items.contracts.item_policy import (
+    ExpiryPolicy,
+    LotSourcePolicy,
+    ShelfLifeUnit,
+)
 
 
 class _Base(BaseModel):
@@ -70,6 +75,17 @@ class InboundTaskLineOut(_Base):
         Field(default=None, max_length=64, description="单位名快照"),
     ]
     ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="倍率快照")]
+
+    # PMS 执行策略投影：前端必须按这些字段决定是否显示日期/后续扫码如何回填
+    expiry_policy: ExpiryPolicy = Field(description="有效期策略")
+    lot_source_policy: LotSourcePolicy = Field(description="批次来源策略")
+    derivation_allowed: bool = Field(description="是否允许按保质期推导日期")
+    shelf_life_value: Annotated[
+        int | None,
+        Field(default=None, gt=0, description="保质期数值"),
+    ]
+    shelf_life_unit: ShelfLifeUnit | None = Field(default=None, description="保质期单位")
+
     received_qty: Annotated[Decimal, Field(ge=0, description="累计已收")]
     remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收")]
     remark: Annotated[str | None, Field(default=None, max_length=500, description="行备注")]
