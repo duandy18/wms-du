@@ -62,20 +62,20 @@ class WmsInboundOperationLine(Base):
             name="ck_wms_inbound_operation_lines_prod_le_exp",
         ),
         CheckConstraint(
-            "ratio_to_base_snapshot > 0",
-            name="ck_wms_inbound_operation_lines_ratio_positive",
+            "actual_ratio_to_base_snapshot > 0",
+            name="ck_wms_inbound_operation_lines_actual_ratio_positive",
         ),
         CheckConstraint(
-            "qty_inbound > 0",
-            name="ck_wms_inbound_operation_lines_qty_inbound_positive",
+            "actual_qty_input > 0",
+            name="ck_wms_inbound_operation_lines_actual_qty_input_positive",
         ),
         CheckConstraint(
             "qty_base > 0",
-            name="ck_wms_inbound_operation_lines_qty_base_positive",
+            name="ck_wms_inbound_operation_lines_actual_qty_base_positive",
         ),
         CheckConstraint(
-            "qty_base = (qty_inbound * ratio_to_base_snapshot)",
-            name="ck_wms_inbound_operation_lines_qty_base_consistent",
+            "qty_base = (actual_qty_input * actual_ratio_to_base_snapshot)",
+            name="ck_wms_inbound_operation_lines_actual_qty_base_consistent",
         ),
     )
 
@@ -101,15 +101,15 @@ class WmsInboundOperationLine(Base):
     item_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     item_spec_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    item_uom_id: Mapped[int] = mapped_column(
+    actual_item_uom_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("item_uoms.id", name="fk_wms_inbound_operation_lines_item_uom", ondelete="RESTRICT"),
+        ForeignKey("item_uoms.id", name="fk_wms_inbound_operation_lines_actual_item_uom", ondelete="RESTRICT"),
         nullable=False,
     )
-    uom_name_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    ratio_to_base_snapshot: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    actual_uom_name_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    actual_ratio_to_base_snapshot: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
 
-    qty_inbound: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    actual_qty_input: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     qty_base: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
 
     batch_no: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

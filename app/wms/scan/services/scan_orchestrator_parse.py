@@ -57,18 +57,13 @@ async def parse_scan(
       parsed, mode, probe, qty, item_id, batch_code, warehouse_id,
       production_date(date|None), expiry_date(date|None)
 
-    Phase M-4 governance：
-    - 对外新增 lot_code（正名），但 orchestrator 内部 key 仍使用 batch_code（历史兼容）
-    - 因此：若请求带 lot_code 且 batch_code 为空，会映射到 parsed['batch_code']
-
-    当前采购收货扫码主线要求：
-    - receive + probe 只做“商品 + 包装”识别
-    - 不从扫码内容推导 qty / batch / production_date / expiry_date
-    - 这些字段由页面单独输入
+    /scan 已收口为 pick probe 工具层：
+    - 只负责商品 / 包装识别
+    - 不再承担 receive / count 主链语义
+    - 不再保留 receive_probe_light 这类过渡逻辑
     """
-    mode = (scan.get("mode") or "count").lower()
-    probe = bool(scan.get("probe"))
-    receive_probe_light = mode == "receive" and probe
+    mode = str(scan.get("mode") or "pick").lower()
+    probe = bool(scan.get("probe", True))
 
     raw = str(scan.get("barcode") or (scan.get("tokens") or {}).get("barcode") or "")
     parsed = parse_tokens(raw)
@@ -96,15 +91,7 @@ async def parse_scan(
         if resolved is not None:
             _apply_barcode_probe(parsed, resolved)
 
-    if receive_probe_light:
-        # 采购收货扫码主线：只保留商品/包装识别，不消费扫码内容中的批次/日期/数量
-        if scan.get("qty") is None:
-            parsed.pop("qty", None)
-        parsed.pop("batch_code", None)
-        parsed.pop("lot_code", None)
-        parsed.pop("production_date", None)
-        parsed.pop("expiry_date", None)
-    elif raw:
+    if raw:
         try:
             r = _BARCODE_RESOLVER.parse(raw)
         except Exception:

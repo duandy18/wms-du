@@ -22,7 +22,7 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   SELECT
                     o.receipt_no_snapshot AS receipt_no,
                     ol.receipt_line_no_snapshot AS line_no,
-                    COALESCE(SUM(ol.qty_inbound), 0) AS received_qty
+                    COALESCE(SUM(ol.qty_base), 0) AS received_qty_base
                   FROM wms_inbound_operations o
                   JOIN wms_inbound_operation_lines ol
                     ON ol.wms_inbound_operation_id = o.id
@@ -44,9 +44,17 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   r.remark,
                   COUNT(l.id) AS line_count,
                   COALESCE(SUM(l.planned_qty), 0) AS total_planned_qty,
-                  COALESCE(SUM(COALESCE(lr.received_qty, 0)), 0) AS total_received_qty,
                   COALESCE(
-                    SUM(GREATEST(l.planned_qty - COALESCE(lr.received_qty, 0), 0)),
+                    SUM(COALESCE(lr.received_qty_base, 0) / l.ratio_to_base_snapshot),
+                    0
+                  ) AS total_received_qty,
+                  COALESCE(
+                    SUM(
+                      GREATEST(
+                        (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(lr.received_qty_base, 0),
+                        0
+                      ) / l.ratio_to_base_snapshot
+                    ),
                     0
                   ) AS total_remaining_qty
                 FROM inbound_receipts r
@@ -148,12 +156,21 @@ async def get_inbound_task_repo(
                   l.item_id,
                   l.item_uom_id,
                   l.planned_qty,
+                  (l.planned_qty * l.ratio_to_base_snapshot) AS planned_qty_base,
                   l.item_name_snapshot,
                   l.item_spec_snapshot,
                   l.uom_name_snapshot,
                   l.ratio_to_base_snapshot,
-                  COALESCE(SUM(ol.qty_inbound), 0) AS received_qty,
-                  GREATEST(l.planned_qty - COALESCE(SUM(ol.qty_inbound), 0), 0) AS remaining_qty,
+                  (COALESCE(SUM(ol.qty_base), 0) / l.ratio_to_base_snapshot) AS received_qty,
+                  GREATEST(
+                    (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),
+                    0
+                  ) / l.ratio_to_base_snapshot AS remaining_qty,
+                  COALESCE(SUM(ol.qty_base), 0) AS received_qty_base,
+                  GREATEST(
+                    (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),
+                    0
+                  ) AS remaining_qty_base,
                   l.remark
                 FROM inbound_receipt_lines l
                 LEFT JOIN wms_inbound_operations o
@@ -209,6 +226,7 @@ async def get_inbound_task_repo(
                 item_id=item_id,
                 item_uom_id=int(r["item_uom_id"]),
                 planned_qty=r["planned_qty"],
+                planned_qty_base=r["planned_qty_base"],
                 item_name_snapshot=r["item_name_snapshot"],
                 item_spec_snapshot=r["item_spec_snapshot"],
                 uom_name_snapshot=r["uom_name_snapshot"],
@@ -228,6 +246,8 @@ async def get_inbound_task_repo(
                 ),
                 received_qty=r["received_qty"],
                 remaining_qty=r["remaining_qty"],
+                received_qty_base=r["received_qty_base"],
+                remaining_qty_base=r["remaining_qty_base"],
                 remark=r["remark"],
             )
         )
