@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -108,12 +108,12 @@ class InboundReceiptLine(Base):
         nullable=False,
     )
 
-    planned_qty: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    planned_qty: Mapped[int] = mapped_column(Integer, nullable=False)
 
     item_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     item_spec_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     uom_name_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    ratio_to_base_snapshot: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    ratio_to_base_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
 
     remark: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 

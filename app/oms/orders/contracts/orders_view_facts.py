@@ -85,7 +85,7 @@ class OrderFactItemOut(BaseModel):
     含义：
     - qty_ordered：订单行要求数量
     - qty_shipped：已出库数量（按 stock_ledger 汇总）
-    - qty_returned：已回仓数量（按 inbound_receipts / lines 汇总）
+    - qty_returned：已回仓数量（按 RETURN_ORDER 收货执行事实汇总）
     - qty_remaining_refundable：剩余可退货数量
     """
 

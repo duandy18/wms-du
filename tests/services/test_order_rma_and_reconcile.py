@@ -107,13 +107,13 @@ async def _ensure_internal_lot_for_receipt(session: AsyncSession, *, warehouse_i
     )
 
 
-async def _insert_confirmed_order_return_receipt(
+async def _insert_released_return_receipt(
     session: AsyncSession,
     *,
     order_id: int,
     warehouse_id: int,
     item_id: int,
-    qty_received: int,
+    qty_returned: int,
     batch_code: Optional[str],
     production_date: Optional[date],
     expiry_date: Optional[date],
@@ -121,13 +121,13 @@ async def _insert_confirmed_order_return_receipt(
     trace_id: str,
 ) -> int:
     """
-    退货终态口径：用 confirmed InboundReceipt 事实表达 returned。
+    退货终态口径：用 released RETURN_ORDER 收货单与收货执行事实表达 returned。
 
     终态写入：
-    - inbound_receipts: source_type='ORDER', source_id=order_id, status='CONFIRMED'
-    - inbound_receipt_lines: 使用终态列（uom_id + qty_input + ratio_to_base_snapshot + qty_base + lot_id + warehouse_id）
-      且 receipt_status_snapshot='CONFIRMED'（lot_id 必填）
-    - batch_code 仅作为 lot_code_input 展示/输入码；lot_id 才是结构锚点
+    - inbound_receipts: source_type='RETURN_ORDER', source_doc_id=order_id, status='RELEASED'
+    - inbound_receipt_lines: 使用终态列（item_uom_id + planned_qty + ratio_to_base_snapshot）
+    - wms_inbound_operation_lines.qty_base 作为 returned 聚合的执行事实
+    - batch_no 仅作为展示/输入码；lot_id 才是结构锚点
     """
     ref = f"RMA-ORD-{order_id}-{trace_id}-{int(occurred_at.timestamp()*1000)}"
 
@@ -183,7 +183,7 @@ async def _insert_confirmed_order_return_receipt(
     )
 
     uom_id, ratio = await _pick_base_uom_and_ratio(session, item_id=int(item_id))
-    qty_input = int(qty_received)
+    qty_input = int(qty_returned)
     qty_base = int(qty_input) * int(ratio)
 
     if batch_code is not None:
@@ -351,7 +351,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     场景：
       - 下单 qty=2（item_id=1）；
       - 入库 + 发货 shipped=2（ref=ORD:...）；
-      - 写入一张 confirmed Receipt returned=2 → remaining=0；
+      - 写入一张 released 退货入库单 returned=2 → remaining=0；
       - 再试图追加 returned=1（第二张 Receipt） -> returned>shipped 的问题被识别出来。
     """
     platform = "PDD"
@@ -424,13 +424,13 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
         expiry_date=ed,
     )
 
-    # 4) 写入一张 confirmed Receipt：returned=2（remaining 应为 0）
-    await _insert_confirmed_order_return_receipt(
+    # 4) 写入一张 released 退货入库单：returned=2（remaining 应为 0）
+    await _insert_released_return_receipt(
         session,
         order_id=order_id,
         warehouse_id=1,
         item_id=item_id,
-        qty_received=2,
+        qty_returned=2,
         batch_code=bc,
         production_date=pd,
         expiry_date=ed,
@@ -448,12 +448,12 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     assert lf.remaining_refundable == 0
 
     # 5) 再追加一张 returned=1 的 Receipt → returned=3 > shipped=2
-    await _insert_confirmed_order_return_receipt(
+    await _insert_released_return_receipt(
         session,
         order_id=order_id,
         warehouse_id=1,
         item_id=item_id,
-        qty_received=1,
+        qty_returned=1,
         batch_code=bc,
         production_date=pd,
         expiry_date=ed,
@@ -478,13 +478,13 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
 
       - 订单 qty=2（item_id=1）；
       - 入库 + 发货 shipped=2；
-      - 写入 returned=1 的 confirmed Receipt；
+      - 写入 returned=1 的 released 退货入库单；
       - OrderReconcileService 能算出 ordered=2, shipped=2, returned=1, remaining=1；
       - apply_counters 将 shipped_qty=2 / returned_qty=1 写回 order_items；
       - orders.status 变为 PARTIALLY_RETURNED。
 
     说明：
-      - returned 的事实源不再是旧执行层 commit，而是 confirmed InboundReceipt。
+      - returned 的事实源不再是旧执行层 commit，而是 released RETURN_ORDER 收货单 + 收货执行事实。
 
     Phase 1A 批次两态：
       - NONE：batch_code=NULL 且 production/expiry=NULL
@@ -558,13 +558,13 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
         expiry_date=ed,
     )
 
-    # 3) 写入 returned=1 的 confirmed Receipt
-    await _insert_confirmed_order_return_receipt(
+    # 3) 写入 returned=1 的 released 退货入库单
+    await _insert_released_return_receipt(
         session,
         order_id=order_id,
         warehouse_id=1,
         item_id=item_id,
-        qty_received=1,
+        qty_returned=1,
         batch_code=bc,
         production_date=pd,
         expiry_date=ed,

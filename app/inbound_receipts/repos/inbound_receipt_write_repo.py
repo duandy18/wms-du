@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -623,8 +622,8 @@ async def create_inbound_receipt_from_return_order_repo(
                 ),
             )
 
-        planned_qty = Decimal(str(line.planned_qty))
-        remaining_qty = Decimal(str(src.qty_remaining_refundable))
+        planned_qty = int(line.planned_qty)
+        remaining_qty = int(src.qty_remaining_refundable)
         if planned_qty > remaining_qty:
             raise HTTPException(
                 status_code=409,
