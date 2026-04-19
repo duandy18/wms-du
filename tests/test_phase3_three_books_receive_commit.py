@@ -182,22 +182,22 @@ async def _ensure_internal_lot_for_receipt(
     return int(lot_id)
 
 
-async def _insert_confirmed_receipt_with_line(
+async def _insert_released_receipt_with_line(
     session: AsyncSession,
     *,
     warehouse_id: int,
     item_id: int,
     batch_code: Optional[str],
-    qty_received: int,
+    qty_input: int,
     occurred_at: datetime,
     trace_id: str,
     production_date: Optional[date],
     expiry_date: Optional[date],
 ) -> int:
     """
-    终态 receipt 事实（CONFIRMED）：
+    终态 receipt 事实（RELEASED）：
     - inbound_receipt_lines 使用终态列（uom_id + qty_input + ratio_to_base_snapshot + qty_base + lot_id + warehouse_id）
-    - lot_id 在 CONFIRMED 状态下必须非空
+    - lot_id 在 RELEASED 状态下必须非空
     """
     ref = "RCPT-PH3-UT"
 
@@ -252,7 +252,7 @@ async def _insert_confirmed_receipt_with_line(
     )
 
     uom_id, ratio = await _ensure_base_uom(session, item_id=int(item_id))
-    qty_input = int(qty_received)
+    qty_input = int(qty_input)
     qty_base = int(qty_input) * int(ratio)
 
     if batch_code is not None:
@@ -327,7 +327,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     """
     Phase 3 合同测试（终态口径）：
 
-    - 以 Receipt(CONFIRMED) 作为事实锚点（终态不再有旧执行层）
+    - 以 Receipt(RELEASED) 作为事实锚点（终态不再有旧执行层）
     - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks_lot
     - snapshot(today) == stocks_lot（至少对 touched keys）
     - verify_receive_commit_three_books 对 touched effects 做三账一致性校验
@@ -354,13 +354,13 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         prod = None
         exp = None
 
-    # 1) 写入 Receipt 事实（终态：CONFIRMED）
-    await _insert_confirmed_receipt_with_line(
+    # 1) 写入 Receipt 事实（终态：RELEASED）
+    await _insert_released_receipt_with_line(
         session,
         warehouse_id=1,
         item_id=item_id,
         batch_code=batch_code,
-        qty_received=scanned_qty,
+        qty_input=scanned_qty,
         occurred_at=now,
         trace_id="PH3-UT-TRACE",
         production_date=prod,

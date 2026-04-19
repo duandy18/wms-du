@@ -20,12 +20,13 @@ async def calc_daily_stats(
     计算单日的：
     - 创建订单数（orders.created_at）
     - 发货订单数（ledger 中 ref=ORD:* 且 delta<0 的 distinct ref）
-    - 退货订单数（Receipt 口径：inbound_receipts.source_type='ORDER' 且 status='CONFIRMED' 的 distinct source_id）
+    - 退货订单数（RETURN_ORDER 收货口径：
+      inbound_receipts.source_type='RETURN_ORDER' 且 status='RELEASED'，
+      以 released_at 落在自然日内的 distinct source_doc_id 计数）
 
     ✅ PROD-only（简化口径）：
     - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
     """
-    # 统一按 UTC 自然日计算
     start = datetime.combine(day, time(0, 0, 0), tzinfo=timezone.utc)
     end = start + timedelta(days=1)
 
@@ -42,7 +43,6 @@ async def calc_daily_stats(
         clauses.append("shop_id = :s")
         params["s"] = shop_id
 
-    # PROD-only：测试店铺门禁（store_id）
     clauses.append(
         """
         NOT EXISTS (
@@ -67,8 +67,6 @@ async def calc_daily_stats(
     orders_created = int(created_res.scalar() or 0)
 
     # ----------------- shipped: stock_ledger -> parse ref -> join orders -----------------
-    # ref 形态：ORD:{PLAT}:{shop_id}:{ext_order_no...}
-    # 用 split_part/regexp_replace 解析后 join orders(platform, shop_id, ext_order_no)
     shipped_clauses = [
         "l.occurred_at >= :start",
         "l.occurred_at < :end",
@@ -84,7 +82,6 @@ async def calc_daily_stats(
         shipped_clauses.append("btrim(CAST(o.shop_id AS text)) = btrim(CAST(:s AS text))")
         params2["s"] = shop_id
 
-    # PROD-only：测试店铺门禁（store_id）
     shipped_clauses.append(
         """
         NOT EXISTS (
@@ -112,18 +109,14 @@ async def calc_daily_stats(
     shipped_res = await session.execute(text(sql_shipped), params2)
     orders_shipped = int(shipped_res.scalar() or 0)
 
-    # ----------------- returned: inbound_receipts JOIN orders -----------------
-    # Receipt 终态口径：
-    # - source_type='ORDER'
-    # - status='CONFIRMED'
-    # - occurred_at 落在自然日内（事实发生时间）
+    # ----------------- returned: released RETURN_ORDER receipts -----------------
     params3: dict = {"start": start, "end": end}
     returned_clauses = [
-        "r.source_type = 'ORDER'",
-        "r.status = 'CONFIRMED'",
-        "r.source_id IS NOT NULL",
-        "r.occurred_at >= :start",
-        "r.occurred_at < :end",
+        "r.source_type = 'RETURN_ORDER'",
+        "r.status = 'RELEASED'",
+        "r.source_doc_id IS NOT NULL",
+        "r.released_at >= :start",
+        "r.released_at < :end",
     ]
     if plat:
         returned_clauses.append("o.platform = :p")
@@ -132,7 +125,6 @@ async def calc_daily_stats(
         returned_clauses.append("o.shop_id = :s")
         params3["s"] = shop_id
 
-    # PROD-only：测试店铺门禁（store_id）
     returned_clauses.append(
         """
         NOT EXISTS (
@@ -149,10 +141,10 @@ async def calc_daily_stats(
 
     where_sql3 = "WHERE " + " AND ".join(returned_clauses)
     sql_returned = f"""
-        SELECT COUNT(DISTINCT r.source_id) AS c
+        SELECT COUNT(DISTINCT r.source_doc_id) AS c
           FROM inbound_receipts AS r
           JOIN orders AS o
-            ON o.id = r.source_id
+            ON o.id = r.source_doc_id
           {where_sql3}
     """
     returned_res = await session.execute(text(sql_returned), params3)

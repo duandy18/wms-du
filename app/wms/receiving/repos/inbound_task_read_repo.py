@@ -45,7 +45,7 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   COUNT(l.id) AS line_count,
                   COALESCE(SUM(l.planned_qty), 0) AS total_planned_qty,
                   COALESCE(
-                    SUM(COALESCE(lr.received_qty_base, 0) / l.ratio_to_base_snapshot),
+                    SUM(COALESCE(lr.received_qty_base, 0)::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric),
                     0
                   ) AS total_received_qty,
                   COALESCE(
@@ -53,7 +53,7 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                       GREATEST(
                         (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(lr.received_qty_base, 0),
                         0
-                      ) / l.ratio_to_base_snapshot
+                      )::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric
                     ),
                     0
                   ) AS total_remaining_qty
@@ -161,11 +161,11 @@ async def get_inbound_task_repo(
                   l.item_spec_snapshot,
                   l.uom_name_snapshot,
                   l.ratio_to_base_snapshot,
-                  (COALESCE(SUM(ol.qty_base), 0) / l.ratio_to_base_snapshot) AS received_qty,
+                  (COALESCE(SUM(ol.qty_base), 0)::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric) AS received_qty,
                   GREATEST(
                     (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),
                     0
-                  ) / l.ratio_to_base_snapshot AS remaining_qty,
+                  )::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric AS remaining_qty,
                   COALESCE(SUM(ol.qty_base), 0) AS received_qty_base,
                   GREATEST(
                     (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),

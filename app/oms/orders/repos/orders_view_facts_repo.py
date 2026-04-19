@@ -280,7 +280,7 @@ async def load_order_facts_full(
     口径：
     - qty_ordered   来自 order_items.qty
     - qty_shipped   来自 stock_ledger(ref=ORD:PLAT:SHOP:EXT, delta<0)
-    - qty_returned  来自 inbound_receipts(source_type='ORDER', status='CONFIRMED')
+    - qty_returned  来自 RETURN_ORDER 收货执行事实（inbound_receipts + wms_inbound_operations + wms_inbound_operation_lines.qty_base）
     - qty_remaining_refundable = max(min(qty_ordered, qty_shipped) - qty_returned, 0)
     """
     head = await load_order_head_by_id(session, order_id=order_id)
@@ -335,15 +335,17 @@ async def load_order_facts_full(
                 text(
                     """
                     SELECT
-                      rl.item_id,
-                      SUM(COALESCE(rl.qty_base, 0)) AS qty_returned
-                    FROM inbound_receipt_lines AS rl
-                    JOIN inbound_receipts AS r
-                      ON r.id = rl.receipt_id
-                    WHERE r.source_type = 'ORDER'
-                      AND r.source_id = :oid
-                      AND r.status = 'CONFIRMED'
-                    GROUP BY rl.item_id
+                      ol.item_id,
+                      SUM(COALESCE(ol.qty_base, 0)) AS qty_returned
+                    FROM inbound_receipts AS r
+                    JOIN wms_inbound_operations AS o
+                      ON o.receipt_no_snapshot = r.receipt_no
+                    JOIN wms_inbound_operation_lines AS ol
+                      ON ol.wms_inbound_operation_id = o.id
+                    WHERE r.source_type = 'RETURN_ORDER'
+                      AND r.source_doc_id = :oid
+                      AND r.status = 'RELEASED'
+                    GROUP BY ol.item_id
                     """
                 ),
                 {"oid": int(order_id)},

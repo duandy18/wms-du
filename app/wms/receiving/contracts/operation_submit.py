@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -16,7 +15,7 @@ class _Base(BaseModel):
 
 
 class InboundOperationEntryIn(_Base):
-    qty_inbound: Annotated[Decimal, Field(gt=0, description="本次收货数量（按实际包装）")]
+    qty_inbound: Annotated[int, Field(ge=1, description="本次收货数量（按实际包装，整数）")]
     barcode_input: Annotated[
         str | None,
         Field(default=None, max_length=128, description="扫码原始条码（可选）"),
@@ -69,9 +68,9 @@ class InboundOperationLineOut(_Base):
     item_spec_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="规格快照")]
     actual_item_uom_id: Annotated[int, Field(ge=1, description="实际包装单位 ID")]
     actual_uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="实际单位名快照")]
-    actual_ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="实际倍率快照")]
-    actual_qty_input: Annotated[Decimal, Field(gt=0, description="本次实际包装数量")]
-    qty_base: Annotated[Decimal, Field(gt=0, description="折算 base 数量")]
+    actual_ratio_to_base_snapshot: Annotated[int, Field(ge=1, description="实际倍率快照（整数）")]
+    actual_qty_input: Annotated[int, Field(ge=1, description="本次实际包装数量（整数）")]
+    qty_base: Annotated[int, Field(ge=1, description="折算 base 数量（整数）")]
     batch_no: Annotated[str | None, Field(default=None, max_length=128, description="批次号")]
     production_date: date | None = Field(default=None, description="生产日期")
     expiry_date: date | None = Field(default=None, description="到期日期")

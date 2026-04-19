@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,12 +22,12 @@ class InboundReceiptReturnSourceLineOut(_Base):
     item_spec_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="规格快照")]
     item_uom_id: Annotated[int, Field(ge=1, description="建议入库包装单位 ID")]
     uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="建议入库单位名")]
-    ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="建议入库倍率快照")]
-    qty_ordered: Annotated[Decimal, Field(ge=0, description="下单数量")]
-    qty_shipped: Annotated[Decimal, Field(ge=0, description="已发数量")]
-    qty_returned: Annotated[Decimal, Field(ge=0, description="已退数量")]
-    qty_remaining_refundable: Annotated[Decimal, Field(ge=0, description="剩余可退数量")]
-    suggested_planned_qty: Annotated[Decimal, Field(ge=0, description="建议本次生成数量")]
+    ratio_to_base_snapshot: Annotated[int, Field(ge=1, description="建议入库倍率快照（整数）")]
+    qty_ordered: Annotated[int, Field(ge=0, description="下单数量（整数）")]
+    qty_shipped: Annotated[int, Field(ge=0, description="已发数量（整数）")]
+    qty_returned: Annotated[int, Field(ge=0, description="已退数量（整数）")]
+    qty_remaining_refundable: Annotated[int, Field(ge=0, description="剩余可退数量（整数）")]
+    suggested_planned_qty: Annotated[int, Field(ge=0, description="建议本次生成数量（整数）")]
 
 
 class InboundReceiptReturnSourceOut(_Base):
@@ -39,7 +38,7 @@ class InboundReceiptReturnSourceOut(_Base):
     ext_order_no: Annotated[str | None, Field(default=None, max_length=128, description="原订单号")]
     warehouse_id: Annotated[int, Field(ge=1, description="退货入库仓库 ID")]
     warehouse_name_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="仓库名快照")]
-    remaining_qty: Annotated[Decimal, Field(ge=0, description="整单剩余可退数量")]
+    remaining_qty: Annotated[int, Field(ge=0, description="整单剩余可退数量（整数）")]
     existing_receipt_id: Annotated[int | None, Field(default=None, ge=1, description="已存在退货入库单 ID")]
     existing_receipt_no: Annotated[str | None, Field(default=None, max_length=64, description="已存在退货入库单号")]
     existing_receipt_status: InboundReceiptStatus | None = Field(default=None, description="已存在退货入库单状态")

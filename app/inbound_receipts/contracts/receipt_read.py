@@ -26,11 +26,11 @@ class InboundReceiptLineReadOut(_Base):
     source_line_id: Annotated[int | None, Field(default=None, ge=1, description="来源行 ID")]
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     item_uom_id: Annotated[int, Field(ge=1, description="包装单位 ID")]
-    planned_qty: Annotated[Decimal, Field(gt=0, description="任务数量")]
+    planned_qty: Annotated[int, Field(ge=1, description="任务数量（整数）")]
     item_name_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="商品名快照")]
     item_spec_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="规格快照")]
     uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="单位名快照")]
-    ratio_to_base_snapshot: Annotated[Decimal, Field(gt=0, description="倍率快照")]
+    ratio_to_base_snapshot: Annotated[int, Field(ge=1, description="倍率快照（整数）")]
     remark: Annotated[str | None, Field(default=None, max_length=500, description="行备注")]
 
 
@@ -72,9 +72,9 @@ class InboundReceiptListOut(_Base):
 
 class InboundReceiptProgressLineOut(_Base):
     line_no: Annotated[int, Field(ge=1, description="任务行号")]
-    planned_qty: Annotated[Decimal, Field(ge=0, description="任务数量")]
-    received_qty: Annotated[Decimal, Field(ge=0, description="累计已收")]
-    remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收")]
+    planned_qty: Annotated[int, Field(ge=0, description="任务数量（整数）")]
+    received_qty: Annotated[Decimal, Field(ge=0, description="累计已收（按计划包装折算，可能为小数）")]
+    remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收（按计划包装折算，可能为小数）")]
 
 
 class InboundReceiptProgressOut(_Base):

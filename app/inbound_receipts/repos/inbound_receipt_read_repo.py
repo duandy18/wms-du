@@ -400,14 +400,14 @@ async def get_inbound_receipt_progress_repo(
                   l.line_no,
                   l.planned_qty,
                   COALESCE(
-                    SUM(COALESCE(ol.qty_base, 0) / l.ratio_to_base_snapshot),
+                    SUM(COALESCE(ol.qty_base, 0)::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric),
                     0
                   ) AS received_qty,
                   COALESCE(
                     GREATEST(
                       (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(SUM(ol.qty_base), 0),
                       0
-                    ) / l.ratio_to_base_snapshot,
+                    )::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric,
                     0
                   ) AS remaining_qty
                 FROM inbound_receipt_lines l

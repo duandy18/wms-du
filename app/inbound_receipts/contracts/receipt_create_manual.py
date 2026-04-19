@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,7 +18,7 @@ class _Base(BaseModel):
 class InboundReceiptCreateManualLineIn(_Base):
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     item_uom_id: Annotated[int, Field(ge=1, description="包装单位 ID")]
-    planned_qty: Annotated[Decimal, Field(gt=0, description="任务数量")]
+    planned_qty: Annotated[int, Field(ge=1, description="任务数量（整数）")]
     item_name_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="商品名（前端展示传入，可空）")]
     item_spec_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="规格（前端展示传入，可空）")]
     uom_name_snapshot: Annotated[str | None, Field(default=None, max_length=64, description="单位名（前端展示传入，可空）")]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -19,11 +18,11 @@ from app.wms.receiving.contracts.operation_submit import (
 UTC = timezone.utc
 
 
-def _to_int_exact(value: Decimal, *, label: str) -> int:
-    if value != value.to_integral_value():
+def _to_int_exact(value: int, *, label: str) -> int:
+    if int(value) < 0:
         raise HTTPException(
             status_code=409,
-            detail=f"{label}_must_be_integer_for_stock_sink:{value}",
+            detail=f"{label}_must_not_be_negative:{value}",
         )
     return int(value)
 
@@ -48,7 +47,7 @@ async def _load_item_uom_snapshot(
     *,
     item_id: int,
     item_uom_id: int,
-) -> tuple[int, str | None, Decimal]:
+) -> tuple[int, str | None, int]:
     row = (
         await session.execute(
             text(
@@ -79,7 +78,7 @@ async def _load_item_uom_snapshot(
     return (
         int(row["actual_item_uom_id"]),
         row["actual_uom_name_snapshot"],
-        Decimal(str(row["actual_ratio_to_base_snapshot"])),
+        int(row["actual_ratio_to_base_snapshot"]),
     )
 
 
@@ -88,7 +87,7 @@ async def _resolve_barcode_uom_snapshot(
     *,
     item_id: int,
     barcode: str,
-) -> tuple[int, str | None, Decimal]:
+) -> tuple[int, str | None, int]:
     code = (barcode or "").strip()
     row = (
         await session.execute(
@@ -125,7 +124,7 @@ async def _resolve_barcode_uom_snapshot(
     return (
         int(row["actual_item_uom_id"]),
         row["actual_uom_name_snapshot"],
-        Decimal(str(row["actual_ratio_to_base_snapshot"])),
+        int(row["actual_ratio_to_base_snapshot"]),
     )
 
 
@@ -325,9 +324,9 @@ async def submit_inbound_operation_repo(
         task_item_id = int(task_line["item_id"])
         task_item_uom_id = int(task_line["item_uom_id"])
         task_uom_name_snapshot = task_line["uom_name_snapshot"]
-        task_ratio = Decimal(str(task_line["ratio_to_base_snapshot"]))
-        planned_qty_base = Decimal(str(task_line["planned_qty_base"]))
-        received_qty_base_running = Decimal(str(task_line["received_qty_base"]))
+        task_ratio = int(task_line["ratio_to_base_snapshot"])
+        planned_qty_base = int(task_line["planned_qty_base"])
+        received_qty_base_running = int(task_line["received_qty_base"])
 
         item_policy = await get_item_policy_by_id(
             session,
@@ -340,7 +339,7 @@ async def submit_inbound_operation_repo(
             )
 
         for entry in line.entries:
-            qty_inbound = Decimal(str(entry.qty_inbound))
+            qty_inbound = int(entry.qty_inbound)
             barcode_input = (
                 str(entry.barcode_input).strip()
                 if entry.barcode_input is not None
@@ -461,9 +460,9 @@ async def submit_inbound_operation_repo(
                         "item_spec_snapshot": task_line["item_spec_snapshot"],
                         "actual_item_uom_id": actual_item_uom_id,
                         "actual_uom_name_snapshot": actual_uom_name_snapshot,
-                        "actual_ratio_to_base_snapshot": actual_ratio,
-                        "actual_qty_input": qty_inbound,
-                        "qty_base": qty_base,
+                        "actual_ratio_to_base_snapshot": actual_ratio_int,
+                        "actual_qty_input": qty_input_int,
+                        "qty_base": qty_base_int,
                         "batch_no": entry.batch_no,
                         "production_date": entry.production_date,
                         "expiry_date": entry.expiry_date,
@@ -632,9 +631,9 @@ async def submit_inbound_operation_repo(
                     item_spec_snapshot=task_line["item_spec_snapshot"],
                     actual_item_uom_id=actual_item_uom_id,
                     actual_uom_name_snapshot=actual_uom_name_snapshot,
-                    actual_ratio_to_base_snapshot=actual_ratio,
-                    actual_qty_input=qty_inbound,
-                    qty_base=qty_base,
+                    actual_ratio_to_base_snapshot=actual_ratio_int,
+                    actual_qty_input=qty_input_int,
+                    qty_base=qty_base_int,
                     batch_no=entry.batch_no,
                     production_date=entry.production_date,
                     expiry_date=entry.expiry_date,

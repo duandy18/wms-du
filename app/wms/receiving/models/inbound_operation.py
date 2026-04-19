@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date as date_type, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -107,10 +107,10 @@ class WmsInboundOperationLine(Base):
         nullable=False,
     )
     actual_uom_name_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    actual_ratio_to_base_snapshot: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    actual_ratio_to_base_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    actual_qty_input: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
-    qty_base: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    actual_qty_input: Mapped[int] = mapped_column(Integer, nullable=False)
+    qty_base: Mapped[int] = mapped_column(Integer, nullable=False)
 
     batch_no: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     production_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
