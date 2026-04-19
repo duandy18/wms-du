@@ -23,7 +23,7 @@ async def enqueue_pick_list_job(
     幂等入队打印任务（pick_list）：
     - 对齐你现有 SQL（行为不变）
     """
-    rt = str(ref_type or "").strip() or "pick_task"
+    rt = str(ref_type or "").strip() or "outbound_event"
     rid = int(ref_id)
     payload_json = json.dumps(payload, ensure_ascii=False)
 
