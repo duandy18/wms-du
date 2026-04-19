@@ -119,6 +119,7 @@ def init_models(
         "app.wms.ledger.models.stock_ledger",
         "app.wms.stock.models.stock_snapshot",
         "app.wms.inbound.models.inbound_event",
+        "app.wms.outbound.models.outbound_event",
         "app.models.order",
         "app.models.order_item",
         "app.models.order_address",
@@ -140,6 +141,7 @@ def init_models(
         "app.inbound_receipts.models",
         "app.wms.receiving.models",
         "app.wms.inbound.models",
+        "app.wms.outbound.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:
