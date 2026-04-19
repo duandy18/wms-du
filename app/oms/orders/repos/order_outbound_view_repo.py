@@ -58,11 +58,12 @@ async def load_order_outbound_lines(
     order_id: int,
 ) -> List[Dict[str, Any]]:
     """
-    订单出库页：读取订单行（来源真相 = order_lines）
+    订单出库页：读取订单行（来源真相 = order_lines + item display）
 
     说明：
-    - 当前只返回真实 order_lines 稳定字段
-    - 不脑补商品名 / 规格 / 单位
+    - 核心真相是 order_lines
+    - 为作业页补充商品展示字段：sku / name / spec / base_uom
+    - 单位优先取 base_uom；若异常缺失，则退回该商品第一条 item_uom
     """
     rows = (
         (
@@ -70,13 +71,31 @@ async def load_order_outbound_lines(
                 text(
                     """
                     SELECT
-                      id,
-                      order_id,
-                      item_id,
-                      req_qty
-                    FROM order_lines
-                    WHERE order_id = :oid
-                    ORDER BY id ASC
+                      ol.id,
+                      ol.order_id,
+                      ol.item_id,
+                      ol.req_qty,
+                      i.sku AS item_sku,
+                      i.name AS item_name,
+                      i.spec AS item_spec,
+                      u.base_uom_id,
+                      u.base_uom_name
+                    FROM order_lines ol
+                    JOIN items i
+                      ON i.id = ol.item_id
+                    LEFT JOIN LATERAL (
+                      SELECT
+                        iu.id AS base_uom_id,
+                        COALESCE(NULLIF(BTRIM(iu.display_name), ''), iu.uom) AS base_uom_name
+                      FROM item_uoms iu
+                      WHERE iu.item_id = ol.item_id
+                      ORDER BY
+                        CASE WHEN iu.is_base THEN 0 ELSE 1 END,
+                        iu.id ASC
+                      LIMIT 1
+                    ) u ON TRUE
+                    WHERE ol.order_id = :oid
+                    ORDER BY ol.id ASC
                     """
                 ),
                 {"oid": int(order_id)},

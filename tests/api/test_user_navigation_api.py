@@ -194,8 +194,10 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
         "wms.inbound.operations",
     ]
     assert _child_codes(nodes["wms.outbound"]) == [
-        "wms.outbound.atomic",
+        "wms.outbound.summary",
         "wms.outbound.order",
+        "wms.outbound.manual_docs",
+        "wms.outbound.manual",
     ]
     assert _child_codes(nodes["wms.count"]) == [
         "wms.count.tasks",

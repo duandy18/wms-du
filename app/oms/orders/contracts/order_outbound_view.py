@@ -38,12 +38,12 @@ class OrderOutboundViewOrderOut(BaseModel):
 
 class OrderOutboundViewLineOut(BaseModel):
     """
-    订单出库页专用：订单行只读模型（来源真相 = order_lines）
+    订单出库页专用：订单行只读模型（来源真相 = order_lines + item display）
 
     说明：
-    - 当前只返回真实 order_lines 稳定字段
-    - 不脑补商品名 / 规格 / 单位
-    - 若后续页面需要展示增强，另做 item_display 块，不污染订单来源合同
+    - 核心真相仍然是 order_lines
+    - 为作业页补充商品展示字段：sku / name / spec / base_uom
+    - 不掺平台 ledger / 执行上下文 / lot 分配结果
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -53,6 +53,13 @@ class OrderOutboundViewLineOut(BaseModel):
     item_id: int
     req_qty: int
 
+    item_sku: Optional[str] = None
+    item_name: Optional[str] = None
+    item_spec: Optional[str] = None
+
+    base_uom_id: Optional[int] = None
+    base_uom_name: Optional[str] = None
+
 
 class OrderOutboundViewResponse(BaseModel):
     """
@@ -60,7 +67,7 @@ class OrderOutboundViewResponse(BaseModel):
 
     结构：
     - order: 订单头（orders）
-    - lines: 订单行（order_lines）
+    - lines: 订单行（order_lines + display）
     """
 
     model_config = ConfigDict(extra="ignore")
