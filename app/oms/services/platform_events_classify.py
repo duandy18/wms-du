@@ -30,7 +30,7 @@ def classify(state: str) -> str:
     """
     Phase 5：彻底消除“预占/RESERVE”概念后，平台事件只分三类动作：
 
-    - PICK  ：进入拣货主线（生成 pick_task / 打印队列；不做库存裁决）
+    - PICK  ：进入执行准备主线（历史语义残留；当前不再走 pick_task 公共主线）
     - CANCEL：取消执行态（撤销拣货任务等）
     - SHIP  ：进入硬出库链路（库存裁决点在 ship_commit）
     """

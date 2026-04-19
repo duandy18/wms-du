@@ -61,8 +61,6 @@ MODEL_SPECS = [
     # ✅ Phase 5：执行域 authority（order_fulfillment）
     ("app.models.order_fulfillment", "OrderFulfillment"),
     # 拣货任务
-    ("app.models.pick_task", "PickTask"),
-    ("app.models.pick_task_line", "PickTaskLine"),
     # ------------------------------------------------------------------
     # 平台 & 事件
     # ------------------------------------------------------------------
@@ -113,8 +111,6 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 内部出库
     # ------------------------------------------------------------------
-    ("app.models.internal_outbound", "InternalOutboundDoc"),
-    ("app.models.internal_outbound", "InternalOutboundLine"),
     # ------------------------------------------------------------------
     # 运输执行 / 账本（Phase-2：Shipment 主实体 + Record 投影）
     # ------------------------------------------------------------------
@@ -191,8 +187,6 @@ __all__ = [
     "OrderShipmentPreparePackage",
     "OrderFulfillment",
     # ---- Pick Tasks ----
-    "PickTask",
-    "PickTaskLine",
     # ---- Events ----
     "PlatformShop",
     "PlatformEvent",
@@ -229,8 +223,6 @@ __all__ = [
     "ReturnTask",
     "ReturnTaskLine",
     # ---- Internal Outbound ----
-    "InternalOutboundDoc",
-    "InternalOutboundLine",
     # ---- Shipping ----
     "TransportShipment",
     "ShippingRecord",

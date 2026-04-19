@@ -44,9 +44,10 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.analytics.routers.orders_stats_routes import router as orders_stats_router
     from app.wms.inbound.routers.inbound_events import router as inbound_events_router
     from app.wms.inbound.routers.inbound_commit import router as inbound_commit_router
-    from app.wms.outbound.routers.outbound import router as outbound_router
-    from app.wms.outbound.routers.pick import router as pick_router
-    from app.wms.outbound.routers.pick_tasks import router as pick_tasks_router
+    from app.wms.outbound.routers.order_submit import router as order_submit_router
+    from app.wms.outbound.routers.manual_docs import router as manual_docs_router
+    from app.wms.outbound.routers.manual_submit import router as manual_submit_router
+    from app.wms.outbound.routers.outbound_summary import router as outbound_summary_router
     from app.wms.outbound.routers.print_jobs import router as print_jobs_router
     from app.procurement.routers.purchase_orders import router as purchase_orders_router
     from app.procurement.routers.purchase_reports import router as purchase_reports_router
@@ -62,7 +63,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.warehouses.routers.warehouses import router as warehouses_router
 
     from app.devtools.routers.dev_fake_orders_routes import router as dev_fake_orders_router
-    from app.wms.outbound.routers.internal_outbound import router as internal_outbound_router
 
     from app.oms.router import router as oms_router
 
@@ -103,15 +103,16 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(scan_router)
     app.include_router(count_router)
     app.include_router(stock_inventory_recount_router)
-    app.include_router(pick_router)
 
     app.include_router(orders_fulfillment_v2_router)
     app.include_router(tms_orders_shipment_v2_router)
     app.include_router(orders_fulfillment_debug_router)
 
-    app.include_router(outbound_router)
+    app.include_router(order_submit_router)
+    app.include_router(manual_docs_router)
+    app.include_router(manual_submit_router)
+    app.include_router(outbound_summary_router)
     app.include_router(tms_shipment_router)
-    app.include_router(internal_outbound_router)
 
     app.include_router(purchase_orders_router)
     app.include_router(purchase_reports_router)
@@ -120,7 +121,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(inbound_events_router)
     app.include_router(inbound_commit_router)
     app.include_router(return_tasks_router)
-    app.include_router(pick_tasks_router)
     app.include_router(print_jobs_router)
 
     app.include_router(meta_router)
