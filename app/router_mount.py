@@ -62,7 +62,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.user.routers.user import router as user_router
     from app.wms.warehouses.routers.warehouses import router as warehouses_router
 
-    from app.devtools.routers.dev_fake_orders_routes import router as dev_fake_orders_router
 
     from app.oms.router import router as oms_router
 
@@ -181,4 +180,3 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
         app.include_router(dev_seed_ledger_router)
         app.include_router(dev_stock_adjust_router)
         app.include_router(fake_platform_router)
-        app.include_router(dev_fake_orders_router)

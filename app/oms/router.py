@@ -22,6 +22,7 @@ from app.oms.routers.platform_orders_ingest_routes import router as platform_ord
 from app.oms.routers.platform_orders_manual_decisions import router as platform_orders_manual_decisions_router
 from app.oms.routers.platform_orders_replay import router as platform_orders_replay_router
 from app.oms.routers.stores import router as stores_router
+from app.oms.orders.routers.order_outbound_options import router as order_outbound_options_router
 from app.oms.orders.routers.order_outbound_view import router as order_outbound_view_router
 
 router = APIRouter(prefix="/oms", tags=["OMS"])
@@ -32,6 +33,7 @@ router.include_router(platform_orders_replay_router)
 router.include_router(platform_orders_manual_decisions_router)
 router.include_router(stores_router)
 router.include_router(fsku_router)
+router.include_router(order_outbound_options_router)
 router.include_router(order_outbound_view_router)
 
 router.include_router(taobao_app_config_router)
