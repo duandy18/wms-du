@@ -190,6 +190,7 @@ async def get_outbound_summary_lines(
                       order_line_id,
                       manual_doc_line_id,
                       item_name_snapshot,
+                      item_sku_snapshot,
                       item_spec_snapshot,
                       remark,
                       created_at

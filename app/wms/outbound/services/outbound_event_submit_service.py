@@ -12,13 +12,13 @@ from app.oms.orders.repos.order_outbound_view_repo import (
     load_order_outbound_head,
     load_order_outbound_lines,
 )
-from app.wms.outbound.contracts.order_submit import (
-    OrderOutboundSubmitIn,
-    OrderOutboundSubmitOut,
-)
 from app.wms.outbound.contracts.manual_submit import (
     ManualOutboundSubmitIn,
     ManualOutboundSubmitOut,
+)
+from app.wms.outbound.contracts.order_submit import (
+    OrderOutboundSubmitIn,
+    OrderOutboundSubmitOut,
 )
 from app.wms.outbound.repos.outbound_event_repo import (
     insert_outbound_event,
@@ -29,6 +29,13 @@ from app.wms.outbound.repos.outbound_event_repo import (
 )
 
 UTC = timezone.utc
+
+
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
 
 
 @dataclass(frozen=True)
@@ -110,7 +117,10 @@ async def load_manual_submit_context(
                       doc_id,
                       line_no,
                       item_id,
-                      requested_qty
+                      requested_qty,
+                      item_name_snapshot,
+                      item_sku_snapshot,
+                      item_spec_snapshot
                     FROM manual_outbound_lines
                     WHERE doc_id = :doc_id
                     ORDER BY line_no ASC, id ASC
@@ -149,8 +159,8 @@ def normalize_order_submit_lines(
         item_id = int(raw["item_id"])
         qty_outbound = int(raw["qty_outbound"])
         lot_id = int(raw["lot_id"])
-        lot_code = str(raw["lot_code"]).strip() if raw.get("lot_code") else None
-        remark = str(raw["remark"]).strip() if raw.get("remark") else None
+        lot_code = _clean_text(raw.get("lot_code"))
+        remark = _clean_text(raw.get("remark"))
 
         src = ctx.order_lines_by_id.get(order_line_id)
         if src is None:
@@ -174,8 +184,9 @@ def normalize_order_submit_lines(
                 "qty_outbound": qty_outbound,
                 "lot_id": lot_id,
                 "lot_code": lot_code,
-                "item_name_snapshot": None,
-                "item_spec_snapshot": None,
+                "item_name_snapshot": _clean_text(src.get("item_name")),
+                "item_sku_snapshot": _clean_text(src.get("item_sku")),
+                "item_spec_snapshot": _clean_text(src.get("item_spec")),
                 "remark": remark,
             }
         )
@@ -200,8 +211,8 @@ def normalize_manual_submit_lines(
         item_id = int(raw["item_id"])
         qty_outbound = int(raw["qty_outbound"])
         lot_id = int(raw["lot_id"])
-        lot_code = str(raw["lot_code"]).strip() if raw.get("lot_code") else None
-        remark = str(raw["remark"]).strip() if raw.get("remark") else None
+        lot_code = _clean_text(raw.get("lot_code"))
+        remark = _clean_text(raw.get("remark"))
 
         src = ctx.doc_lines_by_id.get(manual_doc_line_id)
         if src is None:
@@ -227,8 +238,9 @@ def normalize_manual_submit_lines(
                 "qty_outbound": qty_outbound,
                 "lot_id": lot_id,
                 "lot_code": lot_code,
-                "item_name_snapshot": None,
-                "item_spec_snapshot": None,
+                "item_name_snapshot": _clean_text(src.get("item_name_snapshot")),
+                "item_sku_snapshot": _clean_text(src.get("item_sku_snapshot")),
+                "item_spec_snapshot": _clean_text(src.get("item_spec_snapshot")),
                 "remark": remark,
             }
         )

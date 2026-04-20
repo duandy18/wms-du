@@ -22,6 +22,7 @@ class ManualOutboundDocLineOut(BaseModel):
     requested_qty: int
 
     item_name_snapshot: Optional[str] = None
+    item_sku_snapshot: Optional[str] = None
     item_spec_snapshot: Optional[str] = None
     uom_name_snapshot: Optional[str] = None
 
@@ -64,6 +65,7 @@ class ManualOutboundDocCreateLineIn(BaseModel):
     requested_qty: int = Field(..., gt=0)
 
     item_name_snapshot: Optional[str] = Field(default=None, max_length=255)
+    item_sku_snapshot: Optional[str] = Field(default=None, max_length=64)
     item_spec_snapshot: Optional[str] = Field(default=None, max_length=255)
     uom_name_snapshot: Optional[str] = Field(default=None, max_length=64)
 

@@ -66,7 +66,6 @@ async def insert_outbound_event(
                     """
                 ),
                 {
-                    # event_no 直接复用 trace_id，避免超长
                     "event_no": str(trace_id)[:64],
                     "warehouse_id": int(warehouse_id),
                     "source_type": str(source_type),
@@ -110,6 +109,7 @@ async def insert_outbound_event_lines(
                           order_line_id,
                           manual_doc_line_id,
                           item_name_snapshot,
+                          item_sku_snapshot,
                           item_spec_snapshot,
                           remark
                         )
@@ -123,6 +123,7 @@ async def insert_outbound_event_lines(
                           :order_line_id,
                           :manual_doc_line_id,
                           :item_name_snapshot,
+                          :item_sku_snapshot,
                           :item_spec_snapshot,
                           :remark
                         )
@@ -137,6 +138,7 @@ async def insert_outbound_event_lines(
                           order_line_id,
                           manual_doc_line_id,
                           item_name_snapshot,
+                          item_sku_snapshot,
                           item_spec_snapshot,
                           remark,
                           created_at
@@ -152,6 +154,7 @@ async def insert_outbound_event_lines(
                         "order_line_id": ln.get("order_line_id"),
                         "manual_doc_line_id": ln.get("manual_doc_line_id"),
                         "item_name_snapshot": ln.get("item_name_snapshot"),
+                        "item_sku_snapshot": ln.get("item_sku_snapshot"),
                         "item_spec_snapshot": ln.get("item_spec_snapshot"),
                         "remark": ln.get("remark"),
                     },
