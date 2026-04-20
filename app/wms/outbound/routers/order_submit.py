@@ -1,7 +1,7 @@
 # app/wms/outbound/routers/order_submit.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import new_trace
@@ -30,13 +30,20 @@ async def submit_order_outbound(
 ) -> OrderOutboundSubmitOut:
     trace = new_trace("http:/wms/outbound/orders/submit")
 
-    result = await submit_order_outbound_event(
-        session,
-        order_id=int(order_id),
-        warehouse_id=int(payload.warehouse_id),
-        operator_id=getattr(user, "id", None),
-        trace_id=trace.trace_id,
-        payload=payload,
-    )
-    await session.commit()
-    return result
+    try:
+        result = await submit_order_outbound_event(
+            session,
+            order_id=int(order_id),
+            warehouse_id=int(payload.warehouse_id),
+            operator_id=getattr(user, "id", None),
+            trace_id=trace.trace_id,
+            payload=payload,
+        )
+        await session.commit()
+        return result
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception:
+        await session.rollback()
+        raise

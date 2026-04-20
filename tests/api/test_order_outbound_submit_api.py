@@ -296,3 +296,52 @@ async def test_order_outbound_submit_writes_event_and_ledger(
         )
     ).scalar_one()
     assert int(qty_now) == 8
+
+    opts = await client.get(
+        "/oms/orders/outbound-options",
+        headers=headers,
+        params={"q": str(order_id)},
+    )
+    assert opts.status_code == 200, opts.text
+    opts_data = opts.json()
+    assert opts_data["items"] == []
+
+
+async def test_order_outbound_submit_rejects_duplicate_submit_with_409(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _login_admin_headers(client)
+
+    order_id, order_line_id, warehouse_id, lot_id, item_id = await _seed_order_and_stock(session)
+
+    payload = {
+        "warehouse_id": warehouse_id,
+        "remark": "UT order outbound duplicate submit",
+        "lines": [
+            {
+                "order_line_id": order_line_id,
+                "item_id": item_id,
+                "qty_outbound": 2,
+                "lot_id": lot_id,
+                "lot_code": None,
+                "remark": "line remark",
+            }
+        ],
+    }
+
+    first = await client.post(
+        f"/wms/outbound/orders/{order_id}/submit",
+        headers=headers,
+        json=payload,
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"/wms/outbound/orders/{order_id}/submit",
+        headers=headers,
+        json=payload,
+    )
+    assert second.status_code == 409, second.text
+    body = second.json()
+    assert "order_line_already_completed" in str(body)

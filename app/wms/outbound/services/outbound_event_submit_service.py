@@ -20,6 +20,10 @@ from app.wms.outbound.contracts.order_submit import (
     OrderOutboundSubmitIn,
     OrderOutboundSubmitOut,
 )
+from app.wms.outbound.repos.manual_doc_repo import (
+    complete_manual_doc,
+    list_manual_doc_progress,
+)
 from app.wms.outbound.repos.outbound_event_repo import (
     insert_outbound_event,
     insert_outbound_event_lines,
@@ -141,6 +145,80 @@ async def load_manual_submit_context(
         source_ref=str(head["doc_no"]),
         warehouse_id=int(head["warehouse_id"]),
     )
+
+
+async def load_order_submit_progress(
+    session: AsyncSession,
+    *,
+    order_id: int,
+) -> Dict[int, Dict[str, int]]:
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      ol.id AS order_line_id,
+                      ol.req_qty,
+                      COALESCE(SUM(oel.qty_outbound), 0) AS submitted_qty
+                    FROM order_lines ol
+                    LEFT JOIN outbound_event_lines oel
+                      ON oel.order_line_id = ol.id
+                    WHERE ol.order_id = :order_id
+                    GROUP BY ol.id, ol.req_qty
+                    ORDER BY ol.id ASC
+                    """
+                ),
+                {"order_id": int(order_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return {
+        int(r["order_line_id"]): {
+            "req_qty": int(r["req_qty"]),
+            "submitted_qty": int(r["submitted_qty"]),
+        }
+        for r in rows
+    }
+
+
+async def has_orphan_order_outbound_ledger(
+    session: AsyncSession,
+    *,
+    source_ref: str,
+    ref_line: int,
+    item_id: int,
+    warehouse_id: int,
+    lot_id: int,
+) -> bool:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT 1
+                FROM stock_ledger
+                WHERE reason = 'OUTBOUND_SHIP'
+                  AND ref = :source_ref
+                  AND ref_line = :ref_line
+                  AND item_id = :item_id
+                  AND warehouse_id = :warehouse_id
+                  AND lot_id = :lot_id
+                  AND event_id IS NULL
+                LIMIT 1
+                """
+            ),
+            {
+                "source_ref": str(source_ref),
+                "ref_line": int(ref_line),
+                "item_id": int(item_id),
+                "warehouse_id": int(warehouse_id),
+                "lot_id": int(lot_id),
+            },
+        )
+    ).first()
+    return row is not None
 
 
 def normalize_order_submit_lines(
@@ -343,6 +421,39 @@ async def submit_order_outbound_event(
         ctx=ctx,
     )
 
+    progress_by_line = await load_order_submit_progress(session, order_id=int(order_id))
+    for ln in normalized:
+        order_line_id = int(ln["order_line_id"])
+        req_qty = int(progress_by_line.get(order_line_id, {}).get("req_qty", 0))
+        submitted_qty = int(progress_by_line.get(order_line_id, {}).get("submitted_qty", 0))
+        submit_qty = int(ln["qty_outbound"])
+
+        if req_qty <= 0:
+            raise ValueError(f"order_line_not_found_or_invalid: order_line_id={order_line_id}")
+
+        if submitted_qty >= req_qty:
+            raise ValueError(
+                f"order_line_already_completed: order_line_id={order_line_id}, req_qty={req_qty}, submitted_qty={submitted_qty}"
+            )
+
+        if submitted_qty + submit_qty > req_qty:
+            raise ValueError(
+                f"order_line_over_submit: order_line_id={order_line_id}, req_qty={req_qty}, submitted_qty={submitted_qty}, submit_qty={submit_qty}"
+            )
+
+        orphan_conflict = await has_orphan_order_outbound_ledger(
+            session,
+            source_ref=ctx.source_ref,
+            ref_line=int(ln["ref_line"]),
+            item_id=int(ln["item_id"]),
+            warehouse_id=int(warehouse_id),
+            lot_id=int(ln["lot_id"]),
+        )
+        if orphan_conflict:
+            raise ValueError(
+                f"legacy_orphan_ledger_conflict: source_ref={ctx.source_ref}, ref_line={ln['ref_line']}, item_id={ln['item_id']}, warehouse_id={warehouse_id}, lot_id={ln['lot_id']}"
+            )
+
     event, saved_lines = await _write_event_and_ledger(
         session,
         warehouse_id=int(warehouse_id),
@@ -394,6 +505,13 @@ async def submit_manual_outbound_event(
         remark=payload.remark,
         normalized_lines=normalized,
     )
+
+    progress_rows = await list_manual_doc_progress(session, doc_id=int(doc_id))
+    if progress_rows and all(
+        int(row["submitted_qty"]) >= int(row["requested_qty"])
+        for row in progress_rows
+    ):
+        await complete_manual_doc(session, doc_id=int(doc_id))
 
     return ManualOutboundSubmitOut(
         status="OK",
