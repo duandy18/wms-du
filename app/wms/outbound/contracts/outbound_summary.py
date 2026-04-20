@@ -42,6 +42,7 @@ class OutboundSummaryLineOut(BaseModel):
     order_line_id: Optional[int] = None
     manual_doc_line_id: Optional[int] = None
     item_name_snapshot: Optional[str] = None
+    item_sku_snapshot: Optional[str] = None
     item_spec_snapshot: Optional[str] = None
     remark: Optional[str] = None
     created_at: datetime

@@ -4,7 +4,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, CheckConstraint, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -56,6 +65,7 @@ class OutboundEventLine(Base):
     )
 
     item_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    item_sku_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     item_spec_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 

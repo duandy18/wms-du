@@ -79,6 +79,7 @@ async def create_manual_doc(
                   item_uom_id,
                   requested_qty,
                   item_name_snapshot,
+                  item_sku_snapshot,
                   item_spec_snapshot,
                   uom_name_snapshot
                 )
@@ -89,6 +90,7 @@ async def create_manual_doc(
                   :item_uom_id,
                   :requested_qty,
                   :item_name_snapshot,
+                  :item_sku_snapshot,
                   :item_spec_snapshot,
                   :uom_name_snapshot
                 )
@@ -103,6 +105,11 @@ async def create_manual_doc(
                 "item_name_snapshot": (
                     str(ln["item_name_snapshot"]).strip()
                     if ln.get("item_name_snapshot")
+                    else None
+                ),
+                "item_sku_snapshot": (
+                    str(ln["item_sku_snapshot"]).strip()
+                    if ln.get("item_sku_snapshot")
                     else None
                 ),
                 "item_spec_snapshot": (
@@ -220,6 +227,7 @@ async def get_manual_doc_lines(
                       l.item_uom_id,
                       l.requested_qty,
                       l.item_name_snapshot,
+                      l.item_sku_snapshot,
                       l.item_spec_snapshot,
                       l.uom_name_snapshot
                     FROM manual_outbound_lines l
