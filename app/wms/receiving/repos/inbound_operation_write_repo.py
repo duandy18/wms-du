@@ -210,6 +210,14 @@ async def submit_inbound_operation_repo(
     ).mappings().all()
 
     line_map = {int(r["line_no"]): r for r in task_lines}
+    line_progress_by_no: dict[int, int] = {
+        int(r["line_no"]): int(r["received_qty_base"])
+        for r in task_lines
+    }
+    line_planned_base_by_no: dict[int, int] = {
+        int(r["line_no"]): int(r["planned_qty_base"])
+        for r in task_lines
+    }
 
     operated_at = datetime.now(UTC)
 
@@ -326,7 +334,9 @@ async def submit_inbound_operation_repo(
         task_uom_name_snapshot = task_line["uom_name_snapshot"]
         task_ratio = int(task_line["ratio_to_base_snapshot"])
         planned_qty_base = int(task_line["planned_qty_base"])
-        received_qty_base_running = int(task_line["received_qty_base"])
+        received_qty_base_running = int(
+            line_progress_by_no[int(line.receipt_line_no)]
+        )
 
         item_policy = await get_item_policy_by_id(
             session,
@@ -643,6 +653,23 @@ async def submit_inbound_operation_repo(
             )
 
             received_qty_base_running += qty_base
+            line_progress_by_no[int(line.receipt_line_no)] = received_qty_base_running
+
+    if line_progress_by_no and all(
+        int(line_progress_by_no.get(line_no, 0)) >= int(line_planned_base_by_no[line_no])
+        for line_no in line_planned_base_by_no
+    ):
+        await session.execute(
+            text(
+                """
+                UPDATE inbound_receipts
+                SET status = 'COMPLETED'
+                WHERE id = :receipt_id
+                  AND status = 'RELEASED'
+                """
+            ),
+            {"receipt_id": int(task["id"])},
+        )
 
     return InboundOperationSubmitOut(
         id=operation_id,
