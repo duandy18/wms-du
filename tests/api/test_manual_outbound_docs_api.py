@@ -18,21 +18,27 @@ async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _pick_any_item_id(session: AsyncSession) -> int:
+async def _pick_any_item_and_uom(session: AsyncSession) -> tuple[int, int, str, str | None]:
     row = (
         await session.execute(
             text(
                 """
-                SELECT id
-                FROM items
-                ORDER BY id ASC
+                SELECT
+                  i.id AS item_id,
+                  iu.id AS item_uom_id,
+                  COALESCE(iu.display_name, iu.uom) AS uom_name,
+                  i.spec AS item_spec
+                FROM items i
+                JOIN item_uoms iu
+                  ON iu.item_id = i.id
+                ORDER BY iu.is_outbound_default DESC, iu.is_base DESC, i.id ASC, iu.id ASC
                 LIMIT 1
                 """
             )
         )
-    ).first()
-    assert row is not None, "expected at least one item in baseline"
-    return int(row[0])
+    ).mappings().first()
+    assert row is not None, "expected at least one item_uom in baseline"
+    return int(row["item_id"]), int(row["item_uom_id"]), str(row["uom_name"]), row["item_spec"]
 
 
 async def _ensure_warehouse(session: AsyncSession, warehouse_id: int = 1) -> int:
@@ -56,9 +62,8 @@ async def test_manual_outbound_docs_create_release_void(
 ) -> None:
     headers = await _login_admin_headers(client)
     warehouse_id = await _ensure_warehouse(session, 1)
-    item_id = await _pick_any_item_id(session)
+    item_id, item_uom_id, uom_name, item_spec = await _pick_any_item_and_uom(session)
 
-    # 1) create
     resp = await client.post(
         "/wms/outbound/manual-docs",
         headers=headers,
@@ -66,14 +71,15 @@ async def test_manual_outbound_docs_create_release_void(
             "warehouse_id": warehouse_id,
             "doc_type": "MANUAL_OUTBOUND",
             "recipient_name": f"张三-{uuid4().hex[:6]}",
-            "recipient_type": "EMPLOYEE",
-            "recipient_note": "测试领用",
             "remark": "整单备注",
             "lines": [
                 {
                     "item_id": item_id,
+                    "item_uom_id": item_uom_id,
                     "requested_qty": 2,
-                    "remark": "行备注"
+                    "item_name_snapshot": "测试商品",
+                    "item_spec_snapshot": item_spec,
+                    "uom_name_snapshot": uom_name,
                 }
             ],
         },
@@ -87,7 +93,6 @@ async def test_manual_outbound_docs_create_release_void(
     assert len(data["lines"]) == 1
     doc_id = int(data["id"])
 
-    # 2) get detail
     resp2 = await client.get(
         f"/wms/outbound/manual-docs/{doc_id}",
         headers=headers,
@@ -98,9 +103,10 @@ async def test_manual_outbound_docs_create_release_void(
     assert data2["status"] == "DRAFT"
     assert len(data2["lines"]) == 1
     assert int(data2["lines"][0]["item_id"]) == item_id
+    assert int(data2["lines"][0]["item_uom_id"]) == item_uom_id
     assert int(data2["lines"][0]["requested_qty"]) == 2
+    assert data2["lines"][0]["uom_name_snapshot"] == uom_name
 
-    # 3) release
     resp3 = await client.post(
         f"/wms/outbound/manual-docs/{doc_id}/release",
         headers=headers,
@@ -110,7 +116,6 @@ async def test_manual_outbound_docs_create_release_void(
     assert data3["id"] == doc_id
     assert data3["status"] == "RELEASED"
 
-    # 4) list
     resp4 = await client.get(
         "/wms/outbound/manual-docs?limit=20&offset=0",
         headers=headers,
@@ -120,7 +125,6 @@ async def test_manual_outbound_docs_create_release_void(
     assert isinstance(items, list)
     assert any(int(x["id"]) == doc_id for x in items)
 
-    # 5) void
     resp5 = await client.post(
         f"/wms/outbound/manual-docs/{doc_id}/void",
         headers=headers,
@@ -130,7 +134,6 @@ async def test_manual_outbound_docs_create_release_void(
     assert data5["id"] == doc_id
     assert data5["status"] == "VOIDED"
 
-    # 6) DB evidence
     row = (
         await session.execute(
             text(
