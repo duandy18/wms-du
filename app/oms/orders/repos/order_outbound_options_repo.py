@@ -34,7 +34,19 @@ async def list_order_outbound_options(
     platform_norm = _normalize_text(platform)
     shop_id_norm = _normalize_text(shop_id)
 
-    clauses: List[str] = []
+    clauses: List[str] = [
+        """
+        EXISTS (
+          SELECT 1
+          FROM order_lines ol
+          LEFT JOIN outbound_event_lines oel
+            ON oel.order_line_id = ol.id
+          WHERE ol.order_id = orders.id
+          GROUP BY ol.id, ol.req_qty
+          HAVING COALESCE(SUM(oel.qty_outbound), 0) < ol.req_qty
+        )
+        """
+    ]
     params: Dict[str, Any] = {
         "limit": int(limit),
         "offset": int(offset),

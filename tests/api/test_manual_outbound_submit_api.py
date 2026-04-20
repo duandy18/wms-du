@@ -73,7 +73,11 @@ async def _ensure_warehouse(session: AsyncSession, warehouse_id: int = 1) -> int
     return int(warehouse_id)
 
 
-async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, int, int, int]:
+async def _seed_manual_doc_and_stock(
+    session: AsyncSession,
+    *,
+    requested_qty: int = 2,
+) -> tuple[int, int, int, int, int]:
     warehouse_id = await _ensure_warehouse(session, 1)
     item_id, item_uom_id, uom_name, item_spec, requires_expiry = await _pick_any_item_and_uom(session)
     uniq = uuid4().hex[:10]
@@ -128,7 +132,7 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
               1,
               :item_id,
               :item_uom_id,
-              2,
+              :requested_qty,
               '测试商品',
               :item_spec_snapshot,
               :uom_name_snapshot
@@ -140,6 +144,7 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
             "doc_id": int(doc_id),
             "item_id": int(item_id),
             "item_uom_id": int(item_uom_id),
+            "requested_qty": int(requested_qty),
             "item_spec_snapshot": item_spec,
             "uom_name_snapshot": uom_name,
         },
@@ -304,3 +309,69 @@ async def test_manual_outbound_submit_writes_event_and_ledger(
         )
     ).scalar_one()
     assert int(qty_now) == 8
+
+    doc_status = (
+        await session.execute(
+            text(
+                """
+                SELECT status
+                FROM manual_outbound_docs
+                WHERE id = :doc_id
+                LIMIT 1
+                """
+            ),
+            {"doc_id": doc_id},
+        )
+    ).scalar_one()
+    assert str(doc_status) == "COMPLETED"
+
+
+async def test_manual_outbound_submit_keeps_doc_released_when_partially_submitted(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _login_admin_headers(client)
+    doc_id, doc_line_id, warehouse_id, lot_id, item_id = await _seed_manual_doc_and_stock(
+        session,
+        requested_qty=5,
+    )
+
+    resp = await client.post(
+        f"/wms/outbound/manual/{doc_id}/submit",
+        headers=headers,
+        json={
+            "remark": "UT manual outbound partial submit",
+            "lines": [
+                {
+                    "manual_doc_line_id": doc_line_id,
+                    "item_id": item_id,
+                    "qty_outbound": 2,
+                    "lot_id": lot_id,
+                    "lot_code": None,
+                    "remark": "partial line remark",
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    assert data["status"] == "OK"
+    assert data["source_type"] == "MANUAL"
+    assert data["warehouse_id"] == warehouse_id
+    assert data["lines_count"] == 1
+
+    doc_status = (
+        await session.execute(
+            text(
+                """
+                SELECT status
+                FROM manual_outbound_docs
+                WHERE id = :doc_id
+                LIMIT 1
+                """
+            ),
+            {"doc_id": doc_id},
+        )
+    ).scalar_one()
+    assert str(doc_status) == "RELEASED"

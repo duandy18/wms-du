@@ -30,7 +30,7 @@ class ManualOutboundDocLineOut(BaseModel):
 class ManualOutboundDocOut(BaseModel):
     """
     手动出库单据头：来源层
-    状态只保留 DRAFT / RELEASED / VOIDED
+    状态终态为 DRAFT / RELEASED / COMPLETED / VOIDED
     """
     model_config = ConfigDict(extra="ignore")
 

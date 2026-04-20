@@ -244,6 +244,58 @@ async def get_manual_doc_lines(
     return [dict(r) for r in rows]
 
 
+async def list_manual_doc_progress(
+    session: AsyncSession,
+    *,
+    doc_id: int,
+) -> List[Dict[str, Any]]:
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      l.id AS manual_doc_line_id,
+                      l.line_no,
+                      l.requested_qty,
+                      COALESCE(SUM(oel.qty_outbound), 0) AS submitted_qty
+                    FROM manual_outbound_lines l
+                    LEFT JOIN outbound_event_lines oel
+                      ON oel.manual_doc_line_id = l.id
+                    WHERE l.doc_id = :doc_id
+                    GROUP BY l.id, l.line_no, l.requested_qty
+                    ORDER BY l.line_no ASC, l.id ASC
+                    """
+                ),
+                {"doc_id": int(doc_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(r) for r in rows]
+
+
+async def complete_manual_doc(
+    session: AsyncSession,
+    *,
+    doc_id: int,
+) -> None:
+    upd = await session.execute(
+        text(
+            """
+            UPDATE manual_outbound_docs
+            SET status = 'COMPLETED'
+            WHERE id = :doc_id
+              AND status = 'RELEASED'
+            """
+        ),
+        {"doc_id": int(doc_id)},
+    )
+    if upd.rowcount != 1:
+        raise ValueError(f"manual_doc_complete_reject: id={doc_id}")
+
+
 async def release_manual_doc(
     session: AsyncSession,
     *,
