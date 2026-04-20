@@ -10,15 +10,20 @@ from pydantic import BaseModel, ConfigDict, Field
 class ManualOutboundDocLineOut(BaseModel):
     """
     手动出库单据行：来源层
-    - 不承载 batch / confirmed_qty
+    - 只承载商品、包装单位、计划数量
+    - lot / 实际出库数量不在来源层
     """
     model_config = ConfigDict(extra="ignore")
 
     id: int
     line_no: int
     item_id: int
+    item_uom_id: int
     requested_qty: int
-    remark: Optional[str] = None
+
+    item_name_snapshot: Optional[str] = None
+    item_spec_snapshot: Optional[str] = None
+    uom_name_snapshot: Optional[str] = None
 
 
 class ManualOutboundDocOut(BaseModel):
@@ -36,8 +41,6 @@ class ManualOutboundDocOut(BaseModel):
 
     recipient_name: Optional[str] = None
     recipient_id: Optional[int] = None
-    recipient_type: Optional[str] = None
-    recipient_note: Optional[str] = None
 
     remark: Optional[str] = None
 
@@ -57,8 +60,12 @@ class ManualOutboundDocCreateLineIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     item_id: int = Field(..., ge=1)
+    item_uom_id: int = Field(..., ge=1)
     requested_qty: int = Field(..., gt=0)
-    remark: Optional[str] = Field(default=None, max_length=255)
+
+    item_name_snapshot: Optional[str] = Field(default=None, max_length=255)
+    item_spec_snapshot: Optional[str] = Field(default=None, max_length=255)
+    uom_name_snapshot: Optional[str] = Field(default=None, max_length=64)
 
 
 class ManualOutboundDocCreateIn(BaseModel):
@@ -68,9 +75,6 @@ class ManualOutboundDocCreateIn(BaseModel):
     doc_type: str = Field(..., min_length=1, max_length=64)
 
     recipient_name: str = Field(..., min_length=1, max_length=255)
-    recipient_type: Optional[str] = Field(default=None, max_length=64)
-    recipient_note: Optional[str] = Field(default=None, max_length=255)
-
     remark: Optional[str] = Field(default=None, max_length=255)
 
     lines: List[ManualOutboundDocCreateLineIn] = Field(default_factory=list)

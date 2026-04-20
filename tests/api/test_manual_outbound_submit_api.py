@@ -23,25 +23,39 @@ async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _pick_any_item_id(session: AsyncSession) -> tuple[int, bool]:
+async def _pick_any_item_and_uom(session: AsyncSession) -> tuple[int, int, str, str | None, bool]:
     row = (
         await session.execute(
             text(
                 """
-                SELECT id, expiry_policy::text
-                FROM items
+                SELECT
+                  i.id AS item_id,
+                  iu.id AS item_uom_id,
+                  COALESCE(iu.display_name, iu.uom) AS uom_name,
+                  i.spec AS item_spec,
+                  i.expiry_policy::text AS expiry_policy
+                FROM items i
+                JOIN item_uoms iu
+                  ON iu.item_id = i.id
                 ORDER BY
-                  CASE WHEN expiry_policy::text = 'NONE' THEN 0 ELSE 1 END,
-                  id ASC
+                  CASE WHEN i.expiry_policy::text = 'NONE' THEN 0 ELSE 1 END,
+                  iu.is_outbound_default DESC,
+                  iu.is_base DESC,
+                  i.id ASC,
+                  iu.id ASC
                 LIMIT 1
                 """
             )
         )
-    ).first()
+    ).mappings().first()
     assert row is not None
-    item_id = int(row[0])
-    requires_expiry = str(row[1]).strip().upper() == "REQUIRED"
-    return item_id, requires_expiry
+    return (
+        int(row["item_id"]),
+        int(row["item_uom_id"]),
+        str(row["uom_name"]),
+        row["item_spec"],
+        str(row["expiry_policy"]).strip().upper() == "REQUIRED",
+    )
 
 
 async def _ensure_warehouse(session: AsyncSession, warehouse_id: int = 1) -> int:
@@ -61,10 +75,9 @@ async def _ensure_warehouse(session: AsyncSession, warehouse_id: int = 1) -> int
 
 async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, int, int, int]:
     warehouse_id = await _ensure_warehouse(session, 1)
-    item_id, requires_expiry = await _pick_any_item_id(session)
+    item_id, item_uom_id, uom_name, item_spec, requires_expiry = await _pick_any_item_and_uom(session)
     uniq = uuid4().hex[:10]
 
-    # 手动单据头
     row = await session.execute(
         text(
             """
@@ -74,9 +87,7 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
               doc_type,
               status,
               recipient_name,
-              recipient_type,
-              recipient_note,
-              note,
+              remark,
               created_at
             )
             VALUES (
@@ -85,8 +96,6 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
               'MANUAL_OUTBOUND',
               'RELEASED',
               :recipient_name,
-              'EMPLOYEE',
-              '测试领用',
               '整单备注',
               now()
             )
@@ -108,15 +117,21 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
               doc_id,
               line_no,
               item_id,
+              item_uom_id,
               requested_qty,
-              note
+              item_name_snapshot,
+              item_spec_snapshot,
+              uom_name_snapshot
             )
             VALUES (
               :doc_id,
               1,
               :item_id,
+              :item_uom_id,
               2,
-              '行备注'
+              '测试商品',
+              :item_spec_snapshot,
+              :uom_name_snapshot
             )
             RETURNING id
             """
@@ -124,6 +139,9 @@ async def _seed_manual_doc_and_stock(session: AsyncSession) -> tuple[int, int, i
         {
             "doc_id": int(doc_id),
             "item_id": int(item_id),
+            "item_uom_id": int(item_uom_id),
+            "item_spec_snapshot": item_spec,
+            "uom_name_snapshot": uom_name,
         },
     )
     doc_line_id = int(row2.scalar_one())

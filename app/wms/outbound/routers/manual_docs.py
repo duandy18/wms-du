@@ -44,8 +44,6 @@ async def create_manual_outbound_doc(
         warehouse_id=int(payload.warehouse_id),
         doc_type=payload.doc_type,
         recipient_name=payload.recipient_name,
-        recipient_type=payload.recipient_type,
-        recipient_note=payload.recipient_note,
         remark=payload.remark,
         created_by=getattr(user, "id", None),
         lines=[x.model_dump() for x in payload.lines],

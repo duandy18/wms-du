@@ -34,26 +34,32 @@ async def _ensure_warehouse(session: AsyncSession, warehouse_id: int = 1) -> int
     return int(warehouse_id)
 
 
-async def _pick_any_item_id(session: AsyncSession) -> int:
+async def _pick_any_item_and_uom(session: AsyncSession) -> tuple[int, int, str, str | None]:
     row = (
         await session.execute(
             text(
                 """
-                SELECT id
-                FROM items
-                ORDER BY id ASC
+                SELECT
+                  i.id AS item_id,
+                  iu.id AS item_uom_id,
+                  COALESCE(iu.display_name, iu.uom) AS uom_name,
+                  i.spec AS item_spec
+                FROM items i
+                JOIN item_uoms iu
+                  ON iu.item_id = i.id
+                ORDER BY iu.is_outbound_default DESC, iu.is_base DESC, i.id ASC, iu.id ASC
                 LIMIT 1
                 """
             )
         )
-    ).first()
+    ).mappings().first()
     assert row is not None
-    return int(row[0])
+    return int(row["item_id"]), int(row["item_uom_id"]), str(row["uom_name"]), row["item_spec"]
 
 
 async def _seed_order_event(session: AsyncSession, warehouse_id: int) -> int:
     uniq = uuid4().hex[:8]
-    item_id = await _pick_any_item_id(session)
+    item_id, _, _, _ = await _pick_any_item_and_uom(session)
 
     store_id = await ensure_store(
         session,
@@ -140,7 +146,7 @@ async def _seed_order_event(session: AsyncSession, warehouse_id: int) -> int:
 
 async def _seed_manual_event(session: AsyncSession, warehouse_id: int) -> int:
     uniq = uuid4().hex[:8]
-    item_id = await _pick_any_item_id(session)
+    item_id, item_uom_id, uom_name, item_spec = await _pick_any_item_and_uom(session)
 
     row = await session.execute(
         text(
@@ -165,10 +171,12 @@ async def _seed_manual_event(session: AsyncSession, warehouse_id: int) -> int:
         text(
             """
             INSERT INTO manual_outbound_lines (
-              doc_id, line_no, item_id, requested_qty, note
+              doc_id, line_no, item_id, item_uom_id, requested_qty,
+              item_name_snapshot, item_spec_snapshot, uom_name_snapshot
             )
             VALUES (
-              :doc_id, 1, :item_id, 1, 'manual line'
+              :doc_id, 1, :item_id, :item_uom_id, 1,
+              '测试商品', :item_spec_snapshot, :uom_name_snapshot
             )
             RETURNING id
             """
@@ -176,6 +184,9 @@ async def _seed_manual_event(session: AsyncSession, warehouse_id: int) -> int:
         {
             "doc_id": int(doc_id),
             "item_id": int(item_id),
+            "item_uom_id": int(item_uom_id),
+            "item_spec_snapshot": item_spec,
+            "uom_name_snapshot": uom_name,
         },
     )
     doc_line_id = int(row2.scalar_one())

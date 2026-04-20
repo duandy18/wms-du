@@ -5,7 +5,7 @@ Revises: 02a284d9351c
 Create Date: 2026-03-20 13:29:35.143663
 """
 
-from typing import Sequence, Union
+from typing import Any,  Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -25,17 +25,17 @@ T_MEMBERS = "shipping_provider_pricing_template_destination_group_members"
 T_MATRIX = "shipping_provider_pricing_template_matrix"
 
 
-def _table_exists(insp: sa.Inspector, table_name: str) -> bool:
+def _table_exists(insp: Any, table_name: str) -> bool:
     return table_name in insp.get_table_names()
 
 
-def _index_exists(insp: sa.Inspector, table_name: str, index_name: str) -> bool:
+def _index_exists(insp: Any, table_name: str, index_name: str) -> bool:
     if not _table_exists(insp, table_name):
         return False
     return index_name in {idx["name"] for idx in insp.get_indexes(table_name)}
 
 
-def _unique_exists(insp: sa.Inspector, table_name: str, name: str) -> bool:
+def _unique_exists(insp: Any, table_name: str, name: str) -> bool:
     if not _table_exists(insp, table_name):
         return False
     return name in {c["name"] for c in insp.get_unique_constraints(table_name)}

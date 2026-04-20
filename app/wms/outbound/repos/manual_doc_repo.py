@@ -21,8 +21,6 @@ async def create_manual_doc(
     warehouse_id: int,
     doc_type: str,
     recipient_name: str,
-    recipient_type: str | None,
-    recipient_note: str | None,
     remark: str | None,
     created_by: int | None,
     lines: List[Dict[str, Any]],
@@ -37,9 +35,7 @@ async def create_manual_doc(
                   doc_type,
                   status,
                   recipient_name,
-                  recipient_type,
-                  recipient_note,
-                  note,
+                  remark,
                   created_by,
                   created_at
                 )
@@ -49,9 +45,7 @@ async def create_manual_doc(
                   :doc_type,
                   'DRAFT',
                   :recipient_name,
-                  :recipient_type,
-                  :recipient_note,
-                  :note,
+                  :remark,
                   :created_by,
                   now()
                 )
@@ -63,9 +57,7 @@ async def create_manual_doc(
                 "doc_no": _gen_doc_no(),
                 "doc_type": str(doc_type).strip(),
                 "recipient_name": str(recipient_name).strip(),
-                "recipient_type": str(recipient_type).strip() if recipient_type else None,
-                "recipient_note": str(recipient_note).strip() if recipient_note else None,
-                "note": str(remark).strip() if remark else None,
+                "remark": str(remark).strip() if remark else None,
                 "created_by": int(created_by) if created_by is not None else None,
             },
         )
@@ -84,15 +76,21 @@ async def create_manual_doc(
                   doc_id,
                   line_no,
                   item_id,
+                  item_uom_id,
                   requested_qty,
-                  note
+                  item_name_snapshot,
+                  item_spec_snapshot,
+                  uom_name_snapshot
                 )
                 VALUES (
                   :doc_id,
                   :line_no,
                   :item_id,
+                  :item_uom_id,
                   :requested_qty,
-                  :note
+                  :item_name_snapshot,
+                  :item_spec_snapshot,
+                  :uom_name_snapshot
                 )
                 """
             ),
@@ -100,8 +98,23 @@ async def create_manual_doc(
                 "doc_id": doc_id,
                 "line_no": int(line_no),
                 "item_id": int(ln["item_id"]),
+                "item_uom_id": int(ln["item_uom_id"]),
                 "requested_qty": int(ln["requested_qty"]),
-                "note": str(ln["remark"]).strip() if ln.get("remark") else None,
+                "item_name_snapshot": (
+                    str(ln["item_name_snapshot"]).strip()
+                    if ln.get("item_name_snapshot")
+                    else None
+                ),
+                "item_spec_snapshot": (
+                    str(ln["item_spec_snapshot"]).strip()
+                    if ln.get("item_spec_snapshot")
+                    else None
+                ),
+                "uom_name_snapshot": (
+                    str(ln["uom_name_snapshot"]).strip()
+                    if ln.get("uom_name_snapshot")
+                    else None
+                ),
             },
         )
         line_no += 1
@@ -128,15 +141,13 @@ async def list_manual_docs(
                       d.status,
                       d.recipient_name,
                       d.recipient_id,
-                      d.recipient_type,
-                      d.recipient_note,
-                      d.note AS remark,
+                      d.remark,
                       d.created_by,
                       d.created_at,
-                      d.confirmed_by AS released_by,
-                      d.confirmed_at AS released_at,
-                      d.canceled_by AS voided_by,
-                      d.canceled_at AS voided_at
+                      d.released_by,
+                      d.released_at,
+                      d.voided_by,
+                      d.voided_at
                     FROM manual_outbound_docs d
                     ORDER BY d.created_at DESC, d.id DESC
                     LIMIT :limit OFFSET :offset
@@ -169,15 +180,13 @@ async def get_manual_doc_head(
                       d.status,
                       d.recipient_name,
                       d.recipient_id,
-                      d.recipient_type,
-                      d.recipient_note,
-                      d.note AS remark,
+                      d.remark,
                       d.created_by,
                       d.created_at,
-                      d.confirmed_by AS released_by,
-                      d.confirmed_at AS released_at,
-                      d.canceled_by AS voided_by,
-                      d.canceled_at AS voided_at
+                      d.released_by,
+                      d.released_at,
+                      d.voided_by,
+                      d.voided_at
                     FROM manual_outbound_docs d
                     WHERE d.id = :doc_id
                     LIMIT 1
@@ -208,8 +217,11 @@ async def get_manual_doc_lines(
                       l.id,
                       l.line_no,
                       l.item_id,
+                      l.item_uom_id,
                       l.requested_qty,
-                      l.note AS remark
+                      l.item_name_snapshot,
+                      l.item_spec_snapshot,
+                      l.uom_name_snapshot
                     FROM manual_outbound_lines l
                     WHERE l.doc_id = :doc_id
                     ORDER BY l.line_no ASC, l.id ASC
@@ -230,7 +242,6 @@ async def release_manual_doc(
     doc_id: int,
     released_by: int | None,
 ) -> None:
-    # 至少一行
     row = (
         await session.execute(
             text(
@@ -252,8 +263,8 @@ async def release_manual_doc(
             UPDATE manual_outbound_docs
             SET
               status = 'RELEASED',
-              confirmed_by = :released_by,
-              confirmed_at = now()
+              released_by = :released_by,
+              released_at = now()
             WHERE id = :doc_id
               AND status = 'DRAFT'
             """
@@ -279,8 +290,8 @@ async def void_manual_doc(
             UPDATE manual_outbound_docs
             SET
               status = 'VOIDED',
-              canceled_by = :voided_by,
-              canceled_at = now()
+              voided_by = :voided_by,
+              voided_at = now()
             WHERE id = :doc_id
               AND status IN ('DRAFT', 'RELEASED')
             """
