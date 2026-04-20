@@ -225,39 +225,86 @@ async def get_inbound_return_source_repo(
 async def list_inbound_receipts_repo(
     session: AsyncSession,
 ) -> InboundReceiptListOut:
-    total = int(
-        (
-            await session.execute(
-                text("SELECT COUNT(*) FROM inbound_receipts")
-            )
-        ).scalar_one()
-    )
-
     rows = (
         await session.execute(
             text(
                 """
+                WITH line_received AS (
+                  SELECT
+                    o.receipt_no_snapshot AS receipt_no,
+                    ol.receipt_line_no_snapshot AS line_no,
+                    COALESCE(SUM(ol.qty_base), 0) AS received_qty_base
+                  FROM wms_inbound_operations o
+                  JOIN wms_inbound_operation_lines ol
+                    ON ol.wms_inbound_operation_id = o.id
+                  GROUP BY
+                    o.receipt_no_snapshot,
+                    ol.receipt_line_no_snapshot
+                ),
+                latest_operation AS (
+                  SELECT
+                    receipt_no_snapshot AS receipt_no,
+                    MAX(operated_at) AS last_operated_at
+                  FROM wms_inbound_operations
+                  GROUP BY receipt_no_snapshot
+                )
                 SELECT
-                  id,
-                  receipt_no,
-                  source_type,
-                  source_doc_no_snapshot,
-                  warehouse_id,
-                  warehouse_name_snapshot,
-                  supplier_id,
-                  counterparty_name_snapshot,
-                  status,
-                  remark,
-                  released_at
-                FROM inbound_receipts
-                ORDER BY id DESC
+                  r.id,
+                  r.receipt_no,
+                  r.source_type,
+                  r.source_doc_no_snapshot,
+                  r.warehouse_id,
+                  r.warehouse_name_snapshot,
+                  r.supplier_id,
+                  r.counterparty_name_snapshot,
+                  r.status,
+                  r.remark,
+                  r.released_at,
+                  lo.last_operated_at,
+                  COUNT(l.id) AS line_count,
+                  COALESCE(SUM(l.planned_qty), 0) AS total_planned_qty,
+                  COALESCE(
+                    SUM(COALESCE(lr.received_qty_base, 0)::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric),
+                    0
+                  ) AS total_received_qty,
+                  COALESCE(
+                    SUM(
+                      GREATEST(
+                        (l.planned_qty * l.ratio_to_base_snapshot) - COALESCE(lr.received_qty_base, 0),
+                        0
+                      )::numeric / NULLIF(l.ratio_to_base_snapshot, 0)::numeric
+                    ),
+                    0
+                  ) AS total_remaining_qty
+                FROM inbound_receipts r
+                LEFT JOIN inbound_receipt_lines l
+                  ON l.inbound_receipt_id = r.id
+                LEFT JOIN line_received lr
+                  ON lr.receipt_no = r.receipt_no
+                 AND lr.line_no = l.line_no
+                LEFT JOIN latest_operation lo
+                  ON lo.receipt_no = r.receipt_no
+                GROUP BY
+                  r.id,
+                  r.receipt_no,
+                  r.source_type,
+                  r.source_doc_no_snapshot,
+                  r.warehouse_id,
+                  r.warehouse_name_snapshot,
+                  r.supplier_id,
+                  r.counterparty_name_snapshot,
+                  r.status,
+                  r.remark,
+                  r.released_at,
+                  lo.last_operated_at
+                ORDER BY r.id DESC
                 """
             )
         )
     ).mappings().all()
 
     return InboundReceiptListOut(
-        total=total,
+        total=len(rows),
         items=[
             InboundReceiptListItemOut(
                 id=int(r["id"]),
@@ -271,6 +318,11 @@ async def list_inbound_receipts_repo(
                 status=str(r["status"]),
                 remark=r["remark"],
                 released_at=r["released_at"],
+                last_operated_at=r["last_operated_at"],
+                line_count=int(r["line_count"] or 0),
+                total_planned_qty=int(r["total_planned_qty"] or 0),
+                total_received_qty=r["total_received_qty"] or 0,
+                total_remaining_qty=r["total_remaining_qty"] or 0,
             )
             for r in rows
         ],

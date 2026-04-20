@@ -29,6 +29,13 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   GROUP BY
                     o.receipt_no_snapshot,
                     ol.receipt_line_no_snapshot
+                ),
+                latest_operation AS (
+                  SELECT
+                    receipt_no_snapshot AS receipt_no,
+                    MAX(operated_at) AS last_operated_at
+                  FROM wms_inbound_operations
+                  GROUP BY receipt_no_snapshot
                 )
                 SELECT
                   r.id AS receipt_id,
@@ -41,6 +48,7 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   r.counterparty_name_snapshot,
                   r.status,
                   r.released_at,
+                  lo.last_operated_at,
                   r.remark,
                   COUNT(l.id) AS line_count,
                   COALESCE(SUM(l.planned_qty), 0) AS total_planned_qty,
@@ -63,7 +71,9 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                 LEFT JOIN line_received lr
                   ON lr.receipt_no = r.receipt_no
                  AND lr.line_no = l.line_no
-                WHERE r.status = 'RELEASED'
+                LEFT JOIN latest_operation lo
+                  ON lo.receipt_no = r.receipt_no
+                WHERE r.status IN ('RELEASED', 'COMPLETED')
                 GROUP BY
                   r.id,
                   r.receipt_no,
@@ -75,9 +85,10 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                   r.counterparty_name_snapshot,
                   r.status,
                   r.released_at,
+                  lo.last_operated_at,
                   r.remark
                 ORDER BY
-                  r.released_at DESC NULLS LAST,
+                  COALESCE(lo.last_operated_at, r.released_at) DESC NULLS LAST,
                   r.id DESC
                 """
             )
@@ -97,6 +108,7 @@ async def list_inbound_tasks_repo(session: AsyncSession) -> InboundTaskListOut:
                 counterparty_name_snapshot=r["counterparty_name_snapshot"],
                 status=str(r["status"]),
                 released_at=r["released_at"],
+                last_operated_at=r["last_operated_at"],
                 line_count=int(r["line_count"]),
                 total_planned_qty=r["total_planned_qty"],
                 total_received_qty=r["total_received_qty"],
@@ -141,10 +153,10 @@ async def get_inbound_task_repo(
     if header is None:
         raise HTTPException(status_code=404, detail="inbound_task_not_found")
 
-    if str(header["status"]) != "RELEASED":
+    if str(header["status"]) not in {"RELEASED", "COMPLETED"}:
         raise HTTPException(
             status_code=409,
-            detail=f"inbound_task_not_released:{header['status']}",
+            detail=f"inbound_task_not_readable:{header['status']}",
         )
 
     rows = (

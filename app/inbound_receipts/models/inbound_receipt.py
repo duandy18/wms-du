@@ -22,7 +22,7 @@ class InboundReceipt(Base):
             name="ck_inbound_receipts_source_type",
         ),
         CheckConstraint(
-            "status IN ('DRAFT', 'RELEASED', 'VOIDED')",
+            "status IN ('DRAFT', 'RELEASED', 'COMPLETED', 'VOIDED')",
             name="ck_inbound_receipts_status",
         ),
     )

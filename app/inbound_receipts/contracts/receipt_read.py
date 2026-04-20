@@ -63,6 +63,11 @@ class InboundReceiptListItemOut(_Base):
     status: InboundReceiptStatus
     remark: Annotated[str | None, Field(default=None, max_length=500, description="头备注")]
     released_at: datetime | None = Field(default=None, description="发布时间")
+    last_operated_at: datetime | None = Field(default=None, description="最近收货时间")
+    line_count: Annotated[int, Field(ge=0, description="任务行数")]
+    total_planned_qty: Annotated[int, Field(ge=0, description="总任务数量（整数）")]
+    total_received_qty: Annotated[Decimal, Field(ge=0, description="累计已收（按计划包装折算）")]
+    total_remaining_qty: Annotated[Decimal, Field(ge=0, description="剩余待收（按计划包装折算）")]
 
 
 class InboundReceiptListOut(_Base):

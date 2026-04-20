@@ -45,6 +45,7 @@ class InboundTaskListItemOut(_Base):
     ]
     status: InboundReceiptStatus
     released_at: datetime | None = Field(default=None, description="发布时间")
+    last_operated_at: datetime | None = Field(default=None, description="最近收货时间")
     line_count: Annotated[int, Field(ge=0, description="任务行数")]
     total_planned_qty: Annotated[int, Field(ge=0, description="总任务数量（按计划包装，整数）")]
     total_received_qty: Annotated[Decimal, Field(ge=0, description="累计已收总数（按计划包装折算）")]

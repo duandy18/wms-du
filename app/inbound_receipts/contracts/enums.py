@@ -11,6 +11,7 @@ InboundReceiptSourceType = Literal[
 InboundReceiptStatus = Literal[
     "DRAFT",
     "RELEASED",
+    "COMPLETED",
     "VOIDED",
 ]
 
