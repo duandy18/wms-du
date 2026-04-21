@@ -1,8 +1,28 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
 
-from app.wms.count.routers.count import router
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["router"]
+from app.db.deps import get_async_session
+from app.wms.count.contracts.count import CountRequest, CountResponse
+from app.wms.count.services.count_service import CountService
+
+router = APIRouter(prefix="/count", tags=["count"])
+
+
+@router.post("", response_model=CountResponse, status_code=status.HTTP_200_OK)
+async def count_inventory(
+    req: CountRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> CountResponse:
+    service = CountService()
+    try:
+        return await service.submit(session, req=req)
+    except LookupError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"count failed: {e}") from e

@@ -1,20 +1,52 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
+class CountRequest(BaseModel):
+    """
+    盘点校正请求（批次级）：
 
-_SRC: ModuleType = import_module("app.wms.count.contracts.count")
-__all__ = list(getattr(_SRC, "__all__", ()))
+    - 必填：item_id, warehouse_id, qty(绝对量), ref
+    - lot_code 为正名字段；batch_code 保留兼容入参
+    - production_date / expiry_date：仅对批次受控商品要求至少其一
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    item_id: int = Field(..., description="商品ID")
+    warehouse_id: int = Field(..., ge=1, description="仓库ID")
+    qty: int = Field(..., ge=0, description="盘点后的实际数量（绝对量）")
+    ref: str = Field(..., description="业务参考号（用于台账幂等）")
+
+    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
+    batch_code: Optional[str] = Field(None, description="批次码（兼容字段；等价于 lot_code）")
+
+    occurred_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="盘点发生时间（UTC）；默认当前时间",
+    )
+    production_date: Optional[datetime] = Field(None, description="生产日期（可选）")
+    expiry_date: Optional[datetime] = Field(None, description="有效期（可选）")
+
+    @model_validator(mode="after")
+    def _normalize_time(self) -> "CountRequest":
+        if self.occurred_at.tzinfo is None:
+            self.occurred_at = self.occurred_at.replace(tzinfo=timezone.utc)
+        return self
 
 
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
+class CountResponse(BaseModel):
+    ok: bool = True
+    after: int
+    ref: str
+    item_id: int
+    warehouse_id: int
 
+    lot_code: Optional[str] = None
+    batch_code: Optional[str] = None
 
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+    occurred_at: datetime

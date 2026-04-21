@@ -10,13 +10,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
 from app.models.return_task import ReturnTask
-from app.wms.outbound.contracts.return_task import (
+from app.wms.inventory_adjustment.return_inbound.contracts.return_task import (
     ReturnTaskCommitIn,
     ReturnTaskCreateFromOrder,
     ReturnTaskOut,
     ReturnTaskReceiveIn,
 )
-from app.wms.outbound.services.return_task_service import ReturnTaskService
+from app.wms.inventory_adjustment.return_inbound.services.return_task_service import ReturnTaskService
 
 svc = ReturnTaskService()
 

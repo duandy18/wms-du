@@ -101,8 +101,8 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 入库任务（新主线 owner）
     # ------------------------------------------------------------------
-    ("app.inbound_receipts.models.inbound_receipt", "InboundReceipt"),
-    ("app.inbound_receipts.models.inbound_receipt", "InboundReceiptLine"),
+    ("app.wms.inventory_adjustment.return_inbound.models.inbound_receipt", "InboundReceipt"),
+    ("app.wms.inventory_adjustment.return_inbound.models.inbound_receipt", "InboundReceiptLine"),
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------

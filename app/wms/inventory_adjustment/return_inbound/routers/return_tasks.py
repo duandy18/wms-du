@@ -1,8 +1,22 @@
 # Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+# 本文件是 inventory_adjustment.return_inbound 的本地路由装配入口。
+# 第二刀开始后，这里不再直接 re-export 旧 router，而是改为组装本目录下的真实 router 文件。
 
-from app.wms.outbound.routers.return_tasks import router
+from __future__ import annotations
 
-__all__ = ["router"]
+from fastapi import APIRouter
+
+from .order_refs import register_order_refs
+from .tasks import register_tasks
+
+
+def build_router() -> APIRouter:
+    router = APIRouter(prefix="/return-tasks", tags=["return-tasks"])
+    register_order_refs(router)
+    register_tasks(router)
+    return router
+
+
+router = build_router()
+
+__all__ = ["router", "build_router"]

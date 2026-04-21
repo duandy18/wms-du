@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.inbound_receipts.contracts.receipt_create_manual import (
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_create_manual import (
     InboundReceiptCreateManualIn,
     InboundReceiptCreateManualOut,
 )
-from app.inbound_receipts.repos.inbound_receipt_write_repo import (
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_receipt_write_repo import (
     create_inbound_receipt_manual_repo,
 )
 

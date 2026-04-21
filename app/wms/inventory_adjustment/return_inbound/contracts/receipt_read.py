@@ -6,7 +6,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.inbound_receipts.contracts.enums import (
+from app.wms.inventory_adjustment.return_inbound.contracts.enums import (
     InboundReceiptSourceType,
     InboundReceiptStatus,
 )
