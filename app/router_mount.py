@@ -10,8 +10,8 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     # ---------------------------------------------------------------------------
     from app.admin.router import router as admin_router
     from app.diagnostics.routers.autoheal_execute import router as autoheal_execute_router
-    from app.wms.count.routers.count import router as count_router
-    from app.wms.reconciliation.routers.stock_inventory_recount import router as stock_inventory_recount_router
+    from app.wms.inventory_adjustment.count.routers.count import router as count_router
+    from app.wms.inventory_adjustment.count.routers.stock_inventory_recount import router as stock_inventory_recount_router
     from app.diagnostics.routers.debug_trace import router as debug_trace_router
     from app.devtools.routers.dev_seed_ledger import router as dev_seed_ledger_router
     from app.devtools.routers.dev_stock_adjust import router as dev_stock_adjust_router
@@ -54,7 +54,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.procurement.routers.purchase_reports import router as purchase_reports_router
     from app.inbound_receipts.routers.inbound_receipts import router as inbound_receipts_router
     from app.wms.receiving.routers.inbound_operations import router as inbound_operations_router
-    from app.wms.outbound.routers.return_tasks import router as return_tasks_router
+    from app.wms.inventory_adjustment.return_inbound.routers.return_tasks import router as return_tasks_router
     from app.wms.stock.routers.inventory import router as stock_inventory_router
     from app.wms.snapshot.routers.snapshot_v3 import router as snapshot_v3_router
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
