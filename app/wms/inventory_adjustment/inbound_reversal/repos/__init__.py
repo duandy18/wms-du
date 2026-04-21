@@ -1,4 +1,13 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from .inbound_reversal_repo import (
+    find_committed_inbound_reversal,
+    get_inbound_event_for_reversal,
+    list_inbound_event_lines_for_reversal,
+    mark_inbound_event_superseded,
+)
+
+__all__ = [
+    "find_committed_inbound_reversal",
+    "get_inbound_event_for_reversal",
+    "list_inbound_event_lines_for_reversal",
+    "mark_inbound_event_superseded",
+]
