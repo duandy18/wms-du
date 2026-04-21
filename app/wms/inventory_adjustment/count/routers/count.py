@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.deps import get_async_session
-from app.wms.count.contracts.count import CountRequest, CountResponse
-from app.wms.count.services.count_service import CountService
+from app.wms.inventory_adjustment.count.contracts.count import CountRequest, CountResponse
+from app.wms.inventory_adjustment.count.services.count_service import CountService
 
 router = APIRouter(prefix="/count", tags=["count"])
 

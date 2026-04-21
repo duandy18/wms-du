@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.count.contracts.count import CountRequest
-from app.wms.count.services.count_service import CountService
+from app.wms.inventory_adjustment.count.contracts.count import CountRequest
+from app.wms.inventory_adjustment.count.services.count_service import CountService
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.stock_service import StockService
 from app.wms.reconciliation.services.three_books_consistency import verify_commit_three_books
