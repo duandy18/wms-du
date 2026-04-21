@@ -17,7 +17,10 @@ async def _reset_navigation_registry_state(session: AsyncSession) -> None:
 
     当前主线要求：
     - tms 下子页在相关测试前恢复为可见
-    - wms.count.adjustments 仍保持 is_active = FALSE
+    - wms.inventory_adjustment 下子页保持可见
+    - wms.inbound 只保留 atomic / purchase / manual 可见
+    - wms.inbound.operations / wms.inbound.returns 保持隐藏
+    - inbound 只保留 summary / purchase / manual 可见
     """
     await session.execute(
         text(
@@ -28,24 +31,59 @@ async def _reset_navigation_registry_state(session: AsyncSession) -> None:
             """
         )
     )
+
+    await session.execute(
+        text(
+            """
+            UPDATE page_registry
+               SET is_active = TRUE
+             WHERE parent_code = 'wms.inventory_adjustment'
+            """
+        )
+    )
+
+    await session.execute(
+        text(
+            """
+            UPDATE page_registry
+               SET is_active = TRUE
+             WHERE code IN (
+               'wms.inbound.atomic',
+               'wms.inbound.purchase',
+               'wms.inbound.manual',
+               'inbound.summary',
+               'inbound.purchase',
+               'inbound.manual'
+             )
+            """
+        )
+    )
+
     await session.execute(
         text(
             """
             UPDATE page_registry
                SET is_active = FALSE
-             WHERE code = 'wms.count.adjustments'
+             WHERE code IN (
+               'wms.inbound.operations',
+               'wms.inbound.returns',
+               'inbound.returns'
+             )
             """
         )
     )
+
     await session.execute(
         text(
             """
             UPDATE page_route_prefixes
                SET is_active = TRUE
              WHERE route_prefix LIKE '/tms/%'
+                OR route_prefix LIKE '/inventory-adjustment%'
             """
         )
     )
+
     await session.commit()
 
 
@@ -173,13 +211,14 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
 
     root_codes = [page["code"] for page in pages]
     assert "wms" in root_codes
+    assert "inbound" in root_codes
 
     wms = nodes["wms"]
     assert _child_codes(wms) == [
         "wms.inventory",
         "wms.inbound",
         "wms.outbound",
-        "wms.count",
+        "wms.inventory_adjustment",
         "wms.warehouses",
     ]
 
@@ -190,8 +229,7 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
     assert _child_codes(nodes["wms.inbound"]) == [
         "wms.inbound.atomic",
         "wms.inbound.purchase",
-        "wms.inbound.returns",
-        "wms.inbound.operations",
+        "wms.inbound.manual",
     ]
     assert _child_codes(nodes["wms.outbound"]) == [
         "wms.outbound.summary",
@@ -199,10 +237,26 @@ async def test_my_navigation_admin_contains_new_wms_tree_and_filters_legacy_shel
         "wms.outbound.manual_docs",
         "wms.outbound.manual",
     ]
-    assert _child_codes(nodes["wms.count"]) == [
-        "wms.count.tasks",
+    assert _child_codes(nodes["wms.inventory_adjustment"]) == [
+        "wms.inventory_adjustment.summary",
+        "wms.inventory_adjustment.count",
+        "wms.inventory_adjustment.inbound_reversal",
+        "wms.inventory_adjustment.outbound_reversal",
+        "wms.inventory_adjustment.return_inbound",
     ]
     assert _child_codes(nodes["wms.warehouses"]) == []
+
+    assert _child_codes(nodes["inbound"]) == [
+        "inbound.summary",
+        "inbound.purchase",
+        "inbound.manual",
+    ]
+
+    assert "wms.count" not in nodes
+    assert "wms.count.tasks" not in nodes
+    assert "wms.count.adjustments" not in nodes
+    assert "wms.inbound.returns" not in nodes
+    assert "inbound.returns" not in nodes
 
     assert "wms.order_outbound" not in nodes
     assert "wms.order_management" not in nodes
@@ -288,6 +342,8 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     suppliers_page = nodes["wms.masterdata.suppliers"]
     inventory_page = nodes["wms.inventory.main"]
     warehouses_page = nodes["wms.warehouses"]
+    inventory_adjustment_page = nodes["wms.inventory_adjustment.summary"]
+    inventory_return_inbound_page = nodes["wms.inventory_adjustment.return_inbound"]
 
     assert pricing_page["effective_read_permission"] == "page.tms.read"
     assert pricing_page["effective_write_permission"] == "page.tms.write"
@@ -304,23 +360,35 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     assert warehouses_page["effective_read_permission"] == "page.wms.read"
     assert warehouses_page["effective_write_permission"] == "page.wms.write"
 
+    assert inventory_adjustment_page["effective_read_permission"] == "page.wms.read"
+    assert inventory_adjustment_page["effective_write_permission"] == "page.wms.write"
+
+    assert inventory_return_inbound_page["effective_read_permission"] == "page.wms.read"
+    assert inventory_return_inbound_page["effective_write_permission"] == "page.wms.write"
+
     pricing_route = route_map.get("/tms/pricing")
     items_route = route_map.get("/items")
     suppliers_route = route_map.get("/suppliers")
     inventory_route = route_map.get("/inventory")
     warehouses_route = route_map.get("/warehouses")
+    inventory_adjustment_route = route_map.get("/inventory-adjustment")
+    inventory_return_inbound_route = route_map.get("/inventory-adjustment/return-inbound")
 
     assert pricing_route is not None, "/tms/pricing should exist in route_prefixes"
     assert items_route is not None, "/items should exist in route_prefixes"
     assert suppliers_route is not None, "/suppliers should exist in route_prefixes"
     assert inventory_route is not None, "/inventory should exist in route_prefixes"
     assert warehouses_route is not None, "/warehouses should exist in route_prefixes"
+    assert inventory_adjustment_route is not None, "/inventory-adjustment should exist in route_prefixes"
+    assert inventory_return_inbound_route is not None, "/inventory-adjustment/return-inbound should exist in route_prefixes"
 
     assert pricing_route["page_code"] == "wms.logistics.pricing"
     assert items_route["page_code"] == "wms.masterdata.items"
     assert suppliers_route["page_code"] == "wms.masterdata.suppliers"
     assert inventory_route["page_code"] == "wms.inventory.main"
     assert warehouses_route["page_code"] == "wms.warehouses"
+    assert inventory_adjustment_route["page_code"] == "wms.inventory_adjustment.summary"
+    assert inventory_return_inbound_route["page_code"] == "wms.inventory_adjustment.return_inbound"
 
     assert pricing_route["effective_read_permission"] == "page.tms.read"
     assert pricing_route["effective_write_permission"] == "page.tms.write"
@@ -336,6 +404,12 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
 
     assert warehouses_route["effective_read_permission"] == "page.wms.read"
     assert warehouses_route["effective_write_permission"] == "page.wms.write"
+
+    assert inventory_adjustment_route["effective_read_permission"] == "page.wms.read"
+    assert inventory_adjustment_route["effective_write_permission"] == "page.wms.write"
+
+    assert inventory_return_inbound_route["effective_read_permission"] == "page.wms.read"
+    assert inventory_return_inbound_route["effective_write_permission"] == "page.wms.write"
 
 
 @pytest.mark.asyncio
