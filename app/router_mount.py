@@ -44,10 +44,16 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.analytics.routers.orders_stats_routes import router as orders_stats_router
     from app.wms.inbound.routers.inbound_events import router as inbound_events_router
     from app.wms.inbound.routers.inbound_commit import router as inbound_commit_router
+    from app.wms.inventory_adjustment.inbound_reversal.routers.inbound_reversal import (
+        router as inbound_reversal_router,
+    )
     from app.wms.outbound.routers.order_submit import router as order_submit_router
     from app.wms.outbound.routers.manual_docs import router as manual_docs_router
     from app.wms.outbound.routers.manual_submit import router as manual_submit_router
     from app.wms.outbound.routers.outbound_summary import router as outbound_summary_router
+    from app.wms.inventory_adjustment.outbound_reversal.routers.outbound_reversal import (
+        router as outbound_reversal_router,
+    )
     from app.wms.outbound.routers.lot_candidates import router as outbound_lot_candidates_router
     from app.wms.outbound.routers.print_jobs import router as print_jobs_router
     from app.procurement.routers.purchase_orders import router as purchase_orders_router
@@ -113,6 +119,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(manual_submit_router)
     app.include_router(outbound_lot_candidates_router)
     app.include_router(outbound_summary_router)
+    app.include_router(outbound_reversal_router)
     app.include_router(tms_shipment_router)
 
     app.include_router(purchase_orders_router)
@@ -121,6 +128,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(inbound_operations_router)
     app.include_router(inbound_events_router)
     app.include_router(inbound_commit_router)
+    app.include_router(inbound_reversal_router)
     app.include_router(return_tasks_router)
     app.include_router(print_jobs_router)
 
