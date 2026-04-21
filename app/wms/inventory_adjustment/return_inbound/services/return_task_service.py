@@ -1,20 +1,72 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.return_task import ReturnTask
+from app.wms.stock.services.stock_service import StockService
+from app.wms.inventory_adjustment.return_inbound.services.return_task_service_impl import ReturnTaskServiceImpl
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
+class ReturnTaskService:
+    def __init__(self, stock_svc: Optional[StockService] = None) -> None:
+        self._impl = ReturnTaskServiceImpl(stock_svc=stock_svc)
 
-_SRC: ModuleType = import_module("app.wms.outbound.services.return_task_service")
-__all__ = list(getattr(_SRC, "__all__", ()))
+    async def create_for_order(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: str,  # order_ref
+        warehouse_id: Optional[int] = None,
+        include_zero_shipped: bool = False,
+    ) -> ReturnTask:
+        return await self._impl.create_for_order(
+            session,
+            order_id=order_id,
+            warehouse_id=warehouse_id,
+            include_zero_shipped=include_zero_shipped,
+        )
+
+    async def get_with_lines(
+        self,
+        session: AsyncSession,
+        task_id: int,
+        *,
+        for_update: bool = False,
+    ) -> ReturnTask:
+        return await self._impl.get_with_lines(session, task_id=task_id, for_update=for_update)
+
+    async def record_receive(
+        self,
+        session: AsyncSession,
+        *,
+        task_id: int,
+        item_id: int,
+        qty: int,
+    ) -> ReturnTask:
+        return await self._impl.record_receive(
+            session,
+            task_id=task_id,
+            item_id=item_id,
+            qty=qty,
+        )
+
+    async def commit(
+        self,
+        session: AsyncSession,
+        *,
+        task_id: int,
+        trace_id: Optional[str] = None,
+        occurred_at: Optional[datetime] = None,
+    ) -> ReturnTask:
+        return await self._impl.commit(
+            session,
+            task_id=task_id,
+            trace_id=trace_id,
+            occurred_at=occurred_at,
+        )
 
 
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+__all__ = ["ReturnTaskService"]

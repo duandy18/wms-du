@@ -1,20 +1,13 @@
 # Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+# return_inbound 模块中的 ReturnTask ORM 不再重复定义。
+# 单一 ORM 真相保持在 app.models.return_task。
+# 本文件仅做显式 re-export，避免 registry / metadata 双注册。
 
+from __future__ import annotations
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
+from app.models.return_task import ReturnTask, ReturnTaskLine
 
-_SRC: ModuleType = import_module("app.models.return_task")
-__all__ = list(getattr(_SRC, "__all__", ()))
-
-
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+__all__ = [
+    "ReturnTask",
+    "ReturnTaskLine",
+]

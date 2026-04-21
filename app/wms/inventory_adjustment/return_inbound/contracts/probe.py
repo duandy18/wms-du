@@ -1,20 +1,55 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from enum import Enum
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
-
-_SRC: ModuleType = import_module("app.wms.receiving.contracts.probe")
-__all__ = list(getattr(_SRC, "__all__", ()))
-
-
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
+class _Base(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        populate_by_name=True,
+    )
 
 
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+class InboundTaskProbeStatus(str, Enum):
+    MATCHED = "MATCHED"
+    UNBOUND = "UNBOUND"
+    UNMATCHED = "UNMATCHED"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class InboundTaskProbeIn(_Base):
+    barcode: Annotated[str, Field(min_length=1, max_length=128, description="原始扫码内容")]
+
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def _trim_barcode(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+
+class InboundTaskProbeOut(_Base):
+    ok: bool
+    status: InboundTaskProbeStatus
+    barcode: str
+
+    item_id: int | None = None
+    item_uom_id: int | None = None
+    ratio_to_base: int | None = None
+
+    matched_line_no: int | None = None
+    item_name_snapshot: str | None = None
+    uom_name_snapshot: str | None = None
+
+    message: str | None = None
+
+
+__all__ = [
+    "InboundTaskProbeIn",
+    "InboundTaskProbeOut",
+    "InboundTaskProbeStatus",
+]

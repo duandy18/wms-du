@@ -1,20 +1,14 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_return_source import InboundReceiptReturnSourceOut
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_receipt_read_repo import get_inbound_return_source_repo
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
-
-_SRC: ModuleType = import_module("app.inbound_receipts.services.return_source_service")
-__all__ = list(getattr(_SRC, "__all__", ()))
-
-
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+async def get_inbound_return_source(
+    session: AsyncSession,
+    *,
+    order_key: str,
+) -> InboundReceiptReturnSourceOut:
+    return await get_inbound_return_source_repo(session, order_key=order_key)

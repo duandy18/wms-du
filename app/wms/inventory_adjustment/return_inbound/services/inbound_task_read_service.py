@@ -1,20 +1,30 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.wms.inventory_adjustment.return_inbound.contracts.inbound_task_read import (
+    InboundTaskListOut,
+    InboundTaskReadOut,
+)
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_task_read_repo import (
+    get_inbound_task_repo,
+    list_inbound_tasks_repo,
+)
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
-
-_SRC: ModuleType = import_module("app.wms.receiving.services.inbound_task_read_service")
-__all__ = list(getattr(_SRC, "__all__", ()))
+async def list_inbound_tasks(session: AsyncSession) -> InboundTaskListOut:
+    return await list_inbound_tasks_repo(session)
 
 
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
+async def get_inbound_task(
+    session: AsyncSession,
+    *,
+    receipt_no: str,
+) -> InboundTaskReadOut:
+    return await get_inbound_task_repo(session, receipt_no=receipt_no)
 
 
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+__all__ = [
+    "list_inbound_tasks",
+    "get_inbound_task",
+]

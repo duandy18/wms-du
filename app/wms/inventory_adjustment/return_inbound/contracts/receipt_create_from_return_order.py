@@ -1,20 +1,38 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_read import InboundReceiptReadOut
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
-
-_SRC: ModuleType = import_module("app.inbound_receipts.contracts.receipt_create_from_return_order")
-__all__ = list(getattr(_SRC, "__all__", ()))
-
-
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
+class _Base(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        populate_by_name=True,
+    )
 
 
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+class InboundReceiptCreateFromReturnOrderLineIn(_Base):
+    order_line_id: Annotated[int, Field(ge=1, description="订单行 ID")]
+    item_id: Annotated[int, Field(ge=1, description="商品 ID")]
+    planned_qty: Annotated[int, Field(ge=1, description="本次退货入库数量（整数）")]
+    remark: Annotated[str | None, Field(default=None, max_length=500, description="行备注")]
+
+
+class InboundReceiptCreateFromReturnOrderIn(_Base):
+    order_key: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            description="订单键：支持 ORD:PLAT:SHOP:EXT / PLAT:SHOP:EXT / 唯一 ext_order_no",
+        ),
+    ]
+    remark: Annotated[str | None, Field(default=None, max_length=500, description="头备注")]
+    lines: Annotated[list[InboundReceiptCreateFromReturnOrderLineIn], Field(min_length=1, description="本次生成行")]
+
+
+InboundReceiptCreateFromReturnOrderOut = InboundReceiptReadOut

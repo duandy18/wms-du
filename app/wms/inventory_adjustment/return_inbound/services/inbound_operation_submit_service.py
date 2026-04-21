@@ -1,20 +1,31 @@
-# Split note:
-# 本目录是 inventory_adjustment 模块的物理收口层。
-# 当前阶段先以 re-export / 聚合为主，方便按页面查看 contract / model / repo / router / service。
-# 后续如确认稳定，再逐步把真实实现迁入本目录。
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.wms.inventory_adjustment.return_inbound.contracts.operation_submit import (
+    InboundOperationSubmitIn,
+    InboundOperationSubmitOut,
+)
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_operation_write_repo import (
+    submit_inbound_operation_repo,
+)
 
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
+async def submit_inbound_operation(
+    session: AsyncSession,
+    *,
+    payload: InboundOperationSubmitIn,
+    operator_id: int | None = None,
+    operator_name: str | None = None,
+) -> InboundOperationSubmitOut:
+    return await submit_inbound_operation_repo(
+        session,
+        payload=payload,
+        operator_id=operator_id,
+        operator_name=operator_name,
+    )
 
-_SRC: ModuleType = import_module("app.wms.receiving.services.inbound_operation_submit_service")
-__all__ = list(getattr(_SRC, "__all__", ()))
 
-
-def __getattr__(name: str) -> Any:
-    return getattr(_SRC, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals().keys()) | set(dir(_SRC)))
+__all__ = [
+    "submit_inbound_operation",
+]

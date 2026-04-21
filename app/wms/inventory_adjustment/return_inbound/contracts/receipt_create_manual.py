@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.inbound_receipts.contracts.receipt_read import InboundReceiptReadOut
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_read import InboundReceiptReadOut
 
 
 class _Base(BaseModel):

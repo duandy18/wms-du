@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.inbound_receipts.contracts.receipt_read import (
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_read import (
     InboundReceiptListOut,
     InboundReceiptProgressOut,
     InboundReceiptReadOut,
 )
-from app.inbound_receipts.contracts.receipt_release import (
+from app.wms.inventory_adjustment.return_inbound.contracts.receipt_release import (
     InboundReceiptReleaseOut,
 )
-from app.inbound_receipts.repos.inbound_receipt_read_repo import (
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_receipt_read_repo import (
     get_inbound_receipt_progress_repo,
     get_inbound_receipt_repo,
     list_inbound_receipts_repo,
 )
-from app.inbound_receipts.repos.inbound_receipt_write_repo import (
+from app.wms.inventory_adjustment.return_inbound.repos.inbound_receipt_write_repo import (
     release_inbound_receipt_repo,
 )
 

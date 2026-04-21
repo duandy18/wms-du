@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.outbound.services.return_task_service_impl import ReturnTaskServiceImpl
+from app.wms.inventory_adjustment.return_inbound.services.return_task_service_impl import ReturnTaskServiceImpl
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.stock_service import StockService
 from app.wms.reconciliation.services.three_books_consistency import verify_commit_three_books
