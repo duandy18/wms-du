@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
-from app.wms.count.contracts.count import CountRequest, CountResponse
-from app.wms.count.repos.count_repo import CountRepo
+from app.wms.inventory_adjustment.count.contracts.count import CountRequest, CountResponse
+from app.wms.inventory_adjustment.count.repos.count_repo import CountRepo
 from app.wms.shared.services.lot_code_contract import validate_lot_code_contract
 from app.wms.stock.services.stock_service import StockService
 
