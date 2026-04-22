@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
 from app.wms.inbound.models.inbound_event import InboundEventLine, WmsEvent
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 from app.wms.inventory_adjustment.inbound_reversal.contracts.inbound_reversal import (
     InboundReversalIn,
     InboundReversalOut,
@@ -71,6 +74,11 @@ async def reverse_inbound_event(
     source_lines = await list_inbound_event_lines_for_reversal(
         session,
         event_id=int(original["event_id"]),
+    )
+
+    await ensure_warehouse_not_frozen(
+        session,
+        warehouse_id=int(original["warehouse_id"]),
     )
 
     occurred_at = payload.occurred_at

@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.wms.inventory_adjustment.count.contracts.count import CountRequest, CountResponse
 from app.wms.inventory_adjustment.count.repos.count_repo import CountRepo
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 from app.wms.shared.services.lot_code_contract import validate_lot_code_contract
 from app.wms.stock.services.stock_service import StockService
 
@@ -25,6 +28,11 @@ class CountService:
         *,
         req: CountRequest,
     ) -> CountResponse:
+        await ensure_warehouse_not_frozen(
+            session,
+            warehouse_id=int(req.warehouse_id),
+        )
+
         expiry_policy_text = await self.repo.get_item_expiry_policy_text(
             session,
             item_id=int(req.item_id),

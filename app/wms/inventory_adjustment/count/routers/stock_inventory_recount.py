@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.deps import get_async_session as get_session
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 
 router = APIRouter()
 
@@ -31,6 +35,7 @@ class StockRecountRequest(BaseModel):
 
 
 async def _insert_event(session: AsyncSession, *, source: str, message: str, occurred_at: datetime) -> int:
+    payload = json.dumps({"scan_ref": message}, ensure_ascii=False)
     row = await session.execute(
         text(
             """
@@ -39,7 +44,7 @@ async def _insert_event(session: AsyncSession, *, source: str, message: str, occ
             RETURNING id
             """
         ),
-        {"src": source, "msg": message, "ts": occurred_at},
+        {"src": source, "msg": payload, "ts": occurred_at},
     )
     return int(row.scalar_one())
 
@@ -71,7 +76,12 @@ async def stock_recount(
 
     svc = StockService()
 
-    async with session.begin():
+    try:
+        await ensure_warehouse_not_frozen(
+            session,
+            warehouse_id=int(req.warehouse_id),
+        )
+
         row = await session.execute(
             text(
                 """
@@ -100,13 +110,27 @@ async def stock_recount(
                 batch_code=code,
             )
 
-        ev_id = await _insert_event(session, source="stock_recount", message=scan_ref, occurred_at=occurred_at)
+        ev_id = await _insert_event(
+            session,
+            source="stock_recount",
+            message=scan_ref,
+            occurred_at=occurred_at,
+        )
 
-    return {
-        "scan_ref": scan_ref,
-        "event_id": ev_id,
-        "on_hand": on_hand,
-        "actual": int(req.actual),
-        "delta": delta,
-        "committed": True,
-    }
+        await session.commit()
+
+        return {
+            "scan_ref": scan_ref,
+            "event_id": ev_id,
+            "on_hand": on_hand,
+            "actual": int(req.actual),
+            "delta": delta,
+            "committed": True,
+        }
+
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception:
+        await session.rollback()
+        raise
