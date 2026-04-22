@@ -298,6 +298,45 @@ async def _load_ledger_by_event(session: AsyncSession, *, event_id: int):
     return dict(m) if m else None
 
 
+async def _insert_frozen_count_doc(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+) -> tuple[int, str, datetime]:
+    snapshot_at = datetime.now(timezone.utc)
+    count_no = f"UT-CNT-FROZEN-OUT-{warehouse_id}-{int(snapshot_at.timestamp() * 1_000_000)}"
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO count_docs (
+              count_no,
+              warehouse_id,
+              snapshot_at,
+              status,
+              remark
+            )
+            VALUES (
+              :count_no,
+              :warehouse_id,
+              :snapshot_at,
+              'FROZEN',
+              :remark
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "count_no": count_no,
+            "warehouse_id": int(warehouse_id),
+            "snapshot_at": snapshot_at,
+            "remark": "ut outbound reversal freeze guard",
+        },
+    )
+    doc_id = int(row.scalar_one())
+    await session.flush()
+    return doc_id, count_no, snapshot_at
+
+
 @pytest.mark.asyncio
 async def test_outbound_reversal_creates_reversal_event_and_supersedes_original(session: AsyncSession):
     original = await _seed_outbound_source_event(session)
@@ -370,3 +409,31 @@ async def test_outbound_reversal_duplicate_returns_already_reversed(session: Asy
 
     assert exc.value.status_code == 409
     assert str(exc.value.detail).startswith("outbound_event_already_reversed:")
+
+
+@pytest.mark.asyncio
+async def test_outbound_reversal_rejects_when_count_doc_frozen(session: AsyncSession):
+    original = await _seed_outbound_source_event(session)
+    warehouse_id = int(original["warehouse_id"])
+
+    doc_id, count_no, snapshot_at = await _insert_frozen_count_doc(
+        session,
+        warehouse_id=warehouse_id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await reverse_outbound_event(
+            session,
+            event_id=int(original["event_id"]),
+            payload=OutboundReversalIn(remark="ut frozen outbound reversal"),
+            user_id=None,
+        )
+
+    assert exc.value.status_code == 409
+    detail = exc.value.detail
+    assert isinstance(detail, dict), detail
+    assert detail["error_code"] == "count_doc_frozen_for_warehouse"
+    assert int(detail["warehouse_id"]) == warehouse_id
+    assert int(detail["count_doc_id"]) == doc_id
+    assert str(detail["count_no"]) == count_no
+    assert str(detail["snapshot_at"]) == snapshot_at.isoformat()

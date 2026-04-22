@@ -12,6 +12,7 @@ from app.wms.inventory_adjustment.count.contracts.count_doc import (
     CountDocLinesUpdateOut,
     CountDocListOut,
     CountDocOut,
+    CountDocPostOut,
 )
 from app.wms.inventory_adjustment.count.services.count_doc_service import CountDocService
 
@@ -143,3 +144,30 @@ async def update_count_doc_lines(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"update_count_doc_lines_failed: {e}") from e
+
+
+@router.post("/{doc_id}/post", response_model=CountDocPostOut, status_code=status.HTTP_200_OK)
+async def post_count_doc(
+    doc_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> CountDocPostOut:
+    service = CountDocService()
+    try:
+        out = await service.post_doc(
+            session,
+            doc_id=int(doc_id),
+        )
+        await session.commit()
+        return out
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except LookupError as e:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"post_count_doc_failed: {e}") from e

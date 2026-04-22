@@ -121,6 +121,45 @@ def _date_to_utc_datetime(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
 
+async def _insert_frozen_count_doc(
+    session,
+    *,
+    warehouse_id: int,
+) -> tuple[int, str, datetime]:
+    snapshot_at = datetime.now(timezone.utc)
+    count_no = f"UT-CNT-FROZEN-IN-{warehouse_id}-{int(snapshot_at.timestamp() * 1_000_000)}"
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO count_docs (
+              count_no,
+              warehouse_id,
+              snapshot_at,
+              status,
+              remark
+            )
+            VALUES (
+              :count_no,
+              :warehouse_id,
+              :snapshot_at,
+              'FROZEN',
+              :remark
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "count_no": count_no,
+            "warehouse_id": int(warehouse_id),
+            "snapshot_at": snapshot_at,
+            "remark": "ut inbound reversal freeze guard",
+        },
+    )
+    doc_id = int(row.scalar_one())
+    await session.flush()
+    return doc_id, count_no, snapshot_at
+
+
 @pytest.mark.asyncio
 async def test_inbound_reversal_creates_reversal_event_and_supersedes_original(session):
     picked = await _pick_seed_item_uom(session)
@@ -270,3 +309,65 @@ async def test_inbound_reversal_duplicate_returns_already_reversed(session):
 
     assert exc.value.status_code == 409
     assert str(exc.value.detail).startswith("inbound_event_already_reversed:")
+
+
+@pytest.mark.asyncio
+async def test_inbound_reversal_rejects_when_count_doc_frozen(session):
+    picked = await _pick_seed_item_uom(session)
+
+    warehouse_id = int(picked["warehouse_id"])
+    item_id = int(picked["item_id"])
+    uom_id = int(picked["uom_id"])
+    lot_source_policy = str(picked["lot_source_policy"])
+
+    qty_input = 2
+    production_date = date.today()
+    expiry_date = production_date + timedelta(days=30)
+
+    lot_code_input = None
+    if lot_source_policy in {"SUPPLIER_ONLY", "SUPPLIER"}:
+        lot_code_input = f"UT-IN-REV-FROZEN-{item_id}-{uom_id}"
+
+    payload = InboundCommitIn.model_validate(
+        {
+            "warehouse_id": warehouse_id,
+            "source_type": "MANUAL",
+            "source_ref": None,
+            "occurred_at": production_date.isoformat() + "T00:00:00Z",
+            "remark": "ut inbound reversal frozen source",
+            "lines": [
+                {
+                    "item_id": item_id,
+                    "uom_id": uom_id,
+                    "qty_input": qty_input,
+                    "lot_code_input": lot_code_input,
+                    "production_date": production_date.isoformat(),
+                    "expiry_date": expiry_date.isoformat(),
+                    "remark": "ut frozen source line",
+                }
+            ],
+        }
+    )
+
+    original = await commit_inbound(session, payload=payload, user_id=None)
+    doc_id, count_no, snapshot_at = await _insert_frozen_count_doc(
+        session,
+        warehouse_id=warehouse_id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await reverse_inbound_event(
+            session,
+            event_id=int(original.event_id),
+            payload=InboundReversalIn(remark="ut frozen reversal"),
+            user_id=None,
+        )
+
+    assert exc.value.status_code == 409
+    detail = exc.value.detail
+    assert isinstance(detail, dict), detail
+    assert detail["error_code"] == "count_doc_frozen_for_warehouse"
+    assert int(detail["warehouse_id"]) == warehouse_id
+    assert int(detail["count_doc_id"]) == doc_id
+    assert str(detail["count_no"]) == count_no
+    assert str(detail["snapshot_at"]) == snapshot_at.isoformat()

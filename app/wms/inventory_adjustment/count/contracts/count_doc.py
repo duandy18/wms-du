@@ -61,7 +61,7 @@ class CountDocLineOut(_Base):
 
 
 # =========================================================
-# 出参：盘点单头
+# 出参：盘点单头（含读模型聚合）
 # =========================================================
 class CountDocOut(_Base):
     id: int
@@ -77,6 +77,18 @@ class CountDocOut(_Base):
     created_at: datetime
     counted_at: Optional[datetime] = None
     posted_at: Optional[datetime] = None
+
+    # 读模型聚合字段
+    line_count: int = 0
+    diff_line_count: int = 0
+    diff_qty_base_total: int = 0
+
+    # 已过账事件摘要
+    posted_event_no: Optional[str] = None
+    posted_event_type: Optional[str] = None
+    posted_source_type: Optional[str] = None
+    posted_event_kind: Optional[str] = None
+    posted_event_status: Optional[str] = None
 
 
 class CountDocDetailOut(CountDocOut):
