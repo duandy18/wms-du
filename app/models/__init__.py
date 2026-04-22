@@ -49,6 +49,11 @@ MODEL_SPECS = [
     ("app.wms.inbound.models.inbound_event", "WmsEvent"),
     ("app.wms.inbound.models.inbound_event", "InboundEventLine"),
     # ------------------------------------------------------------------
+    # 库存调节：盘点单（新主线）
+    # ------------------------------------------------------------------
+    ("app.wms.inventory_adjustment.count.models.count_doc", "CountDoc"),
+    ("app.wms.inventory_adjustment.count.models.count_doc", "CountDocLine"),
+    # ------------------------------------------------------------------
     # 订单 & 出库
     # ------------------------------------------------------------------
     ("app.models.order", "Order"),
@@ -177,6 +182,8 @@ __all__ = [
     "StockSnapshot",
     "WmsEvent",
     "InboundEventLine",
+    "CountDoc",
+    "CountDocLine",
     # ---- Orders ----
     "Order",
     "OrderItem",
@@ -222,7 +229,6 @@ __all__ = [
     # ---- Return ----
     "ReturnTask",
     "ReturnTaskLine",
-    # ---- Internal Outbound ----
     # ---- Shipping ----
     "TransportShipment",
     "ShippingRecord",

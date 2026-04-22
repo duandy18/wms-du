@@ -6,6 +6,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MovementType
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 from app.wms.stock.services.stock_service import StockService
 
 
@@ -40,6 +43,11 @@ async def apply_inbound_stock(
     - production_date / expiry_date 必须继续向下传，
       让 lot snapshot 与 RECEIPT ledger snapshot 使用同一决策输入
     """
+    await ensure_warehouse_not_frozen(
+        session,
+        warehouse_id=int(warehouse_id),
+    )
+
     stock_svc = StockService()
 
     return await stock_svc.adjust_lot(

@@ -31,6 +31,9 @@ from app.wms.outbound.repos.outbound_event_repo import (
     load_stocks_lot_for_update,
     update_stocks_lot_qty,
 )
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 
 UTC = timezone.utc
 
@@ -342,6 +345,11 @@ async def _write_event_and_ledger(
     ts = occurred_at or datetime.now(UTC)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
+
+    await ensure_warehouse_not_frozen(
+        session,
+        warehouse_id=int(warehouse_id),
+    )
 
     event = await insert_outbound_event(
         session,

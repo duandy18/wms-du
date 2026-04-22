@@ -114,6 +114,7 @@ def init_models(
         "app.procurement.models.purchase_order_line",
         "app.wms.inventory_adjustment.return_inbound.models.inbound_receipt",
         "app.wms.inventory_adjustment.return_inbound.models.inbound_operation",
+        "app.wms.inventory_adjustment.count.models.count_doc",
         "app.wms.stock.models.lot",
         "app.wms.stock.models.stock_lot",
         "app.wms.ledger.models.stock_ledger",
@@ -139,6 +140,7 @@ def init_models(
         "app.pms.items.models",
         "app.pms.suppliers.models",
         "app.wms.inventory_adjustment.return_inbound.models",
+        "app.wms.inventory_adjustment.count.models",
         "app.wms.inbound.models",
         "app.wms.outbound.models",
     ):

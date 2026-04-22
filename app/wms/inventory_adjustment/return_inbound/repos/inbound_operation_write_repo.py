@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.inbound.repos.item_lookup_repo import get_item_policy_by_id
 from app.wms.inbound.repos.lot_resolve_repo import resolve_inbound_lot
+from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
+    ensure_warehouse_not_frozen,
+)
 from app.wms.inventory_adjustment.return_inbound.contracts.operation_submit import (
     InboundOperationLineOut,
     InboundOperationSubmitIn,
@@ -165,6 +168,11 @@ async def submit_inbound_operation_repo(
             status_code=409,
             detail=f"inbound_task_not_released:{task['status']}",
         )
+
+    await ensure_warehouse_not_frozen(
+        session,
+        warehouse_id=int(task["warehouse_id"]),
+    )
 
     task_lines = (
         await session.execute(
