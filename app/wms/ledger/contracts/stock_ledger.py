@@ -35,6 +35,7 @@ class ReasonCanon(str, Enum):
 class SubReason(str, Enum):
     PO_RECEIPT = "PO_RECEIPT"
     ORDER_SHIP = "ORDER_SHIP"
+    COUNT_CONFIRM = "COUNT_CONFIRM"
     COUNT_ADJUST = "COUNT_ADJUST"
     RETURN_RECEIPT = "RETURN_RECEIPT"
     INTERNAL_SHIP = "INTERNAL_SHIP"
@@ -75,7 +76,7 @@ class LedgerQuery(_Base):
     )
     sub_reason: Optional[SubReason] = Field(
         default=None,
-        description="具体动作（PO_RECEIPT / ORDER_SHIP / COUNT_ADJUST 等）",
+        description="具体动作（PO_RECEIPT / ORDER_SHIP / COUNT_CONFIRM / COUNT_ADJUST 等）",
     )
 
     ref: Optional[str] = Field(default=None, max_length=128, description="关联单据（精确匹配）")

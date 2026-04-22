@@ -23,6 +23,7 @@ _SOURCE_TYPES = (
     "RETURN",
     "TRANSFER_IN",
     "ADJUST_IN",
+    "ORDER",
     "ORDER_SHIP",
     "INTERNAL_OUTBOUND",
     "TRANSFER_OUT",
@@ -57,7 +58,7 @@ class WmsEvent(Base):
             (
                 "source_type IN ("
                 "'PURCHASE_ORDER', 'MANUAL', 'RETURN', 'TRANSFER_IN', 'ADJUST_IN', "
-                "'ORDER_SHIP', 'INTERNAL_OUTBOUND', 'TRANSFER_OUT', 'SCRAP', 'ADJUST_OUT', "
+                "'ORDER', 'ORDER_SHIP', 'INTERNAL_OUTBOUND', 'TRANSFER_OUT', 'SCRAP', 'ADJUST_OUT', "
                 "'COUNT_TASK', 'MANUAL_COUNT'"
                 ")"
             ),

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Sequence
+from typing import Any, Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -97,6 +97,75 @@ class CountDocRepo:
 
         items = list((await session.execute(stmt)).scalars().all())
         return total, items
+
+    async def get_doc_line_stats(
+        self,
+        session: AsyncSession,
+        *,
+        doc_ids: Sequence[int],
+    ) -> dict[int, dict[str, int]]:
+        ids = [int(x) for x in doc_ids]
+        if not ids:
+            return {}
+
+        stmt = (
+            select(
+                CountDocLine.doc_id.label("doc_id"),
+                func.count().label("line_count"),
+                func.sum(
+                    case(
+                        (func.coalesce(CountDocLine.diff_qty_base, 0) != 0, 1),
+                        else_=0,
+                    )
+                ).label("diff_line_count"),
+                func.coalesce(func.sum(func.coalesce(CountDocLine.diff_qty_base, 0)), 0).label(
+                    "diff_qty_base_total"
+                ),
+            )
+            .where(CountDocLine.doc_id.in_(ids))
+            .group_by(CountDocLine.doc_id)
+        )
+
+        rows = (await session.execute(stmt)).mappings().all()
+        out: dict[int, dict[str, int]] = {}
+        for row in rows:
+            out[int(row["doc_id"])] = {
+                "line_count": int(row["line_count"] or 0),
+                "diff_line_count": int(row["diff_line_count"] or 0),
+                "diff_qty_base_total": int(row["diff_qty_base_total"] or 0),
+            }
+        return out
+
+    async def get_posted_event_briefs(
+        self,
+        session: AsyncSession,
+        *,
+        event_ids: Sequence[int],
+    ) -> dict[int, dict[str, Any]]:
+        ids = [int(x) for x in event_ids]
+        if not ids:
+            return {}
+
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                  id,
+                  event_no,
+                  event_type,
+                  source_type,
+                  event_kind,
+                  status
+                FROM wms_events
+                WHERE id = ANY(:event_ids)
+                """
+            ),
+            {"event_ids": ids},
+        )
+        out: dict[int, dict[str, Any]] = {}
+        for row in rows.mappings().all():
+            out[int(row["id"])] = dict(row)
+        return out
 
     async def freeze_doc_lines_from_current_stock(
         self,
