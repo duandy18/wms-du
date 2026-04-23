@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from sqlalchemy import case, func, select, text
@@ -45,37 +46,148 @@ class CountDocRepo:
         stmt = select(CountDoc).where(CountDoc.id == int(doc_id))
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_active_doc_by_warehouse(
+        self,
+        session: AsyncSession,
+        *,
+        warehouse_id: int,
+    ) -> CountDoc | None:
+        stmt = (
+            select(CountDoc)
+            .where(
+                CountDoc.warehouse_id == int(warehouse_id),
+                CountDoc.status.in_(["DRAFT", "FROZEN", "COUNTED"]),
+            )
+            .order_by(CountDoc.created_at.desc(), CountDoc.id.desc())
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def get_doc_detail(
         self,
         session: AsyncSession,
         *,
         doc_id: int,
+        include_lot_snapshots: bool = True,
     ) -> CountDoc | None:
         stmt = (
             select(CountDoc)
             .where(CountDoc.id == int(doc_id))
-            .options(
+            .options(selectinload(CountDoc.lines))
+        )
+        if include_lot_snapshots:
+            stmt = stmt.options(
                 selectinload(CountDoc.lines).selectinload(CountDocLine.lot_snapshots),
             )
-        )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_doc_line_lot_snapshots_map(
+        self,
+        session: AsyncSession,
+        *,
+        doc_id: int,
+    ) -> dict[int, list[Any]]:
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                  s.id,
+                  s.line_id,
+                  s.lot_id,
+                  s.lot_code_snapshot,
+                  s.snapshot_qty_base,
+                  s.created_at
+                FROM count_doc_line_lot_snapshots s
+                JOIN count_doc_lines l
+                  ON l.id = s.line_id
+                WHERE l.doc_id = :doc_id
+                ORDER BY
+                  s.line_id ASC,
+                  s.snapshot_qty_base DESC,
+                  s.lot_id ASC,
+                  s.id ASC
+                """
+            ),
+            {"doc_id": int(doc_id)},
+        )
+
+        out: dict[int, list[Any]] = {}
+        for row in rows.mappings().all():
+            obj = SimpleNamespace(
+                id=int(row["id"]),
+                line_id=int(row["line_id"]),
+                lot_id=int(row["lot_id"]),
+                lot_code_snapshot=row["lot_code_snapshot"],
+                snapshot_qty_base=int(row["snapshot_qty_base"]),
+                created_at=row["created_at"],
+            )
+            out.setdefault(int(obj.line_id), []).append(obj)
+        return out
+
+    async def get_line_lot_snapshots(
+        self,
+        session: AsyncSession,
+        *,
+        line_id: int,
+    ) -> list[Any]:
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                  id,
+                  line_id,
+                  lot_id,
+                  lot_code_snapshot,
+                  snapshot_qty_base,
+                  created_at
+                FROM count_doc_line_lot_snapshots
+                WHERE line_id = :line_id
+                ORDER BY
+                  snapshot_qty_base DESC,
+                  lot_id ASC,
+                  id ASC
+                """
+            ),
+            {"line_id": int(line_id)},
+        )
+
+        out: list[Any] = []
+        for row in rows.mappings().all():
+            out.append(
+                SimpleNamespace(
+                    id=int(row["id"]),
+                    line_id=int(row["line_id"]),
+                    lot_id=int(row["lot_id"]),
+                    lot_code_snapshot=row["lot_code_snapshot"],
+                    snapshot_qty_base=int(row["snapshot_qty_base"]),
+                    created_at=row["created_at"],
+                )
+            )
+        return out
 
     async def list_docs(
         self,
         session: AsyncSession,
         *,
         warehouse_id: int | None = None,
+        active_only: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[int, list[CountDoc]]:
-        where_sql = ""
+        filters: list[str] = []
         params: dict[str, object] = {
             "limit": int(limit),
             "offset": int(offset),
         }
+
         if warehouse_id is not None:
-            where_sql = "WHERE warehouse_id = :warehouse_id"
+            filters.append("warehouse_id = :warehouse_id")
             params["warehouse_id"] = int(warehouse_id)
+
+        if active_only:
+            filters.append("status IN ('DRAFT', 'FROZEN', 'COUNTED')")
+
+        where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
 
         total_sql = text(
             f"""
@@ -94,6 +206,8 @@ class CountDocRepo:
         )
         if warehouse_id is not None:
             stmt = stmt.where(CountDoc.warehouse_id == int(warehouse_id))
+        if active_only:
+            stmt = stmt.where(CountDoc.status.in_(["DRAFT", "FROZEN", "COUNTED"]))
 
         items = list((await session.execute(stmt)).scalars().all())
         return total, items
@@ -167,24 +281,53 @@ class CountDocRepo:
             out[int(row["id"])] = dict(row)
         return out
 
+    async def get_base_uom_map(
+        self,
+        session: AsyncSession,
+        *,
+        item_ids: Sequence[int],
+    ) -> dict[int, dict[str, Any]]:
+        ids = [int(x) for x in item_ids]
+        if not ids:
+            return {}
+
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                  iu.item_id,
+                  iu.id AS base_item_uom_id,
+                  COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS base_uom_name
+                FROM item_uoms iu
+                WHERE iu.item_id = ANY(:item_ids)
+                  AND iu.is_base IS TRUE
+                """
+            ),
+            {"item_ids": ids},
+        )
+
+        out: dict[int, dict[str, Any]] = {}
+        for row in rows.mappings().all():
+            out[int(row["item_id"])] = {
+                "base_item_uom_id": (
+                    int(row["base_item_uom_id"])
+                    if row.get("base_item_uom_id") is not None
+                    else None
+                ),
+                "base_uom_name": row.get("base_uom_name"),
+            }
+        return out
+
     async def freeze_doc_lines_from_current_stock(
         self,
         session: AsyncSession,
         *,
         doc_id: int,
     ) -> tuple[int, int]:
-        """
-        当前一版盘点采用“盘点时冻结该仓库存动作”的方案，因此：
-        - snapshot_at 即冻结时点；
-        - 冻结明细直接从当前 stocks_lot 聚合；
-        - 主行按 item 粒度生成；
-        - lot 分布下沉到 count_doc_line_lot_snapshots。
-        """
         doc = await self.get_doc(session, doc_id=int(doc_id))
         if doc is None:
             raise LookupError(f"count_doc_not_found:{int(doc_id)}")
 
-        # 先清旧冻结结果（当前阶段允许在 DRAFT 下重冻）
         await session.execute(
             text(
                 """
@@ -203,7 +346,6 @@ class CountDocRepo:
             {"doc_id": int(doc_id)},
         )
 
-        # 1) 生成商品级盘点主行
         await session.execute(
             text(
                 """
@@ -236,7 +378,6 @@ class CountDocRepo:
             },
         )
 
-        # 2) 生成该商品行下的 lot 快照参考
         await session.execute(
             text(
                 """
@@ -315,23 +456,13 @@ class CountDocRepo:
         session: AsyncSession,
         *,
         doc_id: int,
+        counted_by_name_snapshot: str,
         lines: Sequence[dict[str, object]],
     ) -> int:
-        """
-        入参 lines 约定每项至少包含：
-        - line_id
-        - counted_item_uom_id
-        - counted_qty_input
-        可选：
-        - reason_code
-        - disposition
-        - remark
-        """
         updated = 0
 
         for raw in lines:
             line_id = int(raw["line_id"])
-            counted_item_uom_id = int(raw["counted_item_uom_id"])
             counted_qty_input = int(raw["counted_qty_input"])
 
             line = (
@@ -345,58 +476,80 @@ class CountDocRepo:
             if line is None:
                 raise LookupError(f"count_doc_line_not_found:{line_id}")
 
-            uom_row = (
+            base_uom_row = (
                 await session.execute(
                     text(
                         """
                         SELECT
                           iu.id,
-                          iu.ratio_to_base,
                           COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS uom_name_snapshot
                           FROM item_uoms iu
-                         WHERE iu.id = :uom_id
-                           AND iu.item_id = :item_id
+                         WHERE iu.item_id = :item_id
+                           AND iu.is_base IS TRUE
+                         ORDER BY iu.id ASC
                          LIMIT 1
                         """
                     ),
                     {
-                        "uom_id": int(counted_item_uom_id),
                         "item_id": int(line.item_id),
                     },
                 )
             ).mappings().first()
-            if uom_row is None:
-                raise LookupError(
-                    f"count_doc_line_invalid_item_uom_pair: line_id={line_id}, item_uom_id={counted_item_uom_id}"
-                )
+            if base_uom_row is None:
+                raise LookupError(f"count_doc_line_base_uom_not_found:item_id={int(line.item_id)}")
 
-            ratio = int(uom_row["ratio_to_base"])
-            uom_name_snapshot = str(uom_row["uom_name_snapshot"])
-            counted_qty_base = int(counted_qty_input) * int(ratio)
+            counted_qty_base = int(counted_qty_input)
             diff_qty_base = int(counted_qty_base) - int(line.snapshot_qty_base)
 
-            line.counted_item_uom_id = int(counted_item_uom_id)
-            line.counted_uom_name_snapshot = uom_name_snapshot
-            line.counted_ratio_to_base_snapshot = int(ratio)
+            line.counted_item_uom_id = int(base_uom_row["id"])
+            line.counted_uom_name_snapshot = str(base_uom_row["uom_name_snapshot"])
+            line.counted_ratio_to_base_snapshot = 1
             line.counted_qty_input = int(counted_qty_input)
             line.counted_qty_base = int(counted_qty_base)
             line.diff_qty_base = int(diff_qty_base)
 
-            reason_code = raw.get("reason_code")
-            disposition = raw.get("disposition")
-            remark = raw.get("remark")
-
-            line.reason_code = str(reason_code).strip() if isinstance(reason_code, str) and reason_code.strip() else None
-            line.disposition = (
-                str(disposition).strip() if isinstance(disposition, str) and disposition.strip() else None
-            )
-            line.remark = str(remark).strip() if isinstance(remark, str) and remark.strip() else None
             line.updated_at = datetime.now(timezone.utc)
 
             updated += 1
 
+        await session.execute(
+            text(
+                """
+                UPDATE count_docs
+                   SET counted_by_name_snapshot = :counted_by_name_snapshot,
+                       reviewed_by_name_snapshot = NULL
+                 WHERE id = :doc_id
+                """
+            ),
+            {
+                "doc_id": int(doc_id),
+                "counted_by_name_snapshot": str(counted_by_name_snapshot).strip(),
+            },
+        )
+
         await session.flush()
         return updated
+
+    async def set_reviewed_by_name_snapshot(
+        self,
+        session: AsyncSession,
+        *,
+        doc_id: int,
+        reviewed_by_name_snapshot: str,
+    ) -> None:
+        await session.execute(
+            text(
+                """
+                UPDATE count_docs
+                   SET reviewed_by_name_snapshot = :reviewed_by_name_snapshot
+                 WHERE id = :doc_id
+                """
+            ),
+            {
+                "doc_id": int(doc_id),
+                "reviewed_by_name_snapshot": str(reviewed_by_name_snapshot).strip(),
+            },
+        )
 
     async def try_mark_doc_counted(
         self,
@@ -404,13 +557,6 @@ class CountDocRepo:
         *,
         doc_id: int,
     ) -> bool:
-        """
-        当且仅当：
-        - 当前为 FROZEN
-        - 至少存在一条明细
-        - 所有明细都已有 counted_qty_base
-        才推进到 COUNTED。
-        """
         result = await session.execute(
             text(
                 """

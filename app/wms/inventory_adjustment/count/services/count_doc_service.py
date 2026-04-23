@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -9,14 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MovementType
 from app.wms.inventory_adjustment.count.contracts.count_doc import (
     CountDocCreateIn,
-    CountDocDetailOut,
     CountDocFreezeOut,
-    CountDocLineOut,
     CountDocLinesUpdateIn,
     CountDocLinesUpdateOut,
     CountDocListOut,
     CountDocOut,
+    CountDocPostIn,
     CountDocPostOut,
+    CountDocVoidOut,
+)
+from app.wms.inventory_adjustment.count.contracts.count_doc_execution import (
+    CountDocExecutionDetailOut,
+    CountDocExecutionLineOut,
 )
 from app.wms.inventory_adjustment.count.repos.count_doc_repo import CountDocRepo
 from app.wms.stock.services.stock_service import StockService
@@ -52,14 +57,30 @@ class CountDocService:
         return doc
 
     @staticmethod
-    def _sorted_lot_snapshots(line) -> list:
+    def _sorted_lot_snapshots(source) -> list:
+        rows = source if isinstance(source, list) else list(getattr(source, "lot_snapshots", []) or [])
         return sorted(
-            list(getattr(line, "lot_snapshots", []) or []),
+            list(rows),
             key=lambda x: (-int(x.snapshot_qty_base), int(x.lot_id), int(x.id)),
         )
 
     @staticmethod
+    def _zero_stats() -> dict[str, int]:
+        return {
+            "line_count": 0,
+            "diff_line_count": 0,
+            "diff_qty_base_total": 0,
+        }
+
+    @staticmethod
+    def _normalize_name(value: str | None) -> str | None:
+        if value is None:
+            return None
+        x = str(value).strip()
+        return x or None
+
     def _line_meta(
+        self,
         *,
         doc,
         line,
@@ -73,23 +94,13 @@ class CountDocService:
             "count_no": str(doc.count_no),
             "event_id": int(event_id),
         }
-        if getattr(line, "reason_code", None):
-            meta["reason_code"] = str(line.reason_code)
-        if getattr(line, "disposition", None):
-            meta["disposition"] = str(line.disposition)
-        if getattr(line, "remark", None):
-            meta["remark"] = str(line.remark)
+        if getattr(doc, "counted_by_name_snapshot", None):
+            meta["counted_by_name_snapshot"] = str(doc.counted_by_name_snapshot)
+        if getattr(doc, "reviewed_by_name_snapshot", None):
+            meta["reviewed_by_name_snapshot"] = str(doc.reviewed_by_name_snapshot)
         if str(sub_reason) == "COUNT_CONFIRM":
             meta["allow_zero_delta_ledger"] = True
         return meta
-
-    @staticmethod
-    def _zero_stats() -> dict[str, int]:
-        return {
-            "line_count": 0,
-            "diff_line_count": 0,
-            "diff_qty_base_total": 0,
-        }
 
     def _build_count_doc_out(
         self,
@@ -113,6 +124,8 @@ class CountDocService:
             status=str(doc.status),  # type: ignore[arg-type]
             posted_event_id=(int(doc.posted_event_id) if doc.posted_event_id is not None else None),
             created_by=(int(doc.created_by) if doc.created_by is not None else None),
+            counted_by_name_snapshot=self._normalize_name(getattr(doc, "counted_by_name_snapshot", None)),
+            reviewed_by_name_snapshot=self._normalize_name(getattr(doc, "reviewed_by_name_snapshot", None)),
             remark=doc.remark,
             created_at=doc.created_at,
             counted_at=doc.counted_at,
@@ -127,6 +140,55 @@ class CountDocService:
             posted_event_status=(str(event["status"]) if event.get("status") is not None else None),
         )
 
+    async def _build_execution_line_outs(
+        self,
+        session: AsyncSession,
+        *,
+        lines: list,
+    ) -> list[CountDocExecutionLineOut]:
+        item_ids = [int(x.item_id) for x in lines]
+        base_uom_map = await self.repo.get_base_uom_map(session, item_ids=item_ids)
+
+        out: list[CountDocExecutionLineOut] = []
+        for line in lines:
+            base_uom = base_uom_map.get(int(line.item_id), {})
+            out.append(
+                CountDocExecutionLineOut(
+                    id=int(line.id),
+                    line_no=int(line.line_no),
+                    item_id=int(line.item_id),
+                    item_name_snapshot=line.item_name_snapshot,
+                    item_spec_snapshot=line.item_spec_snapshot,
+                    snapshot_qty_base=int(line.snapshot_qty_base),
+                    base_item_uom_id=(
+                        int(base_uom["base_item_uom_id"])
+                        if base_uom.get("base_item_uom_id") is not None
+                        else None
+                    ),
+                    base_uom_name=(
+                        str(base_uom["base_uom_name"])
+                        if base_uom.get("base_uom_name") is not None
+                        else None
+                    ),
+                    counted_qty_input=(
+                        int(line.counted_qty_input)
+                        if line.counted_qty_input is not None
+                        else None
+                    ),
+                    counted_qty_base=(
+                        int(line.counted_qty_base)
+                        if line.counted_qty_base is not None
+                        else None
+                    ),
+                    diff_qty_base=(
+                        int(line.diff_qty_base)
+                        if line.diff_qty_base is not None
+                        else None
+                    ),
+                )
+            )
+        return out
+
     async def create_doc(
         self,
         session: AsyncSession,
@@ -134,6 +196,16 @@ class CountDocService:
         payload: CountDocCreateIn,
         actor_user_id: int | None,
     ) -> CountDocOut:
+        active = await self.repo.get_active_doc_by_warehouse(
+            session,
+            warehouse_id=int(payload.warehouse_id),
+        )
+        if active is not None:
+            raise ValueError(
+                f"count_doc_active_exists: warehouse_id={int(payload.warehouse_id)}, "
+                f"doc_id={int(active.id)}, count_no={str(active.count_no)}, status={str(active.status)}"
+            )
+
         count_no = self._make_count_no(payload.snapshot_at)
 
         doc = await self.repo.create_doc(
@@ -147,24 +219,39 @@ class CountDocService:
         await session.flush()
         return self._build_count_doc_out(doc, stats_map={}, event_map={})
 
-    async def get_doc_detail(
+    async def get_doc_execution_detail(
         self,
         session: AsyncSession,
         *,
         doc_id: int,
-    ) -> CountDocDetailOut:
-        doc = await self.repo.get_doc_detail(session, doc_id=int(doc_id))
+    ) -> CountDocExecutionDetailOut:
+        doc = await self.repo.get_doc_detail(
+            session,
+            doc_id=int(doc_id),
+            include_lot_snapshots=False,
+        )
         if doc is None:
             raise LookupError(f"count_doc_not_found:{int(doc_id)}")
 
         stats_map = await self.repo.get_doc_line_stats(session, doc_ids=[int(doc.id)])
-        event_ids = [int(doc.posted_event_id)] if doc.posted_event_id is not None else []
-        event_map = await self.repo.get_posted_event_briefs(session, event_ids=event_ids)
+        stats = stats_map.get(int(doc.id), self._zero_stats())
+        line_outs = await self._build_execution_line_outs(session, lines=list(doc.lines or []))
 
-        base = self._build_count_doc_out(doc, stats_map=stats_map, event_map=event_map)
-        return CountDocDetailOut(
-            **base.model_dump(),
-            lines=[CountDocLineOut.model_validate(x) for x in doc.lines],
+        return CountDocExecutionDetailOut(
+            id=int(doc.id),
+            count_no=str(doc.count_no),
+            warehouse_id=int(doc.warehouse_id),
+            snapshot_at=doc.snapshot_at,
+            status=str(doc.status),  # type: ignore[arg-type]
+            counted_by_name_snapshot=self._normalize_name(getattr(doc, "counted_by_name_snapshot", None)),
+            reviewed_by_name_snapshot=self._normalize_name(getattr(doc, "reviewed_by_name_snapshot", None)),
+            created_at=doc.created_at,
+            counted_at=doc.counted_at,
+            posted_at=doc.posted_at,
+            line_count=int(stats["line_count"]),
+            diff_line_count=int(stats["diff_line_count"]),
+            diff_qty_base_total=int(stats["diff_qty_base_total"]),
+            lines=line_outs,
         )
 
     async def list_docs(
@@ -172,12 +259,14 @@ class CountDocService:
         session: AsyncSession,
         *,
         warehouse_id: int | None = None,
+        active_only: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> CountDocListOut:
         total, docs = await self.repo.list_docs(
             session,
             warehouse_id=int(warehouse_id) if warehouse_id is not None else None,
+            active_only=bool(active_only),
             limit=int(limit),
             offset=int(offset),
         )
@@ -231,17 +320,18 @@ class CountDocService:
                 f"count_doc_lines_update_requires_frozen_or_counted: current={doc.status}"
             )
 
+        counted_by_name = self._normalize_name(payload.counted_by_name_snapshot)
+        if not counted_by_name:
+            raise ValueError("count_doc_lines_update_requires_counted_by_name_snapshot")
+
         updated_count = await self.repo.update_line_counts(
             session,
             doc_id=int(doc_id),
+            counted_by_name_snapshot=counted_by_name,
             lines=[
                 {
                     "line_id": int(x.line_id),
-                    "counted_item_uom_id": int(x.counted_item_uom_id),
                     "counted_qty_input": int(x.counted_qty_input),
-                    "reason_code": x.reason_code,
-                    "disposition": x.disposition,
-                    "remark": x.remark,
                 }
                 for x in payload.lines
             ],
@@ -249,15 +339,24 @@ class CountDocService:
 
         _ = await self.repo.try_mark_doc_counted(session, doc_id=int(doc_id))
         session.expire_all()
-        detail = await self.repo.get_doc_detail(session, doc_id=int(doc_id))
-        if detail is None:
+        detail_model = await self.repo.get_doc_detail(
+            session,
+            doc_id=int(doc_id),
+            include_lot_snapshots=False,
+        )
+        if detail_model is None:
             raise LookupError(f"count_doc_not_found_after_update:{int(doc_id)}")
 
+        line_outs = await self._build_execution_line_outs(
+            session,
+            lines=list(detail_model.lines or []),
+        )
+
         return CountDocLinesUpdateOut(
-            doc_id=int(detail.id),
-            status=str(detail.status),  # type: ignore[arg-type]
+            doc_id=int(detail_model.id),
+            status=str(detail_model.status),  # type: ignore[arg-type]
             updated_count=int(updated_count),
-            lines=[x for x in CountDocDetailOut.model_validate(detail).lines],
+            lines=line_outs,
         )
 
     async def _post_line_diff(
@@ -266,12 +365,44 @@ class CountDocService:
         *,
         doc,
         line,
+        snapshots: list,
         event_id: int,
         event_no: str,
         posted_at: datetime,
         trace_id: str,
     ) -> int:
-        snapshots = self._sorted_lot_snapshots(line)
+        rows = await session.execute(
+            text(
+                """
+                SELECT
+                  id,
+                  line_id,
+                  lot_id,
+                  lot_code_snapshot,
+                  snapshot_qty_base,
+                  created_at
+                FROM count_doc_line_lot_snapshots
+                WHERE line_id = :line_id
+                ORDER BY
+                  snapshot_qty_base DESC,
+                  lot_id ASC,
+                  id ASC
+                """
+            ),
+            {"line_id": int(line.id)},
+        )
+        snapshots = [
+            SimpleNamespace(
+                id=int(row["id"]),
+                line_id=int(row["line_id"]),
+                lot_id=int(row["lot_id"]),
+                lot_code_snapshot=row["lot_code_snapshot"],
+                snapshot_qty_base=int(row["snapshot_qty_base"]),
+                created_at=row["created_at"],
+            )
+            for row in rows.mappings().all()
+        ]
+        snapshots = self._sorted_lot_snapshots(snapshots)
         if not snapshots:
             raise RuntimeError(f"count_doc_post_missing_lot_snapshots: line_id={int(line.id)}")
 
@@ -382,6 +513,7 @@ class CountDocService:
         session: AsyncSession,
         *,
         doc_id: int,
+        payload: CountDocPostIn,
     ) -> CountDocPostOut:
         doc = await self._require_doc(session, doc_id=int(doc_id))
 
@@ -398,14 +530,58 @@ class CountDocService:
         if str(doc.status) != "COUNTED":
             raise ValueError(f"count_doc_post_requires_counted: current={doc.status}")
 
-        detail_out = await self.get_doc_detail(session, doc_id=int(doc_id))
+        reviewed_by_name = self._normalize_name(payload.reviewed_by_name_snapshot)
+        if not reviewed_by_name:
+            raise ValueError("count_doc_post_requires_reviewed_by_name_snapshot")
 
-        if not list(detail_out.lines or []):
-            raise ValueError(f"count_doc_post_requires_lines: doc_id={int(detail_out.id)}")
+        await self.repo.set_reviewed_by_name_snapshot(
+            session,
+            doc_id=int(doc_id),
+            reviewed_by_name_snapshot=reviewed_by_name,
+        )
+        session.expire_all()
 
-        for line in detail_out.lines:
+        doc_model = await self.repo.get_doc_detail(
+            session,
+            doc_id=int(doc_id),
+            include_lot_snapshots=False,
+        )
+        if doc_model is None:
+            raise LookupError(f"count_doc_not_found:{int(doc_id)}")
+
+        if not self._normalize_name(doc_model.counted_by_name_snapshot):
+            raise ValueError("count_doc_post_requires_counted_by_name_snapshot")
+        if not self._normalize_name(doc_model.reviewed_by_name_snapshot):
+            raise ValueError("count_doc_post_requires_reviewed_by_name_snapshot")
+
+        orm_lines = list(doc_model.lines or [])
+        if not orm_lines:
+            raise ValueError(f"count_doc_post_requires_lines: doc_id={int(doc_model.id)}")
+
+        for line in orm_lines:
             if line.counted_qty_base is None or line.diff_qty_base is None:
                 raise ValueError(f"count_doc_post_requires_all_lines_counted: line_id={int(line.id)}")
+
+        doc_ctx = SimpleNamespace(
+            id=int(doc_model.id),
+            count_no=str(doc_model.count_no),
+            warehouse_id=int(doc_model.warehouse_id),
+            created_by=(int(doc_model.created_by) if doc_model.created_by is not None else None),
+            remark=doc_model.remark,
+            counted_by_name_snapshot=self._normalize_name(doc_model.counted_by_name_snapshot),
+            reviewed_by_name_snapshot=self._normalize_name(doc_model.reviewed_by_name_snapshot),
+        )
+
+        lines_ctx = [
+            SimpleNamespace(
+                id=int(line.id),
+                line_no=int(line.line_no),
+                item_id=int(line.item_id),
+                diff_qty_base=(int(line.diff_qty_base) if line.diff_qty_base is not None else None),
+                counted_qty_base=(int(line.counted_qty_base) if line.counted_qty_base is not None else None),
+            )
+            for line in orm_lines
+        ]
 
         posted_at = datetime.now(timezone.utc)
         trace_id = self._make_trace_id()
@@ -447,21 +623,30 @@ class CountDocService:
             ),
             {
                 "event_no": str(event_no),
-                "warehouse_id": int(detail_out.warehouse_id),
-                "source_ref": str(detail_out.count_no),
+                "warehouse_id": int(doc_ctx.warehouse_id),
+                "source_ref": str(doc_ctx.count_no),
                 "occurred_at": posted_at,
                 "trace_id": str(trace_id),
-                "created_by": (int(detail_out.created_by) if detail_out.created_by is not None else None),
-                "remark": (str(detail_out.remark).strip() if detail_out.remark else f"post count doc {detail_out.count_no}"),
+                "created_by": doc_ctx.created_by,
+                "remark": (
+                    str(doc_ctx.remark).strip()
+                    if doc_ctx.remark
+                    else f"post count doc {doc_ctx.count_no}"
+                ),
             },
         )
         event_id = int(row.scalar_one())
 
-        for line in detail_out.lines:
+        for line in lines_ctx:
+            snapshots = await self.repo.get_line_lot_snapshots(
+                session,
+                line_id=int(line.id),
+            )
             await self._post_line_diff(
                 session,
-                doc=detail_out,
+                doc=doc_ctx,
                 line=line,
+                snapshots=snapshots,
                 event_id=int(event_id),
                 event_no=str(event_no),
                 posted_at=posted_at,
@@ -470,17 +655,34 @@ class CountDocService:
 
         await self.repo.mark_doc_posted(
             session,
-            doc_id=int(detail_out.id),
+            doc_id=int(doc_ctx.id),
             posted_event_id=int(event_id),
             posted_at=posted_at,
         )
         session.expire_all()
 
         return CountDocPostOut(
-            doc_id=int(detail_out.id),
+            doc_id=int(doc_ctx.id),
             status="POSTED",
             posted_event_id=int(event_id),
             posted_at=posted_at,
+        )
+
+    async def void_doc(
+        self,
+        session: AsyncSession,
+        *,
+        doc_id: int,
+    ) -> CountDocVoidOut:
+        doc = await self._require_doc(session, doc_id=int(doc_id))
+
+        if str(doc.status) == "POSTED":
+            raise ValueError("count_doc_void_forbidden_after_posted")
+
+        await self.repo.mark_doc_voided(session, doc_id=int(doc_id))
+        return CountDocVoidOut(
+            doc_id=int(doc_id),
+            status="VOIDED",
         )
 
 

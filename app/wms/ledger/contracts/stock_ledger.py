@@ -124,6 +124,10 @@ class LedgerRow(_Base):
     item_id: int
     item_name: Optional[str] = None
 
+    # 基础单位（当前 delta / after_qty 的解释口径）
+    base_item_uom_id: Optional[int] = None
+    base_uom_name: Optional[str] = None
+
     # ✅ 合同双轨：lot_code 正名 + batch_code 兼容
     lot_code: Optional[str] = None
     batch_code: Optional[str] = None

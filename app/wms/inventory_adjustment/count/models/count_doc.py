@@ -18,6 +18,7 @@ class CountDoc(Base):
     - 盘点单头锚定 warehouse_id + snapshot_at
     - snapshot_at 是盘点时点唯一真相源
     - posted_event_id 是后续正式 COUNT 事件的桥接锚点
+    - counted_by / reviewed_by 当前阶段采用名字快照，不先绑定 user_id
     """
 
     __tablename__ = "count_docs"
@@ -58,6 +59,18 @@ class CountDoc(Base):
         nullable=True,
     )
 
+    counted_by_name_snapshot: Mapped[Optional[str]] = mapped_column(
+        sa.String(128),
+        nullable=True,
+        comment="盘点人名字快照",
+    )
+
+    reviewed_by_name_snapshot: Mapped[Optional[str]] = mapped_column(
+        sa.String(128),
+        nullable=True,
+        comment="复核人名字快照",
+    )
+
     remark: Mapped[Optional[str]] = mapped_column(sa.String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -96,7 +109,8 @@ class CountDoc(Base):
         return (
             f"<CountDoc id={self.id} count_no={self.count_no} "
             f"warehouse_id={self.warehouse_id} status={self.status} "
-            f"snapshot_at={self.snapshot_at} posted_event_id={self.posted_event_id}>"
+            f"snapshot_at={self.snapshot_at} posted_event_id={self.posted_event_id} "
+            f"counted_by={self.counted_by_name_snapshot} reviewed_by={self.reviewed_by_name_snapshot}>"
         )
 
 
@@ -107,6 +121,7 @@ class CountDocLine(Base):
     设计原则：
     - 主锚点是 item_id，不再以 lot_id 作为盘点主行业务锚点
     - 这是一张“商品级即时库存快照 + 实盘录入 + 差异处理”的单据行
+    - 当前执行页统一按基础单位录入；counted_ratio_to_base_snapshot 固定为 1
     - lot 分布下沉到 CountDocLineLotSnapshot
     """
 
@@ -147,20 +162,7 @@ class CountDocLine(Base):
     counted_qty_base: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
     diff_qty_base: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
 
-    reason_code: Mapped[Optional[str]] = mapped_column(
-        sa.String(32),
-        nullable=True,
-        index=True,
-    )
-
-    disposition: Mapped[Optional[str]] = mapped_column(
-        sa.String(32),
-        nullable=True,
-        index=True,
-    )
-
-    remark: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
-
+    # 当前阶段前端不再展示这三项，但字段先保留，避免破坏既有表结构与历史数据
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         nullable=False,
@@ -259,7 +261,7 @@ class CountDocLineLotSnapshot(Base):
     设计原则：
     - 不作为盘点主行业务锚点
     - 只保存 snapshot_at 时点该商品的 lot 分布
-    - 供页面参考与后续过账分摊使用
+    - 供后续过账分摊使用（当前执行页不再展开展示）
     """
 
     __tablename__ = "count_doc_line_lot_snapshots"

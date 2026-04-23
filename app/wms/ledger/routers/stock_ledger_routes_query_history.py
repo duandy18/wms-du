@@ -259,6 +259,43 @@ def register(router: APIRouter) -> None:
         )
         rows = (await session.execute(list_stmt)).scalars().all()
 
+        item_ids = sorted({int(r.item_id) for r in rows if r.item_id is not None})
+
+        item_name_map: dict[int, str] = {}
+        base_uom_map: dict[int, dict[str, object | None]] = {}
+
+        if item_ids:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT
+                      i.id,
+                      i.name,
+                      iu.id AS base_item_uom_id,
+                      COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS base_uom_name
+                    FROM items AS i
+                    LEFT JOIN item_uoms AS iu
+                      ON iu.item_id = i.id
+                     AND iu.is_base IS TRUE
+                    WHERE i.id = ANY(:ids)
+                    """
+                ),
+                {"ids": item_ids},
+            )
+            for x in res.mappings().all():
+                iid = int(x["id"])
+                nm = str(x["name"] or "").strip()
+                if nm:
+                    item_name_map[iid] = nm
+                base_uom_map[iid] = {
+                    "base_item_uom_id": (
+                        int(x["base_item_uom_id"])
+                        if x.get("base_item_uom_id") is not None
+                        else None
+                    ),
+                    "base_uom_name": x.get("base_uom_name"),
+                }
+
         lot_ids = sorted({int(getattr(r, "lot_id")) for r in rows if getattr(r, "lot_id", None) is not None})
         lot_code_map: dict[int, str | None] = {}
         if lot_ids:
@@ -281,7 +318,17 @@ def register(router: APIRouter) -> None:
                     created_at=r.created_at,
                     after_qty=r.after_qty,
                     item_id=r.item_id,
-                    item_name=getattr(r, "item_name", None),
+                    item_name=item_name_map.get(int(r.item_id)) if r.item_id is not None else None,
+                    base_item_uom_id=(
+                        base_uom_map.get(int(r.item_id), {}).get("base_item_uom_id")
+                        if r.item_id is not None
+                        else None
+                    ),
+                    base_uom_name=(
+                        base_uom_map.get(int(r.item_id), {}).get("base_uom_name")
+                        if r.item_id is not None
+                        else None
+                    ),
                     warehouse_id=r.warehouse_id,
                     batch_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
                     lot_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,

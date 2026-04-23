@@ -6,13 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.deps import get_async_session
 from app.wms.inventory_adjustment.count.contracts.count_doc import (
     CountDocCreateIn,
-    CountDocDetailOut,
     CountDocFreezeOut,
     CountDocLinesUpdateIn,
     CountDocLinesUpdateOut,
     CountDocListOut,
     CountDocOut,
+    CountDocPostIn,
     CountDocPostOut,
+    CountDocVoidOut,
+)
+from app.wms.inventory_adjustment.count.contracts.count_doc_execution import (
+    CountDocExecutionDetailOut,
 )
 from app.wms.inventory_adjustment.count.services.count_doc_service import CountDocService
 
@@ -32,7 +36,7 @@ async def create_count_doc(
         out = await service.create_doc(
             session,
             payload=payload,
-            actor_user_id=None,  # 当前阶段先不接 user runtime；created_by 允许为空
+            actor_user_id=None,
         )
         await session.commit()
         return out
@@ -53,6 +57,7 @@ async def create_count_doc(
 @router.get("", response_model=CountDocListOut, status_code=status.HTTP_200_OK)
 async def list_count_docs(
     warehouse_id: int | None = Query(default=None, ge=1),
+    active_only: bool = Query(default=False, description="是否只返回未完成盘点单"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_async_session),
@@ -62,6 +67,7 @@ async def list_count_docs(
         return await service.list_docs(
             session,
             warehouse_id=warehouse_id,
+            active_only=active_only,
             limit=limit,
             offset=offset,
         )
@@ -75,14 +81,17 @@ async def list_count_docs(
         raise HTTPException(status_code=500, detail=f"list_count_docs_failed: {e}") from e
 
 
-@router.get("/{doc_id}", response_model=CountDocDetailOut, status_code=status.HTTP_200_OK)
-async def get_count_doc_detail(
+@router.get("/{doc_id}/execution", response_model=CountDocExecutionDetailOut, status_code=status.HTTP_200_OK)
+async def get_count_doc_execution_detail(
     doc_id: int,
     session: AsyncSession = Depends(get_async_session),
-) -> CountDocDetailOut:
+) -> CountDocExecutionDetailOut:
     service = CountDocService()
     try:
-        return await service.get_doc_detail(session, doc_id=int(doc_id))
+        return await service.get_doc_execution_detail(
+            session,
+            doc_id=int(doc_id),
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except LookupError as e:
@@ -90,7 +99,7 @@ async def get_count_doc_detail(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"get_count_doc_detail_failed: {e}") from e
+        raise HTTPException(status_code=500, detail=f"get_count_doc_execution_detail_failed: {e}") from e
 
 
 @router.post("/{doc_id}/freeze", response_model=CountDocFreezeOut, status_code=status.HTTP_200_OK)
@@ -149,11 +158,40 @@ async def update_count_doc_lines(
 @router.post("/{doc_id}/post", response_model=CountDocPostOut, status_code=status.HTTP_200_OK)
 async def post_count_doc(
     doc_id: int,
+    payload: CountDocPostIn,
     session: AsyncSession = Depends(get_async_session),
 ) -> CountDocPostOut:
     service = CountDocService()
     try:
         out = await service.post_doc(
+            session,
+            doc_id=int(doc_id),
+            payload=payload,
+        )
+        await session.commit()
+        return out
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except LookupError as e:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"post_count_doc_failed: {e}") from e
+
+
+@router.post("/{doc_id}/void", response_model=CountDocVoidOut, status_code=status.HTTP_200_OK)
+async def void_count_doc(
+    doc_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> CountDocVoidOut:
+    service = CountDocService()
+    try:
+        out = await service.void_doc(
             session,
             doc_id=int(doc_id),
         )
@@ -170,4 +208,7 @@ async def post_count_doc(
         raise
     except Exception as e:
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"post_count_doc_failed: {e}") from e
+        raise HTTPException(status_code=500, detail=f"void_count_doc_failed: {e}") from e
+
+
+__all__ = ["router"]

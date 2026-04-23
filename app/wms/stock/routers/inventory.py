@@ -10,10 +10,15 @@ from app.wms.stock.contracts.inventory import (
     InventoryQuery,
     InventoryResponse,
 )
+from app.wms.stock.contracts.inventory_explain import (
+    InventoryExplainIn,
+    InventoryExplainOut,
+)
 from app.wms.stock.contracts.options import (
     InventoryOptionsQuery,
     InventoryOptionsResponse,
 )
+from app.wms.stock.services.inventory_explain_service import InventoryExplainService
 from app.wms.stock.services.inventory_options_service import InventoryOptionsService
 from app.wms.stock.services.inventory_read_service import InventoryReadService
 
@@ -61,6 +66,17 @@ async def get_inventory_detail(
         session,
         item_id=item_id,
         query=query,
+    )
+
+
+@router.post("/inventory/explain", response_model=InventoryExplainOut)
+async def explain_inventory(
+    payload: InventoryExplainIn,
+    session: AsyncSession = Depends(get_session),
+) -> InventoryExplainOut:
+    return await InventoryExplainService.explain_inventory(
+        session,
+        payload=payload,
     )
 
 
