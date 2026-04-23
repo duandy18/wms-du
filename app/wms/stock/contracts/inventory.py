@@ -40,9 +40,13 @@ class InventoryRow(_Base):
     category: Optional[str] = None
 
     warehouse_id: Annotated[int, Field(ge=1)]
+    warehouse_name: Optional[str] = None
     lot_code: Optional[str] = None
 
     qty: int
+    base_item_uom_id: Optional[int] = None
+    base_uom_name: Optional[str] = None
+
     expiry_date: date | None = None
     near_expiry: bool = False
     days_to_expiry: Optional[int] = None
@@ -90,6 +94,9 @@ class InventoryDetailSlice(_Base):
 class InventoryDetailResponse(_Base):
     item_id: Annotated[int, Field(ge=1)]
     item_name: Annotated[str, Field(min_length=0, max_length=128)]
+
+    base_item_uom_id: Optional[int] = None
+    base_uom_name: Optional[str] = None
 
     totals: InventoryDetailTotals
     slices: list[InventoryDetailSlice] = Field(default_factory=list)

@@ -62,9 +62,15 @@ class InventoryReadService:
                     brand=r.get("brand"),
                     category=r.get("category"),
                     warehouse_id=int(r["warehouse_id"]),
+                    warehouse_name=r.get("warehouse_name"),
                     lot_code=r.get("lot_code"),
-                    production_date=r.get("production_date"),
                     qty=int(r["qty"] or 0),
+                    base_item_uom_id=(
+                        int(r["base_item_uom_id"])
+                        if r.get("base_item_uom_id") is not None
+                        else None
+                    ),
+                    base_uom_name=r.get("base_uom_name"),
                     expiry_date=expiry_date,
                     near_expiry=near_expiry,
                     days_to_expiry=days_to_expiry,
@@ -97,6 +103,8 @@ class InventoryReadService:
             return InventoryDetailResponse(
                 item_id=int(item_id),
                 item_name="",
+                base_item_uom_id=None,
+                base_uom_name=None,
                 totals=InventoryDetailTotals(
                     on_hand_qty=0,
                     available_qty=0,
@@ -105,6 +113,13 @@ class InventoryReadService:
             )
 
         item_name = str(rows[0].get("item_name") or "")
+        base_item_uom_id = (
+            int(rows[0]["base_item_uom_id"])
+            if rows[0].get("base_item_uom_id") is not None
+            else None
+        )
+        base_uom_name = rows[0].get("base_uom_name")
+
         slices: list[InventoryDetailSlice] = []
         total_on_hand = 0
 
@@ -140,6 +155,8 @@ class InventoryReadService:
         return InventoryDetailResponse(
             item_id=int(item_id),
             item_name=item_name,
+            base_item_uom_id=base_item_uom_id,
+            base_uom_name=base_uom_name,
             totals=InventoryDetailTotals(
                 on_hand_qty=total_on_hand,
                 available_qty=total_on_hand,

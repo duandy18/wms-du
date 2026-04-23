@@ -79,29 +79,18 @@ async def query_inventory_rows(
         WITH base AS (
             SELECT
                 s.item_id,
-                i.name AS item_name,
-                i.sku AS item_code,
-                i.spec AS spec,
-                i.brand AS brand,
-                i.category AS category,
                 s.warehouse_id,
-                l.lot_code AS lot_code,
-                l.production_date AS production_date,
-                l.expiry_date AS expiry_date,
-                s.qty,
-                (
-                    SELECT ib.barcode
-                    FROM item_barcodes AS ib
-                    WHERE ib.item_id = s.item_id
-                      AND ib.active = TRUE
-                    ORDER BY ib.is_primary DESC, ib.id ASC
-                    LIMIT 1
-                ) AS main_barcode
+                s.lot_id
             FROM stocks_lot AS s
             JOIN items AS i
               ON i.id = s.item_id
+            JOIN warehouses AS w
+              ON w.id = s.warehouse_id
             LEFT JOIN lots AS l
               ON l.id = s.lot_id
+            LEFT JOIN item_uoms AS iu
+              ON iu.item_id = s.item_id
+             AND iu.is_base IS TRUE
             WHERE {where_sql}
         )
         SELECT COUNT(*)::int AS total
@@ -121,10 +110,13 @@ async def query_inventory_rows(
             i.brand AS brand,
             i.category AS category,
             s.warehouse_id,
+            w.name AS warehouse_name,
             l.lot_code AS lot_code,
             l.production_date AS production_date,
             l.expiry_date AS expiry_date,
             s.qty,
+            iu.id AS base_item_uom_id,
+            COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS base_uom_name,
             (
                 SELECT ib.barcode
                 FROM item_barcodes AS ib
@@ -136,8 +128,13 @@ async def query_inventory_rows(
         FROM stocks_lot AS s
         JOIN items AS i
           ON i.id = s.item_id
+        JOIN warehouses AS w
+          ON w.id = s.warehouse_id
         LEFT JOIN lots AS l
           ON l.id = s.lot_id
+        LEFT JOIN item_uoms AS iu
+          ON iu.item_id = s.item_id
+         AND iu.is_base IS TRUE
         WHERE {where_sql}
         ORDER BY i.name ASC, s.item_id ASC, s.warehouse_id ASC, l.lot_code NULLS FIRST
         OFFSET :offset
@@ -174,6 +171,8 @@ async def query_inventory_detail_rows(
         SELECT
             s.item_id,
             i.name AS item_name,
+            iu.id AS base_item_uom_id,
+            COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS base_uom_name,
             s.warehouse_id,
             w.name AS warehouse_name,
             l.lot_code AS lot_code,
@@ -187,6 +186,9 @@ async def query_inventory_detail_rows(
           ON w.id = s.warehouse_id
         LEFT JOIN lots AS l
           ON l.id = s.lot_id
+        LEFT JOIN item_uoms AS iu
+          ON iu.item_id = s.item_id
+         AND iu.is_base IS TRUE
         WHERE {" AND ".join(cond)}
         ORDER BY s.warehouse_id ASC, l.lot_code NULLS FIRST
         """
