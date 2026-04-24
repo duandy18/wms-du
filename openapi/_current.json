@@ -39494,19 +39494,7 @@
               }
             ],
             "title": "Lot Code",
-            "description": "Lot 展示码（正名；等价于 batch_code）"
-          },
-          "batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Code",
-            "description": "批次编码（兼容字段；等价于 lot_code）"
+            "description": "Lot 展示码"
           },
           "production_date": {
             "anyOf": [
@@ -39567,7 +39555,7 @@
         },
         "type": "object",
         "title": "ScanRequest",
-        "description": "/scan 已收口为 pick probe 工具层。\n\n- mode 固定为 pick\n- probe 固定为 true\n- 只负责商品 / 包装识别，不承担库存执行"
+        "description": "/scan 已收口为 pick probe 工具层。\n\n- mode 固定为 pick\n- probe 固定为 true\n- 只负责商品 / 包装识别，不承担库存执行\n- lot_code 是唯一批次展示码入参；batch_code alias 已退役"
       },
       "ScanResponse": {
         "properties": {
@@ -39665,17 +39653,6 @@
               }
             ],
             "title": "Lot Code"
-          },
-          "batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Code"
           },
           "production_date": {
             "anyOf": [

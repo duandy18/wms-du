@@ -53,7 +53,7 @@ async def parse_scan(
 ]:
     """
     统一解析 /scan 请求，返回：
-      parsed, mode, probe, qty, item_id, batch_code, warehouse_id,
+      parsed, mode, probe, qty, item_id, lot_code, warehouse_id,
       production_date(date|None), expiry_date(date|None)
 
     /scan 已收口为 pick probe 工具层：
@@ -71,7 +71,6 @@ async def parse_scan(
         "item_id",
         "qty",
         "task_line_id",
-        "batch_code",
         "lot_code",
         "warehouse_id",
         "production_date",
@@ -81,9 +80,6 @@ async def parse_scan(
         v_parsed = parsed.get(f)
         if (v_parsed is None or v_parsed == "") and v_scan is not None:
             parsed[f] = v_scan
-
-    if not parsed.get("batch_code") and parsed.get("lot_code"):
-        parsed["batch_code"] = parsed.get("lot_code")
 
     if raw and parsed.get("item_id") is None:
         resolved = await probe_item_from_barcode(session, raw)
@@ -107,14 +103,14 @@ async def parse_scan(
                 if resolved_gtin is not None:
                     _apply_barcode_probe(parsed, resolved_gtin)
 
-            if getattr(r, "batch", None) and not parsed.get("batch_code"):
-                parsed["batch_code"] = r.batch  # type: ignore[assignment]
+            if getattr(r, "batch", None) and not parsed.get("lot_code"):
+                parsed["lot_code"] = r.batch  # type: ignore[assignment]
             if getattr(r, "expiry", None) and not parsed.get("expiry_date"):
                 parsed["expiry_date"] = r.expiry  # type: ignore[assignment]
 
     qty = int(parsed.get("qty") or scan.get("qty") or 1)
     item_id = int(parsed.get("item_id") or 0)
-    batch_code = parsed.get("batch_code")
+    lot_code = parsed.get("lot_code")
     wh_id = int(parsed.get("warehouse_id") or scan.get("warehouse_id") or 1)
 
     production_date = coerce_date(parsed.get("production_date"))
@@ -126,7 +122,7 @@ async def parse_scan(
         probe,
         qty,
         item_id,
-        batch_code,
+        lot_code,
         wh_id,
         production_date,
         expiry_date,

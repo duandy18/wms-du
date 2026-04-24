@@ -19,7 +19,7 @@ async def run_pick_flow(
     qty: int,
     item_id: int,
     wh_id: int,
-    batch_code: Optional[str],
+    lot_code: Optional[str],
     production_date: Any,
     expiry_date: Any,
     evidence: List[Dict[str, Any]],
@@ -35,7 +35,7 @@ async def run_pick_flow(
     parse_kwargs = {
         "item_id": item_id,
         "warehouse_id": wh_id,
-        "batch_code": batch_code,
+        "lot_code": lot_code,
         "ref": scan_ref_norm,
         "qty": qty,
         "task_line_id": parsed.get("task_line_id"),
