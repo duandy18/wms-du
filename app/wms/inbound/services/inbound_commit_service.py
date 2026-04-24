@@ -32,7 +32,10 @@ _PSEUDO_LOT_CODE_TOKENS = {"NOEXP", "NONE"}
 class ResolvedCommitLine:
     line_no: int
     item_id: int
+    item_name_snapshot: str | None
+    item_spec_snapshot: str | None
     uom_id: int
+    actual_uom_name_snapshot: str | None
     qty_input: int
     ratio_to_base_snapshot: int
     qty_base: int
@@ -102,6 +105,48 @@ async def _require_ratio_to_base(
     if ratio <= 0:
         raise HTTPException(status_code=400, detail="item_uoms.ratio_to_base 非法（必须 >= 1）")
     return ratio
+
+
+async def _load_item_display_snapshot(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    uom_id: int,
+) -> tuple[str | None, str | None, str | None]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  i.name AS item_name_snapshot,
+                  i.spec AS item_spec_snapshot,
+                  COALESCE(NULLIF(iu.display_name, ''), iu.uom) AS actual_uom_name_snapshot
+                FROM items i
+                JOIN item_uoms iu
+                  ON iu.id = :uom_id
+                 AND iu.item_id = i.id
+                WHERE i.id = :item_id
+                LIMIT 1
+                """
+            ),
+            {
+                "item_id": int(item_id),
+                "uom_id": int(uom_id),
+            },
+        )
+    ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"item_display_snapshot_not_found:{int(item_id)}:{int(uom_id)}",
+        )
+
+    return (
+        _norm_text(row["item_name_snapshot"]),
+        _norm_text(row["item_spec_snapshot"]),
+        _norm_text(row["actual_uom_name_snapshot"]),
+    )
 
 
 def _validate_source(payload: InboundCommitIn) -> None:
@@ -182,6 +227,12 @@ async def _resolve_line(
     if qty_base <= 0:
         raise HTTPException(status_code=400, detail=f"第 {line_no} 行 qty_base 必须 > 0")
 
+    item_name_snapshot, item_spec_snapshot, actual_uom_name_snapshot = await _load_item_display_snapshot(
+        session,
+        item_id=int(resolved_item_id),
+        uom_id=int(resolved_uom_id),
+    )
+
     if lot_code_input is not None and lot_code_input.upper() in _PSEUDO_LOT_CODE_TOKENS:
         raise HTTPException(status_code=400, detail=f"lot_code 禁止伪码：line={line_no}")
 
@@ -234,7 +285,10 @@ async def _resolve_line(
     return ResolvedCommitLine(
         line_no=int(line_no),
         item_id=int(resolved_item_id),
+        item_name_snapshot=item_name_snapshot,
+        item_spec_snapshot=item_spec_snapshot,
         uom_id=int(resolved_uom_id),
+        actual_uom_name_snapshot=actual_uom_name_snapshot,
         qty_input=int(qty_input),
         ratio_to_base_snapshot=int(ratio_to_base_snapshot),
         qty_base=int(qty_base),
@@ -302,7 +356,10 @@ async def commit_inbound(
             event_id=int(event.id),
             line_no=int(line.line_no),
             item_id=int(line.item_id),
+            item_name_snapshot=line.item_name_snapshot,
+            item_spec_snapshot=line.item_spec_snapshot,
             actual_uom_id=int(line.uom_id),
+            actual_uom_name_snapshot=line.actual_uom_name_snapshot,
             barcode_input=line.barcode_input,
             actual_qty_input=int(line.qty_input),
             actual_ratio_to_base_snapshot=int(line.ratio_to_base_snapshot),
@@ -354,8 +411,6 @@ async def commit_inbound(
 
     await session.flush()
 
-    # 采购来源：由 procurement service 边界消费本次正式事件，
-    # 同步其 completion 读模型；WMS 不再直接 import procurement repo。
     if str(payload.source_type) == "PURCHASE_ORDER":
         await sync_purchase_completion_for_inbound_event(
             session,

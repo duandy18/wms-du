@@ -16,10 +16,18 @@ from app.wms.inventory_adjustment.inbound_reversal.contracts.inbound_reversal im
     InboundReversalOut,
     InboundReversalRowOut,
 )
+from app.wms.inventory_adjustment.inbound_reversal.contracts.inbound_reversal_read import (
+    InboundReversalDetailLineOut,
+    InboundReversalDetailOut,
+    InboundReversalOptionOut,
+    InboundReversalOptionsOut,
+)
 from app.wms.inventory_adjustment.inbound_reversal.repos.inbound_reversal_repo import (
     find_committed_inbound_reversal,
     get_inbound_event_for_reversal,
+    get_inbound_event_header,
     list_inbound_event_lines_for_reversal,
+    list_inbound_reversal_options,
     mark_inbound_event_superseded,
 )
 from app.wms.stock.services.stock_service import StockService
@@ -43,6 +51,137 @@ def _norm_text(v: object) -> str | None:
     return s or None
 
 
+def _freeze_reason(detail: object) -> str:
+    if isinstance(detail, dict):
+        error_code = str(detail.get("error_code") or "").strip()
+        if error_code == "count_doc_frozen_for_warehouse":
+            return "该仓当前存在冻结中的盘点单，禁止执行入库冲回"
+    return "该原入库事件当前不允许冲回"
+
+
+async def _non_reversible_reason(
+    session: AsyncSession,
+    *,
+    header: dict[str, object],
+) -> str | None:
+    if str(header["event_kind"]) != "COMMIT":
+        return f"当前事件类型为 {header['event_kind']}，不允许冲回"
+
+    if str(header["status"]) != "COMMITTED":
+        return f"当前状态为 {header['status']}，不允许冲回"
+
+    existing = await find_committed_inbound_reversal(
+        session,
+        target_event_id=int(header["event_id"]),
+    )
+    if existing is not None:
+        return f"该原入库事件已被冲回：{existing['event_no']}"
+
+    try:
+        await ensure_warehouse_not_frozen(
+            session,
+            warehouse_id=int(header["warehouse_id"]),
+        )
+    except HTTPException as exc:
+        return _freeze_reason(exc.detail)
+
+    return None
+
+
+async def list_reversible_inbound_events(
+    session: AsyncSession,
+    *,
+    days: int,
+    limit: int,
+    source_type: str | None,
+) -> InboundReversalOptionsOut:
+    rows = await list_inbound_reversal_options(
+        session,
+        days=days,
+        limit=limit,
+        source_type=source_type,
+    )
+
+    items: list[InboundReversalOptionOut] = []
+    for row in rows:
+        reason = await _non_reversible_reason(session, header=row)
+        items.append(
+            InboundReversalOptionOut(
+                event_id=int(row["event_id"]),
+                event_no=str(row["event_no"]),
+                warehouse_id=int(row["warehouse_id"]),
+                source_type=str(row["source_type"]),
+                source_ref=_norm_text(row["source_ref"]),
+                occurred_at=row["occurred_at"],
+                committed_at=row["committed_at"],
+                remark=_norm_text(row["remark"]),
+                line_count=int(row["line_count"] or 0),
+                qty_base_total=int(row["qty_base_total"] or 0),
+                reversible=reason is None,
+                non_reversible_reason=reason,
+            )
+        )
+
+    return InboundReversalOptionsOut(items=items)
+
+
+async def get_reversible_inbound_event_detail(
+    session: AsyncSession,
+    *,
+    event_id: int,
+) -> InboundReversalDetailOut:
+    header = await get_inbound_event_header(session, event_id=int(event_id))
+    if header is None:
+        raise HTTPException(status_code=404, detail=f"inbound_event_not_found:{int(event_id)}")
+
+    line_rows = await list_inbound_event_lines_for_reversal(
+        session,
+        event_id=int(event_id),
+        require_nonempty=False,
+    )
+
+    reason = await _non_reversible_reason(session, header=header)
+    if not line_rows and reason is None:
+        reason = "该原入库事件没有可冲回行"
+
+    lines = [
+        InboundReversalDetailLineOut(
+            line_no=int(r["line_no"]),
+            item_id=int(r["item_id"]),
+            item_name_snapshot=_norm_text(r["item_name_snapshot"]),
+            item_spec_snapshot=_norm_text(r["item_spec_snapshot"]),
+            actual_uom_id=int(r["actual_uom_id"]),
+            actual_uom_name_snapshot=_norm_text(r["actual_uom_name_snapshot"]),
+            actual_qty_input=int(r["actual_qty_input"]),
+            actual_ratio_to_base_snapshot=int(r["actual_ratio_to_base_snapshot"]),
+            qty_base=int(r["qty_base"]),
+            lot_id=(int(r["lot_id"]) if r["lot_id"] is not None else None),
+            lot_code_input=_norm_text(r["lot_code_input"]),
+            production_date=r["production_date"],
+            expiry_date=r["expiry_date"],
+            remark=_norm_text(r["remark"]),
+        )
+        for r in line_rows
+    ]
+
+    return InboundReversalDetailOut(
+        event_id=int(header["event_id"]),
+        event_no=str(header["event_no"]),
+        warehouse_id=int(header["warehouse_id"]),
+        source_type=str(header["source_type"]),
+        source_ref=_norm_text(header["source_ref"]),
+        occurred_at=header["occurred_at"],
+        committed_at=header["committed_at"],
+        status=str(header["status"]),
+        remark=_norm_text(header["remark"]),
+        line_count=int(header["line_count"] or 0),
+        qty_base_total=int(header["qty_base_total"] or 0),
+        reversible=reason is None,
+        non_reversible_reason=reason,
+        lines=lines,
+    )
+
+
 async def reverse_inbound_event(
     session: AsyncSession,
     *,
@@ -54,10 +193,6 @@ async def reverse_inbound_event(
         session,
         target_event_id=int(event_id),
     )
-    existing = await find_committed_inbound_reversal(
-        session,
-        target_event_id=int(event_id),
-    )
     if existing is not None:
         raise HTTPException(
             status_code=409,
@@ -65,15 +200,10 @@ async def reverse_inbound_event(
         )
 
     original = await get_inbound_event_for_reversal(session, event_id=int(event_id))
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"inbound_event_already_reversed:{int(existing['id'])}",
-        )
-
     source_lines = await list_inbound_event_lines_for_reversal(
         session,
         event_id=int(original["event_id"]),
+        require_nonempty=True,
     )
 
     await ensure_warehouse_not_frozen(
@@ -126,7 +256,10 @@ async def reverse_inbound_event(
             event_id=int(event.id),
             line_no=line_no,
             item_id=item_id,
+            item_name_snapshot=_norm_text(src["item_name_snapshot"]),
+            item_spec_snapshot=_norm_text(src["item_spec_snapshot"]),
             actual_uom_id=int(src["actual_uom_id"]),
+            actual_uom_name_snapshot=_norm_text(src["actual_uom_name_snapshot"]),
             barcode_input=_norm_text(src["barcode_input"]),
             actual_qty_input=int(src["actual_qty_input"]),
             actual_ratio_to_base_snapshot=int(src["actual_ratio_to_base_snapshot"]),
@@ -161,6 +294,7 @@ async def reverse_inbound_event(
                 "target_event_id": int(original["event_id"]),
                 "source_type": str(original["source_type"]),
                 "source_ref": _norm_text(original["source_ref"]),
+                "operator_name_snapshot": _norm_text(payload.operator_name_snapshot),
                 "remark": _norm_text(event.remark),
             },
             shadow_write_stocks=False,
@@ -190,11 +324,14 @@ async def reverse_inbound_event(
         source_type=str(original["source_type"]),
         source_ref=_norm_text(original["source_ref"]),
         occurred_at=occurred_at,
+        operator_name_snapshot=str(payload.operator_name_snapshot),
         remark=_norm_text(event.remark),
         rows=rows,
     )
 
 
 __all__ = [
+    "list_reversible_inbound_events",
+    "get_reversible_inbound_event_detail",
     "reverse_inbound_event",
 ]
