@@ -83,14 +83,13 @@ class ReturnTaskLine(Base):
     """
     订单退货回仓任务行（Return Task Line）
 
-    一行代表一个 item（自动回原批次回仓）：
+    一行代表一个 item + lot（自动回原 lot 回仓）：
 
+    - lot_id: 回原批次的结构锚点，来自原出库 stock_ledger.lot_id；
+    - batch_code: 展示快照，来自 lots.lot_code，不参与结构身份；
     - expected_qty: 计划回仓数量（来自订单原出库数量）；
     - picked_qty: 已扫码/录入的回仓数量（累积）；
     - committed_qty: 最终确认入库数量（commit 时写入）。
-
-    核心约束：
-    - batch_code 必须由系统自动回原批次（来自出库台账），不允许人工补录。
     """
 
     __tablename__ = "return_task_lines"
@@ -118,6 +117,14 @@ class ReturnTaskLine(Base):
         comment="商品 ID",
     )
 
+    lot_id: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("lots.id", name="fk_return_task_lines_lot", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        comment="结构锚点：退货回原批次对应的 lots.id，来自原出库 stock_ledger.lot_id",
+    )
+
     item_name: Mapped[Optional[str]] = mapped_column(
         sa.String(255),
         nullable=True,
@@ -127,7 +134,7 @@ class ReturnTaskLine(Base):
     batch_code: Mapped[str] = mapped_column(
         sa.String(64),
         nullable=False,
-        comment="批次编码（系统自动回原批次：来自订单出库台账，必填；不允许人工补录）",
+        comment="展示快照：来自原出库 lot 的 lots.lot_code；不参与结构锚点",
     )
 
     expected_qty: Mapped[Optional[int]] = mapped_column(
@@ -172,7 +179,7 @@ class ReturnTaskLine(Base):
     def __repr__(self) -> str:
         return (
             f"<ReturnTaskLine id={self.id} task_id={self.task_id} "
-            f"item_id={self.item_id} expected={self.expected_qty} "
-            f"picked={self.picked_qty} committed={self.committed_qty} "
-            f"status={self.status}>"
+            f"item_id={self.item_id} lot_id={self.lot_id} "
+            f"expected={self.expected_qty} picked={self.picked_qty} "
+            f"committed={self.committed_qty} status={self.status}>"
         )
