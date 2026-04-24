@@ -1,4 +1,4 @@
-# app/wms/outbound/routers/return_tasks/tasks.py
+# app/wms/inventory_adjustment/return_inbound/routers/tasks.py
 from __future__ import annotations
 
 from typing import List, Optional
