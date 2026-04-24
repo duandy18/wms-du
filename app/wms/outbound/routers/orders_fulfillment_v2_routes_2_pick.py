@@ -14,7 +14,7 @@ from app.wms.shared.services.lot_code_contract import (
     validate_lot_code_contract,
 )
 from app.wms.outbound.contracts.orders_fulfillment_v2 import PickRequest, PickResponse
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.outbound.services.pick_service import PickService
 from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
 

@@ -9,6 +9,10 @@ from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, tex
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.oms.orders.models.order import Order  # noqa: F401
+from app.oms.orders.models.order_item import OrderItem  # noqa: F401
+from app.pms.items.models.item_uom import ItemUOM  # noqa: F401
+from app.pms.suppliers.models.supplier import Supplier  # noqa: F401
 
 if TYPE_CHECKING:
     from app.oms.orders.models.order import Order

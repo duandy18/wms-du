@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.lot_guard import assert_lot_belongs_to
 from app.wms.stock.services.stock_adjust.batch_keys import norm_batch_code
 from app.wms.stock.services.stock_adjust.date_rules import resolve_and_validate_dates_for_inbound

@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.tms.pricing.templates.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate  # noqa: F401
 
 
 class WarehouseShippingProvider(Base):

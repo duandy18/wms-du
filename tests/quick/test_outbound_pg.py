@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.outbound.services.outbound_commit_service import ship_commit
 from app.wms.stock.services.stock_service import StockService
 from tests.services._helpers import ensure_store

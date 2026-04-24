@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.problem import raise_problem
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from app.wms.stock.services.stock_ship_service import ship_commit_direct_lot_impl
 from app.wms.stock.services.lot_resolver import LotResolver

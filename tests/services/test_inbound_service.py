@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # 测试辅助：按项目实际路径导入
 from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.lots import ensure_lot_full
 from app.wms.stock.services.stock_service import StockService
 

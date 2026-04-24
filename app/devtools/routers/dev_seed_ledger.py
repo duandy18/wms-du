@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.stock_service import StockService
 
 router = APIRouter(prefix="/dev", tags=["dev-seed"])

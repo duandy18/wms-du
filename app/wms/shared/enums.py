@@ -1,4 +1,5 @@
-# app/models/enums.py
+# app/wms/shared/enums.py
+# Domain move: FlowType and MovementType belong to WMS shared.
 from __future__ import annotations
 
 try:

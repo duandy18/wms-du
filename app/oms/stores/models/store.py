@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 
 from app.db.base import Base
+from app.wms.warehouses.models.warehouse import Warehouse  # noqa: F401
 
 if TYPE_CHECKING:
     from app.wms.warehouses.models.warehouse import Warehouse

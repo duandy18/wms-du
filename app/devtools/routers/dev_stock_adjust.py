@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.deps import get_async_session as get_session
 from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map, validate_lot_code_contract
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.stock_service import StockService
 
 router = APIRouter(prefix="/dev", tags=["dev-stock"])

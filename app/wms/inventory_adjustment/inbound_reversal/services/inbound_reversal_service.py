@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.inbound.models.inbound_event import InboundEventLine, WmsEvent
 from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
     ensure_warehouse_not_frozen,
