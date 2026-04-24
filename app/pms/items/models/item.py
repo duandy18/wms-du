@@ -11,8 +11,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.order import Order
-    from app.models.order_item import OrderItem
+    from app.oms.orders.models.order import Order
+    from app.oms.orders.models.order_item import OrderItem
     from app.pms.suppliers.models.supplier import Supplier
     from app.pms.items.models.item_uom import ItemUOM
 

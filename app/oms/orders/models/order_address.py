@@ -1,3 +1,5 @@
+# app/oms/orders/models/order_address.py
+# Domain move: order address ORM belongs to OMS orders.
 from __future__ import annotations
 
 from datetime import datetime

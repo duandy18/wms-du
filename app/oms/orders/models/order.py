@@ -1,3 +1,5 @@
+# app/oms/orders/models/order.py
+# Domain move: order ORM belongs to OMS orders.
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,9 +13,9 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.pms.items.models.item import Item
-    from .order_item import OrderItem
-    from .order_logistics import OrderLogistics
-    from .store import Store
+    from app.oms.orders.models.order_item import OrderItem
+    from app.oms.orders.models.order_logistics import OrderLogistics
+    from app.models.store import Store
 
 
 class Order(Base):
