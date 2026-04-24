@@ -1,4 +1,4 @@
-# app/inbound_receipts/models/inbound_receipt.py
+# app/wms/inventory_adjustment/return_inbound/models/inbound_receipt.py
 # 拆分说明：
 # 本文件承接“入库任务层”ORM 模型，只负责 inbound_receipts / inbound_receipt_lines。
 # 它位于 procurement 与 WMS 之间的独立模块，不再沿用旧 app/wms/inbound/models/inbound_receipt.py 的混合语义。

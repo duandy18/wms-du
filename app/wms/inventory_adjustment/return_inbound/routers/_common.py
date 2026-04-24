@@ -1,4 +1,4 @@
-# app/wms/outbound/routers/return_tasks/_common.py
+# app/wms/inventory_adjustment/return_inbound/routers/_common.py
 from __future__ import annotations
 
 import json

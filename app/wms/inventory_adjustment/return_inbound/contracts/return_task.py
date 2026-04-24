@@ -1,4 +1,4 @@
-# app/wms/outbound/contracts/return_task.py
+# app/wms/inventory_adjustment/return_inbound/contracts/return_task.py
 from __future__ import annotations
 
 from datetime import datetime
