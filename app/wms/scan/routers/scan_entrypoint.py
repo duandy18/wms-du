@@ -32,8 +32,7 @@ def register(router: APIRouter) -> None:
         qty = req.qty
         qty_base = result.get("qty_base")
 
-        lot_code = req.lot_code or req.batch_code
-        batch_code = lot_code
+        lot_code = req.lot_code
 
         raw_prod = result.get("production_date")
         if raw_prod is None:
@@ -57,7 +56,6 @@ def register(router: APIRouter) -> None:
             qty=qty,
             qty_base=qty_base,
             lot_code=lot_code,
-            batch_code=batch_code,
             production_date=prod,
             expiry_date=exp,
             evidence=result.get("evidence") or [],
