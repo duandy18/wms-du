@@ -29971,58 +29971,6 @@
         ]
       }
     },
-    "/return-tasks/{task_id}/pick": {
-      "post": {
-        "operationId": "pick_return_task_compat_return_tasks__task_id__pick_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReturnTaskReceiveIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReturnTaskOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Pick Return Task Compat",
-        "tags": [
-          "return-tasks"
-        ]
-      }
-    },
     "/return-tasks/{task_id}/receive": {
       "post": {
         "operationId": "receive_return_task_return_tasks__task_id__receive_post",
