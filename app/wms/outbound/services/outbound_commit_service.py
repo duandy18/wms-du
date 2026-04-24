@@ -316,7 +316,6 @@ class OutboundService:
                         meta={"sub_reason": "ORDER_SHIP", "order_id": int(order_pk)},
                         production_date=None,
                         expiry_date=None,
-                        shadow_write_stocks=False,
                     )
                 else:
                     res = await self.stock_svc.adjust(

@@ -166,7 +166,6 @@ async def _seed_positive_internal_stock(session: AsyncSession, *, warehouse_id: 
         expiry_date=None,
         trace_id=None,
         utc_now=lambda: datetime.now(UTC),
-        shadow_write_stocks=False,
     )
     await session.commit()
 

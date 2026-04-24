@@ -12,11 +12,6 @@ from app.wms.stock.services.stock_adjust.batch_keys import norm_batch_code
 from app.wms.stock.services.stock_adjust.date_rules import resolve_and_validate_dates_for_inbound
 from app.wms.stock.services.stock_adjust.db_items import item_requires_batch
 from app.wms.stock.services.stock_adjust.idempotency import idem_hit_by_lot_and_batch_key
-from app.wms.stock.services.stock_adjust.legacy_stocks_repo import (
-    apply_stock_delta,
-    ensure_stock_slot_exists,
-    lock_stock_slot_for_update,
-)
 from app.wms.stock.services.stock_adjust.lot_code_repo import load_lot_code_for_lot_id
 from app.wms.stock.services.stock_adjust.meta import meta_bool, meta_str
 
@@ -51,7 +46,6 @@ async def adjust_lot_impl(
     expiry_date: Optional[date] = None,
     trace_id: Optional[str],
     utc_now: Callable[[], datetime],
-    shadow_write_stocks: bool = False,
 ) -> Dict[str, Any]:
     """
     Phase M-2 终态：lot-world 主写入口（结构封板）
@@ -59,8 +53,6 @@ async def adjust_lot_impl(
     - 余额：写 stocks_lot（按 lot_id）
     - 台账：写 stock_ledger（必须带 lot_id）
     - 幂等：按 (warehouse_id, item_id, lot_id, reason, ref, ref_line) 命中
-    - stocks：可选 shadow 写入（便于回滚/对账）
-
     当前补充：
     - 若 meta.event_id 存在，则继续向下传到 stock_ledger.event_id
     """
@@ -173,21 +165,6 @@ async def adjust_lot_impl(
 
     if delta != 0:
         await apply_stocks_lot_set_qty(session, slot_id=int(lot_slot_id), new_qty=int(new_qty))
-
-        if shadow_write_stocks:
-            await ensure_stock_slot_exists(
-                session,
-                item_id=int(item_id),
-                warehouse_id=int(warehouse_id),
-                batch_code_norm=bc_norm,
-            )
-            stock_id, _before = await lock_stock_slot_for_update(
-                session,
-                item_id=int(item_id),
-                warehouse_id=int(warehouse_id),
-                batch_code_norm=bc_norm,
-            )
-            await apply_stock_delta(session, stock_id=int(stock_id), delta=int(delta))
 
     meta_out: Dict[str, Any] = dict(meta or {})
     if trace_id:

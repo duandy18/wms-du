@@ -177,7 +177,6 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, i
         expiry_date=expiry_date,
         trace_id=None,
         utc_now=lambda: datetime.now(UTC),
-        shadow_write_stocks=False,
     )
 
     await session.commit()

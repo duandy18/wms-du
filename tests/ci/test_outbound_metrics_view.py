@@ -81,7 +81,6 @@ async def _pick_one_lot_id_for_item(session: AsyncSession, *, warehouse_id: int,
             expiry_date=exp,
             trace_id=None,
             utc_now=lambda: datetime.now(UTC),
-            shadow_write_stocks=False,
         )
     else:
         # 显式 seed：创建 INTERNAL singleton lot + 写入一笔 delta=+1（确保 stocks_lot slot 被 materialize）
@@ -109,7 +108,6 @@ async def _pick_one_lot_id_for_item(session: AsyncSession, *, warehouse_id: int,
             expiry_date=None,
             trace_id=None,
             utc_now=lambda: datetime.now(UTC),
-            shadow_write_stocks=False,
         )
 
     row2 = (
