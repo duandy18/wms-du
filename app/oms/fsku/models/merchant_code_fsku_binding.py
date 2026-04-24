@@ -1,4 +1,5 @@
-# app/models/merchant_code_fsku_binding.py
+# app/oms/fsku/models/merchant_code_fsku_binding.py
+# Domain move: merchant code binding ORM belongs to OMS FSKU.
 from __future__ import annotations
 
 from datetime import datetime
