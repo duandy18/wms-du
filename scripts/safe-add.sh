@@ -18,7 +18,6 @@ EXCLUDES=(
   "app/observability/"
   "ops/observability/"
   "scripts/ports_doctor.sh"
-  "scripts/replay_illegal.py"
   ".DS_Store"
   "__pycache__/"
 )
