@@ -33,8 +33,8 @@ _LEGACY_TABLE_NAMES: Set[str] = {
 }
 
 
-def _iter_model_modules_recursive(pkg_name: str = "app.models") -> Iterator[str]:
-    """递归发现 app.models.* 下的所有模块（排除以下划线开头的内部模块）"""
+def _iter_model_modules_recursive(pkg_name: str) -> Iterator[str]:
+    """递归发现指定 models 包下的所有模块（排除以下划线开头的内部模块）"""
     try:
         pkg = importlib.import_module(pkg_name)
     except ModuleNotFoundError:
@@ -83,7 +83,7 @@ def init_models(
     """
     集中导入模型 + 固化关系映射：
       1) 先显式导入关键模型（保证字符串关系目标类已注册）
-      2) 再递归导入 app.models.* 补齐遗漏
+      2) 再递归导入各业务域 models 包补齐遗漏
       3) 最后统一 configure_mappers()
 
     Phase 5 约束（硬）：
@@ -132,7 +132,6 @@ def init_models(
             loaded.append(mod)
 
     for pkg_name in (
-        "app.models",
         "app.procurement.models",
         "app.pms.items.models",
         "app.pms.suppliers.models",
