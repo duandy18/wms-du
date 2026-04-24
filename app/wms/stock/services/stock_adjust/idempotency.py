@@ -1,18 +1,15 @@
 # app/wms/stock/services/stock_adjust/idempotency.py
 from __future__ import annotations
 
-from typing import Optional
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def idem_hit_by_lot_and_batch_key(
+async def idem_hit_by_lot_key(
     session: AsyncSession,
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code_norm: Optional[str],
     lot_id: int,
     reason: str,
     ref: str,
@@ -24,12 +21,7 @@ async def idem_hit_by_lot_and_batch_key(
     - stock_ledger 不再存在 lot_id_key / batch_code_key
     - 幂等锚点与 DB 唯一约束保持 1:1：
       (warehouse_id, item_id, lot_id, reason, ref, ref_line)
-
-    说明：
-    - batch_code_norm 仅作为历史兼容入参（展示码），不参与幂等键
     """
-    _ = batch_code_norm  # 仅兼容签名，终态不参与幂等
-
     idem = await session.execute(
         text(
             """

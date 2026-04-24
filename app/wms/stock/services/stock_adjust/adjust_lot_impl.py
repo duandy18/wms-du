@@ -11,7 +11,7 @@ from app.wms.stock.services.lot_guard import assert_lot_belongs_to
 from app.wms.stock.services.stock_adjust.batch_keys import norm_batch_code
 from app.wms.stock.services.stock_adjust.date_rules import resolve_and_validate_dates_for_inbound
 from app.wms.stock.services.stock_adjust.db_items import item_requires_batch
-from app.wms.stock.services.stock_adjust.idempotency import idem_hit_by_lot_and_batch_key
+from app.wms.stock.services.stock_adjust.idempotency import idem_hit_by_lot_key
 from app.wms.stock.services.stock_adjust.lot_code_repo import load_lot_code_for_lot_id
 from app.wms.stock.services.stock_adjust.meta import meta_bool, meta_str
 
@@ -97,11 +97,10 @@ async def adjust_lot_impl(
     )
 
     # 幂等：lot-only
-    if await idem_hit_by_lot_and_batch_key(
+    if await idem_hit_by_lot_key(
         session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code_norm=bc_norm,
         lot_id=int(lot_id),
         reason=reason_val,
         ref=str(ref),
