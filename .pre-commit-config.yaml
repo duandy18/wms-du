@@ -10,11 +10,11 @@ repos:
       - id: ruff
         name: ruff lint
         args: ["--fix"]
-        files: ^(app|tests|scripts|tools)/.*\.py$
+        files: ^(app|tests|scripts)/.*\.py$
 
       - id: ruff-format
         name: ruff format
-        files: ^(app|tests|scripts|tools)/.*\.py$
+        files: ^(app|tests|scripts)/.*\.py$
         stages: [manual]   # 只在手动运行时格式化（安全，不强行影响 commit）
 
   # ================================================
@@ -24,14 +24,14 @@ repos:
     rev: 25.1.0
     hooks:
       - id: black
-        files: ^(app|tests|scripts|tools)/.*\.py$
+        files: ^(app|tests|scripts)/.*\.py$
         stages: [manual]
 
   - repo: https://github.com/PyCQA/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        files: ^(app|tests|scripts|tools)/.*\.py$
+        files: ^(app|tests|scripts)/.*\.py$
         args: ["--profile", "black"]
         stages: [manual]
 
@@ -44,19 +44,6 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: mixed-line-ending
-
-  # ================================================
-  # 4) Normalize punctuation（测试文件）
-  # ================================================
-  - repo: local
-    hooks:
-      - id: normalize-punct-tests
-        name: Normalize fullwidth punctuation (tests)
-        language: system
-        entry: bash -lc 'python tools/normalize_punct.py tests'
-        files: ^tests/.*\.py$
-        pass_filenames: false
-        stages: [manual]
 
   # ================================================
   # 5) detect-secrets（安全扫描，但不阻断提交）
