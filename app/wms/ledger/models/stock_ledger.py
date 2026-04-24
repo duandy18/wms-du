@@ -1,4 +1,4 @@
-# app/models/stock_ledger.py
+# app/wms/ledger/models/stock_ledger.py
 from __future__ import annotations
 
 from datetime import date

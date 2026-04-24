@@ -165,7 +165,7 @@ class BarcodeResolver:
         - 17 + 6 位 YYMMDD
         - 10 + 可变长批次号
 
-        这是原 app/utils/gs1.py 唯一仍被 /scan fallback 使用的能力。
+        这是从旧 GS1 工具收口到当前条码解析器后保留的紧凑 GS1 解析能力。
         """
         i = 0
         n = len(s)

@@ -70,7 +70,7 @@ async def _ensure_supplier_lot(session: AsyncSession, *, warehouse_id: int, item
     - 必填快照从 items 取值
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
-    -> 统一走 app/services/stock/lots.py: ensure_lot_full
+    -> 统一走 app.wms.stock.services.lots.ensure_lot_full
     """
     code_raw = str(code).strip()
     assert code_raw, {"msg": "empty lot_code", "warehouse_id": warehouse_id, "item_id": item_id}

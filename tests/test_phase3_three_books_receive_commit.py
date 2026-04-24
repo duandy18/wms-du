@@ -131,7 +131,7 @@ async def _ensure_supplier_lot(
     确保 SUPPLIER lot 存在，返回 lot_id。
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
-    -> 统一走 app/services/stock/lots.py: ensure_lot_full
+    -> 统一走 app.wms.stock.services.lots.ensure_lot_full
 
     语义收口：
     - REQUIRED 商品：lot 身份已切到 (warehouse_id, item_id, production_date)
@@ -168,7 +168,7 @@ async def _ensure_internal_lot_for_receipt(
     INTERNAL lot：lot_code NULL。
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
-    -> 统一走 app/services/stock/lots.py: ensure_internal_lot_singleton
+    -> 统一走 app.wms.stock.services.lots.ensure_internal_lot_singleton
 
     这里仍然把 receipt_id/line_no 作为 provenance 成对传入，满足成对可选规则。
     """

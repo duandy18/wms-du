@@ -126,7 +126,7 @@ async def seed_full_lifecycle_case(session: AsyncSession) -> str:
     - 这里先 ensure SUPPLIER lot（lot_code='B-LIFE-1'）拿到 lot_id，再写 stock_ledger.lot_id
 
     ✅ 终态收口：禁止 tests 直接 INSERT INTO lots
-    -> 统一走 app/services/stock/lots.py: ensure_lot_full
+    -> 统一走 app.wms.stock.services.lots.ensure_lot_full
     """
     trace_id = "LIFE-UT-1"
     platform = "PDD"

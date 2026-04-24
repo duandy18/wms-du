@@ -12,7 +12,7 @@ def test_line_key_format_contract_keeps_legacy_prefixes_and_matches_repo_helper(
     - filled_code 非空 -> 必须产出 "PSKU:{filled_code}"
     - filled_code 为空 -> 必须产出 "NO_PSKU:{line_no}"
 
-    同时保证 app/api 与 app/services 两处生成逻辑严格一致（防漂移）。
+    同时保证 OMS service 与 repo helper 两处生成逻辑严格一致（防漂移）。
     """
     # case 1: has filled_code
     filled_code = "SKU-INGEST-001"

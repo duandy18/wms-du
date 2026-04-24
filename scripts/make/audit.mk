@@ -60,7 +60,7 @@ audit-no-implicit-warehouse-id:
 	  if [ -z "$$hits" ]; then \
 	    echo "[audit-no-implicit-warehouse-id] OK (no hits)"; exit 0; \
 	  fi; \
-	  allow_re="app/services/order_fulfillment_manual_assign\\.py"; \
+	  allow_re="app/wms/outbound/services/order_fulfillment_manual_assign\\.py"; \
 	  bad="$$(printf "%s\n" "$$hits" | rg -v "$$allow_re" || true)"; \
 	  if [ -n "$$bad" ]; then \
 	    echo "$$bad"; \
