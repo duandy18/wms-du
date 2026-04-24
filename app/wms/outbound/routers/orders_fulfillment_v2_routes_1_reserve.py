@@ -98,25 +98,3 @@ def register(router: APIRouter) -> None:
             to_warehouse_id=r.to_warehouse_id,
             fulfillment_status=r.fulfillment_status,
         )
-
-    # 兼容别名：旧 override 入口保留，但语义等同于 manual-assign
-    @router.post(
-        "/{platform}/{shop_id}/{ext_order_no}/fulfillment/override",
-        response_model=ManualAssignResponse,
-    )
-    async def fulfillment_override_alias(
-        platform: str,
-        shop_id: str,
-        ext_order_no: str,
-        body: ManualAssignRequest,
-        session: AsyncSession = Depends(get_session),
-        user: Any = Depends(get_current_user),
-    ):
-        return await fulfillment_manual_assign(
-            platform=platform,
-            shop_id=shop_id,
-            ext_order_no=ext_order_no,
-            body=body,
-            session=session,
-            user=user,
-        )
