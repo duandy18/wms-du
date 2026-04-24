@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
-from app.models.return_task import ReturnTask
+from app.wms.inventory_adjustment.return_inbound.models.return_task import ReturnTask
 from app.wms.inventory_adjustment.return_inbound.contracts.return_task import (
     ReturnTaskCommitIn,
     ReturnTaskCreateFromOrder,

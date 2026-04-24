@@ -111,8 +111,8 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 退货任务
     # ------------------------------------------------------------------
-    ("app.models.return_task", "ReturnTask"),
-    ("app.models.return_task", "ReturnTaskLine"),
+    ("app.wms.inventory_adjustment.return_inbound.models.return_task", "ReturnTask"),
+    ("app.wms.inventory_adjustment.return_inbound.models.return_task", "ReturnTaskLine"),
     # ------------------------------------------------------------------
     # 内部出库
     # ------------------------------------------------------------------

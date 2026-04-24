@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import MovementType
-from app.models.return_task import ReturnTask, ReturnTaskLine
+from app.wms.inventory_adjustment.return_inbound.models.return_task import ReturnTask, ReturnTaskLine
 from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
 from app.wms.stock.services.stock_service import StockService
