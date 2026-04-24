@@ -31,54 +31,39 @@ def _norm_bc(v: Any) -> Optional[str]:
     return s2
 
 
-def _norm_lot_code(v: str | None) -> str | None:
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    return s
-
-
-async def _load_supplier_lot_snapshot_by_lot_code(
+async def _load_lot_snapshot_by_id(
     session: AsyncSession,
     *,
-    warehouse_id: int,
-    item_id: int,
-    lot_code: str | None,
+    lot_id: int,
 ) -> Optional[dict[str, Any]]:
-    if lot_code is None:
-        return None
-
-    code = _norm_lot_code(lot_code)
-    if not code:
-        return None
-
-    rows = (
+    row = (
         await session.execute(
             text(
                 """
-                SELECT id, production_date, expiry_date
-                  FROM lots
-                 WHERE warehouse_id = :w
-                   AND item_id      = :i
-                   AND lot_code_source = 'SUPPLIER'
-                   AND lot_code = :code
-                 LIMIT 2
+                SELECT
+                  id,
+                  warehouse_id,
+                  item_id,
+                  lot_code,
+                  production_date,
+                  expiry_date
+                FROM lots
+                WHERE id = :lot_id
+                LIMIT 1
                 """
             ),
-            {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
+            {"lot_id": int(lot_id)},
         )
-    ).mappings().all()
+    ).mappings().first()
 
-    if not rows:
-        return None
-    if len(rows) > 1:
+    if row is None:
         return None
 
-    row = rows[0]
     return {
         "id": int(row["id"]),
+        "warehouse_id": int(row["warehouse_id"]),
+        "item_id": int(row["item_id"]),
+        "lot_code": row.get("lot_code"),
         "production_date": row.get("production_date"),
         "expiry_date": row.get("expiry_date"),
     }
@@ -87,7 +72,11 @@ async def _load_supplier_lot_snapshot_by_lot_code(
 class ReturnTaskServiceImpl:
     """
     订单退货回仓任务服务（实现层）
-    （其余注释省略，保持原样）
+
+    终态口径：
+    - return_task_lines.lot_id 是回原批次结构锚点；
+    - return_task_lines.batch_code 只是 lots.lot_code 展示快照；
+    - commit 不再通过 batch_code 反查 lot_id。
     """
 
     SHIP_OUT_REASONS: Set[str] = {
@@ -197,13 +186,20 @@ class ReturnTaskServiceImpl:
 
         for x in shipped:
             item_id = int(x["item_id"])
+            lot_id = int(x["lot_id"])
             batch_code = _norm_bc(x.get("batch_code"))
+            if batch_code is None:
+                raise ValueError(
+                    f"return_task_batch_code_required_for_display:item_id={item_id}:lot_id={lot_id}"
+                )
+
             expected_qty = int(x["shipped_qty"])
 
             line = ReturnTaskLine(
                 task_id=task.id,
                 order_line_id=None,
                 item_id=item_id,
+                lot_id=lot_id,
                 batch_code=batch_code,
                 expected_qty=expected_qty,
                 picked_qty=0,
@@ -297,54 +293,57 @@ class ReturnTaskServiceImpl:
             ref_line = int(getattr(ln, "id", 1) or 1)
             bc = _norm_bc(ln.batch_code)
 
-            resolved_lot_id: Optional[int] = None
+            lot_id = int(getattr(ln, "lot_id", 0) or 0)
+            if lot_id <= 0:
+                raise ValueError(f"return_task_line_lot_id_required:line_id={getattr(ln, 'id', None)}")
 
-            if bc is not None:
-                lot_snapshot = await _load_supplier_lot_snapshot_by_lot_code(
-                    session,
-                    warehouse_id=int(task.warehouse_id),
-                    item_id=int(ln.item_id),
-                    lot_code=str(bc),
-                )
-                if lot_snapshot is None:
-                    raise ValueError("lot_not_found_for_batch_code")
+            lot_snapshot = await _load_lot_snapshot_by_id(session, lot_id=lot_id)
+            if lot_snapshot is None:
+                raise ValueError(f"return_task_line_lot_not_found:lot_id={lot_id}")
 
-                resolved_lot_id = int(lot_snapshot["id"])
-
-                # 已经解析到真实 lot_id 后，直接走 lot-only 原语入口，
-                # 不再让 RETURN 正增量再次走 batch_code -> 日期裁决。
-                res = await self.stock_svc.adjust_lot(
-                    session=session,
-                    item_id=int(ln.item_id),
-                    warehouse_id=int(task.warehouse_id),
-                    lot_id=int(resolved_lot_id),
-                    delta=+picked,
-                    reason=MovementType.RETURN,
-                    ref=str(task.order_id),
-                    ref_line=ref_line,
-                    occurred_at=ts,
-                    batch_code=None,
-                    production_date=lot_snapshot.get("production_date"),
-                    expiry_date=lot_snapshot.get("expiry_date"),
-                    trace_id=trace_id,
-                    meta={"sub_reason": "RETURN_RECEIPT"},
-                )
-            else:
-                res = await self.stock_svc.adjust(
-                    session=session,
-                    item_id=int(ln.item_id),
-                    delta=+picked,
-                    reason=MovementType.RETURN,
-                    ref=str(task.order_id),
-                    ref_line=ref_line,
-                    occurred_at=ts,
-                    batch_code=None,
-                    warehouse_id=int(task.warehouse_id),
-                    trace_id=trace_id,
-                    meta={"sub_reason": "RETURN_RECEIPT"},
+            if int(lot_snapshot["warehouse_id"]) != int(task.warehouse_id):
+                raise ValueError(
+                    f"return_task_line_lot_warehouse_mismatch:"
+                    f"line_id={getattr(ln, 'id', None)}:"
+                    f"task_warehouse_id={int(task.warehouse_id)}:"
+                    f"lot_warehouse_id={int(lot_snapshot['warehouse_id'])}"
                 )
 
-            applied_lot_id = int(res.get("lot_id") or (resolved_lot_id or 0) or 0)
+            if int(lot_snapshot["item_id"]) != int(ln.item_id):
+                raise ValueError(
+                    f"return_task_line_lot_item_mismatch:"
+                    f"line_id={getattr(ln, 'id', None)}:"
+                    f"line_item_id={int(ln.item_id)}:"
+                    f"lot_item_id={int(lot_snapshot['item_id'])}"
+                )
+
+            snapshot_batch_code = _norm_bc(lot_snapshot.get("lot_code"))
+            if bc != snapshot_batch_code:
+                raise ValueError(
+                    f"return_task_line_batch_code_snapshot_mismatch:"
+                    f"line_id={getattr(ln, 'id', None)}:"
+                    f"batch_code={bc}:"
+                    f"lot_code={snapshot_batch_code}"
+                )
+
+            res = await self.stock_svc.adjust_lot(
+                session=session,
+                item_id=int(ln.item_id),
+                warehouse_id=int(task.warehouse_id),
+                lot_id=int(lot_id),
+                delta=+picked,
+                reason=MovementType.RETURN,
+                ref=str(task.order_id),
+                ref_line=ref_line,
+                occurred_at=ts,
+                batch_code=None,
+                production_date=lot_snapshot.get("production_date"),
+                expiry_date=lot_snapshot.get("expiry_date"),
+                trace_id=trace_id,
+                meta={"sub_reason": "RETURN_RECEIPT"},
+            )
+
+            applied_lot_id = int(res.get("lot_id") or lot_id)
 
             effects.append(
                 {

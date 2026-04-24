@@ -43,12 +43,10 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     Phase 3 合同测试（退货回仓 commit）：
 
     关键点：
-    - create_for_order 只认 ledger 出库事实：必须先写 OUTBOUND_SHIP delta<0
-    - return commit 用同一个 ref=order_ref，但 ref_line 不是 1（用 ReturnTaskLine.id）
-      因此校验必须用“真实落库 reason”，不能猜 MovementType.RETURN 的字符串值。
-
-    重要：
-    - order_ref 必须每次唯一，避免命中历史遗留未 COMMITTED 的 ReturnTask（跨测试污染）。
+    - create_for_order 只认 ledger 出库事实：必须先写 OUTBOUND_SHIP delta<0；
+    - return_task_lines.lot_id 必须来自原出库 stock_ledger.lot_id；
+    - return_task_lines.batch_code 仅是 lots.lot_code 展示快照；
+    - return commit 必须使用同一个 lot_id 回仓，而不是靠 batch_code 二次反查。
     """
     utc = timezone.utc
     now = datetime.now(utc)
@@ -82,7 +80,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         meta={"sub_reason": "UT_STOCK_IN"},
     )
 
-    # 2) 出库制造出库事实（ReturnTask 依据 ledger 反查 shipped）
+    # 2) 出库制造出库事实（ReturnTask 依据 ledger.lot_id 反查 shipped）
     order_ref = f"UT:PH3:RET:ORDER:{uniq}"
     shipped_qty = 4
 
@@ -100,11 +98,60 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         meta={"sub_reason": "ORDER_SHIP"},
     )
 
-    # 3) 创建回仓任务
+    shipped_lot_row = (
+        await session.execute(
+            text(
+                """
+                SELECT lot_id
+                  FROM stock_ledger
+                 WHERE warehouse_id = :w
+                   AND item_id = :i
+                   AND ref = :ref
+                   AND ref_line = 1
+                   AND delta < 0
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {"w": wh_id, "i": item_id, "ref": order_ref},
+        )
+    ).first()
+    assert shipped_lot_row is not None, "missing shipped ledger row"
+    shipped_lot_id = int(shipped_lot_row[0])
+
+    # 3) 创建回仓任务：任务行必须固化原出库 lot_id
     task = await svc.create_for_order(session, order_id=order_ref)
     assert task.status != "COMMITTED"
     assert int(task.warehouse_id) == wh_id
     assert task.lines and len(task.lines) >= 1
+
+    task_line = None
+    for x in task.lines or []:
+        if int(x.item_id) == int(item_id):
+            task_line = x
+            break
+
+    assert task_line is not None
+    assert int(task_line.lot_id) == shipped_lot_id
+    assert str(task_line.batch_code) == batch_code
+
+    stored_task_line = (
+        await session.execute(
+            text(
+                """
+                SELECT rtl.lot_id, rtl.batch_code, lo.lot_code
+                  FROM return_task_lines rtl
+                  JOIN lots lo
+                    ON lo.id = rtl.lot_id
+                 WHERE rtl.id = :line_id
+                """
+            ),
+            {"line_id": int(task_line.id)},
+        )
+    ).first()
+    assert stored_task_line is not None
+    assert int(stored_task_line[0]) == shipped_lot_id
+    assert str(stored_task_line[1]) == str(stored_task_line[2]) == batch_code
 
     # 4) 录入回仓数量
     task = await svc.record_receive(session, task_id=int(task.id), item_id=item_id, qty=2)
@@ -114,6 +161,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
             ln = x
             break
     assert ln is not None
+    assert int(ln.lot_id) == shipped_lot_id
     assert int(ln.picked_qty or 0) == 2
 
     # 5) commit：回仓入库（service 内 enforce_three_books）
@@ -132,6 +180,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
             ln2 = x
             break
     assert ln2 is not None
+    assert int(ln2.lot_id) == shipped_lot_id
     ref_line = int(getattr(ln2, "id", 1) or 1)
 
     # ✅ 终态：stock_ledger 无 batch_code 列；用 (wh,item,ref,ref_line,delta>0) 定位回仓入库行
@@ -156,6 +205,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     assert row, "missing return-in ledger row"
     reason_val = str(row[1])
     lot_id_val = int(row[2])
+    assert lot_id_val == shipped_lot_id
 
     await run_snapshot(session)
     await verify_commit_three_books(
@@ -167,7 +217,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
                 "warehouse_id": wh_id,
                 "item_id": item_id,
                 "lot_id": lot_id_val,
-                "batch_code": batch_code,  # 仅展示/兼容字段（不参与结构锚点）
+                "batch_code": batch_code,  # 仅展示快照（不参与结构锚点）
                 "qty": 2,
                 "ref": order_ref,
                 "ref_line": ref_line,

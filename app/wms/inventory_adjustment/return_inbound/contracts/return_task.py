@@ -14,6 +14,7 @@ class ReturnTaskLineOut(BaseModel):
     order_line_id: Optional[int] = None
 
     item_id: int
+    lot_id: int
     item_name: Optional[str]
     batch_code: str
 
