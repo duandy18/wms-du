@@ -5,6 +5,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+LOT_WORLD_TABLES = (
+    "stock_ledger",
+    "stocks_lot",
+    "stock_snapshots",
+)
+
+FORBIDDEN_BATCH_WORLD_COLUMNS = {
+    "batch_code",
+    "batch_code_key",
+    "lot_id_key",
+}
+
+
 async def _get_index_defs(session: AsyncSession, *, table: str) -> list[str]:
     rows = await session.execute(
         text(
@@ -19,6 +32,46 @@ async def _get_index_defs(session: AsyncSession, *, table: str) -> list[str]:
         {"t": str(table)},
     )
     return [str(r[0]) for r in rows.fetchall()]
+
+
+async def _get_table_columns(session: AsyncSession, *, table: str) -> set[str]:
+    rows = await session.execute(
+        text(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name=:t
+             ORDER BY ordinal_position
+            """
+        ),
+        {"t": str(table)},
+    )
+    return {str(r[0]) for r in rows.fetchall()}
+
+
+async def _get_column_nullable(
+    session: AsyncSession,
+    *,
+    table: str,
+    column: str,
+) -> str | None:
+    row = await session.execute(
+        text(
+            """
+            SELECT is_nullable
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name=:t
+               AND column_name=:c
+            """
+        ),
+        {"t": str(table), "c": str(column)},
+    )
+    value = row.scalar_one_or_none()
+    if value is None:
+        return None
+    return str(value).strip().upper()
 
 
 def _has_required_unique_by_production_date(idx_defs: list[str]) -> bool:
@@ -79,25 +132,22 @@ def _has_legacy_unique_by_key(idx_defs: list[str]) -> bool:
     return False
 
 
-async def test_alembic_single_head_and_stocks_lot_contract(session: AsyncSession) -> None:
+async def test_alembic_single_head_and_lot_world_schema_contract(session: AsyncSession) -> None:
     # 1) single head
     r = await session.execute(text("SELECT COUNT(*) FROM alembic_version"))
     assert int(r.scalar_one() or 0) == 1
 
-    # 2) stocks_lot.lot_id NOT NULL (schema-level contract)
-    r2 = await session.execute(
-        text(
-            """
-            SELECT is_nullable
-              FROM information_schema.columns
-             WHERE table_schema='public'
-               AND table_name='stocks_lot'
-               AND column_name='lot_id'
-            """
-        )
-    )
-    is_nullable = (r2.scalar_one_or_none() or "").strip().upper()
-    assert is_nullable == "NO", "stocks_lot.lot_id must be NOT NULL in lot-world"
+    # 2) lot-world structure tables must keep lot_id as the required structural anchor.
+    for table in LOT_WORLD_TABLES:
+        columns = await _get_table_columns(session, table=table)
+
+        assert "lot_id" in columns, f"{table}.lot_id must exist in lot-world"
+
+        nullable = await _get_column_nullable(session, table=table, column="lot_id")
+        assert nullable == "NO", f"{table}.lot_id must be NOT NULL in lot-world"
+
+        forbidden = FORBIDDEN_BATCH_WORLD_COLUMNS & columns
+        assert not forbidden, f"{table} must not contain retired batch-world columns: {sorted(forbidden)}"
 
     # 3) lots indexes contracts
     idx_defs = await _get_index_defs(session, table="lots")

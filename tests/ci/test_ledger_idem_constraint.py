@@ -13,8 +13,9 @@ async def test_stock_ledger_idempotency_unique_exists(session):
       (warehouse_id, lot_id, item_id, reason, ref, ref_line)
 
     说明：
-      - lot_id 允许为 NULL（NONE 槽位），由 SQL NULL 语义表达（不使用 lot_id_key=0）
-      - batch_code 仅为展示/输入标签（lots.lot_code），不参与幂等唯一性（不使用 batch_code_key/__NULL_BATCH__）
+      - lot_id 是必填结构锚点；不允许 lot_id_key=0 / sentinel。
+      - batch_code 仅为展示/输入标签（lots.lot_code），不参与幂等唯一性。
+      - stock_ledger 不允许回潮 batch_code / batch_code_key / lot_id_key。
     """
     sql = text(
         """
@@ -43,3 +44,32 @@ async def test_stock_ledger_idempotency_unique_exists(session):
     assert any(
         set(cols) == set(target) for cols in cols_sets
     ), f"Missing idempotency unique on {target}. Found uniques: {sorted(cols_sets)}"
+
+    columns_rec = await session.execute(
+        text(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='stock_ledger'
+            """
+        )
+    )
+    columns = {str(row[0]) for row in columns_rec.fetchall()}
+
+    forbidden = {"batch_code", "batch_code_key", "lot_id_key"} & columns
+    assert not forbidden, f"stock_ledger must not contain retired batch-world columns: {sorted(forbidden)}"
+
+    nullable_rec = await session.execute(
+        text(
+            """
+            SELECT is_nullable
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='stock_ledger'
+               AND column_name='lot_id'
+            """
+        )
+    )
+    is_nullable = (nullable_rec.scalar_one_or_none() or "").strip().upper()
+    assert is_nullable == "NO", "stock_ledger.lot_id must be NOT NULL in lot-world"
