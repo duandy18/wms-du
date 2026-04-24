@@ -201,3 +201,19 @@ async def test_stock_inventory_recount_returns_409_when_count_doc_frozen(
 
     if "http_status" in body:
         assert int(body["http_status"]) == 409, body
+
+@pytest.mark.asyncio
+async def test_stock_inventory_recount_rejects_retired_batch_code_alias(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/stock/inventory/recount",
+        json={
+            "item_id": 910001,
+            "warehouse_id": 1,
+            "batch_code": "UT-RECOUNT-RETIRED-ALIAS",
+            "actual": 1,
+        },
+    )
+
+    assert response.status_code == 422, response.text

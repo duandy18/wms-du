@@ -595,7 +595,7 @@
     "/stock/inventory/recount": {
       "post": {
         "summary": "Stock Recount",
-        "description": "运维盘点：把 item@warehouse@batch_code 的 qty 校正为 actual。\n\nPhase 4E 真收口：\n- 禁止读取 legacy stocks\n- current 余额统一来自 stocks_lot\n- batch_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM",
+        "description": "运维盘点：把 item@warehouse@lot_code 的 qty 校正为 actual。\n\nPhase 4E 真收口：\n- 禁止读取 legacy stocks\n- current 余额统一来自 stocks_lot\n- lot_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM",
         "operationId": "stock_recount_stock_inventory_recount_post",
         "requestBody": {
           "content": {
@@ -42402,19 +42402,7 @@
               }
             ],
             "title": "Lot Code",
-            "description": "Lot 展示码（优先使用；等价于 batch_code）"
-          },
-          "batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Code",
-            "description": "批次（无批次槽位传 null）"
+            "description": "Lot 展示码"
           },
           "actual": {
             "type": "integer",
@@ -42435,6 +42423,7 @@
             "title": "Ctx"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "item_id",
