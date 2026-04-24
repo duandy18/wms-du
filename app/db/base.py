@@ -145,6 +145,7 @@ def init_models(
         "app.oms.platforms.models",
         "app.oms.fsku.models",
         "app.tms.pricing.templates.models",
+        "app.tms.providers.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:
