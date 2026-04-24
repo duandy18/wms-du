@@ -8,7 +8,7 @@ from sqlalchemy import Select, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.inventory_adjustment.return_inbound.models.return_task import ReturnTask, ReturnTaskLine
 from app.wms.ledger.models.stock_ledger import StockLedger
 from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books

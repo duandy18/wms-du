@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.inventory_adjustment.count.contracts.count_doc import (
     CountDocCreateIn,
     CountDocFreezeOut,

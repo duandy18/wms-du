@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.reconciliation.services.order_reconcile_service import OrderReconcileService
 from app.oms.services.order_service import OrderService
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full

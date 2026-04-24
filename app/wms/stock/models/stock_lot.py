@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.wms.stock.models.lot import Lot
+from app.wms.warehouses.models.warehouse import Warehouse  # noqa: F401
 
 
 class StockLot(Base):

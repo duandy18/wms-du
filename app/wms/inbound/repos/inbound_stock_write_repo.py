@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
     ensure_warehouse_not_frozen,
 )

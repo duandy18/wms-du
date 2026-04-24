@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.oms.services.order_service import OrderService
 from app.wms.outbound.services.outbound_commit_service import OutboundService
 from app.wms.stock.services.stock_service import StockService

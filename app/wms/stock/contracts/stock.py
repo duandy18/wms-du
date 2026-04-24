@@ -6,7 +6,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 
 class _Base(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="ignore")

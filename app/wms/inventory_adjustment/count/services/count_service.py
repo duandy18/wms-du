@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.inventory_adjustment.count.contracts.count import CountRequest, CountResponse
 from app.wms.inventory_adjustment.count.repos.count_repo import CountRepo
 from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (

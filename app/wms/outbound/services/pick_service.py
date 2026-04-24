@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Union
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MovementType
+from app.wms.shared.enums import MovementType
 from app.wms.stock.services.stock_service import StockService
 
 

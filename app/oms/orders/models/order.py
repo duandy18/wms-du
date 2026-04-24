@@ -10,6 +10,9 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.oms.orders.models.order_item import OrderItem  # noqa: F401
+from app.oms.orders.models.order_logistics import OrderLogistics  # noqa: F401
+from app.oms.stores.models.store import Store  # noqa: F401
 
 if TYPE_CHECKING:
     from app.pms.items.models.item import Item
