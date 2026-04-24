@@ -1,3 +1,5 @@
+# app/oms/stores/models/platform_shops.py
+# Domain move: PlatformShop ORM belongs to OMS stores.
 from __future__ import annotations
 
 from datetime import datetime

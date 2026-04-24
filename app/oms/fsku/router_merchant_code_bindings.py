@@ -19,7 +19,7 @@ from app.oms.fsku.contracts.merchant_code_bindings import (
 )
 from app.oms.fsku.models.fsku import Fsku
 from app.oms.fsku.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
-from app.models.store import Store
+from app.oms.stores.models.store import Store
 from app.oms.fsku.services.merchant_code_binding_service import MerchantCodeBindingService
 from app.oms.services.platform_order_resolve_service import norm_platform, norm_shop_id
 from app.oms.services.test_shop_testset_guard_service import TestShopTestSetGuardService

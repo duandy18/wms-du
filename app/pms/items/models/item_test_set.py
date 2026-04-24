@@ -1,4 +1,5 @@
-# app/models/item_test_set.py
+# app/pms/items/models/item_test_set.py
+# Domain move: ItemTestSet ORM belongs to PMS item test sets.
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.item_test_set_item import ItemTestSetItem
+    from app.pms.items.models.item_test_set_item import ItemTestSetItem
 
 
 class ItemTestSet(Base):

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.pms.items.models.item import Item
     from app.oms.orders.models.order_item import OrderItem
     from app.oms.orders.models.order_logistics import OrderLogistics
-    from app.models.store import Store
+    from app.oms.stores.models.store import Store
 
 
 class Order(Base):

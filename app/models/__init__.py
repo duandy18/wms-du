@@ -36,8 +36,8 @@ MODEL_SPECS = [
     ("app.pms.items.models.item", "Item"),
     # ✅ Phase M-2：多包装/多单位结构化
     ("app.pms.items.models.item_uom", "ItemUOM"),
-    ("app.models.item_test_set", "ItemTestSet"),
-    ("app.models.item_test_set_item", "ItemTestSetItem"),
+    ("app.pms.items.models.item_test_set", "ItemTestSet"),
+    ("app.pms.items.models.item_test_set_item", "ItemTestSetItem"),
     ("app.wms.stock.models.lot", "Lot"),
     # ✅ Phase 5：lot-world 成为唯一库存余额真相（stocks_lot + lots）
     ("app.wms.stock.models.stock_lot", "StockLot"),
@@ -69,7 +69,7 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 平台 & 事件
     # ------------------------------------------------------------------
-    ("app.models.platform_shops", "PlatformShop"),
+    ("app.oms.stores.models.platform_shops", "PlatformShop"),
     ("app.models.platform_event", "PlatformEvent"),
     ("app.models.event_store", "EventStore"),
     ("app.models.event_log", "EventLog"),
@@ -78,7 +78,7 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 门店 & 权限导航
     # ------------------------------------------------------------------
-    ("app.models.store", "Store"),
+    ("app.oms.stores.models.store", "Store"),
     ("app.models.user", "User"),
     ("app.models.permission", "Permission"),
     ("app.models.page_registry", "PageRegistry"),
