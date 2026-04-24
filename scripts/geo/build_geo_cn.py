@@ -97,7 +97,7 @@ def main() -> None:
     for pc in list(cities_by_prov.keys()):
         cities_by_prov[pc] = sorted(cities_by_prov[pc], key=lambda x: x["code"])
 
-    out_dir = root / "app" / "resources" / "geo"
+    out_dir = root / "app" / "tms" / "geo" / "resources"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     (out_dir / "cn_provinces.json").write_text(
