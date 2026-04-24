@@ -7,6 +7,144 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+async def list_outbound_reversal_option_rows(
+    session: AsyncSession,
+    *,
+    days: int,
+    limit: int,
+    source_type: str | None = None,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "days": int(days),
+        "limit": int(limit),
+    }
+    source_clause = ""
+    if source_type is not None:
+        source_clause = "AND e.source_type = :source_type"
+        params["source_type"] = str(source_type)
+
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT
+                  e.id AS event_id,
+                  e.event_no,
+                  e.warehouse_id,
+                  e.source_type,
+                  e.source_ref,
+                  e.occurred_at,
+                  e.committed_at,
+                  e.event_kind,
+                  e.target_event_id,
+                  e.status,
+                  e.remark,
+                  COALESCE(COUNT(l.id), 0)::int AS line_count,
+                  COALESCE(SUM(l.qty_outbound), 0)::int AS qty_outbound_total,
+                  (
+                    SELECT r.id
+                    FROM wms_events r
+                    WHERE r.event_type = 'OUTBOUND'
+                      AND r.event_kind = 'REVERSAL'
+                      AND r.target_event_id = e.id
+                      AND r.status = 'COMMITTED'
+                    ORDER BY r.id DESC
+                    LIMIT 1
+                  ) AS reversal_event_id
+                FROM wms_events e
+                LEFT JOIN outbound_event_lines l
+                  ON l.event_id = e.id
+                WHERE e.event_type = 'OUTBOUND'
+                  AND e.event_kind = 'COMMIT'
+                  AND e.status = 'COMMITTED'
+                  AND e.occurred_at >= now() - (:days * INTERVAL '1 day')
+                  {source_clause}
+                GROUP BY
+                  e.id,
+                  e.event_no,
+                  e.warehouse_id,
+                  e.source_type,
+                  e.source_ref,
+                  e.occurred_at,
+                  e.committed_at,
+                  e.event_kind,
+                  e.target_event_id,
+                  e.status,
+                  e.remark
+                ORDER BY COALESCE(e.committed_at, e.occurred_at) DESC, e.id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        )
+    ).mappings().all()
+
+    return [dict(r) for r in rows]
+
+
+async def get_outbound_reversal_detail_header(
+    session: AsyncSession,
+    *,
+    event_id: int,
+) -> dict[str, Any]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  e.id AS event_id,
+                  e.event_no,
+                  e.warehouse_id,
+                  e.source_type,
+                  e.source_ref,
+                  e.occurred_at,
+                  e.committed_at,
+                  e.event_kind,
+                  e.target_event_id,
+                  e.status,
+                  e.remark,
+                  COALESCE(COUNT(l.id), 0)::int AS line_count,
+                  COALESCE(SUM(l.qty_outbound), 0)::int AS qty_outbound_total,
+                  (
+                    SELECT r.id
+                    FROM wms_events r
+                    WHERE r.event_type = 'OUTBOUND'
+                      AND r.event_kind = 'REVERSAL'
+                      AND r.target_event_id = e.id
+                      AND r.status = 'COMMITTED'
+                    ORDER BY r.id DESC
+                    LIMIT 1
+                  ) AS reversal_event_id
+                FROM wms_events e
+                LEFT JOIN outbound_event_lines l
+                  ON l.event_id = e.id
+                WHERE e.id = :event_id
+                  AND e.event_type = 'OUTBOUND'
+                GROUP BY
+                  e.id,
+                  e.event_no,
+                  e.warehouse_id,
+                  e.source_type,
+                  e.source_ref,
+                  e.occurred_at,
+                  e.committed_at,
+                  e.event_kind,
+                  e.target_event_id,
+                  e.status,
+                  e.remark
+                LIMIT 1
+                """
+            ),
+            {"event_id": int(event_id)},
+        )
+    ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"outbound_event_not_found:{int(event_id)}")
+
+    return dict(row)
+
+
 async def get_outbound_event_for_reversal(
     session: AsyncSession,
     *,
@@ -147,6 +285,8 @@ async def mark_outbound_event_superseded(
 
 
 __all__ = [
+    "list_outbound_reversal_option_rows",
+    "get_outbound_reversal_detail_header",
     "get_outbound_event_for_reversal",
     "find_committed_outbound_reversal",
     "list_outbound_event_lines_for_reversal",

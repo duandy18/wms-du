@@ -13,6 +13,9 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     from app.wms.inventory_adjustment.count.routers.count import router as count_router
     from app.wms.inventory_adjustment.count.routers.count_docs import router as count_docs_router
     from app.wms.inventory_adjustment.count.routers.stock_inventory_recount import router as stock_inventory_recount_router
+    from app.wms.inventory_adjustment.summary.routers.summary import (
+        router as inventory_adjustment_summary_router,
+    )
     from app.diagnostics.routers.debug_trace import router as debug_trace_router
     from app.devtools.routers.dev_seed_ledger import router as dev_seed_ledger_router
     from app.devtools.routers.dev_stock_adjust import router as dev_stock_adjust_router
@@ -110,6 +113,7 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(scan_router)
     app.include_router(count_router)
     app.include_router(count_docs_router)
+    app.include_router(inventory_adjustment_summary_router)
     app.include_router(stock_inventory_recount_router)
 
     app.include_router(orders_fulfillment_v2_router)
