@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/order_reconcile_queries.py
+# app/oms/orders/services/order_reconcile_queries.py
 from __future__ import annotations
 
 from datetime import datetime
