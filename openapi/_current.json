@@ -23363,41 +23363,6 @@
         ]
       }
     },
-    "/item-barcodes/{id}/primary": {
-      "post": {
-        "operationId": "set_primary_compat_item_barcodes__id__primary_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "title": "Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Primary Compat",
-        "tags": [
-          "item-barcodes"
-        ]
-      }
-    },
     "/item-barcodes/{id}/set-primary": {
       "post": {
         "operationId": "set_primary_item_barcodes__id__set_primary_post",
