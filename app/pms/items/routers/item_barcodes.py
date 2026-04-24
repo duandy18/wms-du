@@ -233,12 +233,6 @@ def set_primary(id: int, db: Session = Depends(get_db)):
     return bc
 
 
-@router.post("/{id}/primary", status_code=status.HTTP_204_NO_CONTENT)
-def set_primary_compat(id: int, db: Session = Depends(get_db)):
-    _ = set_primary(id, db)
-    return None
-
-
 @router.patch("/{id}", response_model=ItemBarcodeOut)
 def update_barcode(id: int, body: ItemBarcodeUpdate, db: Session = Depends(get_db)):
     bc = get_item_barcode_by_id(db, int(id))
