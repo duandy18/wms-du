@@ -1,3 +1,5 @@
+# app/events/models/event_error_log.py
+# Domain move: EventErrorLog ORM belongs to shared events infrastructure.
 from __future__ import annotations
 
 from datetime import datetime

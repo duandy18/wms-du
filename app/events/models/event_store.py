@@ -1,3 +1,5 @@
+# app/events/models/event_store.py
+# Domain move: EventStore ORM belongs to shared events infrastructure.
 from __future__ import annotations
 
 from datetime import datetime

@@ -1,3 +1,5 @@
+# app/events/models/audit_event.py
+# Domain move: AuditEvent ORM belongs to shared events/audit infrastructure.
 from __future__ import annotations
 
 from datetime import datetime

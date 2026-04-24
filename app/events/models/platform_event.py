@@ -1,3 +1,5 @@
+# app/events/models/platform_event.py
+# Domain move: PlatformEvent ORM belongs to shared platform events infrastructure.
 from __future__ import annotations
 
 from datetime import datetime

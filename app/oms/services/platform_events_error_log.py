@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.event_error_log import EventErrorLog
+from app.events.models.event_error_log import EventErrorLog
 from app.oms.services.platform_events_extractors import extract_ref, extract_shop_id, extract_state
 
 
