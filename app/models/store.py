@@ -19,7 +19,7 @@ from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.warehouse import Warehouse
+    from app.wms.warehouses.models.warehouse import Warehouse
 
 
 class Store(Base):

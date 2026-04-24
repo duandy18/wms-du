@@ -11,12 +11,7 @@ from app.wms.outbound.services.outbound_commit_service import OutboundService
 
 from app.oms.services.platform_events_ship import build_ship_lines_for_commit
 
-try:
-    from app.models.warehouse import WarehouseCode
-except Exception:
-
-    class WarehouseCode:  # type: ignore
-        MAIN = "MAIN"
+from app.wms.warehouses.models.warehouse import WarehouseCode
 
 
 def _build_lines_for_pick_or_cancel(task: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -7,7 +7,7 @@ from typing import Optional
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.warehouse import WarehouseCode
+from app.wms.warehouses.models.warehouse import WarehouseCode
 from app.wms.stock.services.stock_service import StockService
 
 

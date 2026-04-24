@@ -31,7 +31,7 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 仓库 / 基础库存模型
     # ------------------------------------------------------------------
-    ("app.models.warehouse", "Warehouse"),
+    ("app.wms.warehouses.models.warehouse", "Warehouse"),
     # ✅ 旧“库位维度”已从主线移除（库存主链路仅使用 warehouse_id）
     ("app.pms.items.models.item", "Item"),
     # ✅ Phase M-2：多包装/多单位结构化
