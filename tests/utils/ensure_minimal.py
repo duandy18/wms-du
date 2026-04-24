@@ -157,7 +157,7 @@ async def ensure_supplier_lot(
     Phase M-5：创建/获取一个最小合法 SUPPLIER lot，并返回 lot_id。
 
     ✅ 工程收口：禁止 tests 里直接 INSERT INTO lots
-    -> 统一走 app.services.lot_service.ensure_lot_full
+    -> 统一走 app.wms.stock.services.lot_service.ensure_lot_full
 
     语义收口：
     - helper 名字就叫 ensure_supplier_lot，因此它必须保证商品策略至少提升到 REQUIRED

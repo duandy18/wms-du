@@ -1,4 +1,4 @@
-# app/models/stock_snapshot.py
+# app/wms/stock/models/stock_snapshot.py
 from __future__ import annotations
 
 from datetime import date

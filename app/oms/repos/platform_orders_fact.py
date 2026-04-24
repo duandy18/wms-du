@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 def line_key_from_inputs(*, filled_code: Optional[str], line_no: Optional[int]) -> Optional[str]:
     """
-    与 app/services/platform_order_fact_service._line_key 对齐（保持幂等键物理格式不变）：
+    与 app.oms.services.platform_order_fact_service._line_key 对齐（保持幂等键物理格式不变）：
 
     - 有填写码（filled_code 非空）：PSKU:{filled_code}
     - 无填写码（filled_code 为空）：NO_PSKU:{line_no}

@@ -1,4 +1,4 @@
-# app/models/stock_lot.py
+# app/wms/stock/models/stock_lot.py
 from __future__ import annotations
 
 import sqlalchemy as sa

@@ -22,7 +22,7 @@ from app.wms.ledger.services.ledger_writer import write_ledger as _write_ledger
 async def write_ledger_infra(**kwargs: Any) -> Any:
     """
     ✅ infra wrapper: 允许模块内直接 await write_ledger()
-    其他模块（例如 app/services/stock_adjust/*）必须调用本函数，而不能直接调用 write_ledger。
+    其他库存写入模块必须调用本函数，而不能直接调用 write_ledger。
     """
     return await _write_ledger(**kwargs)
 
