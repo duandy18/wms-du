@@ -1,4 +1,5 @@
-# app/models/shipping_provider_pricing_template_validation_record.py
+# app/tms/pricing/templates/models/shipping_provider_pricing_template_validation_record.py
+# Domain move: pricing template validation ORM belongs to TMS pricing templates.
 from __future__ import annotations
 
 from datetime import datetime

@@ -1,4 +1,5 @@
-# app/models/shipping_provider_pricing_template_module_range.py
+# app/tms/pricing/templates/models/shipping_provider_pricing_template_module_range.py
+# Domain move: pricing template range ORM belongs to TMS pricing templates.
 from __future__ import annotations
 
 from datetime import datetime

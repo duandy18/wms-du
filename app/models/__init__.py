@@ -127,31 +127,31 @@ MODEL_SPECS = [
     # 运价模板（新主线：template -> ranges/groups -> matrix + surcharge_config）
     # ------------------------------------------------------------------
     (
-        "app.models.shipping_provider_pricing_template_surcharge_config_city",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config_city",
         "ShippingProviderPricingTemplateSurchargeConfigCity",
     ),
     (
-        "app.models.shipping_provider_pricing_template_surcharge_config",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config",
         "ShippingProviderPricingTemplateSurchargeConfig",
     ),
-    ("app.models.shipping_provider_pricing_template", "ShippingProviderPricingTemplate"),
+    ("app.tms.pricing.templates.models.shipping_provider_pricing_template", "ShippingProviderPricingTemplate"),
     (
-        "app.models.shipping_provider_pricing_template_validation_record",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_validation_record",
         "ShippingProviderPricingTemplateValidationRecord",
     ),
     (
-        "app.models.shipping_provider_pricing_template_module_range",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_module_range",
         "ShippingProviderPricingTemplateModuleRange",
     ),
     (
-        "app.models.shipping_provider_pricing_template_destination_group",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group",
         "ShippingProviderPricingTemplateDestinationGroup",
     ),
     (
-        "app.models.shipping_provider_pricing_template_destination_group_member",
+        "app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group_member",
         "ShippingProviderPricingTemplateDestinationGroupMember",
     ),
-    ("app.models.shipping_provider_pricing_template_matrix", "ShippingProviderPricingTemplateMatrix"),
+    ("app.tms.pricing.templates.models.shipping_provider_pricing_template_matrix", "ShippingProviderPricingTemplateMatrix"),
     # ------------------------------------------------------------------
     # 运价实例（终态主线：scheme -> ranges/groups -> pricing_matrix + surcharge_config）
     # ------------------------------------------------------------------

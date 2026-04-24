@@ -5,23 +5,23 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
-from app.models.shipping_provider_pricing_template_destination_group import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
 )
-from app.models.shipping_provider_pricing_template_destination_group_member import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group_member import (
     ShippingProviderPricingTemplateDestinationGroupMember,
 )
-from app.models.shipping_provider_pricing_template_matrix import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_matrix import (
     ShippingProviderPricingTemplateMatrix,
 )
-from app.models.shipping_provider_pricing_template_module_range import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
 )
-from app.models.shipping_provider_pricing_template_surcharge_config import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
-from app.models.shipping_provider_pricing_template_surcharge_config_city import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config_city import (
     ShippingProviderPricingTemplateSurchargeConfigCity,
 )
 from app.tms.permissions import check_config_perm

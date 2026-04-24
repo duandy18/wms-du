@@ -6,17 +6,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
-from app.models.shipping_provider_pricing_template_destination_group import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
 )
-from app.models.shipping_provider_pricing_template_destination_group_member import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group_member import (
     ShippingProviderPricingTemplateDestinationGroupMember,
 )
-from app.models.shipping_provider_pricing_template_matrix import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_matrix import (
     ShippingProviderPricingTemplateMatrix,
 )
-from app.models.shipping_provider_pricing_template_module_range import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
 )
 from app.tms.pricing.templates.repository import (

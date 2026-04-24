@@ -1,4 +1,5 @@
-# app/models/shipping_provider_pricing_template_matrix.py
+# app/tms/pricing/templates/models/shipping_provider_pricing_template_matrix.py
+# Domain move: pricing template matrix ORM belongs to TMS pricing templates.
 from __future__ import annotations
 
 from datetime import datetime

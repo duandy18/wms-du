@@ -6,17 +6,17 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
-from app.models.shipping_provider_pricing_template_destination_group import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
 )
-from app.models.shipping_provider_pricing_template_matrix import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_matrix import (
     ShippingProviderPricingTemplateMatrix,
 )
-from app.models.shipping_provider_pricing_template_module_range import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
 )
-from app.models.shipping_provider_pricing_template_surcharge_config import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
 from app.models.warehouse_shipping_provider import WarehouseShippingProvider

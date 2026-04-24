@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.models.shipping_provider_pricing_template_module_range import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_module_range import (
     ShippingProviderPricingTemplateModuleRange,
 )
 from app.tms.permissions import check_config_perm
