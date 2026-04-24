@@ -86,35 +86,3 @@ class AuditEventWriter:
                 ref,
                 json.dumps(payload, ensure_ascii=False),
             )
-
-
-class AuditService:
-    """
-    兼容用审计服务（薄封装）：
-
-    - 新代码请直接用 AuditEventWriter.write；
-    - 旧代码如依赖 AuditService，可以逐步迁移。
-    """
-
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def log_event(
-        self,
-        *,
-        flow: str,
-        event: str,
-        ref: str,
-        trace_id: Optional[str] = None,
-        meta: Optional[Dict[str, Any]] = None,
-        auto_commit: bool = False,
-    ) -> None:
-        await AuditEventWriter.write(
-            self.session,
-            flow=flow,
-            event=event,
-            ref=ref,
-            trace_id=trace_id,
-            meta=meta,
-            auto_commit=auto_commit,
-        )
