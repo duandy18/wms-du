@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
-from app.models.shipping_provider_pricing_template_destination_group import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template import ShippingProviderPricingTemplate
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
 )
-from app.models.shipping_provider_pricing_template_matrix import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_matrix import (
     ShippingProviderPricingTemplateMatrix,
 )
-from app.models.shipping_provider_pricing_template_surcharge_config import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
 

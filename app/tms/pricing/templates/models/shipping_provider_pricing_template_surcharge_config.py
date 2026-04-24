@@ -1,4 +1,5 @@
-# app/models/shipping_provider_pricing_template_surcharge_config.py
+# app/tms/pricing/templates/models/shipping_provider_pricing_template_surcharge_config.py
+# Domain move: pricing template surcharge config ORM belongs to TMS pricing templates.
 from __future__ import annotations
 
 from datetime import datetime

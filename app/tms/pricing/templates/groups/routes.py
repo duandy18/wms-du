@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.models.shipping_provider_pricing_template_destination_group import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group import (
     ShippingProviderPricingTemplateDestinationGroup,
 )
-from app.models.shipping_provider_pricing_template_destination_group_member import (
+from app.tms.pricing.templates.models.shipping_provider_pricing_template_destination_group_member import (
     ShippingProviderPricingTemplateDestinationGroupMember,
 )
 from app.tms.permissions import check_config_perm
