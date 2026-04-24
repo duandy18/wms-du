@@ -19,13 +19,10 @@ class Base(DeclarativeBase):
 
 _INITIALIZED: bool = False  # 防重复初始化
 
-# Phase 5：这些 legacy 模型对应的表在当前 DB/主线迁移中不存在，
-# 若被导入会污染 Base.metadata，触发 alembic-check 误报 add_table。
-# ✅ 规则：主线 metadata 禁止加载它们（不允许双真相 / 不复活旧表）。
-_DEFAULT_EXCLUDE: Set[str] = {
-    "app.models.batch",
-    "app.wms.inbound.models.inbound_receipt",
-}
+# 显式排除清单：
+# 仅用于临时屏蔽“文件仍存在、但不得进入主线 metadata”的模型。
+# 当前旧 batch / 旧 inbound_receipt 模型已物理删除，清单保持为空。
+_DEFAULT_EXCLUDE: Set[str] = set()
 
 # Phase M-5：表名级别的 legacy 黑名单（防止未来模块改名/移动导致 ex 失效）
 # 一旦被导入，必须从 Base.metadata 移除，避免 alembic-check 噪音。
