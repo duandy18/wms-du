@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, FastAPI
 
 
-def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
+def mount_routers(app: FastAPI) -> None:
     # ---------------------------------------------------------------------------
     # routers imports
     # ---------------------------------------------------------------------------
@@ -17,9 +17,6 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
         router as inventory_adjustment_summary_router,
     )
     from app.diagnostics.routers.debug_trace import router as debug_trace_router
-    from app.devtools.routers.dev_seed_ledger import router as dev_seed_ledger_router
-    from app.devtools.routers.dev_stock_adjust import router as dev_stock_adjust_router
-    from app.devtools.routers.fake_platform_routes import router as fake_platform_router
     from app.analytics.routers.finance_overview import router as finance_overview_router
     from app.diagnostics.routers.flow_replay import router as flow_replay_router
     from app.tms.routers.geo_cn import router as geo_router
@@ -191,8 +188,3 @@ def mount_routers(app: FastAPI, *, enable_dev_routes: bool) -> None:
     app.include_router(autoheal_execute_router)
 
     app.include_router(finance_overview_router)
-
-    if enable_dev_routes:
-        app.include_router(dev_seed_ledger_router)
-        app.include_router(dev_stock_adjust_router)
-        app.include_router(fake_platform_router)
