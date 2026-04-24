@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.wms.inventory_adjustment.return_inbound.services.return_task_service_impl import ReturnTaskServiceImpl
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.stock_service import StockService
-from app.wms.reconciliation.services.three_books_consistency import verify_commit_three_books
+from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 
 
 async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:

@@ -12,7 +12,7 @@ from app.wms.shared.enums import MovementType
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.wms.stock.services.stock_service import StockService
-from app.wms.reconciliation.services.three_books_consistency import verify_receive_commit_three_books
+from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 
 
 async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:
@@ -330,7 +330,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     - 以 Receipt(RELEASED) 作为事实锚点（终态不再有旧执行层）
     - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks_lot
     - snapshot(today) == stocks_lot（至少对 touched keys）
-    - verify_receive_commit_three_books 对 touched effects 做三账一致性校验
+    - verify_commit_three_books 对 touched effects 做三账一致性校验
 
     Phase 1A 批次两态（真相源：items.expiry_policy）：
     - expiry_policy=NONE：batch_code=NULL 且 production/expiry=NULL；库存聚合到无批次槽位（INTERNAL lot_code NULL）
@@ -404,7 +404,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     assert lot_id is not None, {"msg": "expected ledger row to provide lot_id", "ref": ref, "ref_line": 1, "item_id": item_id}
 
     await run_snapshot(session)
-    await verify_receive_commit_three_books(
+    await verify_commit_three_books(
         session,
         warehouse_id=1,
         ref=ref,

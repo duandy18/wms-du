@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.wms.outbound.services.outbound_commit_service import OutboundService
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.stock_service import StockService
-from app.wms.reconciliation.services.three_books_consistency import verify_receive_commit_three_books
+from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 from tests.services._helpers import ensure_store
 
 
@@ -134,7 +134,7 @@ async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
 
     # 双保险：再跑一次快照 + 三账校验（只对本次 touched key）
     await run_snapshot(session)
-    await verify_receive_commit_three_books(
+    await verify_commit_three_books(
         session,
         warehouse_id=warehouse_id,
         ref=str(order_id),

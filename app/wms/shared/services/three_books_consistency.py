@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/three_books_consistency.py
+# app/wms/shared/services/three_books_consistency.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -265,21 +265,3 @@ async def verify_commit_three_books(
             "三账一致性失败：snapshot_total != stocks_lot_total（Phase 4C：按 item 总量对齐）"
             f" mismatches={mismatches} expected_delta_by_item={dict(expected_delta_by_item)}"
         )
-
-
-# 兼容旧名称
-async def verify_receive_commit_three_books(
-    session: AsyncSession,
-    *,
-    warehouse_id: int,
-    ref: str,
-    effects: List[Dict[str, Any]],
-    at: datetime,
-) -> None:
-    return await verify_commit_three_books(
-        session,
-        warehouse_id=warehouse_id,
-        ref=ref,
-        effects=effects,
-        at=at,
-    )
