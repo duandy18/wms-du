@@ -1,4 +1,5 @@
-# app/models/shipping_provider.py
+# app/tms/providers/models/shipping_provider.py
+# Domain move: shipping provider ORM belongs to TMS providers.
 from __future__ import annotations
 
 from datetime import datetime

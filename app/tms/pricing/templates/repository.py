@@ -19,7 +19,7 @@ from app.tms.pricing.templates.models.shipping_provider_pricing_template_module_
 from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
-from app.models.warehouse_shipping_provider import WarehouseShippingProvider
+from app.tms.providers.models.warehouse_shipping_provider import WarehouseShippingProvider
 from app.tms.pricing.templates.contracts.template import TemplateOut
 
 

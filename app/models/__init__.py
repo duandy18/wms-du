@@ -24,10 +24,10 @@ MODEL_SPECS = [
     ("app.pms.suppliers.models.supplier_contact", "SupplierContact"),
     # ⚠️ 关键顺序：先加载 WarehouseShippingProvider
     # 再加载 ShippingProvider / Warehouse
-    ("app.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
-    ("app.models.shipping_provider", "ShippingProvider"),
-    ("app.models.shipping_provider_contact", "ShippingProviderContact"),
-    ("app.models.electronic_waybill_config", "ElectronicWaybillConfig"),
+    ("app.tms.providers.models.warehouse_shipping_provider", "WarehouseShippingProvider"),
+    ("app.tms.providers.models.shipping_provider", "ShippingProvider"),
+    ("app.tms.providers.models.shipping_provider_contact", "ShippingProviderContact"),
+    ("app.tms.providers.models.electronic_waybill_config", "ElectronicWaybillConfig"),
     # ------------------------------------------------------------------
     # 仓库 / 基础库存模型
     # ------------------------------------------------------------------

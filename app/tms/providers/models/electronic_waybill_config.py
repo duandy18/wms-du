@@ -1,4 +1,5 @@
-# app/models/electronic_waybill_config.py
+# app/tms/providers/models/electronic_waybill_config.py
+# Domain move: electronic waybill config ORM belongs to TMS providers.
 from __future__ import annotations
 
 from datetime import datetime
