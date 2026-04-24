@@ -70,11 +70,11 @@ MODEL_SPECS = [
     # 平台 & 事件
     # ------------------------------------------------------------------
     ("app.oms.stores.models.platform_shops", "PlatformShop"),
-    ("app.models.platform_event", "PlatformEvent"),
-    ("app.models.event_store", "EventStore"),
-    ("app.models.event_log", "EventLog"),
-    ("app.models.event_error_log", "EventErrorLog"),
-    ("app.models.audit_event", "AuditEvent"),
+    ("app.events.models.platform_event", "PlatformEvent"),
+    ("app.events.models.event_store", "EventStore"),
+    ("app.events.models.event_log", "EventLog"),
+    ("app.events.models.event_error_log", "EventErrorLog"),
+    ("app.events.models.audit_event", "AuditEvent"),
     # ------------------------------------------------------------------
     # 门店 & 权限导航
     # ------------------------------------------------------------------

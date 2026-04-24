@@ -151,6 +151,7 @@ def init_models(
         "app.wms.warehouses.models",
         "app.oms.stores.models",
         "app.user.models",
+        "app.events.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:

@@ -1,4 +1,5 @@
-# app/models/print_job.py
+# app/wms/outbound/models/print_job.py
+# Domain move: PrintJob ORM belongs to WMS outbound print queue.
 from __future__ import annotations
 
 from datetime import datetime
