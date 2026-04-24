@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.return_task import ReturnTask
+from app.wms.inventory_adjustment.return_inbound.models.return_task import ReturnTask
 from app.wms.stock.services.stock_service import StockService
 from app.wms.inventory_adjustment.return_inbound.services.return_task_service_impl import ReturnTaskServiceImpl
 
