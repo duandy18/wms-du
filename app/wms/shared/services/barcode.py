@@ -71,9 +71,22 @@ class BarcodeResolver:
             sku = m.group("sku").strip()
             return ParsedBarcode(sku=sku, gtin=None, batch=None, expiry=None, raw=code, kind="SKU")
 
-        # 2) GS1 AI（01=GTIN, 10=批次, 17=效期 YYMMDD）
+        # 2) GS1 AI
+        #    支持：
+        #    - 括号格式：(01)GTIN(17)YYMMDD(10)BATCH
+        #    - 紧凑格式：01 + GTIN14 + 17 + YYMMDD + 10 + BATCH
         if "(" in s and ")" in s:
             gs1 = self._parse_gs1(s)
+            if gs1:
+                sku = gs1.sku or (
+                    self._gtin_to_sku(gs1.gtin) if (self._gtin_to_sku and gs1.gtin) else None
+                )
+                return ParsedBarcode(
+                    sku=sku, gtin=gs1.gtin, batch=gs1.batch, expiry=gs1.expiry, raw=code, kind="GS1"
+                )
+
+        if s.startswith("01") and len(s) >= 16 and s[2:16].isdigit():
+            gs1 = self._parse_compact_gs1(s)
             if gs1:
                 sku = gs1.sku or (
                     self._gtin_to_sku(gs1.gtin) if (self._gtin_to_sku and gs1.gtin) else None
@@ -144,6 +157,50 @@ class BarcodeResolver:
                     gtin = None
 
         return ParsedBarcode(sku=None, gtin=gtin, batch=batch, expiry=expiry, raw=s, kind=kind)
+
+    def _parse_compact_gs1(self, s: str) -> Optional[ParsedBarcode]:
+        """
+        解析无括号紧凑 GS1 AI：
+        - 01 + 14 位 GTIN
+        - 17 + 6 位 YYMMDD
+        - 10 + 可变长批次号
+
+        这是原 app/utils/gs1.py 唯一仍被 /scan fallback 使用的能力。
+        """
+        i = 0
+        n = len(s)
+        gtin: Optional[str] = None
+        batch: Optional[str] = None
+        expiry: Optional[date] = None
+
+        while i + 2 <= n:
+            ai = s[i : i + 2]
+            i += 2
+
+            if ai == "01":
+                if i + 14 > n:
+                    return None
+                gtin = s[i : i + 14]
+                i += 14
+                continue
+
+            if ai == "17":
+                if i + 6 > n:
+                    return None
+                expiry = self._parse_expiry(s[i : i + 6])
+                i += 6
+                continue
+
+            if ai == "10":
+                batch = s[i:] or None
+                break
+
+            return None
+
+        if gtin is None and batch is None and expiry is None:
+            return None
+
+        return ParsedBarcode(sku=None, gtin=gtin, batch=batch, expiry=expiry, raw=s, kind="GS1")
 
     def _parse_kv(self, s: str) -> Optional[ParsedBarcode]:
         """

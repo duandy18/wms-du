@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.services.barcode import BarcodeResolver
-from app.utils.gs1 import parse_gs1
 
 from app.wms.scan.services.scan_orchestrator_dates import coerce_date
 from app.wms.scan.services.scan_orchestrator_item_resolver import (
@@ -112,17 +111,6 @@ async def parse_scan(
                 parsed["batch_code"] = r.batch  # type: ignore[assignment]
             if getattr(r, "expiry", None) and not parsed.get("expiry_date"):
                 parsed["expiry_date"] = r.expiry  # type: ignore[assignment]
-
-        if raw and not (parsed.get("item_id") or parsed.get("batch_code") or parsed.get("expiry_date")):
-            gs1 = parse_gs1(raw)
-            if gs1:
-                if "batch" in gs1 and "batch_code" not in parsed:
-                    parsed["batch_code"] = gs1["batch"]
-                if "expiry" in gs1 and "expiry_date" not in parsed:
-                    parsed["expiry_date"] = gs1["expiry"]
-                for k in ("item_id", "production_date", "expiry_date", "batch_code"):
-                    if gs1.get(k) and not parsed.get(k):
-                        parsed[k] = gs1[k]
 
     qty = int(parsed.get("qty") or scan.get("qty") or 1)
     item_id = int(parsed.get("item_id") or 0)
