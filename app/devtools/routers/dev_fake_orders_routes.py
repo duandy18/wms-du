@@ -20,7 +20,7 @@ from app.devtools.contracts.dev_fake_orders import (
     DevFakeOrdersRunOut,
 )
 
-from app.devtools.services.fake_orders_service import build_report, generate_orders, parse_seed
+from app.devtools.services.fake_orders import build_report, generate_orders, parse_seed
 
 router = APIRouter(prefix="/dev/fake-orders", tags=["devtools", "fake-orders"])
 

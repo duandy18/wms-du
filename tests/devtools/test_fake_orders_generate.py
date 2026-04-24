@@ -1,7 +1,7 @@
 # tests/devtools/test_fake_orders_generate.py
 from __future__ import annotations
 
-from app.devtools.services.fake_orders_service import generate_orders, parse_seed
+from app.devtools.services.fake_orders import generate_orders, parse_seed
 
 
 def test_generate_orders_includes_address_fields_for_pick_flow() -> None:
