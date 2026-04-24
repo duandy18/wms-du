@@ -112,17 +112,6 @@ def register_tasks(router: APIRouter) -> None:
             await session.rollback()
             raise HTTPException(status_code=400, detail=str(e))
 
-    # =========================================================
-    # Pick（旧路径兼容，内部转发到 receive）
-    # =========================================================
-    @router.post("/{task_id}/pick", response_model=ReturnTaskOut)
-    async def pick_return_task_compat(
-        task_id: int,
-        payload: ReturnTaskReceiveIn,
-        session: AsyncSession = Depends(get_session),
-    ) -> ReturnTaskOut:
-        return await receive_return_task(task_id, payload, session)
-
     # -----------------------------
     # Commit
     # -----------------------------
