@@ -9,9 +9,9 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.pdd_order import PddOrder, PddOrderItem
-from app.models.store_platform_connection import StorePlatformConnection
-from app.models.store_platform_credential import StorePlatformCredential
+from app.oms.platforms.models.pdd_order import PddOrder, PddOrderItem
+from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
+from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
 
 from .access_repository import (
     ConnectionUpsertInput,

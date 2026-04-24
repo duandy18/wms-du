@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.taobao_order import TaobaoOrder
+from app.oms.platforms.models.taobao_order import TaobaoOrder
 
 
 async def list_taobao_orders(

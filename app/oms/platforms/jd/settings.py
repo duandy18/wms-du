@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from app.models.jd_app_config import JdAppConfig
+from app.oms.platforms.models.jd_app_config import JdAppConfig
 
 from .errors import JdJosConfigError
 

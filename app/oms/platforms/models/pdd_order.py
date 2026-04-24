@@ -1,3 +1,5 @@
+# app/oms/platforms/models/pdd_order.py
+# Domain move: PDD order fact ORM belongs to OMS platform order ledger.
 from __future__ import annotations
 
 from datetime import datetime

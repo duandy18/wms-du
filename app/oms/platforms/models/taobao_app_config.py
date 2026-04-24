@@ -1,4 +1,5 @@
-# app/models/jd_app_config.py
+# app/oms/platforms/models/taobao_app_config.py
+# Domain move: Taobao app config ORM belongs to OMS platform access.
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,21 +10,26 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
-class JdAppConfig(Base):
+class TaobaoAppConfig(Base):
     """
-    京东平台系统级接入配置（当前态）。
+    淘宝开放平台系统级应用配置表。
 
     职责：
-    - 保存 JD OAuth / JOS 所需系统级配置
-    - 不保存店铺级 access_token / refresh_token
-    - 不承载 OMS connection / pull_ready 等业务状态
+    - 保存 OMS 系统接入淘宝开放平台所需的应用配置
+    - 保存 app_key / app_secret / callback_url / api_base_url / sign_method
+    - 保存当前是否启用的配置记录
+
+    不负责：
+    - 店铺授权材料（access_token / refresh_token）
+    - 店铺接入状态裁决
+    - 店铺 identity
     """
 
-    __tablename__ = "jd_app_configs"
+    __tablename__ = "taobao_app_configs"
 
     __table_args__ = (
         sa.Index(
-            "ix_jd_app_configs_is_enabled",
+            "ix_taobao_app_configs_is_enabled",
             "is_enabled",
         ),
     )
@@ -34,12 +40,12 @@ class JdAppConfig(Base):
         autoincrement=True,
     )
 
-    client_id: Mapped[str] = mapped_column(
+    app_key: Mapped[str] = mapped_column(
         sa.String(128),
         nullable=False,
     )
 
-    client_secret: Mapped[str] = mapped_column(
+    app_secret: Mapped[str] = mapped_column(
         sa.Text,
         nullable=False,
     )
@@ -49,14 +55,14 @@ class JdAppConfig(Base):
         nullable=False,
     )
 
-    gateway_url: Mapped[str] = mapped_column(
-        sa.String(512),
+    api_base_url: Mapped[str] = mapped_column(
+        sa.String(255),
         nullable=False,
-        server_default=sa.text("'https://api.jd.com/routerjson'"),
+        server_default=sa.text("'https://eco.taobao.com/router/rest'"),
     )
 
     sign_method: Mapped[str] = mapped_column(
-        sa.String(32),
+        sa.String(16),
         nullable=False,
         server_default=sa.text("'md5'"),
     )
@@ -64,7 +70,7 @@ class JdAppConfig(Base):
     is_enabled: Mapped[bool] = mapped_column(
         sa.Boolean,
         nullable=False,
-        server_default=sa.true(),
+        server_default=sa.false(),
     )
 
     created_at: Mapped[datetime] = mapped_column(

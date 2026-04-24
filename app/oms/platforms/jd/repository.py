@@ -8,9 +8,9 @@ from typing import Optional
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.jd_app_config import JdAppConfig
-from app.models.store_platform_connection import StorePlatformConnection
-from app.models.store_platform_credential import StorePlatformCredential
+from app.oms.platforms.models.jd_app_config import JdAppConfig
+from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
+from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
 
 
 def _norm_platform(platform: str) -> str:

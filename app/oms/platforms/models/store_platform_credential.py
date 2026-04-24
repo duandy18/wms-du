@@ -1,4 +1,5 @@
-# app/models/store_platform_credential.py
+# app/oms/platforms/models/store_platform_credential.py
+# Domain move: store platform credential ORM belongs to OMS platform access.
 from __future__ import annotations
 
 from datetime import datetime

@@ -3,14 +3,24 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import text
 
-from app.models.taobao_app_config import TaobaoAppConfig
+from app.oms.platforms.models.taobao_app_config import TaobaoAppConfig
 from app.oms.platforms.taobao.errors import TaobaoTopConfigError
 from app.oms.platforms.taobao.repository import get_enabled_taobao_app_config
 from app.oms.platforms.taobao.settings import (
     build_taobao_callback_url_from_model,
     build_taobao_top_config_from_model,
 )
+
+
+@pytest.fixture(autouse=True)
+async def _clean_taobao_app_configs(session):
+    await session.execute(text("DELETE FROM taobao_app_configs"))
+    await session.commit()
+    yield
+    await session.execute(text("DELETE FROM taobao_app_configs"))
+    await session.commit()
 
 
 def _row(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List
 
-from app.models.taobao_order import TaobaoOrder, TaobaoOrderItem
+from app.oms.platforms.models.taobao_order import TaobaoOrder, TaobaoOrderItem
 from app.oms.platforms.taobao.contracts_ledger import (
     TaobaoOrderLedgerDetailOut,
     TaobaoOrderLedgerItemOut,
