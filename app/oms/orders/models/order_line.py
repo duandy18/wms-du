@@ -1,3 +1,5 @@
+# app/oms/orders/models/order_line.py
+# Domain move: order line ORM belongs to OMS orders.
 from __future__ import annotations
 
 from sqlalchemy import BigInteger, ForeignKey, Index, Integer

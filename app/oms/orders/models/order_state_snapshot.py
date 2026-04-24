@@ -1,3 +1,5 @@
+# app/oms/orders/models/order_state_snapshot.py
+# Domain move: order state snapshot ORM belongs to OMS orders.
 from __future__ import annotations
 
 from datetime import datetime

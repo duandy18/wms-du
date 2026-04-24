@@ -56,15 +56,15 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 订单 & 出库
     # ------------------------------------------------------------------
-    ("app.models.order", "Order"),
-    ("app.models.order_item", "OrderItem"),
-    ("app.models.order_line", "OrderLine"),
-    ("app.models.order_logistics", "OrderLogistics"),
-    ("app.models.order_state_snapshot", "OrderStateSnapshot"),
+    ("app.oms.orders.models.order", "Order"),
+    ("app.oms.orders.models.order_item", "OrderItem"),
+    ("app.oms.orders.models.order_line", "OrderLine"),
+    ("app.oms.orders.models.order_logistics", "OrderLogistics"),
+    ("app.oms.orders.models.order_state_snapshot", "OrderStateSnapshot"),
     ("app.tms.shipment.models.order_shipment_prepare", "OrderShipmentPrepare"),
     ("app.tms.shipment.models.order_shipment_prepare_package", "OrderShipmentPreparePackage"),
     # ✅ Phase 5：执行域 authority（order_fulfillment）
-    ("app.models.order_fulfillment", "OrderFulfillment"),
+    ("app.oms.orders.models.order_fulfillment", "OrderFulfillment"),
     # 拣货任务
     # ------------------------------------------------------------------
     # 平台 & 事件

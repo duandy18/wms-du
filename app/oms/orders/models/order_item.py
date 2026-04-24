@@ -1,3 +1,5 @@
+# app/oms/orders/models/order_item.py
+# Domain move: order item ORM belongs to OMS orders.
 from __future__ import annotations
 
 from decimal import Decimal
@@ -11,7 +13,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.pms.items.models.item import Item
-    from .order import Order
+    from app.oms.orders.models.order import Order
 
 
 class OrderItem(Base):

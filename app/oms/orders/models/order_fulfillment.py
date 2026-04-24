@@ -1,4 +1,5 @@
-# app/models/order_fulfillment.py
+# app/oms/orders/models/order_fulfillment.py
+# Domain move: order fulfillment ORM belongs to OMS orders.
 from __future__ import annotations
 
 from datetime import datetime

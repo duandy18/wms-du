@@ -1,3 +1,5 @@
+# app/oms/orders/models/order_logistics.py
+# Domain move: order logistics ORM belongs to OMS orders.
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .order import Order
+    from app.oms.orders.models.order import Order
 
 
 class OrderLogistics(Base):
