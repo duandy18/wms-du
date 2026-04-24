@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/three_books_enforcer.py
+# app/wms/shared/services/three_books_enforcer.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.wms.reconciliation.services.three_books_consistency import verify_commit_three_books
+from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 
 
 async def enforce_three_books(

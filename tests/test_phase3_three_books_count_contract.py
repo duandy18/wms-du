@@ -11,7 +11,7 @@ from app.wms.inventory_adjustment.count.contracts.count import CountRequest
 from app.wms.inventory_adjustment.count.services.count_service import CountService
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.stock_service import StockService
-from app.wms.reconciliation.services.three_books_consistency import verify_commit_three_books
+from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 
 
 def _date_to_utc_datetime(d: date) -> datetime:

@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.wms.shared.enums import MovementType
 from app.wms.inventory_adjustment.return_inbound.models.return_task import ReturnTask, ReturnTaskLine
 from app.wms.ledger.models.stock_ledger import StockLedger
-from app.wms.reconciliation.services.three_books_enforcer import enforce_three_books
+from app.wms.shared.services.three_books_enforcer import enforce_three_books
 from app.wms.stock.services.stock_service import StockService
 
 UTC = timezone.utc
