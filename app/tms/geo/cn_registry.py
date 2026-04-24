@@ -19,8 +19,8 @@ def _norm(s: Optional[str]) -> str:
 
 
 def _repo_root() -> Path:
-    # app/geo/cn_registry.py -> app/geo -> app -> repo root
-    return Path(__file__).resolve().parents[2]
+    # app/tms/geo/cn_registry.py -> app/tms/geo -> app/tms -> app -> repo root
+    return Path(__file__).resolve().parents[3]
 
 
 @lru_cache(maxsize=1)
