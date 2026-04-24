@@ -19,7 +19,6 @@ def _build_app() -> Any:
     注意：
     - devtools 已退役；
     - 不再支持 --enable-dev-routes；
-    - 不再设置 WMS_ENABLE_DEV_ROUTES；
     - 把 cwd 切到 repo root，保证相对路径落在仓库内。
     """
     os.chdir(ROOT)
