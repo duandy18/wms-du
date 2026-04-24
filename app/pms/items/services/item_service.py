@@ -6,7 +6,6 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.pms.items.models.item import Item
-from app.pms.items.services.item_maintenance_service import ItemMaintenanceService
 from app.pms.items.services.item_presenter import ItemPresenter
 from app.pms.items.services.item_query_service import ItemQueryService
 from app.pms.items.services.item_test_set_service import ItemTestSetService
@@ -17,9 +16,9 @@ class ItemService:
     """
     门面（Facade）：
 
-    - 内部按功能拆分到：Query / Write / Presenter / TestSet / Maintenance
+    - 内部按功能拆分到：Query / Write / Presenter / TestSet
     - 主合同写入语义通过 ItemWriteService 统一收口
-    - 例外修复通道（create_item_by_id）仍走 Maintenance
+    - create_item_by_id 历史修复通道已退役，不再保留内部兼容入口
 
     Phase M-3：
     - items.case_ratio / items.case_uom 已删除；包装单位/倍率请走 item_uoms
@@ -38,7 +37,6 @@ class ItemService:
         self._write = ItemWriteService(db)
         self._present = ItemPresenter(db)
         self._test_sets = ItemTestSetService(db)
-        self._maintenance = ItemMaintenanceService(db)
 
     def next_sku(self) -> str:
         return self._write.next_sku()
@@ -106,40 +104,6 @@ class ItemService:
             expiry_policy=expiry_policy,
             derivation_allowed=derivation_allowed,
             uom_governance_enabled=uom_governance_enabled,
-        )
-        out = self._present.present_item(item=obj)
-        assert out is not None
-        return out
-
-    def create_item_by_id(
-        self,
-        *,
-        id: int,
-        sku: Optional[str] = None,
-        name: Optional[str] = None,
-        spec: Optional[str] = None,
-        barcode: Optional[str] = None,
-        brand: Optional[str] = None,
-        category: Optional[str] = None,
-        enabled: Optional[bool] = True,
-        supplier_id: Optional[int] = None,
-        has_shelf_life: Optional[bool] = None,
-        shelf_life_value: Optional[int] = None,
-        shelf_life_unit: Optional[str] = None,
-    ) -> Item:
-        obj = self._maintenance.create_item_by_id(
-            id=id,
-            sku=sku,
-            name=name,
-            spec=spec,
-            barcode=barcode,
-            brand=brand,
-            category=category,
-            enabled=enabled,
-            supplier_id=supplier_id,
-            has_shelf_life=has_shelf_life,
-            shelf_life_value=shelf_life_value,
-            shelf_life_unit=shelf_life_unit,
         )
         out = self._present.present_item(item=obj)
         assert out is not None

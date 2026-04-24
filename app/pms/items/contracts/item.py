@@ -168,41 +168,6 @@ class ItemUpdate(_Base):
         return self
 
 
-class ItemCreateById(_Base):
-    """
-    这个接口本身就是“例外通道”，用于历史兼容/修复。
-
-    Phase M-3：
-    - items.case_ratio/case_uom 已删除；包装单位请走 item_uoms
-
-    说明：
-    - 本轮主线不收这个例外通道
-    - 仅把 shelf_life 的合同口径对齐到真实 DB
-    - 不接受 weight_kg；基础包装净重请改 item_uoms
-    """
-
-    id: Annotated[int, Field(gt=0)]
-
-    sku: Annotated[str | None, Field(default=None, max_length=64)] = None
-    name: Annotated[str | None, Field(default=None, max_length=128)] = None
-    spec: Annotated[str | None, Field(default=None, max_length=128)] = None
-
-    barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
-
-    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
-    category: Annotated[str | None, Field(default=None, max_length=64)] = None
-
-    enabled: bool | None = True
-    supplier_id: int | None = None
-
-    lot_source_policy: LotSourcePolicy | None = None
-    expiry_policy: ExpiryPolicy | None = None
-    has_shelf_life: bool | None = None
-
-    shelf_life_value: Annotated[int | None, Field(default=None, gt=0)] = None
-    shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
-
-
 class ItemOut(ItemBase):
     id: int
     supplier_name: str | None = None
@@ -229,6 +194,5 @@ __all__ = [
     "ItemBase",
     "ItemCreate",
     "ItemUpdate",
-    "ItemCreateById",
     "ItemOut",
 ]
