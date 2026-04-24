@@ -1,4 +1,5 @@
-# app/models/shipping_record.py
+# app/tms/records/models/shipping_record.py
+# Domain move: shipping record ORM belongs to TMS records as the logistics ledger.
 from __future__ import annotations
 
 from datetime import datetime

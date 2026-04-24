@@ -120,9 +120,9 @@ MODEL_SPECS = [
     # 运输执行 / 账本（Phase-2：Shipment 主实体 + Record 投影）
     # ------------------------------------------------------------------
     ("app.models.transport_shipment", "TransportShipment"),
-    ("app.models.shipping_record", "ShippingRecord"),
-    ("app.models.carrier_bill_item", "CarrierBillItem"),
-    ("app.models.shipping_record_reconciliation", "ShippingRecordReconciliation"),
+    ("app.tms.records.models.shipping_record", "ShippingRecord"),
+    ("app.tms.billing.models.carrier_bill_item", "CarrierBillItem"),
+    ("app.tms.billing.models.shipping_record_reconciliation", "ShippingRecordReconciliation"),
     # ------------------------------------------------------------------
     # 运价模板（新主线：template -> ranges/groups -> matrix + surcharge_config）
     # ------------------------------------------------------------------

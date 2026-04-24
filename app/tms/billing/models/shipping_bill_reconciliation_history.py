@@ -1,4 +1,5 @@
-# app/models/shipping_bill_reconciliation_history.py
+# app/tms/billing/models/shipping_bill_reconciliation_history.py
+# Domain move: reconciliation history ORM belongs to TMS billing.
 from __future__ import annotations
 
 from datetime import datetime

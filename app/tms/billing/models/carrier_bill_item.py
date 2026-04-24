@@ -1,4 +1,5 @@
-# app/models/carrier_bill_item.py
+# app/tms/billing/models/carrier_bill_item.py
+# Domain move: carrier bill item ORM belongs to TMS billing.
 from __future__ import annotations
 
 from datetime import datetime
