@@ -1,12 +1,16 @@
-# app/models/warehouse.py
+# app/wms/warehouses/models/warehouse.py
+# Domain move: Warehouse ORM belongs to WMS warehouses.
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import Boolean, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.tms.providers.models.warehouse_shipping_provider import WarehouseShippingProvider
 
 
 class WarehouseCode:

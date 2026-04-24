@@ -124,7 +124,7 @@ def init_models(
         "app.oms.orders.models.order_logistics",
         "app.oms.orders.models.order_fulfillment",
         "app.models.store",
-        "app.models.warehouse",
+        "app.wms.warehouses.models.warehouse",
         "app.models.platform_shops",
     ]
     for mod in [m for m in explicit_chain if m and m not in ex]:
@@ -148,6 +148,7 @@ def init_models(
         "app.tms.providers.models",
         "app.tms.shipment.models",
         "app.oms.orders.models",
+        "app.wms.warehouses.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:
