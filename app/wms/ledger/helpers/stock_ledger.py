@@ -90,6 +90,71 @@ def _to_str_or_none(v) -> str | None:
     return x or None
 
 
+def resolve_ledger_lot_code_filter(q: LedgerQuery) -> tuple[bool, str | None]:
+    """
+    解析 ledger 查询中的 lot_code / batch_code 双轨入参。
+
+    规则：
+    - lot_code 是正名字段；
+    - batch_code 是历史兼容字段；
+    - 任一字段被调用方显式传入，都表示要按 lots.lot_code 过滤；
+    - 两个字段都传时，归一后必须完全一致；
+    - "" / "None" 等伪空值由 normalize_optional_lot_code 归一为 None，
+      且仍表示调用方显式要求过滤 INTERNAL lot_code NULL 口径。
+    """
+    fields_set = set(getattr(q, "model_fields_set", set()))
+    has_lot_code = "lot_code" in fields_set
+    has_batch_code = "batch_code" in fields_set
+
+    if not has_lot_code and not has_batch_code:
+        return False, None
+
+    lot_code = (
+        normalize_optional_lot_code(getattr(q, "lot_code", None))
+        if has_lot_code
+        else None
+    )
+    batch_code = (
+        normalize_optional_lot_code(getattr(q, "batch_code", None))
+        if has_batch_code
+        else None
+    )
+
+    if has_lot_code and has_batch_code and lot_code != batch_code:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "lot_code_alias_conflict",
+                "message": "lot_code and batch_code must be identical when both provided.",
+                "lot_code": lot_code,
+                "batch_code": batch_code,
+            },
+        )
+
+    return True, lot_code if has_lot_code else batch_code
+
+
+def normalize_ledger_lot_code_aliases(q: LedgerQuery) -> LedgerQuery:
+    """
+    将 ledger 查询入参中的 lot_code / batch_code 归一为同一个展示码。
+
+    该函数只处理合同入参，不改变输出合同：
+    - 输出仍同时保留 lot_code + batch_code；
+    - 内部结构事实仍以 lot_id 为准；
+    - batch_code 不得重新成为 stock_ledger 的结构字段。
+    """
+    should_filter, lot_code = resolve_ledger_lot_code_filter(q)
+    if not should_filter:
+        return q
+
+    return q.model_copy(
+        update={
+            "lot_code": lot_code,
+            "batch_code": lot_code,
+        }
+    )
+
+
 def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime):
     """
     根据查询模型构建 SQLAlchemy 过滤条件列表（不包含 item_keyword 模糊搜索）。
@@ -114,15 +179,13 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
     if getattr(q, "lot_id", None) is not None:
         conditions.append(StockLedger.lot_id == getattr(q, "lot_id"))
 
-    # ✅ lot-only：batch_code 仅作为展示码（lots.lot_code）过滤
-    # - 不传 batch_code：不加过滤
+    # ✅ lot-only：lot_code 为正名；batch_code 为兼容别名
+    # - 不传 lot_code/batch_code：不加过滤
     # - 传 "" / "None"：归一为 None -> lots.lot_code IS NULL（无批次标签槽位）
     # - 传 "B2026..."：lots.lot_code = 'B2026...'
-    fields_set = getattr(q, "model_fields_set", set())
-    if "batch_code" in fields_set:
-        norm_bc = normalize_optional_lot_code(getattr(q, "batch_code", None))
-        # 通过 EXISTS 约束到 lots.lot_code（支持 NULL 语义）
-        if norm_bc is None:
+    should_filter_lot_code, norm_lot_code = resolve_ledger_lot_code_filter(q)
+    if should_filter_lot_code:
+        if norm_lot_code is None:
             conditions.append(
                 sa.exists(
                     select(1).select_from(Lot).where(
@@ -139,7 +202,7 @@ def build_common_filters(q: LedgerQuery, time_from: datetime, time_to: datetime)
                     select(1).select_from(Lot).where(
                         sa.and_(
                             Lot.id == StockLedger.lot_id,
-                            Lot.lot_code == norm_bc,
+                            Lot.lot_code == norm_lot_code,
                         )
                     )
                 )
@@ -213,7 +276,7 @@ def build_base_ids_stmt(q: LedgerQuery, time_from: datetime, time_to: datetime):
     """
     按查询条件构造基础 SQL（只选中符合条件的 id 列表）：
 
-    - 支持按 item_id / warehouse_id / lot_id / batch_code(展示码) / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
+    - 支持按 item_id / warehouse_id / lot_id / lot_code(batch_code 兼容别名) / reason / reason_canon / sub_reason / ref / trace_id / 时间过滤；
     - 支持按 item_keyword 模糊匹配 items.name / items.sku；
     - 不再依赖 stock_id / batch_id，完全对齐当前 StockLedger 模型。
     """
