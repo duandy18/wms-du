@@ -1,4 +1,5 @@
-# app/models/page_route_prefix.py
+# app/user/models/page_route_prefix.py
+# Domain move: PageRoutePrefix ORM belongs to user navigation runtime.
 from __future__ import annotations
 
 import sqlalchemy as sa

@@ -1,11 +1,12 @@
-# app/models/permission.py
+# app/user/models/permission.py
+# Domain move: Permission ORM belongs to user runtime permissions.
 from __future__ import annotations
 
 from sqlalchemy import Column, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
-from app.models.user import user_permissions  # 新用户权限关联
+from app.user.models.user import user_permissions  # 新用户权限关联
 
 
 class Permission(Base):

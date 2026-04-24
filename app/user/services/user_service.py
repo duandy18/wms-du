@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
-from app.models.user import User
+from app.user.models.user import User
 from app.user.repositories.user_repository import UserRepository
 from app.user.services.user_admin_audit import AdminUserAuditService
 from app.user.services.user_auth import (

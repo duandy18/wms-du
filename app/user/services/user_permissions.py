@@ -5,8 +5,8 @@ from typing import Any, List
 
 from sqlalchemy.orm import Session
 
-from app.models.permission import Permission
-from app.models.user import user_permissions
+from app.user.models.permission import Permission
+from app.user.models.user import user_permissions
 from app.user.services.user_errors import AuthorizationError
 
 

@@ -1,4 +1,5 @@
-# app/models/user.py
+# app/user/models/user.py
+# Domain move: User ORM and user_permissions association belong to user runtime.
 from __future__ import annotations
 
 import sqlalchemy as sa

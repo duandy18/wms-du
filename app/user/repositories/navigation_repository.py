@@ -5,9 +5,9 @@ from typing import Any, Iterable
 
 from sqlalchemy.orm import Session, aliased
 
-from app.models.page_registry import PageRegistry
-from app.models.page_route_prefix import PageRoutePrefix
-from app.models.permission import Permission
+from app.user.models.page_registry import PageRegistry
+from app.user.models.page_route_prefix import PageRoutePrefix
+from app.user.models.permission import Permission
 
 
 class NavigationRepository:

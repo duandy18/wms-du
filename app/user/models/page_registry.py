@@ -1,4 +1,5 @@
-# app/models/page_registry.py
+# app/user/models/page_registry.py
+# Domain move: PageRegistry ORM belongs to user navigation runtime.
 from __future__ import annotations
 
 import sqlalchemy as sa
