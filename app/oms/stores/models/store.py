@@ -1,3 +1,5 @@
+# app/oms/stores/models/store.py
+# Domain move: Store and StoreWarehouse ORM belong to OMS stores.
 from __future__ import annotations
 
 from datetime import datetime
