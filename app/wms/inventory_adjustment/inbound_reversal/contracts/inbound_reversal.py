@@ -21,6 +21,10 @@ class InboundReversalIn(_Base):
         default_factory=lambda: datetime.now(timezone.utc),
         description="冲回业务发生时间",
     )
+    operator_name_snapshot: Annotated[
+        str,
+        Field(min_length=1, max_length=64, description="操作人员姓名"),
+    ]
     remark: Annotated[str | None, Field(default=None, max_length=500, description="冲回备注")]
 
     @model_validator(mode="after")
@@ -47,6 +51,7 @@ class InboundReversalOut(_Base):
     source_type: InboundSourceType
     source_ref: Annotated[str | None, Field(default=None, max_length=128, description="来源单号/外部引用号")]
     occurred_at: datetime = Field(description="冲回业务发生时间")
+    operator_name_snapshot: Annotated[str, Field(min_length=1, max_length=64, description="操作人员姓名")]
     remark: Annotated[str | None, Field(default=None, max_length=500, description="冲回备注")]
     rows: list[InboundReversalRowOut] = Field(default_factory=list, description="冲回结果行")
 

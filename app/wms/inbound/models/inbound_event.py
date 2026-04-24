@@ -190,11 +190,15 @@ class InboundEventLine(Base):
         nullable=False,
     )
 
+    item_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    item_spec_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     actual_uom_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("item_uoms.id", name="fk_inbound_event_lines_actual_uom", ondelete="RESTRICT"),
         nullable=False,
     )
+    actual_uom_name_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     barcode_input: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 

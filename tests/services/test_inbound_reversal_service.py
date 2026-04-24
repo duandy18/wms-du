@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 from fastapi import HTTPException
 from sqlalchemy import text
 
@@ -160,6 +161,14 @@ async def _insert_frozen_count_doc(
     return doc_id, count_no, snapshot_at
 
 
+def test_inbound_reversal_operator_name_snapshot_required() -> None:
+    with pytest.raises(ValidationError):
+        InboundReversalIn(remark="missing operator")
+
+    with pytest.raises(ValidationError):
+        InboundReversalIn(operator_name_snapshot="   ", remark="blank operator")
+
+
 @pytest.mark.asyncio
 async def test_inbound_reversal_creates_reversal_event_and_supersedes_original(session):
     picked = await _pick_seed_item_uom(session)
@@ -208,6 +217,7 @@ async def test_inbound_reversal_creates_reversal_event_and_supersedes_original(s
         event_id=int(original.event_id),
         payload=InboundReversalIn(
             occurred_at=_date_to_utc_datetime(production_date),
+            operator_name_snapshot="测试操作人A",
             remark="ut inbound reversal",
         ),
         user_id=None,
@@ -294,7 +304,10 @@ async def test_inbound_reversal_duplicate_returns_already_reversed(session):
     first = await reverse_inbound_event(
         session,
         event_id=int(original.event_id),
-        payload=InboundReversalIn(remark="ut first reversal"),
+        payload=InboundReversalIn(
+            operator_name_snapshot="测试操作人B",
+            remark="ut first reversal",
+        ),
         user_id=None,
     )
     assert first.ok is True
@@ -303,7 +316,10 @@ async def test_inbound_reversal_duplicate_returns_already_reversed(session):
         await reverse_inbound_event(
             session,
             event_id=int(original.event_id),
-            payload=InboundReversalIn(remark="ut duplicate reversal"),
+            payload=InboundReversalIn(
+                operator_name_snapshot="测试操作人C",
+                remark="ut duplicate reversal",
+            ),
             user_id=None,
         )
 
@@ -359,7 +375,10 @@ async def test_inbound_reversal_rejects_when_count_doc_frozen(session):
         await reverse_inbound_event(
             session,
             event_id=int(original.event_id),
-            payload=InboundReversalIn(remark="ut frozen reversal"),
+            payload=InboundReversalIn(
+                operator_name_snapshot="测试操作人D",
+                remark="ut frozen reversal",
+            ),
             user_id=None,
         )
 
