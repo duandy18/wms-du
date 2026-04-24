@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/order_reconcile_service.py
+# app/oms/orders/services/order_reconcile_service.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,15 +6,15 @@ from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.reconciliation.services.order_reconcile_apply import apply_counters as _apply_counters
-from app.wms.reconciliation.services.order_reconcile_queries import (
+from app.oms.orders.services.order_reconcile_apply import apply_counters as _apply_counters
+from app.oms.orders.services.order_reconcile_queries import (
     list_order_ids_by_created_at,
     load_items,
     load_order_head,
     load_returned,
     load_shipped,
 )
-from app.wms.reconciliation.services.order_reconcile_types import OrderLineFact, OrderReconcileResult
+from app.oms.orders.services.order_reconcile_types import OrderLineFact, OrderReconcileResult
 
 __all__ = [
     "OrderLineFact",

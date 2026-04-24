@@ -1,10 +1,10 @@
-# app/wms/reconciliation/services/order_reconcile_apply.py
+# app/oms/orders/services/order_reconcile_apply.py
 from __future__ import annotations
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.reconciliation.services.order_reconcile_types import OrderReconcileResult
+from app.oms.orders.services.order_reconcile_types import OrderReconcileResult
 
 
 async def apply_counters(session: AsyncSession, result: OrderReconcileResult) -> None:

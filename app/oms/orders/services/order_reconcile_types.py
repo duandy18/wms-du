@@ -1,4 +1,4 @@
-# app/wms/reconciliation/services/order_reconcile_types.py
+# app/oms/orders/services/order_reconcile_types.py
 from __future__ import annotations
 
 from dataclasses import dataclass
