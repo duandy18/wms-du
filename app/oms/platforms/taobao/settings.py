@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from app.models.taobao_app_config import TaobaoAppConfig
+from app.oms.platforms.models.taobao_app_config import TaobaoAppConfig
 
 from .errors import TaobaoTopConfigError
 

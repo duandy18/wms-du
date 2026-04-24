@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from app.models.pdd_app_config import PddAppConfig
+from app.oms.platforms.models.pdd_app_config import PddAppConfig
 
 
 DEFAULT_PDD_API_BASE_URL = "https://gw-api.pinduoduo.com/api/router"

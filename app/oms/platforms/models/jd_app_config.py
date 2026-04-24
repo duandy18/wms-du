@@ -1,4 +1,5 @@
-# app/models/pdd_app_config.py
+# app/oms/platforms/models/jd_app_config.py
+# Domain move: JD app config ORM belongs to OMS platform access.
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,26 +10,21 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
-class PddAppConfig(Base):
+class JdAppConfig(Base):
     """
-    拼多多开放平台系统级应用配置表。
+    京东平台系统级接入配置（当前态）。
 
     职责：
-    - 保存 OMS 系统接入拼多多开放平台所需的应用配置
-    - 保存 client_id / client_secret / redirect_uri / api_base_url / sign_method
-    - 保存当前是否启用的配置记录
-
-    不负责：
-    - 店铺授权材料（access_token / refresh_token）
-    - 店铺接入状态裁决
-    - 店铺 identity
+    - 保存 JD OAuth / JOS 所需系统级配置
+    - 不保存店铺级 access_token / refresh_token
+    - 不承载 OMS connection / pull_ready 等业务状态
     """
 
-    __tablename__ = "pdd_app_configs"
+    __tablename__ = "jd_app_configs"
 
     __table_args__ = (
         sa.Index(
-            "ix_pdd_app_configs_is_enabled",
+            "ix_jd_app_configs_is_enabled",
             "is_enabled",
         ),
     )
@@ -49,19 +45,19 @@ class PddAppConfig(Base):
         nullable=False,
     )
 
-    redirect_uri: Mapped[str] = mapped_column(
+    callback_url: Mapped[str] = mapped_column(
         sa.String(512),
         nullable=False,
     )
 
-    api_base_url: Mapped[str] = mapped_column(
-        sa.String(255),
+    gateway_url: Mapped[str] = mapped_column(
+        sa.String(512),
         nullable=False,
-        server_default=sa.text("'https://gw-api.pinduoduo.com/api/router'"),
+        server_default=sa.text("'https://api.jd.com/routerjson'"),
     )
 
     sign_method: Mapped[str] = mapped_column(
-        sa.String(16),
+        sa.String(32),
         nullable=False,
         server_default=sa.text("'md5'"),
     )
@@ -69,7 +65,7 @@ class PddAppConfig(Base):
     is_enabled: Mapped[bool] = mapped_column(
         sa.Boolean,
         nullable=False,
-        server_default=sa.false(),
+        server_default=sa.true(),
     )
 
     created_at: Mapped[datetime] = mapped_column(

@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.models.jd_app_config import JdAppConfig
-from app.models.store_platform_credential import StorePlatformCredential
+from app.oms.platforms.models.jd_app_config import JdAppConfig
+from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
 from app.oms.platforms.jd import service_pull as jd_pull_module
 from app.oms.platforms.jd.service_order_detail import (
     JdOrderDetail,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List
 
-from app.models.pdd_order import PddOrder, PddOrderItem
+from app.oms.platforms.models.pdd_order import PddOrder, PddOrderItem
 from app.oms.platforms.pdd.contracts_ledger import (
     PddOrderLedgerDetailOut,
     PddOrderLedgerItemOut,

@@ -1,3 +1,5 @@
+# app/oms/platforms/models/pdd_order_order_mapping.py
+# Domain move: PDD order mapping ORM belongs to OMS platform order ledger.
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,8 +11,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .order import Order
-    from .pdd_order import PddOrder
+    from app.models.order import Order
+    from app.oms.platforms.models.pdd_order import PddOrder
 
 
 class PddOrderOrderMapping(Base):

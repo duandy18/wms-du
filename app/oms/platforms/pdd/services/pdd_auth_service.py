@@ -10,7 +10,7 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.store_token import StoreToken
+from app.oms.platforms.models.store_token import StoreToken
 
 # ===== 配置：先用环境变量，后面你可以接到自己的 settings 体系 =====
 PDD_CLIENT_ID = os.getenv("PDD_CLIENT_ID", "")

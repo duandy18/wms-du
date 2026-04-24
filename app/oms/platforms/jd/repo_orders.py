@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.jd_order import JdOrder
+from app.oms.platforms.models.jd_order import JdOrder
 
 
 async def list_jd_orders(

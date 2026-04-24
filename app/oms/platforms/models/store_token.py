@@ -1,4 +1,5 @@
-# app/models/store_token.py
+# app/oms/platforms/models/store_token.py
+# Domain move: store token ORM belongs to OMS platform access.
 from __future__ import annotations
 
 from datetime import datetime, timezone

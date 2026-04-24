@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List
 
-from app.models.jd_order import JdOrder, JdOrderItem
+from app.oms.platforms.models.jd_order import JdOrder, JdOrderItem
 from app.oms.platforms.jd.contracts_ledger import (
     JdOrderLedgerDetailOut,
     JdOrderLedgerItemOut,

@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.pdd_order import PddOrder
+from app.oms.platforms.models.pdd_order import PddOrder
 from app.oms.platforms.pdd.contracts import PddOrderSummary
 from app.oms.platforms.pdd.repo_orders import (
     load_shop_id_by_store_id_for_pdd,

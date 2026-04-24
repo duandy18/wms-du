@@ -7,7 +7,7 @@ from typing import Optional
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.pdd_app_config import PddAppConfig
+from app.oms.platforms.models.pdd_app_config import PddAppConfig
 
 from .settings import DEFAULT_PDD_API_BASE_URL, DEFAULT_PDD_SIGN_METHOD
 

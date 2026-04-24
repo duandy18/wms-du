@@ -1,4 +1,5 @@
-# app/models/store_platform_connection.py
+# app/oms/platforms/models/store_platform_connection.py
+# Domain move: store platform connection ORM belongs to OMS platform access.
 from __future__ import annotations
 
 from datetime import datetime

@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.models.pdd_app_config import PddAppConfig
-from app.models.store_platform_connection import StorePlatformConnection
-from app.models.store_platform_credential import StorePlatformCredential
+from app.oms.platforms.models.pdd_app_config import PddAppConfig
+from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
+from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
 from app.oms.platforms.pdd.service_pull import PddPullService
 
 

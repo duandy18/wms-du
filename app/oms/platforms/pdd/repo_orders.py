@@ -7,8 +7,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.pdd_order import PddOrder, PddOrderItem
-from app.models.pdd_order_order_mapping import PddOrderOrderMapping
+from app.oms.platforms.models.pdd_order import PddOrder, PddOrderItem
+from app.oms.platforms.models.pdd_order_order_mapping import PddOrderOrderMapping
 from app.oms.platforms.pdd.contracts import PddOrderDetail
 
 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models.pdd_app_config import PddAppConfig
+from app.oms.platforms.models.pdd_app_config import PddAppConfig
 from app.oms.platforms.pdd.repository import get_enabled_pdd_app_config
 from app.oms.platforms.pdd.settings import (
     PddOpenConfigError,

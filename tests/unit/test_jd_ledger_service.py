@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.jd_order import JdOrder, JdOrderItem
+from app.oms.platforms.models.jd_order import JdOrder, JdOrderItem
 from app.oms.platforms.jd import service_ledger as jd_ledger_module
 
 
