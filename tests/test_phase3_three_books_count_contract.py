@@ -41,13 +41,58 @@ async def _pick_item(session: AsyncSession) -> tuple[int, bool]:
     return int(row2[0]), True
 
 
+async def _load_ledger_lot_id(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    ref: str,
+    ref_line: int = 1,
+) -> int:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT lot_id
+                  FROM stock_ledger
+                 WHERE warehouse_id = :warehouse_id
+                   AND item_id = :item_id
+                   AND ref = :ref
+                   AND ref_line = :ref_line
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "ref": str(ref),
+                "ref_line": int(ref_line),
+            },
+        )
+    ).first()
+
+    if not row or row[0] is None:
+        raise AssertionError(
+            {
+                "msg": "count ledger row must carry lot_id",
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "ref": str(ref),
+                "ref_line": int(ref_line),
+            }
+        )
+
+    return int(row[0])
+
+
 def _build_count_request(
     *,
     item_id: int,
     warehouse_id: int,
     qty: int,
     ref: str,
-    batch_code: str,
+    lot_code: str,
     occurred_at: datetime,
     production_date: date | None,
     expiry_date: date | None,
@@ -58,7 +103,7 @@ def _build_count_request(
         "warehouse_id": warehouse_id,
         "qty": qty,
         "ref": ref,
-        "batch_code": batch_code,
+        "lot_code": lot_code,
         "occurred_at": occurred_at,
     }
     if requires_expiry:
@@ -108,7 +153,7 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
             warehouse_id=warehouse_id,
             qty=5,
             ref=ref,
-            batch_code=batch_code,
+            lot_code=batch_code,
             occurred_at=now,
             production_date=prod,
             expiry_date=exp,
@@ -119,7 +164,15 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
     assert int(payload.after) == 5
     assert payload.item_id == item_id
     assert payload.warehouse_id == warehouse_id
-    assert payload.batch_code == batch_code
+    assert payload.lot_code == batch_code
+
+    lot_id = await _load_ledger_lot_id(
+        session,
+        warehouse_id=warehouse_id,
+        item_id=item_id,
+        ref=ref,
+        ref_line=1,
+    )
 
     await run_snapshot(session)
     await verify_commit_three_books(
@@ -130,7 +183,8 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
             {
                 "warehouse_id": warehouse_id,
                 "item_id": item_id,
-                "batch_code": batch_code,
+                "lot_id": lot_id,
+                "lot_code": batch_code,
                 "qty": 0,
                 "ref": ref,
                 "ref_line": 1,
@@ -179,7 +233,7 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
             warehouse_id=warehouse_id,
             qty=7,
             ref=ref,
-            batch_code=batch_code,
+            lot_code=batch_code,
             occurred_at=now,
             production_date=prod,
             expiry_date=exp,
@@ -190,7 +244,15 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
     assert int(payload.after) == 7
     assert payload.item_id == item_id
     assert payload.warehouse_id == warehouse_id
-    assert payload.batch_code == batch_code
+    assert payload.lot_code == batch_code
+
+    lot_id = await _load_ledger_lot_id(
+        session,
+        warehouse_id=warehouse_id,
+        item_id=item_id,
+        ref=ref,
+        ref_line=1,
+    )
 
     await run_snapshot(session)
     await verify_commit_three_books(
@@ -201,7 +263,8 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
             {
                 "warehouse_id": warehouse_id,
                 "item_id": item_id,
-                "batch_code": batch_code,
+                "lot_id": lot_id,
+                "lot_code": batch_code,
                 "qty": 2,
                 "ref": ref,
                 "ref_line": 1,
@@ -209,3 +272,18 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
         ],
         at=now,
     )
+
+
+def test_count_request_rejects_retired_batch_code_alias() -> None:
+    try:
+        CountRequest(
+            item_id=910001,
+            warehouse_id=1,
+            qty=1,
+            ref="ut:count:retired-batch-code-alias",
+            batch_code="UT-COUNT-RETIRED-ALIAS",
+        )
+    except Exception as exc:
+        assert "batch_code" in str(exc)
+    else:
+        raise AssertionError("CountRequest must reject retired batch_code alias")
