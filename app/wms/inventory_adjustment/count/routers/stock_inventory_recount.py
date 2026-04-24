@@ -1,4 +1,4 @@
-# app/wms/reconciliation/routers/stock_inventory_recount.py
+# app/wms/inventory_adjustment/count/routers/stock_inventory_recount.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
