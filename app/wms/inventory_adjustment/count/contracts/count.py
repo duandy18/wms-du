@@ -11,19 +11,18 @@ class CountRequest(BaseModel):
     盘点校正请求（批次级）：
 
     - 必填：item_id, warehouse_id, qty(绝对量), ref
-    - lot_code 为正名字段；batch_code 保留兼容入参
+    - lot_code 为唯一批次展示码入参；batch_code alias 已退役
     - production_date / expiry_date：仅对批次受控商品要求至少其一
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     item_id: int = Field(..., description="商品ID")
     warehouse_id: int = Field(..., ge=1, description="仓库ID")
     qty: int = Field(..., ge=0, description="盘点后的实际数量（绝对量）")
     ref: str = Field(..., description="业务参考号（用于台账幂等）")
 
-    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
-    batch_code: Optional[str] = Field(None, description="批次码（兼容字段；等价于 lot_code）")
+    lot_code: Optional[str] = Field(None, description="Lot 展示码")
 
     occurred_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -47,6 +46,4 @@ class CountResponse(BaseModel):
     warehouse_id: int
 
     lot_code: Optional[str] = None
-    batch_code: Optional[str] = None
-
     occurred_at: datetime

@@ -21015,19 +21015,7 @@
               }
             ],
             "title": "Lot Code",
-            "description": "Lot 展示码（优先使用；等价于 batch_code）"
-          },
-          "batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Code",
-            "description": "批次码（兼容字段；等价于 lot_code）"
+            "description": "Lot 展示码"
           },
           "occurred_at": {
             "type": "string",
@@ -21062,6 +21050,7 @@
             "description": "有效期（可选）"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "item_id",
@@ -21070,7 +21059,7 @@
           "ref"
         ],
         "title": "CountRequest",
-        "description": "盘点校正请求（批次级）：\n\n- 必填：item_id, warehouse_id, qty(绝对量), ref\n- lot_code 为正名字段；batch_code 保留兼容入参\n- production_date / expiry_date：仅对批次受控商品要求至少其一"
+        "description": "盘点校正请求（批次级）：\n\n- 必填：item_id, warehouse_id, qty(绝对量), ref\n- lot_code 为唯一批次展示码入参；batch_code alias 已退役\n- production_date / expiry_date：仅对批次受控商品要求至少其一"
       },
       "CountResponse": {
         "properties": {
@@ -21105,17 +21094,6 @@
               }
             ],
             "title": "Lot Code"
-          },
-          "batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Code"
           },
           "occurred_at": {
             "type": "string",

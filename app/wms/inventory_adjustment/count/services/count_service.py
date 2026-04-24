@@ -39,10 +39,9 @@ class CountService:
         )
         requires_batch = expiry_policy_text.upper() == "REQUIRED"
 
-        lot_code_raw = req.lot_code or req.batch_code
         lot_code = validate_lot_code_contract(
             requires_batch=requires_batch,
-            lot_code=lot_code_raw,
+            lot_code=req.lot_code,
         )
 
         if requires_batch and req.production_date is None and req.expiry_date is None:
@@ -88,6 +87,5 @@ class CountService:
             item_id=req.item_id,
             warehouse_id=req.warehouse_id,
             lot_code=lot_code,
-            batch_code=lot_code,
             occurred_at=req.occurred_at,
         )
