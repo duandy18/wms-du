@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.oms.fsku.contracts.fsku import FskuDetailOut, FskuListItem, FskuListOut
-from app.models.fsku import Fsku, FskuComponent
+from app.oms.fsku.models.fsku import Fsku, FskuComponent
 from app.oms.fsku.services.fsku_service_mapper import to_detail
 
 

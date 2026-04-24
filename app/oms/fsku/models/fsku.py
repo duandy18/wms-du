@@ -1,4 +1,5 @@
-# app/models/fsku.py
+# app/oms/fsku/models/fsku.py
+# Domain move: FSKU ORM belongs to OMS FSKU.
 from __future__ import annotations
 
 from datetime import datetime

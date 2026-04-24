@@ -8,8 +8,8 @@ from typing import Optional
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.fsku import Fsku
-from app.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
+from app.oms.fsku.models.fsku import Fsku
+from app.oms.fsku.models.merchant_code_fsku_binding import MerchantCodeFskuBinding
 
 
 def _utc_now() -> datetime:

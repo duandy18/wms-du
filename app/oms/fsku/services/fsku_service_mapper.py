@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.oms.fsku.contracts.fsku import FskuComponentOut, FskuDetailOut
-from app.models.fsku import Fsku, FskuComponent
+from app.oms.fsku.models.fsku import Fsku, FskuComponent
 
 
 def to_detail(f: Fsku, components: list[FskuComponent]) -> FskuDetailOut:

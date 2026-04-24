@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.oms.fsku.contracts.fsku import FskuComponentIn, FskuDetailOut
-from app.models.fsku import Fsku, FskuComponent
+from app.oms.fsku.models.fsku import Fsku, FskuComponent
 from app.oms.fsku.services.fsku_service_errors import FskuBadInput, FskuConflict, FskuNotFound
 from app.oms.fsku.services.fsku_service_mapper import to_detail
 from app.oms.fsku.services.fsku_service_utils import normalize_code, normalize_shape, utc_now
