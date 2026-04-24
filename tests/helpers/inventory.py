@@ -222,7 +222,6 @@ async def seed_batch_slot(
         expiry_date=expiry_date,
         trace_id=None,
         utc_now=lambda: datetime.now(UTC),
-        shadow_write_stocks=False,
     )
 
 

@@ -292,7 +292,6 @@ async def reverse_outbound_event(
                 "operator_name_snapshot": operator_name_snapshot,
                 "remark": _norm_text(event.remark),
             },
-            shadow_write_stocks=False,
         )
 
         rows.append(

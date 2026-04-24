@@ -128,7 +128,6 @@ class PickService:
                 production_date=None,
                 expiry_date=None,
                 trace_id=trace_id,
-                shadow_write_stocks=False,
             )
         else:
             res = await self.stock_svc.adjust(

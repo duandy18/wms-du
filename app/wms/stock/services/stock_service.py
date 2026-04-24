@@ -317,7 +317,6 @@ class StockService:
                 expiry_date=expiry_date,
                 trace_id=trace_id,
                 utc_now=lambda: datetime.now(UTC),
-                shadow_write_stocks=False,
             )
         except HTTPException:
             raise
@@ -356,7 +355,6 @@ class StockService:
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
         trace_id: Optional[str] = None,
-        shadow_write_stocks: bool = False,
     ) -> Dict[str, Any]:
         """
         lot-only 原语入口：
@@ -379,7 +377,6 @@ class StockService:
             expiry_date=expiry_date,
             trace_id=trace_id,
             utc_now=lambda: datetime.now(UTC),
-            shadow_write_stocks=bool(shadow_write_stocks),
         )
 
     async def ship_commit_direct(

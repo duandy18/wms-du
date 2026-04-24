@@ -431,7 +431,6 @@ class CountDocService:
                     event_id=int(event_id),
                     sub_reason="COUNT_CONFIRM",
                 ),
-                shadow_write_stocks=False,
             )
             return 1
 
@@ -457,7 +456,6 @@ class CountDocService:
                     event_id=int(event_id),
                     sub_reason="COUNT_ADJUST",
                 ),
-                shadow_write_stocks=False,
             )
             return 1
 
@@ -496,7 +494,6 @@ class CountDocService:
                     event_id=int(event_id),
                     sub_reason="COUNT_ADJUST",
                 ),
-                shadow_write_stocks=False,
             )
             remaining -= int(consume)
             written += 1

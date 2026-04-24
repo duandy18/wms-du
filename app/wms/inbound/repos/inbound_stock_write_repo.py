@@ -72,7 +72,6 @@ async def apply_inbound_stock(
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
-        shadow_write_stocks=False,
     )
 
 

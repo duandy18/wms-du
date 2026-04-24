@@ -292,7 +292,6 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
         expiry_date=expiry_date,
         trace_id=None,
         utc_now=lambda: datetime.now(UTC),
-        shadow_write_stocks=False,
     )
 
 

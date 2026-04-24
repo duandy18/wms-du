@@ -80,7 +80,6 @@ async def _seed_wh_item_lot_stock(
         expiry_date=exp,
         trace_id=None,
         utc_now=lambda: datetime.now(timezone.utc),
-        shadow_write_stocks=False,
     )
 
     await session.commit()

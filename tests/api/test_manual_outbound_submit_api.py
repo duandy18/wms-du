@@ -192,7 +192,6 @@ async def _seed_manual_doc_and_stock(
         expiry_date=expiry_date,
         trace_id=None,
         utc_now=lambda: datetime.now(UTC),
-        shadow_write_stocks=False,
     )
 
     await session.commit()
