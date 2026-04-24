@@ -20,8 +20,6 @@ IS_DEV_ENV = WMS_ENV == "dev"
 # ✅ 测试入口应显式注入 PYTEST_RUNNING=1（比依赖 PYTEST_CURRENT_TEST 更可靠）
 PYTEST_RUNNING = os.getenv("PYTEST_RUNNING") == "1"
 
-# ✅ 允许在非 dev 环境（例如 test）显式开启 dev 路由，以满足 tests/api/* 对 /dev/* 的契约依赖
-DEV_ROUTES_ENABLED = IS_DEV_ENV or (os.getenv("WMS_ENABLE_DEV_ROUTES") == "1")
 
 # ✅ 路由 dump：仅 dev 环境且显式开启才打印；pytest 下强制禁用
 DUMP_ROUTES = (os.getenv("WMS_DUMP_ROUTES") == "1") and IS_DEV_ENV and (not PYTEST_RUNNING)
@@ -49,8 +47,7 @@ app.add_middleware(
 # 注册异常处理（Problem 形状）
 register_exception_handlers(app)
 
-# 挂载路由（dev 路由是否启用由 DEV_ROUTES_ENABLED 决定）
-mount_routers(app, enable_dev_routes=DEV_ROUTES_ENABLED)
+mount_routers(app)
 
 
 def _dump_routes_at_start() -> None:
