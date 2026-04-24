@@ -1,4 +1,5 @@
-# app/models/transport_shipment.py
+# app/tms/shipment/models/transport_shipment.py
+# Domain move: transport shipment ORM belongs to TMS shipment.
 from __future__ import annotations
 
 from datetime import datetime

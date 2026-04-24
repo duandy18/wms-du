@@ -1,3 +1,5 @@
+# app/tms/shipment/models/order_shipment_prepare_package.py
+# Domain move: order shipment prepare package ORM belongs to TMS shipment.
 from __future__ import annotations
 
 from datetime import datetime

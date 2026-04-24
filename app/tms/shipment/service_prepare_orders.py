@@ -16,7 +16,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.order_shipment_prepare import OrderShipmentPrepare
+from app.tms.shipment.models.order_shipment_prepare import OrderShipmentPrepare
 
 from .contracts_prepare_orders import (
     ShipPrepareImportResponse,
