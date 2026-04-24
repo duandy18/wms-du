@@ -140,6 +140,8 @@ def init_models(
         "app.wms.inventory_adjustment.count.models",
         "app.wms.inbound.models",
         "app.wms.outbound.models",
+        "app.tms.records.models",
+        "app.tms.billing.models",
     ):
         for mod in _iter_model_modules_recursive(pkg_name):
             if mod in ex or mod in loaded:

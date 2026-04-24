@@ -1,4 +1,5 @@
-# app/models/shipping_record_reconciliation.py
+# app/tms/billing/models/shipping_record_reconciliation.py
+# Domain move: shipping record reconciliation ORM belongs to TMS billing.
 from __future__ import annotations
 
 from datetime import datetime
