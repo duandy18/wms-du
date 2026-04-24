@@ -61,8 +61,8 @@ MODEL_SPECS = [
     ("app.models.order_line", "OrderLine"),
     ("app.models.order_logistics", "OrderLogistics"),
     ("app.models.order_state_snapshot", "OrderStateSnapshot"),
-    ("app.models.order_shipment_prepare", "OrderShipmentPrepare"),
-    ("app.models.order_shipment_prepare_package", "OrderShipmentPreparePackage"),
+    ("app.tms.shipment.models.order_shipment_prepare", "OrderShipmentPrepare"),
+    ("app.tms.shipment.models.order_shipment_prepare_package", "OrderShipmentPreparePackage"),
     # ✅ Phase 5：执行域 authority（order_fulfillment）
     ("app.models.order_fulfillment", "OrderFulfillment"),
     # 拣货任务
@@ -119,7 +119,7 @@ MODEL_SPECS = [
     # ------------------------------------------------------------------
     # 运输执行 / 账本（Phase-2：Shipment 主实体 + Record 投影）
     # ------------------------------------------------------------------
-    ("app.models.transport_shipment", "TransportShipment"),
+    ("app.tms.shipment.models.transport_shipment", "TransportShipment"),
     ("app.tms.records.models.shipping_record", "ShippingRecord"),
     ("app.tms.billing.models.carrier_bill_item", "CarrierBillItem"),
     ("app.tms.billing.models.shipping_record_reconciliation", "ShippingRecordReconciliation"),

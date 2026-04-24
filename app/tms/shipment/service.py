@@ -18,8 +18,8 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.order_shipment_prepare import OrderShipmentPrepare
-from app.models.order_shipment_prepare_package import OrderShipmentPreparePackage
+from app.tms.shipment.models.order_shipment_prepare import OrderShipmentPrepare
+from app.tms.shipment.models.order_shipment_prepare_package import OrderShipmentPreparePackage
 from app.tms.quote_snapshot import (
     extract_cost_estimated,
     extract_freight_estimated,
