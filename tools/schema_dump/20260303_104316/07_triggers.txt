@@ -1,3 +1,0 @@
- table_name | tgname | trigger_def
-------------+--------+-------------
-(0 rows)
