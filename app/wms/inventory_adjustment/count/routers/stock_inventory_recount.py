@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,10 +26,11 @@ def _make_scan_ref(device_id: Optional[str], occurred_at: datetime, warehouse_id
 
 
 class StockRecountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     item_id: int = Field(..., description="物料ID")
     warehouse_id: int = Field(..., ge=1, description="仓库ID")
-    lot_code: Optional[str] = Field(None, description="Lot 展示码（优先使用；等价于 batch_code）")
-    batch_code: Optional[str] = Field(None, description="批次（无批次槽位传 null）")
+    lot_code: Optional[str] = Field(None, description="Lot 展示码")
     actual: int = Field(..., ge=0, description="实际数量")
     ctx: Dict[str, Any] | None = None
 
@@ -55,19 +56,19 @@ async def stock_recount(
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
     """
-    运维盘点：把 item@warehouse@batch_code 的 qty 校正为 actual。
+    运维盘点：把 item@warehouse@lot_code 的 qty 校正为 actual。
 
     Phase 4E 真收口：
     - 禁止读取 legacy stocks
     - current 余额统一来自 stocks_lot
-    - batch_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM
+    - lot_code 为展示码（lots.lot_code），按 NULL 语义用 IS NOT DISTINCT FROM
     """
     device_id = (req.ctx or {}).get("device_id") if isinstance(req.ctx, dict) else None
     occurred_at = datetime.now(timezone.utc)
     scan_ref = _make_scan_ref(device_id, occurred_at, req.warehouse_id)
 
-    # Phase M-4 governance：lot_code 正名；batch_code 兼容字段
-    code = getattr(req, "lot_code", None) or req.batch_code
+    # Phase M-4 governance：lot_code 为唯一公开入参；batch_code alias 已退役
+    code = req.lot_code
 
     try:
         from app.wms.stock.services.stock_service import StockService  # type: ignore
