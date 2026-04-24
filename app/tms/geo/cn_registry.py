@@ -18,16 +18,15 @@ def _norm(s: Optional[str]) -> str:
     return (s or "").strip()
 
 
-def _repo_root() -> Path:
-    # app/tms/geo/cn_registry.py -> app/tms/geo -> app/tms -> app -> repo root
-    return Path(__file__).resolve().parents[3]
+def _resource_dir() -> Path:
+    return Path(__file__).resolve().parent / "resources"
 
 
 @lru_cache(maxsize=1)
 def load_cn_geo() -> Tuple[List[GeoItem], Dict[str, List[GeoItem]]]:
-    root = _repo_root()
-    provinces_path = root / "app" / "resources" / "geo" / "cn_provinces.json"
-    cities_path = root / "app" / "resources" / "geo" / "cn_cities.json"
+    root = _resource_dir()
+    provinces_path = root / "cn_provinces.json"
+    cities_path = root / "cn_cities.json"
 
     provinces_raw = json.loads(provinces_path.read_text(encoding="utf-8"))
     cities_raw = json.loads(cities_path.read_text(encoding="utf-8"))
