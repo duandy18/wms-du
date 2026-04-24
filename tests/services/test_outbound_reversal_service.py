@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,8 @@ from app.wms.inventory_adjustment.outbound_reversal.contracts.outbound_reversal 
     OutboundReversalIn,
 )
 from app.wms.inventory_adjustment.outbound_reversal.services.outbound_reversal_service import (
+    get_outbound_reversal_detail,
+    list_outbound_reversal_options,
     reverse_outbound_event,
 )
 from app.wms.outbound.models.outbound_event import OutboundEventLine
@@ -337,6 +340,60 @@ async def _insert_frozen_count_doc(
     return doc_id, count_no, snapshot_at
 
 
+def test_outbound_reversal_requires_operator_name() -> None:
+    with pytest.raises(ValidationError):
+        OutboundReversalIn.model_validate({"remark": "missing operator"})
+
+    with pytest.raises(ValidationError):
+        OutboundReversalIn.model_validate(
+            {
+                "operator_name_snapshot": "   ",
+                "remark": "blank operator",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_outbound_reversal_options_and_detail_read_model(session: AsyncSession):
+    original = await _seed_outbound_source_event(session)
+
+    options = await list_outbound_reversal_options(
+        session,
+        days=30,
+        limit=100,
+        source_type="MANUAL",
+    )
+
+    option = next(
+        (item for item in options.items if int(item.event_id) == int(original["event_id"])),
+        None,
+    )
+    assert option is not None
+    assert option.event_no == str(original["event_no"])
+    assert option.source_type == "MANUAL"
+    assert option.reversible is True
+    assert option.non_reversible_reason is None
+    assert option.line_count == 1
+    assert option.qty_outbound_total == int(original["qty_outbound"])
+
+    detail = await get_outbound_reversal_detail(
+        session,
+        event_id=int(original["event_id"]),
+    )
+    assert detail.event_id == int(original["event_id"])
+    assert detail.event_no == str(original["event_no"])
+    assert detail.source_type == "MANUAL"
+    assert detail.status == "COMMITTED"
+    assert detail.reversible is True
+    assert detail.non_reversible_reason is None
+    assert detail.line_count == 1
+    assert detail.qty_outbound_total == int(original["qty_outbound"])
+    assert len(detail.lines) == 1
+    assert detail.lines[0].item_name_snapshot == "ut item"
+    assert detail.lines[0].item_sku_snapshot == "ut-sku"
+    assert detail.lines[0].item_spec_snapshot == "ut-spec"
+
+
 @pytest.mark.asyncio
 async def test_outbound_reversal_creates_reversal_event_and_supersedes_original(session: AsyncSession):
     original = await _seed_outbound_source_event(session)
@@ -344,7 +401,7 @@ async def test_outbound_reversal_creates_reversal_event_and_supersedes_original(
     reversal = await reverse_outbound_event(
         session,
         event_id=int(original["event_id"]),
-        payload=OutboundReversalIn(remark="ut outbound reversal"),
+        payload=OutboundReversalIn(operator_name_snapshot="UT操作员", remark="ut outbound reversal"),
         user_id=None,
     )
 
@@ -352,6 +409,7 @@ async def test_outbound_reversal_creates_reversal_event_and_supersedes_original(
     assert int(reversal.target_event_id) == int(original["event_id"])
     assert int(reversal.event_id) > int(original["event_id"])
     assert reversal.source_type == "MANUAL"
+    assert reversal.operator_name_snapshot == "UT操作员"
     assert reversal.warehouse_id == int(original["warehouse_id"])
     assert len(reversal.rows) == 1
 
@@ -394,7 +452,7 @@ async def test_outbound_reversal_duplicate_returns_already_reversed(session: Asy
     first = await reverse_outbound_event(
         session,
         event_id=int(original["event_id"]),
-        payload=OutboundReversalIn(remark="ut first outbound reversal"),
+        payload=OutboundReversalIn(operator_name_snapshot="UT操作员", remark="ut first outbound reversal"),
         user_id=None,
     )
     assert first.ok is True
@@ -403,7 +461,7 @@ async def test_outbound_reversal_duplicate_returns_already_reversed(session: Asy
         await reverse_outbound_event(
             session,
             event_id=int(original["event_id"]),
-            payload=OutboundReversalIn(remark="ut duplicate outbound reversal"),
+            payload=OutboundReversalIn(operator_name_snapshot="UT操作员", remark="ut duplicate outbound reversal"),
             user_id=None,
         )
 
@@ -425,7 +483,7 @@ async def test_outbound_reversal_rejects_when_count_doc_frozen(session: AsyncSes
         await reverse_outbound_event(
             session,
             event_id=int(original["event_id"]),
-            payload=OutboundReversalIn(remark="ut frozen outbound reversal"),
+            payload=OutboundReversalIn(operator_name_snapshot="UT操作员", remark="ut frozen outbound reversal"),
             user_id=None,
         )
 
