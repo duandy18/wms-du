@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, decode_access_token, verify_password
-from app.models.user import User
+from app.user.models.user import User
 
 
 def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:

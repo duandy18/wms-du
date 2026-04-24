@@ -10,7 +10,7 @@ from app.admin.contracts.user_permission_matrix import (
     PermissionMatrixRowOut,
 )
 from app.admin.contracts.user_permission_matrix_update import UserPermissionMatrixUpdateIn
-from app.models.permission import Permission
+from app.user.models.permission import Permission
 from app.user.repositories.navigation_repository import NavigationRepository
 from app.user.repositories.user_repository import UserRepository
 from app.user.services.user_admin_audit import AdminUserAuditService

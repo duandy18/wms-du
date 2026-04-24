@@ -79,10 +79,10 @@ MODEL_SPECS = [
     # 门店 & 权限导航
     # ------------------------------------------------------------------
     ("app.oms.stores.models.store", "Store"),
-    ("app.models.user", "User"),
-    ("app.models.permission", "Permission"),
-    ("app.models.page_registry", "PageRegistry"),
-    ("app.models.page_route_prefix", "PageRoutePrefix"),
+    ("app.user.models.user", "User"),
+    ("app.user.models.permission", "Permission"),
+    ("app.user.models.page_registry", "PageRegistry"),
+    ("app.user.models.page_route_prefix", "PageRoutePrefix"),
     # ------------------------------------------------------------------
     # 店铺 × 平台接入（OMS 淘宝 / 拼多多 / 京东）
     # ------------------------------------------------------------------

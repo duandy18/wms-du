@@ -7,8 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
-from app.models.permission import Permission
-from app.models.user import User, user_permissions
+from app.user.models.permission import Permission
+from app.user.models.user import User, user_permissions
 from app.user.services.user_errors import DuplicateUserError, NotFoundError
 
 
