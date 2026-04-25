@@ -458,19 +458,10 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     await db_session_like_pg.commit()
     print("[TEST] 已通过 StockService.adjust_lot 入库 10 件到 BATCH-001")
 
-    # 4) pick（终态合同：batch_code 必须按行提供）
-    resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/pick",
-        json={
-            "warehouse_id": 1,
-            "lines": [{"item_id": 3001, "qty": 1, "batch_code": "BATCH-001"}],
-        },
-    )
-    print("[HTTP] pick status:", resp.status_code, "body:", resp.text)
-    assert resp.status_code == 200, resp.text
-    pick_list = resp.json()
-    assert isinstance(pick_list, list)
-    assert len(pick_list) == 1
+    # 4) legacy HTTP pick route has been retired.
+    # Formal outbound execution is covered by /wms/outbound/orders/{order_id}/submit
+    # and dedicated outbound submit API tests.
+    assert lot_id > 0
 
     provider = await _pick_active_shipping_provider_for_warehouse(db_session_like_pg, warehouse_id=1)
     if provider is None:

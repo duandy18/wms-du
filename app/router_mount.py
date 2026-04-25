@@ -89,13 +89,9 @@ def mount_routers(app: FastAPI) -> None:
     from app.wms.outbound.routers.orders_fulfillment_v2_routes_1_reserve import (
         register as register_orders_fulfillment_v2_reserve,
     )
-    from app.wms.outbound.routers.orders_fulfillment_v2_routes_2_pick import (
-        register as register_orders_fulfillment_v2_pick,
-    )
 
     orders_fulfillment_v2_router = APIRouter(prefix="/orders", tags=["orders-fulfillment-v2"])
     register_orders_fulfillment_v2_reserve(orders_fulfillment_v2_router)
-    register_orders_fulfillment_v2_pick(orders_fulfillment_v2_router)
 
     # ===========================
     # mount routers
