@@ -103,5 +103,5 @@ async def test_expiry_analytics_query_returns_sorted_not_enforcing(session: Asyn
     plan = await alloc.allocate(session, item_id=3003, need_qty=2, warehouse_id=1)
 
     assert len(plan) >= 1
-    assert plan[0]["batch_code"] == "A_NEAR"
+    assert plan[0]["lot_code"] == "A_NEAR"
     assert int(plan[0]["take_qty"]) == 2

@@ -30,7 +30,7 @@ class BatchAgeingService:
             SELECT
                 s.warehouse_id,
                 s.item_id,
-                lo.lot_code AS batch_code,
+                lo.lot_code AS lot_code,
                 lo.expiry_date,
                 COALESCE(SUM(s.qty), 0) AS qty
             FROM stocks_lot s
@@ -57,7 +57,7 @@ class BatchAgeingService:
                     {
                         "warehouse_id": int(r["warehouse_id"]),
                         "item_id": int(r["item_id"]),
-                        "batch_code": r["batch_code"],
+                        "lot_code": r["lot_code"],
                         "expiry_date": str(exp),
                         "days_left": int(days_left),
                         "risk_level": "HIGH" if days_left <= 7 else "MEDIUM" if days_left <= 14 else "LOW",
