@@ -44,23 +44,37 @@ class PurchaseCostSource:
     async def fetch_sku_purchase_ledger(
         self,
         *,
-        from_date: date,
-        to_date: date,
+        from_date: date | None,
+        to_date: date | None,
         supplier_id: int | None = None,
+        warehouse_id: int | None = None,
         item_keyword: str = "",
     ) -> dict[str, Any]:
         keyword = item_keyword.strip()
         params: dict[str, object] = {
-            "from_date": from_date,
-            "to_date": to_date,
             "item_keyword": keyword,
             "item_keyword_like": f"%{keyword}%",
         }
 
-        supplier_filter = ""
+        where_clauses: list[str] = ["1 = 1"]
+
+        if from_date is not None:
+            params["from_date"] = from_date
+            where_clauses.append("DATE(po.purchase_time) >= :from_date")
+
+        if to_date is not None:
+            params["to_date"] = to_date
+            where_clauses.append("DATE(po.purchase_time) <= :to_date")
+
         if supplier_id is not None:
             params["supplier_id"] = int(supplier_id)
-            supplier_filter = "AND po.supplier_id = :supplier_id"
+            where_clauses.append("po.supplier_id = :supplier_id")
+
+        if warehouse_id is not None:
+            params["warehouse_id"] = int(warehouse_id)
+            where_clauses.append("po.warehouse_id = :warehouse_id")
+
+        where_sql = "\n               AND ".join(where_clauses)
 
         sql = text(
             f"""
@@ -79,6 +93,9 @@ class PurchaseCostSource:
                 po.supplier_id AS supplier_id,
                 COALESCE(po.supplier_name, '') AS supplier_name,
 
+                po.warehouse_id AS warehouse_id,
+                COALESCE(wh.name, '') AS warehouse_name,
+
                 po.purchase_time AS purchase_time,
                 DATE(po.purchase_time) AS purchase_date,
 
@@ -92,8 +109,8 @@ class PurchaseCostSource:
 
                 FROM purchase_orders po
                 JOIN purchase_order_lines pol ON pol.po_id = po.id
-               WHERE {self._base_where()}
-                 {supplier_filter}
+                JOIN warehouses wh ON wh.id = po.warehouse_id
+               WHERE {where_sql}
                  AND (
                    :item_keyword = ''
                    OR pol.item_sku ILIKE :item_keyword_like
@@ -124,6 +141,8 @@ class PurchaseCostSource:
               spec_text,
               supplier_id,
               supplier_name,
+              warehouse_id,
+              warehouse_name,
               purchase_time,
               purchase_date,
               qty_ordered_input,
@@ -163,15 +182,13 @@ class PurchaseCostSource:
                     "spec_text": row["spec_text"],
                     "supplier_id": int(row["supplier_id"]),
                     "supplier_name": str(row["supplier_name"] or ""),
+                    "warehouse_id": int(row["warehouse_id"]),
+                    "warehouse_name": str(row["warehouse_name"] or ""),
                     "purchase_time": row["purchase_time"],
                     "purchase_date": row["purchase_date"],
                     "qty_ordered_input": int(row["qty_ordered_input"] or 0),
-                    "purchase_uom_name_snapshot": str(
-                        row["purchase_uom_name_snapshot"] or ""
-                    ),
-                    "purchase_ratio_to_base_snapshot": int(
-                        row["purchase_ratio_to_base_snapshot"] or 0
-                    ),
+                    "purchase_uom_name_snapshot": str(row["purchase_uom_name_snapshot"] or ""),
+                    "purchase_ratio_to_base_snapshot": int(row["purchase_ratio_to_base_snapshot"] or 0),
                     "qty_ordered_base": int(row["qty_ordered_base"] or 0),
                     "purchase_unit_price": (
                         to_decimal(row["purchase_unit_price"])
@@ -189,16 +206,87 @@ class PurchaseCostSource:
             ]
         }
 
+    async def fetch_sku_purchase_ledger_options(self) -> dict[str, Any]:
+        item_rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                      pol.item_id,
+                      MAX(pol.item_sku) AS item_sku,
+                      MAX(pol.item_name) AS item_name,
+                      MAX(pol.spec_text) AS spec_text
+                    FROM purchase_order_lines pol
+                    GROUP BY pol.item_id
+                    ORDER BY MAX(pol.item_sku) ASC NULLS LAST, pol.item_id ASC
+                    LIMIT 500
+                    """
+                )
+            )
+        ).mappings().all()
+
+        supplier_rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                      po.supplier_id,
+                      COALESCE(po.supplier_name, '') AS supplier_name
+                    FROM purchase_orders po
+                    JOIN purchase_order_lines pol ON pol.po_id = po.id
+                    GROUP BY po.supplier_id, COALESCE(po.supplier_name, '')
+                    ORDER BY supplier_name ASC, po.supplier_id ASC
+                    """
+                )
+            )
+        ).mappings().all()
+
+        warehouse_rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                      po.warehouse_id,
+                      COALESCE(wh.name, '') AS warehouse_name
+                    FROM purchase_orders po
+                    JOIN purchase_order_lines pol ON pol.po_id = po.id
+                    JOIN warehouses wh ON wh.id = po.warehouse_id
+                    GROUP BY po.warehouse_id, COALESCE(wh.name, '')
+                    ORDER BY warehouse_name ASC, po.warehouse_id ASC
+                    """
+                )
+            )
+        ).mappings().all()
+
+        return {
+            "items": [
+                {
+                    "item_id": int(row["item_id"]),
+                    "item_sku": row["item_sku"],
+                    "item_name": row["item_name"],
+                    "spec_text": row["spec_text"],
+                }
+                for row in item_rows
+            ],
+            "suppliers": [
+                {
+                    "supplier_id": int(row["supplier_id"]),
+                    "supplier_name": str(row["supplier_name"] or ""),
+                }
+                for row in supplier_rows
+            ],
+            "warehouses": [
+                {
+                    "warehouse_id": int(row["warehouse_id"]),
+                    "warehouse_name": str(row["warehouse_name"] or ""),
+                }
+                for row in warehouse_rows
+            ],
+        }
+
     def _base_where(self) -> str:
         return """
         DATE(po.purchase_time) BETWEEN :from_date AND :to_date
-        AND NOT EXISTS (
-          SELECT 1
-            FROM item_test_set_items its
-            JOIN item_test_sets ts ON ts.id = its.set_id
-           WHERE ts.code = 'DEFAULT'
-             AND its.item_id = pol.item_id
-        )
         """
 
     def _line_amount_expr(self) -> str:

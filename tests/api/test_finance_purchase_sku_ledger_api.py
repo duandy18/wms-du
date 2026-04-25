@@ -126,6 +126,8 @@ async def test_finance_purchase_sku_ledger_returns_po_line_level_prices_and_acco
         "spec_text",
         "supplier_id",
         "supplier_name",
+        "warehouse_id",
+        "warehouse_name",
         "purchase_time",
         "purchase_date",
         "qty_ordered_input",
@@ -145,6 +147,10 @@ async def test_finance_purchase_sku_ledger_returns_po_line_level_prices_and_acco
     assert int(row_2["item_id"]) == item_id
     assert int(row_1["supplier_id"]) == 1
     assert int(row_2["supplier_id"]) == 1
+    assert int(row_1["warehouse_id"]) == 1
+    assert int(row_2["warehouse_id"]) == 1
+    assert str(row_1["warehouse_name"]).strip()
+    assert str(row_2["warehouse_name"]).strip()
     assert row_1["purchase_date"] == "2036-01-14"
     assert row_2["purchase_date"] == "2036-01-14"
 
@@ -214,6 +220,7 @@ async def test_finance_purchase_sku_ledger_filters_by_item_keyword_and_supplier(
         f"?from_date=2036-01-15"
         f"&to_date=2036-01-15"
         f"&supplier_id=1"
+        f"&warehouse_id=1"
         f"&item_keyword={item_id}",
         headers=headers,
     )
@@ -221,3 +228,44 @@ async def test_finance_purchase_sku_ledger_filters_by_item_keyword_and_supplier(
 
     rows = resp.json()["rows"]
     assert any(int(row["po_line_id"]) == po_line_id for row in rows), rows
+
+
+@pytest.mark.asyncio
+async def test_finance_purchase_sku_ledger_options_include_items_suppliers_and_warehouses(
+    client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _headers(client)
+    item_id = await _pick_supplier_item(client, headers)
+    uom_id, _ratio_to_base = await _pick_purchase_uom(session, item_id=item_id)
+
+    payload = {
+        "warehouse_id": 1,
+        "supplier_id": 1,
+        "purchaser": "UT",
+        "purchase_time": "2036-01-16T10:00:00Z",
+        "lines": [
+            {
+                "line_no": 1,
+                "item_id": item_id,
+                "uom_id": uom_id,
+                "qty_input": 1,
+                "supply_price": "4.00",
+            }
+        ],
+    }
+
+    created = await client.post("/purchase-orders/", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+
+    resp = await client.get(
+        "/finance/purchase-costs/sku-purchase-ledger/options",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert set(body) == {"items", "suppliers", "warehouses"}
+    assert any(int(row["item_id"]) == item_id for row in body["items"]), body
+    assert any(int(row["supplier_id"]) == 1 for row in body["suppliers"]), body
+    assert any(int(row["warehouse_id"]) == 1 for row in body["warehouses"]), body
