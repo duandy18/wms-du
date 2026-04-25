@@ -147,7 +147,6 @@ async def adjust_lot_impl(
         session=session,
         warehouse_id=int(warehouse_id),
         item_id=int(item_id),
-        batch_code=bc_norm,
         reason=reason_val,
         sub_reason=sub_reason,
         delta=int(delta),

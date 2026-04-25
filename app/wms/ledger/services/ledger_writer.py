@@ -48,13 +48,6 @@ def _canon_reason(reason: str) -> Optional[str]:
     return None
 
 
-def _norm_batch_code(batch_code: Optional[str]) -> Optional[str]:
-    if batch_code is None:
-        return None
-    s = str(batch_code).strip()
-    return s or None
-
-
 def _need_patch(
     *,
     reason_canon: Optional[str],
@@ -100,7 +93,6 @@ async def write_ledger(
     *,
     warehouse_id: int,
     item_id: int,
-    batch_code: Optional[str],
     reason: str,
     sub_reason: Optional[str] = None,
     delta: int,
@@ -127,7 +119,8 @@ async def write_ledger(
     - trace_id 为技术链路锚点
 
     注意：
-    - batch_code 为历史兼容入参（展示码 lots.lot_code），stock_ledger 表终态不落 batch_code 列。
+    - stock_ledger 表终态不落 batch_code 列；
+    - 展示码统一由读面通过 lot_id JOIN lots.lot_code 获取。
     """
 
     await assert_lot_belongs_to(
@@ -138,7 +131,6 @@ async def write_ledger(
     )
 
     reason_canon = _canon_reason(reason)
-    _ = _norm_batch_code(batch_code)  # 兼容归一：仅用于上游语义/日志；不落 stock_ledger 表
 
     # ---- Phase 3: enforce "dates only on RECEIPT" at write boundary ----
     if reason_canon != "RECEIPT":
