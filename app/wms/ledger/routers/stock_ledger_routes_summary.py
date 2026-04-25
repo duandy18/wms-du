@@ -18,7 +18,6 @@ from app.wms.ledger.helpers.stock_ledger import (
     build_common_filters,
     normalize_time_range,
 )
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 
 
 def register(router: APIRouter) -> None:
@@ -27,10 +26,6 @@ def register(router: APIRouter) -> None:
         payload: LedgerQuery,
         session: AsyncSession = Depends(get_session),
     ) -> LedgerSummary:
-        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
-        if getattr(payload, "batch_code", None) != norm_bc:
-            payload = payload.model_copy(update={"batch_code": norm_bc})
-
         time_from, time_to = normalize_time_range(payload)
         conditions = build_common_filters(payload, time_from, time_to)
 

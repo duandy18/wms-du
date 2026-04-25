@@ -4,7 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.wms.ledger.contracts.stock_ledger import LedgerQuery
 from app.wms.ledger.contracts.stock_ledger_lot_shadow import LotShadowReconcileOut
@@ -21,10 +20,6 @@ def register(router: APIRouter) -> None:
         if payload.warehouse_id is None or payload.item_id is None:
             raise HTTPException(status_code=400, detail="shadow-reconcile-lot 必须指定 warehouse_id + item_id。")
 
-        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
-        if getattr(payload, "batch_code", None) != norm_bc:
-            payload = payload.model_copy(update={"batch_code": norm_bc})
-
         time_from, time_to = normalize_time_range(payload)
 
         data = await LotShadowReconcileService.reconcile(
@@ -33,7 +28,7 @@ def register(router: APIRouter) -> None:
             item_id=int(payload.item_id),
             time_from=time_from,
             time_to=time_to,
-            batch_code=getattr(payload, "batch_code", None),
+            batch_code=getattr(payload, "lot_code", None),
             lot_id=getattr(payload, "lot_id", None),
         )
 

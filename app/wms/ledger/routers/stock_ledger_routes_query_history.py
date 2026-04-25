@@ -9,7 +9,6 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.wms.stock.models.lot import Lot
 from app.procurement.models.purchase_order import PurchaseOrder
@@ -233,10 +232,6 @@ def register(router: APIRouter) -> None:
         payload: LedgerQuery,
         session: AsyncSession = Depends(get_session),
     ) -> LedgerList:
-        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
-        if getattr(payload, "batch_code", None) != norm_bc:
-            payload = payload.model_copy(update={"batch_code": norm_bc})
-
         if not _has_anchor(payload):
             raise HTTPException(
                 status_code=400,
@@ -330,7 +325,6 @@ def register(router: APIRouter) -> None:
                         else None
                     ),
                     warehouse_id=r.warehouse_id,
-                    batch_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
                     lot_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
                     lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,
