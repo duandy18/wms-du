@@ -518,28 +518,8 @@ async def ensure_lot_full(
     raise ValueError("supplier_lot_not_allowed_for_nonrequired_item")
 
 
-async def ensure_batch_full(
-    session: AsyncSession,
-    *,
-    item_id: int,
-    warehouse_id: int,
-    batch_code: str,
-    production_date,
-    expiry_date,
-) -> int:
-    return await ensure_lot_full(
-        session,
-        item_id=item_id,
-        warehouse_id=warehouse_id,
-        lot_code=batch_code,
-        production_date=production_date,
-        expiry_date=expiry_date,
-    )
-
-
 __all__ = [
     "normalize_lot_code",
     "ensure_internal_lot_singleton",
     "ensure_lot_full",
-    "ensure_batch_full",
 ]
