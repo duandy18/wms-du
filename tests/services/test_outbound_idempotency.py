@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -12,9 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.outbound.services.outbound_commit_service import OutboundService
-from app.wms.stock.services.stock_service import StockService
 from tests.services._helpers import ensure_store
-from tests.utils.ensure_minimal import ensure_item
+from tests.utils.ensure_minimal import ensure_item, set_stock_qty
 
 UTC = timezone.utc
 
@@ -51,23 +50,12 @@ async def _seed_stock(
 ) -> None:
     await _ensure_item_row(session, item_id=item_id)
 
-    svc = StockService()
-    ts = datetime.now(UTC)
-    prod = date.today()
-    exp = prod + timedelta(days=365)
-
-    await svc.adjust(
-        session=session,
-        item_id=item_id,
-        delta=qty,
-        reason="INBOUND_SEED",
-        ref="SEED-STOCK-IDEM",
-        ref_line=1,
-        occurred_at=ts,
-        warehouse_id=warehouse_id,
-        batch_code=batch_code,
-        production_date=prod,
-        expiry_date=exp,
+    await set_stock_qty(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        batch_code=str(batch_code),
+        qty=int(qty),
     )
     await session.commit()
 

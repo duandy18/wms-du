@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.oms.services.order_service import OrderService
 from app.wms.outbound.services.outbound_commit_service import OutboundService
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from app.diagnostics.services.trace_service import TraceService
 
 pytestmark = pytest.mark.asyncio
@@ -48,24 +49,36 @@ async def test_full_trace_order_outbound(session: AsyncSession):
     row = await session.execute(text("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1"))
     wh_id = int(row.scalar_one())
 
-    stock_svc = StockService()
     now = datetime.now(UTC)
     batch_code = "B-TRACE-E2E-1"
 
     # === 1) 预先做一次入库：给这个 item/仓/批次准备库存 ===
-    await stock_svc.adjust(
+    production_date = date.today()
+    expiry_date = production_date + timedelta(days=365)
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_code=str(batch_code),
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+    await adjust_lot_impl(
         session=session,
         item_id=int(item_id),
-        warehouse_id=wh_id,
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
         delta=10,
         reason="UT_TRACE_SEED_INBOUND",
         ref="UT-TRACE-SEED",
         ref_line=1,
         occurred_at=now,
+        meta=None,
         batch_code=batch_code,
-        production_date=date.today(),
-        expiry_date=date.today() + timedelta(days=365),
+        production_date=production_date,
+        expiry_date=expiry_date,
         trace_id=trace_id,
+        utc_now=lambda: datetime.now(UTC),
     )
 
     # === 2) 建订单 ===
@@ -141,7 +154,7 @@ async def test_full_trace_order_outbound(session: AsyncSession):
     )
 
     # === 3) 出库（OutboundService.commit）→ ledger.trace_id ===
-    outbound_svc = OutboundService(stock_svc)
+    outbound_svc = OutboundService()
 
     r_outbound = await outbound_svc.commit(
         session=session,

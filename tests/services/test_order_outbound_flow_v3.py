@@ -5,10 +5,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.enums import MovementType
 from app.oms.services.order_service import OrderService
 from app.wms.outbound.services.outbound_commit_service import OutboundService
-from app.wms.stock.services.stock_service import StockService
+from tests.utils.ensure_minimal import set_stock_qty
 
 pytestmark = pytest.mark.asyncio
 
@@ -138,22 +137,16 @@ async def _ensure_seed_to_10(session: AsyncSession) -> None:
     )
     await session.commit()
 
-    svc = StockService()
     before = await _read_qty_lot(session)
     if before >= 10:
         return
 
-    need = 10 - before
-    await svc.adjust(
-        session=session,
-        item_id=ITEM_ID,
-        warehouse_id=WAREHOUSE_ID,
-        delta=int(need),
-        reason=MovementType.INBOUND,
-        ref=f"UT-SEED-OUTFLOW-{ITEM_ID}-{WAREHOUSE_ID}-NULL",
-        ref_line=1,
-        occurred_at=datetime.now(timezone.utc),
+    await set_stock_qty(
+        session,
+        item_id=int(ITEM_ID),
+        warehouse_id=int(WAREHOUSE_ID),
         batch_code=None,
+        qty=10,
     )
     await session.commit()
 

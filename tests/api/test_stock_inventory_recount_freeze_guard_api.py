@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import httpx
@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.stock.services.stock_service import StockService
+from tests.utils.ensure_minimal import set_stock_qty
 
 
 pytestmark = pytest.mark.asyncio
@@ -105,24 +105,13 @@ async def _seed_positive_stock(
     qty: int,
     ref: str,
 ) -> None:
-    now = datetime.now(UTC)
-    prod = now.date()
-    exp = prod + timedelta(days=365)
-
-    stock = StockService()
-    await stock.adjust(
-        session=session,
+    _ = ref
+    await set_stock_qty(
+        session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         batch_code=str(batch_code),
-        delta=int(qty),
-        reason="RECEIPT",
-        ref=str(ref),
-        ref_line=1,
-        occurred_at=now,
-        production_date=prod,
-        expiry_date=exp,
-        meta={"sub_reason": "UT_RECOUNT_FREEZE_GUARD_SEED"},
+        qty=int(qty),
     )
 
 
