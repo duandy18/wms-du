@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
 from app.wms.shared.services.expiry_analytics_allocator import ExpiryAnalyticsAllocator
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from tests.utils.ensure_minimal import ensure_item
 
 UTC = timezone.utc
@@ -37,40 +38,64 @@ async def test_expiry_analytics_query_returns_sorted_not_enforcing(session: Asyn
     """
     await ensure_item(session, id=3003, sku="SKU-3003", name="ITEM-3003", expiry_required=True)
 
-    svc = StockService()
     now = datetime.now(UTC)
     prod = date.today()
 
     exp_near = prod + timedelta(days=1)
     exp_far = prod + timedelta(days=10)
 
-    # 用正路写入：RECEIPT 路径写 lot canonical snapshot + RECEIPT ledger snapshot
+    lot_near = await ensure_lot_full(
+        session,
+        item_id=3003,
+        warehouse_id=1,
+        lot_code="A_NEAR",
+        production_date=prod,
+        expiry_date=exp_near,
+    )
+    lot_far = await ensure_lot_full(
+        session,
+        item_id=3003,
+        warehouse_id=1,
+        lot_code="B_FAR",
+        production_date=prod,
+        expiry_date=exp_far,
+    )
+
+    # 用 lot-only 原语写入：RECEIPT 路径写 lot canonical snapshot + RECEIPT ledger snapshot
     # ref 必须不同，避免 ledger 唯一键冲突
-    await svc.adjust(
+    await adjust_lot_impl(
         session=session,
         warehouse_id=1,
         item_id=3003,
+        lot_id=int(lot_near),
         delta=3,
         reason=MovementType.RECEIPT,
         ref="UT-EXP-NEAR",
         ref_line=1,
         occurred_at=now,
+        meta=None,
         batch_code="A_NEAR",
         production_date=prod,
         expiry_date=exp_near,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
     )
-    await svc.adjust(
+    await adjust_lot_impl(
         session=session,
         warehouse_id=1,
         item_id=3003,
+        lot_id=int(lot_far),
         delta=3,
         reason=MovementType.RECEIPT,
         ref="UT-EXP-FAR",
         ref_line=1,
         occurred_at=now,
+        meta=None,
         batch_code="B_FAR",
         production_date=prod,
         expiry_date=exp_far,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
     )
     await session.commit()
 
