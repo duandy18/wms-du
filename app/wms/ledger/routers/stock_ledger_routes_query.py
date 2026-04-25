@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.wms.stock.models.lot import Lot
 from app.wms.ledger.models.stock_ledger import StockLedger
@@ -50,13 +49,9 @@ def register(router: APIRouter) -> None:
         """
         普通查询（<=90 天限制由 normalize_time_range 控制）：
         - 默认按 occurred_at 降序 + id 降序排序；
-        - 支持 item_id/item_keyword/warehouse_id/batch_code(展示码)/lot_id/reason/reason_canon/sub_reason/ref/trace_id 过滤；
-        - 返回 item_name + batch_code(展示码) + base_uom_name（当前页批量补齐）。
+        - 支持 item_id/item_keyword/warehouse_id/lot_code/lot_id/reason/reason_canon/sub_reason/ref/trace_id 过滤；
+        - 返回 item_name + lot_code + base_uom_name（当前页批量补齐）。
         """
-        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
-        if getattr(payload, "batch_code", None) != norm_bc:
-            payload = payload.model_copy(update={"batch_code": norm_bc})
-
         time_from, time_to = normalize_time_range(payload)
 
         ids_stmt = build_base_ids_stmt(payload, time_from, time_to)
@@ -144,7 +139,6 @@ def register(router: APIRouter) -> None:
                         else None
                     ),
                     warehouse_id=r.warehouse_id,
-                    batch_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
                     lot_code=lot_code_map.get(int(getattr(r, "lot_id"))) if getattr(r, "lot_id", None) is not None else None,
                     lot_id=getattr(r, "lot_id", None),
                     trace_id=r.trace_id,

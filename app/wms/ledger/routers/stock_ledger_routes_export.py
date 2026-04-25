@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.services.lot_code_contract import normalize_optional_lot_code
 from app.db.session import get_session
 from app.wms.stock.models.lot import Lot
 from app.wms.ledger.models.stock_ledger import StockLedger
@@ -40,7 +39,6 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger], lot_code_map: dic
             "item_id",
             "warehouse_id",
             "lot_code",
-            "batch_code",
             "lot_id",
             "trace_id",
         ]
@@ -48,7 +46,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger], lot_code_map: dic
 
     for r in rows:
         lot_id = getattr(r, "lot_id", None)
-        batch_code = lot_code_map.get(int(lot_id)) if lot_id is not None else None
+        lot_code = lot_code_map.get(int(lot_id)) if lot_id is not None else None
 
         writer.writerow(
             [
@@ -63,8 +61,7 @@ def _build_export_csv_with_sub_reason(rows: list[StockLedger], lot_code_map: dic
                 r.after_qty,
                 r.item_id,
                 r.warehouse_id,
-                batch_code,
-                batch_code,
+                lot_code,
                 lot_id,
                 r.trace_id or "",
             ]
@@ -82,10 +79,6 @@ def register(router: APIRouter) -> None:
         payload: LedgerQuery,
         session: AsyncSession = Depends(get_session),
     ):
-        norm_bc = normalize_optional_lot_code(getattr(payload, "batch_code", None))
-        if getattr(payload, "batch_code", None) != norm_bc:
-            payload = payload.model_copy(update={"batch_code": norm_bc})
-
         time_from, time_to = normalize_time_range(payload)
 
         rows_stmt = select(StockLedger)
