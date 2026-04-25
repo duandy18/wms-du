@@ -176,52 +176,106 @@ class PurchaseCostSource:
             ]
         }
 
-    async def fetch_sku_purchase_ledger_options(self) -> dict[str, Any]:
+    def _build_purchase_ledger_filters(
+        self,
+        *,
+        supplier_id: int | None = None,
+        warehouse_id: int | None = None,
+        item_keyword: str = "",
+    ) -> tuple[str, dict[str, object]]:
+        keyword = item_keyword.strip()
+        params: dict[str, object] = {
+            "item_keyword": keyword,
+            "item_keyword_like": f"%{keyword}%",
+        }
+        where_clauses: list[str] = ["1 = 1"]
+
+        if supplier_id is not None:
+            params["supplier_id"] = int(supplier_id)
+            where_clauses.append("supplier_id = :supplier_id")
+
+        if warehouse_id is not None:
+            params["warehouse_id"] = int(warehouse_id)
+            where_clauses.append("warehouse_id = :warehouse_id")
+
+        if keyword:
+            where_clauses.append(
+                """
+                (
+                  item_sku ILIKE :item_keyword_like
+                  OR item_name ILIKE :item_keyword_like
+                  OR spec_text ILIKE :item_keyword_like
+                  OR CAST(item_id AS text) = :item_keyword
+                )
+                """
+            )
+
+        return "\n                      AND ".join(where_clauses), params
+
+    async def fetch_sku_purchase_ledger_options(
+        self,
+        *,
+        supplier_id: int | None = None,
+        warehouse_id: int | None = None,
+        item_keyword: str = "",
+    ) -> dict[str, Any]:
+        where_sql, params = self._build_purchase_ledger_filters(
+            supplier_id=supplier_id,
+            warehouse_id=warehouse_id,
+            item_keyword=item_keyword,
+        )
+
         item_rows = (
             await self.session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                       item_id,
                       MAX(item_sku) AS item_sku,
                       MAX(item_name) AS item_name,
                       MAX(spec_text) AS spec_text
                     FROM finance_purchase_price_ledger_lines
+                    WHERE {where_sql}
                     GROUP BY item_id
                     ORDER BY MAX(item_sku) ASC NULLS LAST, item_id ASC
                     LIMIT 500
                     """
-                )
+                ),
+                params,
             )
         ).mappings().all()
 
         supplier_rows = (
             await self.session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                       supplier_id,
                       COALESCE(supplier_name, '') AS supplier_name
                     FROM finance_purchase_price_ledger_lines
+                    WHERE {where_sql}
                     GROUP BY supplier_id, COALESCE(supplier_name, '')
                     ORDER BY supplier_name ASC, supplier_id ASC
                     """
-                )
+                ),
+                params,
             )
         ).mappings().all()
 
         warehouse_rows = (
             await self.session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                       warehouse_id,
                       COALESCE(warehouse_name, '') AS warehouse_name
                     FROM finance_purchase_price_ledger_lines
+                    WHERE {where_sql}
                     GROUP BY warehouse_id, COALESCE(warehouse_name, '')
                     ORDER BY warehouse_name ASC, warehouse_id ASC
                     """
-                )
+                ),
+                params,
             )
         ).mappings().all()
 
