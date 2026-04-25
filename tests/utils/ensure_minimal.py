@@ -227,28 +227,28 @@ async def _get_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: i
     return int(v) if v is not None else 0
 
 
-async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None) -> None:
+async def ensure_stock_slot(session: AsyncSession, *, item_id: int, warehouse_id: int, lot_code: str | None) -> None:
     """
     Phase 4D+：创建 stocks_lot 槽位（测试工具）。
 
     ✅ 工程收口：禁止 tests 里直接 INSERT INTO stocks_lot
     -> 统一走 adjust_lot_impl（writer 自己 ensure 槽位）
     """
-    await set_stock_qty(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=batch_code, qty=0)
+    await set_stock_qty(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=lot_code, qty=0)
 
 
-async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str | None, qty: int) -> None:
+async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: int, lot_code: str | None, qty: int) -> None:
     """
     Phase 4D+：把 stocks_lot 槽位的 qty 设置为特定值（幂等重置，用于测试）。
 
     ✅ 工程收口：禁止 tests 里 UPDATE stocks_lot / INSERT stocks_lot
     -> 做法：读当前 qty -> 计算 delta -> 走 adjust_lot_impl 写入（ledger + balance 一致）
     """
-    if batch_code is None:
+    if lot_code is None:
         bc_norm: Optional[str] = None
         lot_id = await ensure_internal_lot_singleton(session, item_id=int(item_id), warehouse_id=int(warehouse_id))
     else:
-        bc_norm = (str(batch_code).strip() or None)
+        bc_norm = (str(lot_code).strip() or None)
         if bc_norm is None:
             lot_id = await ensure_internal_lot_singleton(session, item_id=int(item_id), warehouse_id=int(warehouse_id))
         else:
@@ -269,7 +269,7 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
     if expiry_policy == "REQUIRED" and int(delta) > 0:
         if bc_norm is None:
             raise RuntimeError(
-                f"set_stock_qty requires batch_code for REQUIRED item: item_id={int(item_id)}"
+                f"set_stock_qty requires lot_code for REQUIRED item: item_id={int(item_id)}"
             )
         production_date, expiry_date = _stable_required_dates_from_code(bc_norm, days=365)
     else:
@@ -325,12 +325,12 @@ async def ensure_supplier_lot_with_stock(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
-        batch_code=code_raw,
+        lot_code=code_raw,
     )
     await set_stock_qty(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
-        batch_code=code_raw,
+        lot_code=code_raw,
         qty=int(qty),
     )

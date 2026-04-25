@@ -171,7 +171,7 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
         session,
         item_id=item_id,
         warehouse_id=warehouse_id,
-        batch_code=batch_code,
+        lot_code=batch_code,
         qty=5,
     )
 
@@ -247,7 +247,7 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
         session,
         item_id=item_id,
         warehouse_id=warehouse_id,
-        batch_code=batch_code,
+        lot_code=batch_code,
         qty=5,
     )
 

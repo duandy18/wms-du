@@ -110,7 +110,7 @@ async def _seed_positive_stock(
         session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
-        batch_code=str(batch_code),
+        lot_code=str(batch_code),
         qty=int(qty),
     )
 
