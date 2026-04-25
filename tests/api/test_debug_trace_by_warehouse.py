@@ -107,30 +107,36 @@ async def test_debug_trace_filter_by_warehouse(client, session: AsyncSession):
     )
 
     # 在 WH1 写一条 ledger 负账
-    await stock_svc.adjust(
+    await stock_svc.adjust_lot(
         session=session,
         item_id=item_id,
         warehouse_id=wh1,
+        lot_id=int(lot1),
         delta=-2,
         reason="UNIT_TEST_WH1",
         ref="REF-WH1",
         ref_line=1,
         occurred_at=now,
         batch_code=batch1,
+        production_date=None,
+        expiry_date=None,
         trace_id=trace_id,
     )
 
     # 在 WH2 写一条 ledger 负账
-    await stock_svc.adjust(
+    await stock_svc.adjust_lot(
         session=session,
         item_id=item_id,
         warehouse_id=wh2,
+        lot_id=int(lot2),
         delta=-3,
         reason="UNIT_TEST_WH2",
         ref="REF-WH2",
         ref_line=1,
         occurred_at=now + timedelta(seconds=1),
         batch_code=batch2,
+        production_date=None,
+        expiry_date=None,
         trace_id=trace_id,
     )
 

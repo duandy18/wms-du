@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.stock.services.stock_service import StockService
+from tests.utils.ensure_minimal import set_stock_qty
 
 pytestmark = pytest.mark.asyncio
 UTC = timezone.utc
@@ -69,21 +69,13 @@ async def _seed_positive_stock(
     qty: int,
     ref: str,
 ) -> None:
-    stock = StockService()
-    now = datetime.now(UTC)
-    await stock.adjust(
-        session=session,
+    _ = ref
+    await set_stock_qty(
+        session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         batch_code=str(batch_code),
-        delta=int(qty),
-        reason="RECEIPT",
-        ref=str(ref),
-        ref_line=1,
-        occurred_at=now,
-        production_date=now.date(),
-        expiry_date=now.date().replace(year=now.date().year + 1),
-        meta={"sub_reason": "UT_COUNT_DOC_EXECUTION_SEED"},
+        qty=int(qty),
     )
 
 

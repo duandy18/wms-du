@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import httpx
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.services.three_books_consistency import verify_commit_three_books
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.wms.stock.services.stock_service import StockService
+from tests.utils.ensure_minimal import set_stock_qty
 
 pytestmark = pytest.mark.asyncio
 UTC = timezone.utc
@@ -83,24 +83,15 @@ async def _seed_positive_stock(
     production_date: date | None = None,
     expiry_date: date | None = None,
 ) -> None:
-    now = datetime.now(UTC)
-    prod = production_date or now.date()
-    exp = expiry_date or (prod + timedelta(days=365))
-
-    stock = StockService()
-    await stock.adjust(
-        session=session,
+    _ = ref
+    _ = production_date
+    _ = expiry_date
+    await set_stock_qty(
+        session,
         item_id=int(item_id),
         warehouse_id=int(warehouse_id),
         batch_code=str(batch_code),
-        delta=int(qty),
-        reason="RECEIPT",
-        ref=str(ref),
-        ref_line=1,
-        occurred_at=now,
-        production_date=prod,
-        expiry_date=exp,
-        meta={"sub_reason": "UT_COUNT_DOC_MAINLINE_SEED"},
+        qty=int(qty),
     )
 
 
