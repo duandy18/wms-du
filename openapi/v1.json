@@ -26752,17 +26752,6 @@
             "title": "Requires Dates",
             "default": true
           },
-          "default_batch_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Default Batch Code"
-          },
           "is_test": {
             "type": "boolean",
             "title": "Is Test",

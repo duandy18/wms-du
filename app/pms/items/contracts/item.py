@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -177,7 +177,6 @@ class ItemOut(ItemBase):
 
     requires_batch: bool = True
     requires_dates: bool = True
-    default_batch_code: Optional[str] = None
 
     is_test: bool = False
 

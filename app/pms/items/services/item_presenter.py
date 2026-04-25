@@ -16,7 +16,7 @@ class ItemPresenter:
     输出投影层（Presentation / Projection）：
 
     - 负责把“裸 Item ORM”变成“对外契约 Item”：
-      * decorate_rules（requires_batch / default_batch_code 等规则投影）
+      * decorate_rules（requires_batch / requires_dates 等规则投影）
       * is_test（DEFAULT test set membership）
       * primary_barcode（主条码真相）
     - 不负责 CRUD / 事务
