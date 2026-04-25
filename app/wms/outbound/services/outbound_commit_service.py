@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.services.lot_code_contract import fetch_item_expiry_policy_map
+from app.wms.stock.services.stock_contract_resolver import resolve_lot_for_stock_adjust
 from app.core.problem import raise_problem
 from app.wms.outbound.services.invariant_guard_outbound import enforce_outbound_invariant_guard
 from app.wms.outbound.services.order_fulfillment_service import OrderFulfillmentService
@@ -239,19 +240,37 @@ class OutboundService:
                         expiry_date=None,
                     )
                 else:
-                    res = await self.stock_svc.adjust(
+                    resolved_lot_id, resolved_batch_code = await resolve_lot_for_stock_adjust(
+                        session,
+                        lot_resolver=self.stock_svc.lot_resolver,
+                        item_id=int(item_id),
+                        warehouse_id=int(wh_id),
+                        batch_code=batch_code,
+                        lot_id=None,
+                        ref=str(order_ref),
+                        occurred_at=ts,
+                        production_date=None,
+                        expiry_date=None,
+                    )
+
+                    res = await self.stock_svc.adjust_lot(
                         session=session,
-                        item_id=item_id,
+                        item_id=int(item_id),
+                        warehouse_id=int(wh_id),
+                        lot_id=int(resolved_lot_id),
                         delta=-need,
                         reason="OUTBOUND_SHIP",
                         ref=str(order_ref),
                         ref_line=1,
                         occurred_at=ts,
-                        warehouse_id=wh_id,
-                        batch_code=batch_code,
                         trace_id=trace_id,
+                        batch_code=resolved_batch_code,
                         meta={"sub_reason": "ORDER_SHIP", "order_id": int(order_pk)},
+                        production_date=None,
+                        expiry_date=None,
                     )
+                    lot_id = int(resolved_lot_id)
+                    batch_code = resolved_batch_code
 
                 committed += 1
                 total_qty += need
