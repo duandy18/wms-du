@@ -40,12 +40,12 @@ test-core: venv audit-all upgrade-dev-test-db
 
 .PHONY: test-flow
 test-flow: venv audit-all upgrade-dev-test-db
-	@echo "[pytest] Flow tests (explicit file set)"
+	@echo "[pytest] Flow tests (formal outbound submit contracts)"
 	@PYTHONPATH=. WMS_ENV=test WMS_DATABASE_URL="$(DEV_TEST_DB_DSN)" WMS_TEST_DATABASE_URL="$(DEV_TEST_DB_DSN)" \
 	$(PYTEST) -q -s \
-	  tests/services/test_order_outbound_flow_v3.py \
-	  tests/services/test_outbound_ledger_consistency.py \
-	  tests/services/test_outbound_idempotency.py
+	  tests/api/test_order_outbound_submit_api.py \
+	  tests/api/test_manual_outbound_submit_api.py \
+	  tests/api/test_outbound_summary_api.py
 
 .PHONY: test-snapshot
 test-snapshot: venv audit-all upgrade-dev-test-db
