@@ -24,11 +24,11 @@ def register(router: APIRouter) -> None:
     async def get_orders_sla_stats(
         time_from: Optional[datetime] = Query(
             None,
-            description="起始时间（含），用于过滤发货时间 outbound_commits_v2.created_at",
+            description="起始时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at",
         ),
         time_to: Optional[datetime] = Query(
             None,
-            description="结束时间（含），用于过滤发货时间 outbound_commits_v2.created_at",
+            description="结束时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at",
         ),
         platform: Optional[str] = Query(
             None,
@@ -49,10 +49,10 @@ def register(router: APIRouter) -> None:
         订单发货 SLA 统计：
 
         - 以 orders.created_at 为下单时间；
-        - 以 outbound_commits_v2.created_at 为发货时间（state=COMPLETED）；
-        - 两表通过 trace_id 关联。
+        - 以 order_fulfillment.shipped_at 为发货完成时间；
+        - 通过 order_fulfillment.order_id 关联 orders.id。
 
-        只统计在给定时间窗口内发货的订单（按 outbound_commits_v2.created_at 过滤）。
+        只统计在给定时间窗口内发货的订单（按 order_fulfillment.shipped_at 过滤）。
 
         ✅ PROD-only（简化口径）：
         - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
@@ -68,25 +68,22 @@ def register(router: APIRouter) -> None:
             o.platform              AS platform,
             o.shop_id               AS shop_id,
             o.created_at            AS created_at,
-            oc.created_at           AS shipped_at,
-            EXTRACT(EPOCH FROM (oc.created_at - o.created_at)) / 3600.0
+            f.shipped_at            AS shipped_at,
+            EXTRACT(EPOCH FROM (f.shipped_at - o.created_at)) / 3600.0
                                     AS latency_hours
           FROM orders AS o
-          JOIN outbound_commits_v2 AS oc
-            ON oc.trace_id = o.trace_id
-          WHERE oc.state = 'COMPLETED'
-            AND oc.created_at >= :start
-            AND oc.created_at <= :end
+          JOIN order_fulfillment AS f
+            ON f.order_id = o.id
+          WHERE f.shipped_at IS NOT NULL
+            AND f.shipped_at >= :start
+            AND f.shipped_at <= :end
 
             -- ----------------- PROD-only：测试店铺门禁（store_id 级别） -----------------
             AND NOT EXISTS (
               SELECT 1
-                FROM stores s
-                JOIN platform_test_shops pts
-                  ON pts.store_id = s.id
+                FROM platform_test_shops pts
+               WHERE pts.store_id = o.store_id
                  AND pts.code = 'DEFAULT'
-               WHERE upper(s.platform) = upper(o.platform)
-                 AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
             )
         {plat_clause}
         {shop_clause}

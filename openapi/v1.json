@@ -16475,7 +16475,7 @@
           "orders-sla"
         ],
         "summary": "Get Orders Sla Stats",
-        "description": "订单发货 SLA 统计：\n\n- 以 orders.created_at 为下单时间；\n- 以 outbound_commits_v2.created_at 为发货时间（state=COMPLETED）；\n- 两表通过 trace_id 关联。\n\n只统计在给定时间窗口内发货的订单（按 outbound_commits_v2.created_at 过滤）。\n\n✅ PROD-only（简化口径）：\n- 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）",
+        "description": "订单发货 SLA 统计：\n\n- 以 orders.created_at 为下单时间；\n- 以 order_fulfillment.shipped_at 为发货完成时间；\n- 通过 order_fulfillment.order_id 关联 orders.id。\n\n只统计在给定时间窗口内发货的订单（按 order_fulfillment.shipped_at 过滤）。\n\n✅ PROD-only（简化口径）：\n- 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）",
         "operationId": "get_orders_sla_stats_orders_stats_sla_get",
         "parameters": [
           {
@@ -16492,10 +16492,10 @@
                   "type": "null"
                 }
               ],
-              "description": "起始时间（含），用于过滤发货时间 outbound_commits_v2.created_at",
+              "description": "起始时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at",
               "title": "Time From"
             },
-            "description": "起始时间（含），用于过滤发货时间 outbound_commits_v2.created_at"
+            "description": "起始时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at"
           },
           {
             "name": "time_to",
@@ -16511,10 +16511,10 @@
                   "type": "null"
                 }
               ],
-              "description": "结束时间（含），用于过滤发货时间 outbound_commits_v2.created_at",
+              "description": "结束时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at",
               "title": "Time To"
             },
-            "description": "结束时间（含），用于过滤发货时间 outbound_commits_v2.created_at"
+            "description": "结束时间（含），用于过滤发货完成时间 order_fulfillment.shipped_at"
           },
           {
             "name": "platform",
