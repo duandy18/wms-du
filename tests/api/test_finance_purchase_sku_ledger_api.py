@@ -269,3 +269,52 @@ async def test_finance_purchase_sku_ledger_options_include_items_suppliers_and_w
     assert any(int(row["item_id"]) == item_id for row in body["items"]), body
     assert any(int(row["supplier_id"]) == 1 for row in body["suppliers"]), body
     assert any(int(row["warehouse_id"]) == 1 for row in body["warehouses"]), body
+
+
+@pytest.mark.asyncio
+async def test_finance_purchase_sku_ledger_options_are_cascading(
+    client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _headers(client)
+    item_id = await _pick_supplier_item(client, headers)
+    uom_id, _ratio_to_base = await _pick_purchase_uom(session, item_id=item_id)
+
+    payload = {
+        "warehouse_id": 1,
+        "supplier_id": 1,
+        "purchaser": "UT",
+        "purchase_time": "2036-01-17T10:00:00Z",
+        "lines": [
+            {
+                "line_no": 1,
+                "item_id": item_id,
+                "uom_id": uom_id,
+                "qty_input": 1,
+                "supply_price": "5.00",
+            }
+        ],
+    }
+
+    created = await client.post("/purchase-orders/", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+
+    resp = await client.get(
+        f"/finance/purchase-costs/sku-purchase-ledger/options"
+        f"?supplier_id=1"
+        f"&warehouse_id=1"
+        f"&item_keyword={item_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert set(body) == {"items", "suppliers", "warehouses"}
+
+    assert body["items"], body
+    assert body["suppliers"], body
+    assert body["warehouses"], body
+
+    assert all(int(row["item_id"]) == item_id for row in body["items"]), body
+    assert all(int(row["supplier_id"]) == 1 for row in body["suppliers"]), body
+    assert all(int(row["warehouse_id"]) == 1 for row in body["warehouses"]), body

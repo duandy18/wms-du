@@ -47,9 +47,16 @@ def register(router: APIRouter) -> None:
     async def get_finance_sku_purchase_ledger_options(
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
+        supplier_id: int | None = Query(None, description="供应商过滤，可选"),
+        warehouse_id: int | None = Query(None, description="仓库过滤，可选"),
+        item_keyword: str | None = Query(None, description="商品名 / SKU / item_id 过滤，可选"),
     ) -> SkuPurchaseLedgerOptionsResponse:
         _ = current_user
-        return await FinancePurchaseCostService(session).get_sku_purchase_ledger_options()
+        return await FinancePurchaseCostService(session).get_sku_purchase_ledger_options(
+            supplier_id=supplier_id,
+            warehouse_id=warehouse_id,
+            item_keyword=item_keyword or "",
+        )
 
     @router.get(
         "/purchase-costs/sku-purchase-ledger",

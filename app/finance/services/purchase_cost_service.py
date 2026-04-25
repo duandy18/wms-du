@@ -48,7 +48,17 @@ class FinancePurchaseCostService:
         )
         return SkuPurchaseLedgerResponse(**data)
 
-    async def get_sku_purchase_ledger_options(self) -> SkuPurchaseLedgerOptionsResponse:
+    async def get_sku_purchase_ledger_options(
+        self,
+        *,
+        supplier_id: int | None = None,
+        warehouse_id: int | None = None,
+        item_keyword: str = "",
+    ) -> SkuPurchaseLedgerOptionsResponse:
         source = PurchaseCostSource(self.session)
-        data = await source.fetch_sku_purchase_ledger_options()
+        data = await source.fetch_sku_purchase_ledger_options(
+            supplier_id=supplier_id,
+            warehouse_id=warehouse_id,
+            item_keyword=item_keyword,
+        )
         return SkuPurchaseLedgerOptionsResponse(**data)
