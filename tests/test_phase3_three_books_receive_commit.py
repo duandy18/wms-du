@@ -11,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.wms.shared.enums import MovementType
 from app.wms.snapshot.services.snapshot_run import run_snapshot
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from app.wms.shared.services.three_books_consistency import verify_commit_three_books
+
+
+UTC = timezone.utc
 
 
 async def _pick_test_item(session: AsyncSession) -> tuple[int, bool]:
@@ -82,8 +85,7 @@ async def _ensure_base_uom(session: AsyncSession, *, item_id: int) -> Tuple[int,
               display_name = EXCLUDED.display_name,
               is_base = EXCLUDED.is_base,
               is_purchase_default = EXCLUDED.is_purchase_default,
-              is_inbound_default = EXCLUDED.is_inbound_default,
-              is_outbound_default = EXCLUDED.is_outbound_default
+              is_inbound_default = EXCLUDED.is_outbound_default
             """
         ),
         {"i": int(item_id)},
@@ -193,7 +195,7 @@ async def _insert_released_receipt_with_line(
     trace_id: str,
     production_date: Optional[date],
     expiry_date: Optional[date],
-) -> int:
+) -> tuple[int, int]:
     """
     终态 receipt 事实（RELEASED）：
     - inbound_receipt_lines 使用终态列（uom_id + qty_input + ratio_to_base_snapshot + qty_base + lot_id + warehouse_id）
@@ -266,7 +268,12 @@ async def _insert_released_receipt_with_line(
         )
         lot_code_input = str(batch_code)
     else:
-        lot_id = await _ensure_internal_lot_for_receipt(session, warehouse_id=int(warehouse_id), item_id=int(item_id), receipt_id=int(receipt_id))
+        lot_id = await _ensure_internal_lot_for_receipt(
+            session,
+            warehouse_id=int(warehouse_id),
+            item_id=int(item_id),
+            receipt_id=int(receipt_id),
+        )
         lot_code_input = None
 
     await session.execute(
@@ -319,7 +326,7 @@ async def _insert_released_receipt_with_line(
         },
     )
     await session.flush()
-    return receipt_id
+    return int(receipt_id), int(lot_id)
 
 
 @pytest.mark.asyncio
@@ -328,7 +335,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     Phase 3 合同测试（终态口径）：
 
     - 以 Receipt(RELEASED) 作为事实锚点（终态不再有旧执行层）
-    - 以 StockService.adjust(INBOUND) 作为“入库落账动作”写入 ledger+stocks_lot
+    - 以 lot-only 写入原语作为“入库落账动作”写入 ledger+stocks_lot
     - snapshot(today) == stocks_lot（至少对 touched keys）
     - verify_commit_three_books 对 touched effects 做三账一致性校验
 
@@ -336,9 +343,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
     - expiry_policy=NONE：batch_code=NULL 且 production/expiry=NULL；库存聚合到无批次槽位（INTERNAL lot_code NULL）
     - expiry_policy=REQUIRED：batch_code 非空；日期按测试显式填写
     """
-    stock_svc = StockService()
-    utc = timezone.utc
-    now = datetime.now(utc)
+    now = datetime.now(UTC)
 
     item_id, may_need_expiry = await _pick_test_item(session)
 
@@ -355,7 +360,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         exp = None
 
     # 1) 写入 Receipt 事实（终态：RELEASED）
-    await _insert_released_receipt_with_line(
+    _receipt_id, lot_id = await _insert_released_receipt_with_line(
         session,
         warehouse_id=1,
         item_id=item_id,
@@ -367,42 +372,27 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         expiry_date=exp,
     )
 
-    # 2) 写入入库动作（ledger+stocks_lot）
+    # 2) 写入入库动作（ledger+stocks_lot）。测试造数统一走 lot-only 原语，不再调用 StockService.adjust。
     ref = "RCPT-PH3-UT"
-    await stock_svc.adjust(
+    await adjust_lot_impl(
         session=session,
-        item_id=item_id,
+        item_id=int(item_id),
         warehouse_id=1,
-        delta=scanned_qty,
+        lot_id=int(lot_id),
+        delta=int(scanned_qty),
         reason=MovementType.INBOUND,
         ref=ref,
         ref_line=1,
         occurred_at=now,
+        meta=None,
         batch_code=batch_code,
         production_date=prod,
         expiry_date=exp,
+        trace_id="PH3-UT-TRACE",
+        utc_now=lambda: datetime.now(UTC),
     )
 
     # 3) 双保险：独立跑快照 + 三账一致性校验
-    # 终态：effects 必须带 lot_id（lot-only world），从 ledger 反查本次 ref/ref_line 的 lot_id
-    row = await session.execute(
-        text(
-            """
-            SELECT lot_id
-              FROM stock_ledger
-             WHERE warehouse_id = :w
-               AND item_id = :i
-               AND ref = :ref
-               AND ref_line = :rl
-             ORDER BY id DESC
-             LIMIT 1
-            """
-        ),
-        {"w": 1, "i": int(item_id), "ref": str(ref), "rl": 1},
-    )
-    lot_id = row.scalar_one_or_none()
-    assert lot_id is not None, {"msg": "expected ledger row to provide lot_id", "ref": ref, "ref_line": 1, "item_id": item_id}
-
     await run_snapshot(session)
     await verify_commit_three_books(
         session,
@@ -412,7 +402,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
             {
                 "warehouse_id": 1,
                 "item_id": item_id,
-                "batch_code": batch_code,
+                "lot_code": batch_code,
                 "lot_id": int(lot_id),
                 "qty": scanned_qty,
                 "ref": ref,
