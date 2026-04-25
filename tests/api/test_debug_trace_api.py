@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -10,6 +10,7 @@ from tests.services._helpers import ensure_store
 from tests.utils.ensure_minimal import ensure_item
 
 from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 pytestmark = pytest.mark.asyncio
 
@@ -144,51 +145,43 @@ async def _seed_trace_case(session: AsyncSession) -> str:
         expiry_date=exp,
     )
 
+    # 先写入 +2 库存，再写 SHIPMENT -2。
+    # 不能直接插 ledger 负账，否则会破坏 ledger / stocks_lot 三账一致性。
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
+        delta=2,
+        reason="UT_TRACE_SEED_INBOUND",
+        ref=f"{order_ref}:SEED",
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+        meta=None,
+        batch_code=lot_code,
+        production_date=prod,
+        expiry_date=exp,
+        trace_id=trace_id,
+        utc_now=lambda: datetime.now(timezone.utc),
+    )
+
     # stock_ledger：SHIPMENT（lot_id 维度；不写 batch_code）
-    await session.execute(
-        text(
-            """
-            INSERT INTO stock_ledger (
-                trace_id,
-                warehouse_id,
-                item_id,
-                lot_id,
-                reason,
-                reason_canon,
-                ref,
-                ref_line,
-                delta,
-                occurred_at,
-                created_at,
-                after_qty,
-                production_date,
-                expiry_date
-            )
-            VALUES (
-                :trace_id,
-                :wh_id,
-                :item_id,
-                :lot_id,
-                'SHIPMENT',
-                'SHIPMENT',
-                :ref,
-                1,
-                -2,
-                now(),
-                now(),
-                0,
-                NULL,
-                NULL
-            )
-            """
-        ),
-        {
-            "trace_id": trace_id,
-            "wh_id": wh_id,
-            "item_id": item_id,
-            "lot_id": int(lot_id),
-            "ref": order_ref,
-        },
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
+        delta=-2,
+        reason="SHIPMENT",
+        ref=order_ref,
+        ref_line=1,
+        occurred_at=datetime.now(timezone.utc),
+        meta=None,
+        batch_code=lot_code,
+        production_date=None,
+        expiry_date=None,
+        trace_id=trace_id,
+        utc_now=lambda: datetime.now(timezone.utc),
     )
 
     await session.commit()
