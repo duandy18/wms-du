@@ -19,9 +19,9 @@ __all__ = [
     "_has_table",
     "_columns_of",
     "ensure_wh_loc_item",
-    "seed_batch_slot",
+    "seed_supplier_lot_slot",
     "seed_many",
-    "qty_by_code",
+    "qty_by_lot_code",
     "sum_on_hand",
     "available",
     "insert_snapshot",
@@ -135,12 +135,12 @@ async def _get_stock_qty(session: AsyncSession, *, item: int, wh: int, lot_id: i
     return int(v) if v is not None else 0
 
 
-async def seed_batch_slot(
+async def seed_supplier_lot_slot(
     session: AsyncSession,
     *,
     item: int,
     loc: int,
-    code: str,
+    lot_code: str,
     qty: int,
     days: int = 365,
 ) -> None:
@@ -153,11 +153,11 @@ async def seed_batch_slot(
       （等价于旧实现的 ON CONFLICT DO UPDATE SET qty）
 
     关键：日期合同必须认真对待
-    - seed_batch_slot 的语义就是“造一个 SUPPLIER batch slot”，因此商品必须走 REQUIRED
+    - seed_supplier_lot_slot 的语义就是“造一个 SUPPLIER lot slot”，因此商品必须走 REQUIRED
     - REQUIRED 且发生入库（delta>0）时，必须提供 production/expiry 事实
     """
     wh = _wh_from_loc(loc)
-    code_raw = str(code).strip()
+    code_raw = str(lot_code).strip()
     if not code_raw:
         raise ValueError("code empty")
 
@@ -204,7 +204,7 @@ async def seed_batch_slot(
     if expiry_policy == "REQUIRED" and int(delta) > 0 and expiry_date is None:
         production_date, expiry_date = _stable_required_dates_from_code(code_raw, days=int(days))
 
-    ref = f"ut:seed_batch_slot:set:{int(wh)}:{int(item)}:{code_raw}:{int(target)}"
+    ref = f"ut:seed_supplier_lot_slot:set:{int(wh)}:{int(item)}:{code_raw}:{int(target)}"
 
     await adjust_lot_impl(
         session=session,
@@ -227,7 +227,7 @@ async def seed_batch_slot(
 
 async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]) -> None:
     for item, loc, code, qty, days in entries:
-        await seed_batch_slot(session, item=item, loc=loc, code=code, qty=qty, days=days)
+        await seed_supplier_lot_slot(session, item=item, loc=loc, lot_lot_code=code, qty=qty, days=days)
 
 
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
@@ -243,7 +243,7 @@ async def available(session: AsyncSession, *, item: int, loc: int) -> int:
     return await sum_on_hand(session, item=item, loc=loc)
 
 
-async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) -> int:
+async def qty_by_lot_code(session: AsyncSession, *, item: int, loc: int, lot_code: str) -> int:
     wh = _wh_from_loc(loc)
     row = await session.execute(
         SA(
@@ -256,7 +256,7 @@ async def qty_by_code(session: AsyncSession, *, item: int, loc: int, code: str) 
                AND lo.lot_code = :code
             """
         ),
-        {"i": int(item), "w": int(wh), "code": str(code)},
+        {"i": int(item), "w": int(wh), "code": str(lot_code)},
     )
     return int(row.scalar_one() or 0)
 
