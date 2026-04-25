@@ -1,11 +1,12 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_internal_lot_singleton
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 UTC = timezone.utc
 
@@ -59,10 +60,49 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
     return int(row.scalar_one_or_none() or 0)
 
 
+async def _ensure_internal_lot(session: AsyncSession, *, item_id: int, wh: int) -> int:
+    lot_id = await ensure_internal_lot_singleton(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        source_receipt_id=None,
+        source_line_no=None,
+    )
+    return int(lot_id)
+
+
+async def _write_delta(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    wh: int,
+    lot_id: int,
+    delta: int,
+    reason: str,
+    ref: str,
+    ref_line: int,
+) -> None:
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        lot_id=int(lot_id),
+        delta=int(delta),
+        reason=str(reason),
+        ref=str(ref),
+        ref_line=int(ref_line),
+        occurred_at=datetime.now(UTC),
+        meta=None,
+        batch_code=None,
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
+    )
+
+
 @pytest.mark.asyncio
 async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
-    svc = StockService()
-
     item_id = 1
     wh_returns = await _ensure_wh(session, "RETURNS")
     wh_main = await _ensure_wh(session, "MAIN")
@@ -76,43 +116,41 @@ async def test_inbound_receive_and_reclassify_integrity(session: AsyncSession):
 
     batch_code: str | None = None
 
-    await svc.adjust(
-        session=session,
+    lot_returns = await _ensure_internal_lot(session, item_id=item_id, wh=wh_returns)
+    lot_main = await _ensure_internal_lot(session, item_id=item_id, wh=wh_main)
+
+    await _write_delta(
+        session,
         item_id=item_id,
-        warehouse_id=wh_returns,
+        wh=wh_returns,
+        lot_id=lot_returns,
         delta=+2,
         reason=MovementType.INBOUND,
         ref="PO-R1",
         ref_line=1,
-        occurred_at=datetime.now(UTC),
-        batch_code=batch_code,
-        production_date=date.today(),
     )
     r0 = await _qty(session, item_id, wh_returns, batch_code)
     assert r0 >= 2
 
-    await svc.adjust(
-        session=session,
+    await _write_delta(
+        session,
         item_id=item_id,
-        warehouse_id=wh_returns,
+        wh=wh_returns,
+        lot_id=lot_returns,
         delta=-1,
         reason="RETURN_RECLASSIFY",
         ref="X-MOVE-1",
         ref_line=1,
-        occurred_at=datetime.now(UTC),
-        batch_code=batch_code,
     )
-    await svc.adjust(
-        session=session,
+    await _write_delta(
+        session,
         item_id=item_id,
-        warehouse_id=wh_main,
+        wh=wh_main,
+        lot_id=lot_main,
         delta=+1,
         reason="RETURN_RECLASSIFY",
         ref="X-MOVE-1",
         ref_line=2,
-        occurred_at=datetime.now(UTC),
-        batch_code=batch_code,
-        production_date=date.today(),
     )
 
     r1 = await _qty(session, item_id, wh_returns, batch_code)

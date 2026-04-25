@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
 from app.wms.stock.services.lots import ensure_internal_lot_singleton
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 UTC = timezone.utc
 
@@ -45,7 +45,6 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, lot_id: int) -> int
 
 @pytest.mark.asyncio
 async def test_receive_then_pick_then_count(session: AsyncSession):
-    svc = StockService()
     item_id = 1
     wh = 1
 
@@ -59,7 +58,7 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     lot_id = await _ensure_internal_lot(session, item_id=item_id, wh=wh, ref="UT-IPC-INTERNAL-RECEIPT-1")
     batch_code: str | None = None
 
-    await svc.adjust_lot(
+    await adjust_lot_impl(
         session=session,
         item_id=item_id,
         warehouse_id=wh,
@@ -69,12 +68,17 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
         ref="Q-IPC-1",
         ref_line=1,
         occurred_at=datetime.now(UTC),
+        meta=None,
         batch_code=batch_code,
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
     )
     q1 = await _qty(session, item_id, wh, lot_id)
     assert q1 >= 2
 
-    await svc.adjust_lot(
+    await adjust_lot_impl(
         session=session,
         item_id=item_id,
         warehouse_id=wh,
@@ -84,7 +88,12 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
         ref="Q-IPC-2",
         ref_line=1,
         occurred_at=datetime.now(UTC),
+        meta=None,
         batch_code=batch_code,
+        production_date=None,
+        expiry_date=None,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
     )
     q2 = await _qty(session, item_id, wh, lot_id)
     assert q2 == q1 - 1
@@ -92,7 +101,7 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
     remain = await _qty(session, item_id, wh, lot_id)
     delta = 1 - remain
     if delta != 0:
-        await svc.adjust_lot(
+        await adjust_lot_impl(
             session=session,
             item_id=item_id,
             warehouse_id=wh,
@@ -102,7 +111,12 @@ async def test_receive_then_pick_then_count(session: AsyncSession):
             ref="Q-IPC-3",
             ref_line=1,
             occurred_at=datetime.now(UTC),
+            meta=None,
             batch_code=batch_code,
+            production_date=None,
+            expiry_date=None,
+            trace_id=None,
+            utc_now=lambda: datetime.now(UTC),
         )
     q3 = await _qty(session, item_id, wh, lot_id)
     assert q3 == 1

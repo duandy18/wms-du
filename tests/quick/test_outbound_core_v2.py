@@ -1,12 +1,12 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 UTC = timezone.utc
 
@@ -62,47 +62,86 @@ async def _qty(session: AsyncSession, item_id: int, wh: int, code: str | None) -
     return int(r.scalar_one_or_none() or 0)
 
 
+async def _lot_id_for_slot(session: AsyncSession, *, item_id: int, wh: int, code: str | None) -> int:
+    if code is None:
+        return int(
+            await ensure_internal_lot_singleton(
+                session,
+                item_id=int(item_id),
+                warehouse_id=int(wh),
+                source_receipt_id=None,
+                source_line_no=None,
+            )
+        )
+
+    prod = date.today()
+    exp = prod + timedelta(days=365)
+    return int(
+        await ensure_lot_full(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(wh),
+            lot_code=str(code),
+            production_date=prod,
+            expiry_date=exp,
+        )
+    )
+
+
+async def _write_delta(
+    session: AsyncSession,
+    *,
+    item_id: int,
+    wh: int,
+    code: str | None,
+    delta: int,
+    reason: MovementType | str,
+    ref: str,
+    ref_line: int,
+):
+    lot_id = await _lot_id_for_slot(session, item_id=int(item_id), wh=int(wh), code=code)
+    prod = date.today() if code is not None else None
+    exp = (prod + timedelta(days=365)) if prod is not None else None
+    return await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        lot_id=int(lot_id),
+        delta=int(delta),
+        reason=reason,
+        ref=str(ref),
+        ref_line=int(ref_line),
+        occurred_at=datetime.now(UTC),
+        meta=None,
+        batch_code=code,
+        production_date=prod,
+        expiry_date=exp,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
+    )
+
+
 async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, code: str | None, qty: int) -> None:
-    svc = StockService()
     before = await _qty(session, item_id, wh, code)
     if before >= qty:
         return
 
     need = qty - before
-    if code is None:
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-OUTCORE-{item_id}-{wh}-NULL",
-            ref_line=1,
-            occurred_at=datetime.now(UTC),
-            batch_code=None,
-        )
-    else:
-        prod = date.today()
-        exp = prod + timedelta(days=365)
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-OUTCORE-{item_id}-{wh}-{code}",
-            ref_line=1,
-            occurred_at=datetime.now(UTC),
-            batch_code=str(code),
-            production_date=prod,
-            expiry_date=exp,
-        )
+    await _write_delta(
+        session,
+        item_id=int(item_id),
+        wh=int(wh),
+        code=code,
+        delta=int(need),
+        reason=MovementType.INBOUND,
+        ref=f"UT-SEED-OUTCORE-{item_id}-{wh}-{code or 'NULL'}",
+        ref_line=1,
+    )
     await session.commit()
 
 
 @pytest.mark.asyncio
 async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
-    svc = StockService()
     item_id, wh = 3003, 1
     code = await _slot_code(session, item_id)
 
@@ -113,49 +152,44 @@ async def test_outbound_core_idem_and_insufficient(session: AsyncSession):
     assert before >= 1
 
     # 扣 1
-    await svc.adjust(
-        session=session,
+    await _write_delta(
+        session,
         item_id=item_id,
+        wh=wh,
+        code=code,
         delta=-1,
         reason=MovementType.OUTBOUND,
         ref="Q-OUTCORE-1",
         ref_line=1,
-        occurred_at=datetime.now(UTC),
-        batch_code=code,
-        warehouse_id=wh,
     )
     mid = await _qty(session, item_id, wh, code)
     assert mid == before - 1
 
     # 同 ref/ref_line 幂等
-    res = await svc.adjust(
-        session=session,
+    res = await _write_delta(
+        session,
         item_id=item_id,
+        wh=wh,
+        code=code,
         delta=-1,
         reason=MovementType.OUTBOUND,
         ref="Q-OUTCORE-1",
         ref_line=1,
-        occurred_at=datetime.now(UTC),
-        batch_code=code,
-        warehouse_id=wh,
     )
     assert res.get("idempotent") is True
 
     # 不足：新世界观为 409 + Problem（HTTPException）
     remain = await _qty(session, item_id, wh, code)
-    with pytest.raises(HTTPException) as exc:
-        await svc.adjust(
-            session=session,
+    with pytest.raises(ValueError) as exc:
+        await _write_delta(
+            session,
             item_id=item_id,
+            wh=wh,
+            code=code,
             delta=-(remain + 1),
             reason=MovementType.OUTBOUND,
             ref="Q-OUTCORE-2",
             ref_line=1,
-            occurred_at=datetime.now(UTC),
-            batch_code=code,
-            warehouse_id=wh,
         )
 
-    assert exc.value.status_code == 409
-    assert isinstance(exc.value.detail, dict)
-    assert exc.value.detail.get("error_code") == "insufficient_stock"
+    assert "insufficient stock" in str(exc.value).lower()
