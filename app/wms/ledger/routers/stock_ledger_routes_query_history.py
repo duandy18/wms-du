@@ -139,7 +139,7 @@ async def _load_receipt_line_rows(
             pol.item_sku AS item_sku,
             NULL::varchar AS category,
             pol.spec_text AS spec_text,
-            COALESCE(lo.lot_code, rl.lot_code_input, '') AS batch_code,
+            COALESCE(lo.lot_code, rl.lot_code_input, '') AS lot_code,
             rl.production_date,
             rl.expiry_date,
             COALESCE(rl.qty_base, 0) AS qty_received,
@@ -159,6 +159,47 @@ async def _load_receipt_line_rows(
     )
     rows = await session.execute(sql, {"receipt_id": int(receipt_id)})
     return [dict(r) for r in rows.mappings().all()]
+
+
+async def _load_lot_code_map(
+    session: AsyncSession,
+    *,
+    ledger_rows: list[StockLedger],
+) -> dict[int, str | None]:
+    lot_ids = sorted(
+        {
+            int(getattr(row, "lot_id"))
+            for row in ledger_rows
+            if getattr(row, "lot_id", None) is not None
+        }
+    )
+    if not lot_ids:
+        return {}
+
+    res = await session.execute(select(Lot.id, Lot.lot_code).where(Lot.id.in_(lot_ids)))
+    return {int(lot_id): lot_code for lot_id, lot_code in res.all()}
+
+
+def _explain_ledger_row(row: StockLedger, lot_code_map: dict[int, str | None]) -> ExplainLedgerRow:
+    lot_id = getattr(row, "lot_id", None)
+    return ExplainLedgerRow(
+        id=int(row.id),
+        warehouse_id=int(row.warehouse_id),
+        item_id=int(row.item_id),
+        lot_code=lot_code_map.get(int(lot_id)) if lot_id is not None else None,
+        reason=str(row.reason),
+        reason_canon=getattr(row, "reason_canon", None),
+        sub_reason=getattr(row, "sub_reason", None),
+        ref=str(row.ref),
+        ref_line=int(row.ref_line),
+        delta=int(row.delta),
+        after_qty=int(row.after_qty),
+        occurred_at=row.occurred_at,
+        created_at=row.created_at,
+        trace_id=getattr(row, "trace_id", None),
+        production_date=getattr(row, "production_date", None),
+        expiry_date=getattr(row, "expiry_date", None),
+    )
 
 
 def register(router: APIRouter) -> None:
@@ -196,6 +237,7 @@ def register(router: APIRouter) -> None:
             .limit(limit)
         )
         ledger_rows = (await session.execute(ledger_stmt)).scalars().all()
+        lot_code_map = await _load_lot_code_map(session, ledger_rows=ledger_rows)
 
         po_obj: Optional[PurchaseOrder] = None
         if str(receipt_row.get("source_type") or "") == "PO" and receipt_row.get("source_id") is not None:
@@ -203,7 +245,7 @@ def register(router: APIRouter) -> None:
 
         return LedgerExplainOut(
             anchor=ExplainAnchor(ref=ref, trace_id=normalized_trace_id),
-            ledger=[ExplainLedgerRow.model_validate(r) for r in ledger_rows],
+            ledger=[_explain_ledger_row(r, lot_code_map) for r in ledger_rows],
             receipt=ExplainReceipt.model_validate(receipt_row),
             receipt_lines=[ExplainReceiptLine.model_validate(ln) for ln in receipt_lines],
             purchase_order=(

@@ -44,7 +44,7 @@ class ExplainReceiptLine(BaseModel):
     category: Optional[str] = None
     spec_text: Optional[str] = None
 
-    batch_code: str
+    lot_code: Optional[str] = None
     production_date: Optional[date] = None
     expiry_date: Optional[date] = None
 
@@ -103,7 +103,7 @@ class ExplainLedgerRow(BaseModel):
     id: int
     warehouse_id: int
     item_id: int
-    batch_code: str
+    lot_code: Optional[str] = None
 
     reason: str
     reason_canon: Optional[str] = None

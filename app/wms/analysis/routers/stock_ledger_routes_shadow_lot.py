@@ -28,7 +28,7 @@ def register(router: APIRouter) -> None:
             item_id=int(payload.item_id),
             time_from=time_from,
             time_to=time_to,
-            batch_code=getattr(payload, "lot_code", None),
+            lot_code=getattr(payload, "lot_code", None),
             lot_id=getattr(payload, "lot_id", None),
         )
 
