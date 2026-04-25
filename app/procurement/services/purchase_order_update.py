@@ -26,7 +26,6 @@ from app.procurement.repos.purchase_order_update_repo import (
 from app.procurement.services.purchase_order_create import (
     _load_items_map,
     _maybe_uom_id_from_raw,
-    _parse_discount_amount,
     _require_qty_input_from_raw,
     _require_supplier_snapshot_via_pms,
     _trim_or_none,
@@ -105,10 +104,8 @@ async def _normalize_update_payload(
         if supply_price is not None:
             supply_price = Decimal(str(supply_price))
 
-        discount_amount = _parse_discount_amount(raw.get("discount_amount"))
-        line_total = (
-            (Decimal("0") if supply_price is None else (supply_price * Decimal(qty_ordered_base)))
-            - discount_amount
+        line_total = Decimal("0") if supply_price is None else (
+            supply_price * Decimal(qty_ordered_base)
         )
         total_amount += line_total
 
@@ -125,8 +122,6 @@ async def _normalize_update_payload(
                 "qty_ordered_input": int(qty_input),
                 "qty_ordered_base": int(qty_ordered_base),
                 "supply_price": supply_price,
-                "discount_amount": discount_amount,
-                "discount_note": raw.get("discount_note"),
                 "remark": _trim_or_none(raw.get("remark")),
             }
         )

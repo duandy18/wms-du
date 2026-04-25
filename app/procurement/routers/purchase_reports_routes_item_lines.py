@@ -29,7 +29,6 @@ def register(router: APIRouter) -> None:
         planned_line_amount_expr = (
             func.coalesce(PurchaseOrderLine.supply_price, 0)
             * PurchaseOrderLine.qty_ordered_base
-            - func.coalesce(PurchaseOrderLine.discount_amount, 0)
         )
 
         stmt = (
@@ -48,7 +47,6 @@ def register(router: APIRouter) -> None:
                 PurchaseOrderLine.qty_ordered_input.label("qty_ordered_input"),
                 PurchaseOrderLine.qty_ordered_base.label("qty_ordered_base"),
                 PurchaseOrderLine.supply_price.label("supply_price_snapshot"),
-                PurchaseOrderLine.discount_amount.label("discount_amount_snapshot"),
                 planned_line_amount_expr.label("planned_line_amount"),
             )
             .select_from(PurchaseOrderLine)
@@ -102,7 +100,6 @@ def register(router: APIRouter) -> None:
                         if r["supply_price_snapshot"] is not None
                         else None
                     ),
-                    discount_amount_snapshot=Decimal(str(r["discount_amount_snapshot"] or 0)),
                     planned_line_amount=Decimal(str(r["planned_line_amount"] or 0)),
                 )
             )

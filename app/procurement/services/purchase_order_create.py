@@ -59,17 +59,6 @@ def _trim_or_none(v: Any) -> Optional[str]:
     return s or None
 
 
-def _parse_discount_amount(v: Any) -> Decimal:
-    if v is None or (isinstance(v, str) and not v.strip()):
-        return Decimal("0")
-    try:
-        d = Decimal(str(v))
-    except Exception as e:
-        raise ValueError("discount_amount 必须为数字") from e
-    if d < 0:
-        raise ValueError("discount_amount 必须 >= 0")
-    return d
-
 
 def _require_qty_input_from_raw(raw: Dict[str, Any]) -> int:
     """
@@ -161,10 +150,8 @@ async def create_po_v2(
         if supply_price is not None:
             supply_price = Decimal(str(supply_price))
 
-        discount_amount = _parse_discount_amount(raw.get("discount_amount"))
-        line_total = (
-            (Decimal("0") if supply_price is None else (supply_price * Decimal(qty_ordered_base)))
-            - discount_amount
+        line_total = Decimal("0") if supply_price is None else (
+            supply_price * Decimal(qty_ordered_base)
         )
         total_amount += line_total
 
@@ -181,8 +168,6 @@ async def create_po_v2(
                 "qty_ordered_input": qty_input,
                 "qty_ordered_base": qty_ordered_base,
                 "supply_price": supply_price,
-                "discount_amount": discount_amount,
-                "discount_note": raw.get("discount_note"),
                 "remark": _trim_or_none(raw.get("remark")),
             }
         )

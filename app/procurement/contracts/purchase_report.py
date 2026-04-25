@@ -68,7 +68,6 @@ class ItemPurchaseReportLineItem(_Base):
     qty_ordered_base: int
 
     supply_price_snapshot: Decimal | None = None
-    discount_amount_snapshot: Decimal
     planned_line_amount: Decimal
 
 

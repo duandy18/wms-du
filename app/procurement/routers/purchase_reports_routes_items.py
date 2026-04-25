@@ -76,7 +76,6 @@ def register(router: APIRouter) -> None:
         planned_line_amount_expr = (
             func.coalesce(PurchaseOrderLine.supply_price, 0)
             * PurchaseOrderLine.qty_ordered_base
-            - func.coalesce(PurchaseOrderLine.discount_amount, 0)
         )
 
         stmt = (

@@ -41,7 +41,6 @@ async def upsert_completion_rows_for_po(
           qty_ordered_input,
           qty_ordered_base,
           supply_price_snapshot,
-          discount_amount_snapshot,
           planned_line_amount,
           qty_received_base,
           qty_remaining_base,
@@ -68,10 +67,8 @@ async def upsert_completion_rows_for_po(
           pol.qty_ordered_input AS qty_ordered_input,
           pol.qty_ordered_base AS qty_ordered_base,
           pol.supply_price AS supply_price_snapshot,
-          COALESCE(pol.discount_amount, 0::numeric(14, 2)) AS discount_amount_snapshot,
           (
             COALESCE(pol.supply_price, 0::numeric(12, 2)) * pol.qty_ordered_base
-            - COALESCE(pol.discount_amount, 0::numeric(14, 2))
           )::numeric(14, 2) AS planned_line_amount,
           0 AS qty_received_base,
           pol.qty_ordered_base AS qty_remaining_base,
@@ -103,7 +100,6 @@ async def upsert_completion_rows_for_po(
           qty_ordered_input = EXCLUDED.qty_ordered_input,
           qty_ordered_base = EXCLUDED.qty_ordered_base,
           supply_price_snapshot = EXCLUDED.supply_price_snapshot,
-          discount_amount_snapshot = EXCLUDED.discount_amount_snapshot,
           planned_line_amount = EXCLUDED.planned_line_amount,
           qty_remaining_base = GREATEST(
             EXCLUDED.qty_ordered_base - purchase_order_line_completion.qty_received_base,

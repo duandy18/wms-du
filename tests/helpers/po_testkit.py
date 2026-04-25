@@ -125,7 +125,6 @@ async def create_po_with_line(
     - purchase_ratio_to_base_snapshot
     - qty_ordered_input
     - qty_ordered_base（>0）
-    - discount_amount（NOT NULL）
     """
     if qty_ordered_base <= 0:
         raise ValueError("qty_ordered_base must be > 0 (ck_po_lines_qty_ordered_base_positive).")
@@ -210,7 +209,6 @@ async def create_po_with_line(
                 purchase_ratio_to_base_snapshot,
                 qty_ordered_input,
                 qty_ordered_base,
-                discount_amount
             )
             VALUES (
                 :po_id, 1, :item_id,
@@ -220,7 +218,6 @@ async def create_po_with_line(
                 :ratio,
                 :qty_input,
                 :qty_ordered_base,
-                0
             )
             RETURNING id
             """

@@ -56,7 +56,6 @@ class PurchaseCostSource:
         return """
         (
           COALESCE(pol.supply_price, 0) * COALESCE(pol.qty_ordered_base, 0)
-          - COALESCE(pol.discount_amount, 0)
         )
         """
 

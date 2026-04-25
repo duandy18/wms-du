@@ -25,9 +25,6 @@ class PurchaseOrderLineListOut(BaseModel):
     qty_ordered_base: int
 
     supply_price: Optional[Decimal] = None
-    discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
-    discount_note: Optional[str] = None
-
     remark: Optional[str] = None
 
     created_at: datetime
@@ -122,7 +119,7 @@ class PurchaseOrderCreateLineV2(BaseModel):
 
     严格合同：
     - 必填：line_no / item_id / uom_id / qty_input
-    - 可选商业字段：supply_price / discount_amount / discount_note / remark
+    - 可选商业字段：supply_price / remark
     - 快照与派生字段（item_name / ratio_to_base / qty_ordered_base）不允许前端直传
     """
 
@@ -132,13 +129,11 @@ class PurchaseOrderCreateLineV2(BaseModel):
     qty_input: int = Field(gt=0)
 
     supply_price: Optional[Decimal] = Field(default=None, ge=0)
-    discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
-    discount_note: Optional[str] = None
     remark: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
-    @field_validator("discount_note", "remark")
+    @field_validator("remark")
     @classmethod
     def _blank_to_none(cls, v: Optional[str]) -> Optional[str]:
         if v is None:

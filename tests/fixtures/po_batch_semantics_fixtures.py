@@ -113,8 +113,6 @@ async def _create_po_with_one_line(
         qty_ordered_input=qty_base,
         qty_ordered_base=qty_base,
         supply_price=None,
-        discount_amount=0,
-        discount_note=None,
         remark=None,
     )
     session.add(line)
