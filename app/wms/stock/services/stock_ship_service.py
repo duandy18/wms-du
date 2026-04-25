@@ -66,8 +66,8 @@ async def ship_commit_direct_lot_impl(
     """
     Batch-as-Lot 终态：禁止执行域自动挑 lot（包括 FEFO）。
 
-    - REQUIRED 商品：必须显式批次（但本函数 lines 不含 batch_code），因此直接拒绝。
-    - NONE 商品：batch_code 必须为 null，统一扣 INTERNAL 槽位（lots.lot_code IS NULL）。
+    - REQUIRED 商品：必须显式批次（但本函数 lines 不含 lot_code），因此直接拒绝。
+    - NONE 商品：lot_code 必须为 null，统一扣 INTERNAL 槽位（lots.lot_code IS NULL）。
     """
     ts = occurred_at or datetime.now(UTC)
 
@@ -98,13 +98,13 @@ async def ship_commit_direct_lot_impl(
         requires_batch = _requires_batch_from_expiry_policy(pol_map.get(int(item_id)))
 
         if requires_batch:
-            # 执行域必须显式批次；本函数没有 batch_code 入参 => 直接拒绝，防止暗中 FEFO
+            # 执行域必须显式批次；本函数没有 lot_code 入参 => 直接拒绝，防止暗中 FEFO
             raise_problem(
                 status_code=422,
                 error_code="batch_required",
                 message="批次受控商品必须提供批次，禁止自动挑选批次出库。",
-                details=[{"type": "batch", "path": "lines[item_id]", "item_id": int(item_id), "reason": "batch_code_required"}],
-                next_actions=[{"action": "provide_batch_code", "label": "按行提供 batch_code 后重试"}],
+                details=[{"type": "batch", "path": "lines[item_id]", "item_id": int(item_id), "reason": "lot_code_required"}],
+                next_actions=[{"action": "provide_lot_code", "label": "按行提供 lot_code 后重试"}],
             )
 
         # NONE：允许执行（扣 INTERNAL 槽位）
@@ -186,7 +186,7 @@ async def ship_commit_direct_lot_impl(
             ref_line=int(ref_line),
             occurred_at=ts,
             trace_id=trace_id,
-            batch_code=None,
+            lot_code=None,
             meta={"sub_reason": "ORDER_SHIP"},
         )
 
