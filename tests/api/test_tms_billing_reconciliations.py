@@ -328,7 +328,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
     )
 
     resp = await client.get(
-        "/tms/billing/reconciliations",
+        "/shipping-assist/billing/reconciliations",
         params={"carrier_code": carrier_code, "tracking_no": tracking_no},
         headers=headers,
     )
@@ -420,7 +420,7 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
     )
 
     resp = await client.get(
-        "/tms/billing/reconciliation-histories",
+        "/shipping-assist/billing/reconciliation-histories",
         params={"carrier_code": carrier_code, "tracking_no": tracking_no},
         headers=headers,
     )
@@ -479,7 +479,7 @@ async def test_tms_billing_approve_bill_only_requires_approved_bill_only(client,
     )
 
     bad_resp = await client.post(
-        f"/tms/billing/reconciliations/{reconciliation_id}/approve",
+        f"/shipping-assist/billing/reconciliations/{reconciliation_id}/approve",
         json={
             "approved_reason_code": "resolved",
             "adjust_amount": 0,
@@ -490,7 +490,7 @@ async def test_tms_billing_approve_bill_only_requires_approved_bill_only(client,
     assert bad_resp.status_code == 422, bad_resp.text
 
     ok_resp = await client.post(
-        f"/tms/billing/reconciliations/{reconciliation_id}/approve",
+        f"/shipping-assist/billing/reconciliations/{reconciliation_id}/approve",
         json={
             "approved_reason_code": "approved_bill_only",
             "adjust_amount": 0,
@@ -569,7 +569,7 @@ async def test_tms_billing_approve_diff_requires_resolved(client, session: Async
     )
 
     bad_resp = await client.post(
-        f"/tms/billing/reconciliations/{reconciliation_id}/approve",
+        f"/shipping-assist/billing/reconciliations/{reconciliation_id}/approve",
         json={
             "approved_reason_code": "approved_bill_only",
             "adjust_amount": 1.25,
@@ -580,7 +580,7 @@ async def test_tms_billing_approve_diff_requires_resolved(client, session: Async
     assert bad_resp.status_code == 422, bad_resp.text
 
     ok_resp = await client.post(
-        f"/tms/billing/reconciliations/{reconciliation_id}/approve",
+        f"/shipping-assist/billing/reconciliations/{reconciliation_id}/approve",
         json={
             "approved_reason_code": "resolved",
             "adjust_amount": 1.25,

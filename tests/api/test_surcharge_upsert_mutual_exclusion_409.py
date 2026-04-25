@@ -82,7 +82,7 @@ async def _bind_provider_to_warehouse(
     provider_id: int,
 ) -> None:
     r = await async_client.post(
-        f"/tms/pricing/warehouses/{int(warehouse_id)}/bindings",
+        f"/shipping-assist/pricing/warehouses/{int(warehouse_id)}/bindings",
         headers=headers,
         json={
             "shipping_provider_id": int(provider_id),
@@ -95,7 +95,7 @@ async def _bind_provider_to_warehouse(
     assert r.status_code in (200, 201, 409), r.text
     if r.status_code == 409:
         pr = await async_client.patch(
-            f"/tms/pricing/warehouses/{int(warehouse_id)}/bindings/{int(provider_id)}",
+            f"/shipping-assist/pricing/warehouses/{int(warehouse_id)}/bindings/{int(provider_id)}",
             headers=headers,
             json={"active": True, "priority": 0},
         )
@@ -105,7 +105,7 @@ async def _bind_provider_to_warehouse(
 async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
     wid = await _pick_warehouse_id(async_client, headers)
 
-    pr = await async_client.get("/shipping-providers", headers=headers)
+    pr = await async_client.get("/shipping-assist/pricing/providers", headers=headers)
     assert pr.status_code == 200, pr.text
     providers_body = pr.json()
     providers = providers_body.get("data") if isinstance(providers_body, dict) else providers_body
@@ -123,7 +123,7 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
 
         post_schema = (
             spec.get("paths", {})
-            .get("/shipping-providers", {})
+            .get("/shipping-assist/pricing/providers", {})
             .get("post", {})
             .get("requestBody", {})
             .get("content", {})
@@ -136,7 +136,7 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
         payload.setdefault("code", f"UTP{seed}".upper())
         payload.setdefault("warehouse_id", int(wid))
 
-        cr = await async_client.post("/shipping-providers", headers=headers, json=payload)
+        cr = await async_client.post("/shipping-assist/pricing/providers", headers=headers, json=payload)
         assert cr.status_code in (200, 201), cr.text
         data = cr.json()
         pid = data.get("id") if isinstance(data, dict) else None
@@ -148,7 +148,7 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
     await _bind_provider_to_warehouse(async_client, headers, int(wid), int(provider_id))
 
     tr = await async_client.get(
-        f"/tms/pricing/shipping-providers/{int(provider_id)}/templates",
+        f"/shipping-assist/pricing/providers/{int(provider_id)}/templates",
         headers=headers,
     )
     assert tr.status_code == 200, tr.text
@@ -179,7 +179,7 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
 
     post_schema = (
         spec.get("paths", {})
-        .get("/tms/pricing/templates", {})
+        .get("/shipping-assist/pricing/templates", {})
         .get("post", {})
         .get("requestBody", {})
         .get("content", {})
@@ -196,7 +196,7 @@ async def _ensure_template_id(async_client, headers: Dict[str, str]) -> int:
     payload.setdefault("billable_weight_strategy", "actual_only")
     payload.setdefault("rounding_mode", "none")
 
-    cr = await async_client.post("/tms/pricing/templates", headers=headers, json=payload)
+    cr = await async_client.post("/shipping-assist/pricing/templates", headers=headers, json=payload)
     assert cr.status_code in (200, 201), cr.text
     data = cr.json()
     tid = (data.get("data", {}) or {}).get("id") if isinstance(data, dict) else None
@@ -218,7 +218,7 @@ async def _create_surcharge_config(
     cities: list[dict[str, object]],
 ) -> dict:
     r = await async_client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs",
         headers=headers,
         json={
             "province_code": province_code,
@@ -275,7 +275,7 @@ async def test_surcharge_config_create_city_mode_then_patch_to_province_mode(cli
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/tms/pricing/surcharge-configs/{config_id}",
+        f"/shipping-assist/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "province_code": province_code,
@@ -326,7 +326,7 @@ async def test_surcharge_config_create_province_mode_then_patch_to_cities_mode(c
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/tms/pricing/surcharge-configs/{config_id}",
+        f"/shipping-assist/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "province_code": province_code,
@@ -376,7 +376,7 @@ async def test_surcharge_config_batch_province_create_skips_existing_and_payload
     assert existing["province_code"] == "110000"
 
     r = await client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs/batch-province",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs/batch-province",
         headers=h,
         json={
             "items": [
@@ -443,7 +443,7 @@ async def test_surcharge_config_city_container_create_then_patch_add_cities(clie
     template_id = await _ensure_template_id(client, h)
 
     r1 = await client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "320000",
@@ -462,7 +462,7 @@ async def test_surcharge_config_city_container_create_then_patch_add_cities(clie
     config_id = int(body1["id"])
 
     r2 = await client.patch(
-        f"/tms/pricing/surcharge-configs/{config_id}",
+        f"/shipping-assist/pricing/surcharge-configs/{config_id}",
         headers=h,
         json={
             "cities": [
@@ -496,7 +496,7 @@ async def test_surcharge_config_city_container_create_rejects_duplicate_province
     template_id = await _ensure_template_id(client, h)
 
     r1 = await client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "330000",
@@ -507,7 +507,7 @@ async def test_surcharge_config_city_container_create_rejects_duplicate_province
     assert r1.status_code == 201, r1.text
 
     r2 = await client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs/city-container",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs/city-container",
         headers=h,
         json={
             "province_code": "330000",

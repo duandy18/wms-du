@@ -15,7 +15,7 @@ from . import routes_items
 from . import routes_reconcile
 from . import routes_reconciliations
 
-router = APIRouter(prefix="/tms/billing", tags=["tms-billing"])
+router = APIRouter(prefix="/shipping-assist/billing", tags=["shipping-assist-billing"])
 
 
 def _register_all_routes() -> None:

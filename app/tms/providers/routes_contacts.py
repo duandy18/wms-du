@@ -108,7 +108,7 @@ async def _clear_primary_contact(
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-providers/{provider_id}/contacts",
+        "/shipping-assist/pricing/providers/{provider_id}/contacts",
         response_model=ShippingProviderContactOut,
         status_code=status.HTTP_201_CREATED,
         name="shipping_provider_create_contact",
@@ -194,7 +194,7 @@ def register(router: APIRouter) -> None:
         return _to_out(dict(row))
 
     @router.patch(
-        "/shipping-provider-contacts/{contact_id}",
+        "/shipping-assist/pricing/provider-contacts/{contact_id}",
         response_model=ShippingProviderContactOut,
         name="shipping_provider_update_contact",
     )
@@ -284,7 +284,7 @@ def register(router: APIRouter) -> None:
         return _to_out(dict(row))
 
     @router.delete(
-        "/shipping-provider-contacts/{contact_id}",
+        "/shipping-assist/pricing/provider-contacts/{contact_id}",
         status_code=status.HTTP_200_OK,
         name="shipping_provider_delete_contact",
     )

@@ -38,7 +38,7 @@ async def _list_shipping_providers(
     client: AsyncClient,
     headers: dict[str, str],
 ) -> list[dict]:
-    r = await client.get("/shipping-providers", headers=headers)
+    r = await client.get("/shipping-assist/pricing/providers", headers=headers)
     assert r.status_code == 200, r.text
     rows = r.json()["data"] or []
     assert isinstance(rows, list), rows
@@ -52,7 +52,7 @@ async def _list_warehouse_bindings(
     warehouse_id: int,
 ) -> list[dict]:
     r = await client.get(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings",
         headers=headers,
     )
     assert r.status_code == 200, r.text
@@ -69,7 +69,7 @@ async def _create_shipping_provider(
     code: str,
 ) -> int:
     r = await client.post(
-        "/shipping-providers",
+        "/shipping-assist/pricing/providers",
         headers=headers,
         json={
             "name": name,
@@ -116,7 +116,7 @@ async def _create_template(
     name: str,
 ) -> int:
     r = await client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=headers,
         json={
             "shipping_provider_id": int(shipping_provider_id),
@@ -138,7 +138,7 @@ async def _put_ranges(
     template_id: int,
 ) -> int:
     r = await client.put(
-        f"/tms/pricing/templates/{template_id}/ranges",
+        f"/shipping-assist/pricing/templates/{template_id}/ranges",
         headers=headers,
         json={
             "ranges": [
@@ -164,7 +164,7 @@ async def _post_group(
     template_id: int,
 ) -> int:
     r = await client.post(
-        f"/tms/pricing/templates/{template_id}/groups",
+        f"/shipping-assist/pricing/templates/{template_id}/groups",
         headers=headers,
         json={
             "sort_order": 0,
@@ -187,7 +187,7 @@ async def _put_single_matrix_cell(
     range_id: int,
 ) -> None:
     r = await client.put(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=headers,
         json={
             "cells": [
@@ -214,7 +214,7 @@ async def _submit_validation(
     template_id: int,
 ) -> None:
     r = await client.post(
-        f"/tms/pricing/templates/{template_id}/submit-validation",
+        f"/shipping-assist/pricing/templates/{template_id}/submit-validation",
         headers=headers,
         json={"confirm_validated": True},
     )
@@ -233,7 +233,7 @@ async def _bind_template(
     template_id: int,
 ):
     return await client.post(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings",
         headers=headers,
         json={
             "shipping_provider_id": int(shipping_provider_id),
@@ -282,7 +282,7 @@ async def _fetch_summary(
     headers: dict[str, str],
 ) -> list[dict]:
     r = await client.get(
-        "/tms/pricing/warehouses/active-carriers/summary",
+        "/shipping-assist/pricing/warehouses/active-carriers/summary",
         headers=headers,
     )
     assert r.status_code == 200, r.text
@@ -324,7 +324,7 @@ async def test_scheduled_binding_not_in_active_carriers_summary(
 
     future_time = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
     activate_resp = await client.post(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
         headers=headers,
         json={"effective_from": future_time},
     )
@@ -364,7 +364,7 @@ async def test_active_binding_appears_in_active_carriers_summary(
     assert bind_resp.status_code == 201, bind_resp.text
 
     activate_resp = await client.post(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings/{shipping_provider_id}/activate",
         headers=headers,
         json={"effective_from": None},
     )

@@ -31,7 +31,7 @@ def _recommend(
 ) -> dict:
     h = auth_headers(token)
     rr = client.post(
-        "/shipping-quote/recommend",
+        "/shipping-assist/shipping/quote/recommend",
         headers=h,
         json={
             "warehouse_id": warehouse_id,
@@ -61,7 +61,7 @@ def test_shipping_quote_recommend_excludes_scheduled_binding(client: TestClient)
     wid = pick_warehouse_id(client, token)
     clear_warehouse_bindings(client, token, wid)
 
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"]
     assert pdata, "no shipping providers"
@@ -75,7 +75,7 @@ def test_shipping_quote_recommend_excludes_scheduled_binding(client: TestClient)
     )
 
     deactivate_resp = client.post(
-        f"/tms/pricing/warehouses/{wid}/bindings/{provider_id}/deactivate",
+        f"/shipping-assist/pricing/warehouses/{wid}/bindings/{provider_id}/deactivate",
         headers=h,
         json={},
     )
@@ -83,7 +83,7 @@ def test_shipping_quote_recommend_excludes_scheduled_binding(client: TestClient)
 
     future_time = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
     activate_resp = client.post(
-        f"/tms/pricing/warehouses/{wid}/bindings/{provider_id}/activate",
+        f"/shipping-assist/pricing/warehouses/{wid}/bindings/{provider_id}/activate",
         headers=h,
         json={"effective_from": future_time},
     )
@@ -108,7 +108,7 @@ def test_shipping_quote_recommend_includes_active_binding(client: TestClient) ->
     wid = pick_warehouse_id(client, token)
     clear_warehouse_bindings(client, token, wid)
 
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"]
     assert pdata, "no shipping providers"

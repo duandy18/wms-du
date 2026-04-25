@@ -29,7 +29,7 @@ from .service_prepare_orders import ShipmentPrepareOrdersService
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/ship/prepare/orders",
+        "/shipping-assist/shipping/prepare/orders",
         response_model=ShipPrepareOrdersListResponse,
     )
     async def list_prepare_orders(
@@ -43,7 +43,7 @@ def register(router: APIRouter) -> None:
         return ShipPrepareOrdersListResponse(ok=True, items=items)
 
     @router.get(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}",
         response_model=ShipPrepareOrderDetailResponse,
     )
     async def get_prepare_order_detail(
@@ -63,7 +63,7 @@ def register(router: APIRouter) -> None:
         return ShipPrepareOrderDetailResponse(ok=True, item=item)
 
     @router.post(
-        "/ship/prepare/orders/import",
+        "/shipping-assist/shipping/prepare/orders/import",
         response_model=ShipPrepareImportResponse,
     )
     async def import_prepare_order(
@@ -81,7 +81,7 @@ def register(router: APIRouter) -> None:
         )
 
     @router.post(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/address-confirm",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/address-confirm",
         response_model=ShipPrepareAddressConfirmResponse,
     )
     async def confirm_prepare_order_address(

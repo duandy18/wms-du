@@ -57,7 +57,7 @@ async def _assert_code_unique_or_409(
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-providers",
+        "/shipping-assist/pricing/providers",
         status_code=status.HTTP_201_CREATED,
         response_model=ShippingProviderCreateOut,
     )
@@ -119,7 +119,7 @@ def register(router: APIRouter) -> None:
 
         return ShippingProviderCreateOut(ok=True, data=row_to_provider(row, []))
 
-    @router.patch("/shipping-providers/{provider_id}", response_model=ShippingProviderUpdateOut)
+    @router.patch("/shipping-assist/pricing/providers/{provider_id}", response_model=ShippingProviderUpdateOut)
     async def update_shipping_provider(
         provider_id: int = Path(..., ge=1),
         payload: ShippingProviderUpdateIn = ...,

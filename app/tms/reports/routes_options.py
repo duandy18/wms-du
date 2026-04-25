@@ -15,7 +15,7 @@ from app.tms.reports.helpers import build_where_clause, parse_date_param
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-reports/options",
+        "/shipping-assist/reports/options",
         response_model=ShippingReportFilterOptions,
     )
     async def shipping_reports_options(

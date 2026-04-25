@@ -15,7 +15,7 @@ from app.tms.reports.helpers import build_where_clause, clean_opt_str, parse_dat
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-reports/by-warehouse",
+        "/shipping-assist/reports/by-warehouse",
         response_model=ShippingByWarehouseResponse,
     )
     async def shipping_reports_by_warehouse(
