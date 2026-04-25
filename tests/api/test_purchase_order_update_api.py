@@ -205,8 +205,6 @@ async def test_purchase_order_update_replaces_head_and_lines_and_rebuilds_comple
                 "uom_id": int(uom_b),
                 "qty_input": 4,
                 "supply_price": "2.50",
-                "discount_amount": "1.50",
-                "discount_note": "L1-DISCOUNT",
                 "remark": "LINE-1-UPDATED",
             },
             {
@@ -215,8 +213,6 @@ async def test_purchase_order_update_replaces_head_and_lines_and_rebuilds_comple
                 "uom_id": int(uom_c),
                 "qty_input": 5,
                 "supply_price": "1.00",
-                "discount_amount": "0.50",
-                "discount_note": "L2-DISCOUNT",
                 "remark": "LINE-2-UPDATED",
             },
         ],
@@ -241,14 +237,12 @@ async def test_purchase_order_update_replaces_head_and_lines_and_rebuilds_comple
     assert int(line1["item_id"]) == int(item_b), line1
     assert int(line1["qty_ordered_input"]) == 4, line1
     assert int(line1["qty_ordered_base"]) == 4, line1
-    assert str(line1["discount_note"]) == "L1-DISCOUNT", line1
     assert str(line1["remark"]) == "LINE-1-UPDATED", line1
 
     line2 = lines_by_no[2]
     assert int(line2["item_id"]) == int(item_c), line2
     assert int(line2["qty_ordered_input"]) == 5, line2
     assert int(line2["qty_ordered_base"]) == 5, line2
-    assert str(line2["discount_note"]) == "L2-DISCOUNT", line2
     assert str(line2["remark"]) == "LINE-2-UPDATED", line2
 
     old_item_ids = {int(item_a)}

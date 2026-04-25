@@ -24,10 +24,6 @@ class PurchaseOrderLine(Base):
             name="uq_purchase_order_lines_po_id_line_no",
         ),
         sa.CheckConstraint(
-            "discount_amount >= 0",
-            name="ck_po_lines_discount_amount_nonneg",
-        ),
-        sa.CheckConstraint(
             "qty_ordered_base > 0",
             name="ck_po_lines_qty_ordered_base_positive",
         ),
@@ -88,19 +84,7 @@ class PurchaseOrderLine(Base):
         nullable=True,
     )
 
-    discount_amount: Mapped[Decimal] = mapped_column(
-        sa.Numeric(14, 2),
-        nullable=False,
-        default=Decimal("0"),
-        server_default="0",
-        comment="整行减免金额（>=0）",
-    )
 
-    discount_note: Mapped[Optional[str]] = mapped_column(
-        sa.Text,
-        nullable=True,
-        comment="折扣说明（可选）",
-    )
 
     remark: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
 

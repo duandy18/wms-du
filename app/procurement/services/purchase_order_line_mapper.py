@@ -1,7 +1,6 @@
 # app/procurement/services/purchase_order_line_mapper.py
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any, Dict
 
 from app.procurement.contracts.purchase_order import PurchaseOrderLineListOut
@@ -18,12 +17,6 @@ def _safe_int(v: object, default: int) -> int:
 def build_line_base_data(*, ln: Any) -> Dict[str, Any]:
     ordered_base = get_qty_ordered_base(ln)
 
-    discount_amount = getattr(ln, "discount_amount", None)
-    try:
-        discount_amount_val = Decimal(str(discount_amount or 0))
-    except Exception:
-        discount_amount_val = Decimal("0")
-
     return {
         "id": _safe_int(getattr(ln, "id"), 0),
         "po_id": _safe_int(getattr(ln, "po_id"), 0),
@@ -32,13 +25,16 @@ def build_line_base_data(*, ln: Any) -> Dict[str, Any]:
         "item_name": getattr(ln, "item_name", None),
         "item_sku": getattr(ln, "item_sku", None),
         "spec_text": getattr(ln, "spec_text", None),
-        "purchase_uom_id_snapshot": _safe_int(getattr(ln, "purchase_uom_id_snapshot"), 0),
+        "purchase_uom_id_snapshot": _safe_int(
+            getattr(ln, "purchase_uom_id_snapshot"),
+            0,
+        ),
         "supply_price": getattr(ln, "supply_price", None),
-        "discount_amount": discount_amount_val,
-        "discount_note": getattr(ln, "discount_note", None),
         "qty_ordered_input": getattr(ln, "qty_ordered_input", 0),
         "purchase_ratio_to_base_snapshot": getattr(
-            ln, "purchase_ratio_to_base_snapshot", 1
+            ln,
+            "purchase_ratio_to_base_snapshot",
+            1,
         ),
         "qty_ordered_base": ordered_base,
         "remark": getattr(ln, "remark", None),
