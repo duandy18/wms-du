@@ -1,17 +1,11 @@
 # app/oms/services/platform_events_actions.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.oms.services.order_service import OrderService
-from app.wms.outbound.services.outbound_commit_service import OutboundService
-
-from app.oms.services.platform_events_ship import build_ship_lines_for_commit
-
-from app.wms.warehouses.models.warehouse import WarehouseCode
 
 
 def _build_lines_for_pick_or_cancel(task: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -86,28 +80,19 @@ async def do_ship(
     trace_id: str,
 ) -> int:
     """
-    SHIP：直接调用 OutboundService.commit 扣库存（库存裁决点）
-    返回 lines 数量（便于 audit 记录）
+    SHIP：平台事件不再自动扣 WMS 库存。
+
+    终态执行入口是正式 WMS 出库提交链路：
+    - /wms/outbound/orders/{order_id}/submit
+    - /wms/outbound/manual/{doc_id}/submit
+
+    平台事件中的 batch_code / lot_code 不能作为库存结构事实。
     """
+    _ = session, platform, raw_event, mapped, trace_id
+
     if not task.get("ref"):
         raise ValueError("Missing ref for SHIP")
 
-    lines = build_ship_lines_for_commit(raw_event=raw_event, mapped=mapped, task=task)
-
-    occurred_at = datetime.now(timezone.utc)
-    wh_code = str(
-        (mapped.get("warehouse_code") if isinstance(mapped, dict) else None)
-        or task.get("warehouse_code")
-        or getattr(WarehouseCode, "MAIN", "MAIN")
+    raise ValueError(
+        "platform_ship_stock_commit_retired: use formal WMS outbound submit with lot_id"
     )
-
-    svc = OutboundService()
-    await svc.commit(
-        session=session,
-        order_id=task.get("ref"),
-        lines=lines,
-        occurred_at=occurred_at,
-        warehouse_code=wh_code,
-        trace_id=trace_id,
-    )
-    return len(lines)
