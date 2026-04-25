@@ -52,11 +52,8 @@ def register(router: APIRouter) -> None:
         item_keyword: str | None = Query(None, description="商品名 / SKU / item_id 过滤，可选"),
     ) -> SkuPurchaseLedgerResponse:
         _ = current_user
-        from_dt, to_dt = await ensure_default_range(
-            session,
-            from_dt=parse_date_param(from_date),
-            to_dt=parse_date_param(to_date),
-        )
+        from_dt = parse_date_param(from_date)
+        to_dt = parse_date_param(to_date)
         return await FinancePurchaseCostService(session).get_sku_purchase_ledger(
             from_date=from_dt,
             to_date=to_dt,

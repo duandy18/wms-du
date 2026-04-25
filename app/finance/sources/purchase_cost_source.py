@@ -44,23 +44,32 @@ class PurchaseCostSource:
     async def fetch_sku_purchase_ledger(
         self,
         *,
-        from_date: date,
-        to_date: date,
+        from_date: date | None,
+        to_date: date | None,
         supplier_id: int | None = None,
         item_keyword: str = "",
     ) -> dict[str, Any]:
         keyword = item_keyword.strip()
         params: dict[str, object] = {
-            "from_date": from_date,
-            "to_date": to_date,
             "item_keyword": keyword,
             "item_keyword_like": f"%{keyword}%",
         }
 
-        supplier_filter = ""
+        where_clauses: list[str] = ["1 = 1"]
+
+        if from_date is not None:
+            params["from_date"] = from_date
+            where_clauses.append("DATE(po.purchase_time) >= :from_date")
+
+        if to_date is not None:
+            params["to_date"] = to_date
+            where_clauses.append("DATE(po.purchase_time) <= :to_date")
+
         if supplier_id is not None:
             params["supplier_id"] = int(supplier_id)
-            supplier_filter = "AND po.supplier_id = :supplier_id"
+            where_clauses.append("po.supplier_id = :supplier_id")
+
+        where_sql = "\n               AND ".join(where_clauses)
 
         sql = text(
             f"""
@@ -92,8 +101,7 @@ class PurchaseCostSource:
 
                 FROM purchase_orders po
                 JOIN purchase_order_lines pol ON pol.po_id = po.id
-               WHERE {self._base_where()}
-                 {supplier_filter}
+               WHERE {where_sql}
                  AND (
                    :item_keyword = ''
                    OR pol.item_sku ILIKE :item_keyword_like
@@ -192,13 +200,6 @@ class PurchaseCostSource:
     def _base_where(self) -> str:
         return """
         DATE(po.purchase_time) BETWEEN :from_date AND :to_date
-        AND NOT EXISTS (
-          SELECT 1
-            FROM item_test_set_items its
-            JOIN item_test_sets ts ON ts.id = its.set_id
-           WHERE ts.code = 'DEFAULT'
-             AND its.item_id = pol.item_id
-        )
         """
 
     def _line_amount_expr(self) -> str:

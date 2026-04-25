@@ -31,8 +31,8 @@ class FinancePurchaseCostService:
     async def get_sku_purchase_ledger(
         self,
         *,
-        from_date: date,
-        to_date: date,
+        from_date: date | None,
+        to_date: date | None,
         supplier_id: int | None = None,
         item_keyword: str = "",
     ) -> SkuPurchaseLedgerResponse:
