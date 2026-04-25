@@ -10,8 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.inventory_adjustment.return_inbound.services.return_task_service_impl import ReturnTaskServiceImpl
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 from app.wms.shared.services.three_books_consistency import verify_commit_three_books
+
+
+UTC = timezone.utc
 
 
 async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
@@ -37,6 +41,26 @@ async def _pick_item_for_stock_in(session: AsyncSession) -> tuple[int, bool]:
     return int(row2[0]), True
 
 
+async def _ensure_supplier_lot(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+    production_date,
+    expiry_date,
+) -> int:
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=str(lot_code),
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+    return int(lot_id)
+
+
 @pytest.mark.asyncio
 async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     """
@@ -48,11 +72,9 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     - return_task_lines.batch_code 仅是 lots.lot_code 展示快照；
     - return commit 必须使用同一个 lot_id 回仓，而不是靠 batch_code 二次反查。
     """
-    utc = timezone.utc
-    now = datetime.now(utc)
+    now = datetime.now(UTC)
 
-    stock = StockService()
-    svc = ReturnTaskServiceImpl(stock_svc=stock)
+    svc = ReturnTaskServiceImpl()
 
     wh_id = 1
     item_id, may_need_expiry = await _pick_item_for_stock_in(session)
@@ -63,39 +85,54 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     uniq = uuid4().hex[:10]
     trace_id = f"PH3-UT-TRACE-RET-{uniq}"
 
-    # 1) 入库造库存：+10
-    await stock.adjust(
-        session=session,
-        item_id=item_id,
+    lot_id = await _ensure_supplier_lot(
+        session,
         warehouse_id=wh_id,
-        batch_code=batch_code,
+        item_id=item_id,
+        lot_code=batch_code,
+        production_date=prod,
+        expiry_date=exp,
+    )
+
+    # 1) 入库造库存：+10。测试造数统一走 lot-only 原语，不再调用 StockService.adjust。
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
         delta=10,
         reason="RECEIPT",
         ref=f"UT:PH3:RET:IN:{uniq}",
         ref_line=1,
         occurred_at=now,
+        meta={"sub_reason": "UT_STOCK_IN"},
+        batch_code=batch_code,
         production_date=prod,
         expiry_date=exp,
         trace_id=trace_id,
-        meta={"sub_reason": "UT_STOCK_IN"},
+        utc_now=lambda: datetime.now(UTC),
     )
 
     # 2) 出库制造出库事实（ReturnTask 依据 ledger.lot_id 反查 shipped）
     order_ref = f"UT:PH3:RET:ORDER:{uniq}"
     shipped_qty = 4
 
-    await stock.adjust(
+    await adjust_lot_impl(
         session=session,
-        item_id=item_id,
-        warehouse_id=wh_id,
-        batch_code=batch_code,
-        delta=-shipped_qty,
+        item_id=int(item_id),
+        warehouse_id=int(wh_id),
+        lot_id=int(lot_id),
+        delta=-int(shipped_qty),
         reason="OUTBOUND_SHIP",
         ref=order_ref,
         ref_line=1,
         occurred_at=now,
-        trace_id=trace_id,
         meta={"sub_reason": "ORDER_SHIP"},
+        batch_code=batch_code,
+        production_date=None,
+        expiry_date=None,
+        trace_id=trace_id,
+        utc_now=lambda: datetime.now(UTC),
     )
 
     shipped_lot_row = (
@@ -118,6 +155,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     ).first()
     assert shipped_lot_row is not None, "missing shipped ledger row"
     shipped_lot_id = int(shipped_lot_row[0])
+    assert shipped_lot_id == int(lot_id)
 
     # 3) 创建回仓任务：任务行必须固化原出库 lot_id
     task = await svc.create_for_order(session, order_id=order_ref)
@@ -217,7 +255,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
                 "warehouse_id": wh_id,
                 "item_id": item_id,
                 "lot_id": lot_id_val,
-                "batch_code": batch_code,  # 仅展示快照（不参与结构锚点）
+                "lot_code": batch_code,
                 "qty": 2,
                 "ref": order_ref,
                 "ref_line": ref_line,
