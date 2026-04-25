@@ -86,7 +86,7 @@ class ReturnTaskLine(Base):
     一行代表一个 item + lot（自动回原 lot 回仓）：
 
     - lot_id: 回原批次的结构锚点，来自原出库 stock_ledger.lot_id；
-    - batch_code: 展示快照，来自 lots.lot_code，不参与结构身份；
+    - lot_code_snapshot: 展示快照，来自 lots.lot_code，不参与结构身份；
     - expected_qty: 计划回仓数量（来自订单原出库数量）；
     - picked_qty: 已扫码/录入的回仓数量（累积）；
     - committed_qty: 最终确认入库数量（commit 时写入）。
@@ -131,7 +131,7 @@ class ReturnTaskLine(Base):
         comment="商品名称快照（可选）",
     )
 
-    batch_code: Mapped[str] = mapped_column(
+    lot_code_snapshot: Mapped[str] = mapped_column(
         sa.String(64),
         nullable=False,
         comment="展示快照：来自原出库 lot 的 lots.lot_code；不参与结构锚点",

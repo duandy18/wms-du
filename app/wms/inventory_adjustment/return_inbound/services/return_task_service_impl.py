@@ -17,7 +17,7 @@ from app.wms.stock.services.stock_service import StockService
 UTC = timezone.utc
 
 
-def _norm_bc(v: Any) -> Optional[str]:
+def _norm_lot_code_snapshot(v: Any) -> Optional[str]:
     if v is None:
         return None
     if isinstance(v, str):
@@ -75,8 +75,8 @@ class ReturnTaskServiceImpl:
 
     终态口径：
     - return_task_lines.lot_id 是回原批次结构锚点；
-    - return_task_lines.batch_code 只是 lots.lot_code 展示快照；
-    - commit 不再通过 batch_code 反查 lot_id。
+    - return_task_lines.lot_code_snapshot 只是 lots.lot_code 展示快照；
+    - commit 不再通过 lot_code_snapshot 反查 lot_id。
     """
 
     SHIP_OUT_REASONS: Set[str] = {
@@ -128,7 +128,7 @@ class ReturnTaskServiceImpl:
                     "item_id": item_id,
                     "warehouse_id": wh_id,
                     "lot_id": lot_id,
-                    "batch_code": lot_code_map.get(lot_id),
+                    "lot_code_snapshot": lot_code_map.get(lot_id),
                     "shipped_qty": shipped_qty,
                 }
             )
@@ -187,10 +187,10 @@ class ReturnTaskServiceImpl:
         for x in shipped:
             item_id = int(x["item_id"])
             lot_id = int(x["lot_id"])
-            batch_code = _norm_bc(x.get("batch_code"))
-            if batch_code is None:
+            lot_code_snapshot = _norm_lot_code_snapshot(x.get("lot_code_snapshot"))
+            if lot_code_snapshot is None:
                 raise ValueError(
-                    f"return_task_batch_code_required_for_display:item_id={item_id}:lot_id={lot_id}"
+                    f"return_task_lot_code_snapshot_required_for_display:item_id={item_id}:lot_id={lot_id}"
                 )
 
             expected_qty = int(x["shipped_qty"])
@@ -200,7 +200,7 @@ class ReturnTaskServiceImpl:
                 order_line_id=None,
                 item_id=item_id,
                 lot_id=lot_id,
-                batch_code=batch_code,
+                lot_code_snapshot=lot_code_snapshot,
                 expected_qty=expected_qty,
                 picked_qty=0,
                 committed_qty=0,
@@ -291,7 +291,7 @@ class ReturnTaskServiceImpl:
                 continue
 
             ref_line = int(getattr(ln, "id", 1) or 1)
-            bc = _norm_bc(ln.batch_code)
+            lot_code_snapshot = _norm_lot_code_snapshot(ln.lot_code_snapshot)
 
             lot_id = int(getattr(ln, "lot_id", 0) or 0)
             if lot_id <= 0:
@@ -317,13 +317,13 @@ class ReturnTaskServiceImpl:
                     f"lot_item_id={int(lot_snapshot['item_id'])}"
                 )
 
-            snapshot_batch_code = _norm_bc(lot_snapshot.get("lot_code"))
-            if bc != snapshot_batch_code:
+            snapshot_lot_code = _norm_lot_code_snapshot(lot_snapshot.get("lot_code"))
+            if lot_code_snapshot != snapshot_lot_code:
                 raise ValueError(
-                    f"return_task_line_batch_code_snapshot_mismatch:"
+                    f"return_task_line_lot_code_snapshot_mismatch:"
                     f"line_id={getattr(ln, 'id', None)}:"
-                    f"batch_code={bc}:"
-                    f"lot_code={snapshot_batch_code}"
+                    f"lot_code_snapshot={lot_code_snapshot}:"
+                    f"lot_code={snapshot_lot_code}"
                 )
 
             res = await self.stock_svc.adjust_lot(
@@ -350,7 +350,7 @@ class ReturnTaskServiceImpl:
                     "warehouse_id": int(task.warehouse_id),
                     "item_id": int(ln.item_id),
                     "lot_id": int(applied_lot_id),
-                    "batch_code": bc,
+                    "lot_code": lot_code_snapshot,
                     "qty": int(picked),
                     "ref": str(task.order_id),
                     "ref_line": ref_line,
