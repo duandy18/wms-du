@@ -133,6 +133,7 @@ def init_models(
 
     for pkg_name in (
         "app.procurement.models",
+        "app.finance.models",
         "app.pms.items.models",
         "app.pms.suppliers.models",
         "app.wms.inventory_adjustment.return_inbound.models",
