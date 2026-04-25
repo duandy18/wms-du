@@ -18478,56 +18478,6 @@
         }
       }
     },
-    "/inventory/autoheal/execute": {
-      "post": {
-        "tags": [
-          "inventory_autoheal_execute"
-        ],
-        "summary": "Autoheal Execute",
-        "operationId": "autoheal_execute_inventory_autoheal_execute_post",
-        "parameters": [
-          {
-            "name": "cut",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Cut"
-            }
-          },
-          {
-            "name": "dry_run",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": true,
-              "title": "Dry Run"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/finance/overview/daily": {
       "get": {
         "tags": [

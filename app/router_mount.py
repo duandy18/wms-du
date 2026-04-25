@@ -9,7 +9,6 @@ def mount_routers(app: FastAPI) -> None:
     # routers imports
     # ---------------------------------------------------------------------------
     from app.admin.router import router as admin_router
-    from app.diagnostics.routers.autoheal_execute import router as autoheal_execute_router
     from app.wms.inventory_adjustment.count.routers.count import router as count_router
     from app.wms.inventory_adjustment.count.routers.count_docs import router as count_docs_router
     from app.wms.inventory_adjustment.count.routers.stock_inventory_recount import router as stock_inventory_recount_router
@@ -185,6 +184,5 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(flow_replay_router)
     app.include_router(lifecycle_router)
     app.include_router(intelligence_router)
-    app.include_router(autoheal_execute_router)
 
     app.include_router(finance_overview_router)
