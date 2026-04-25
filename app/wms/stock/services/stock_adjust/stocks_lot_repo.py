@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # NOTE:
 # - 本模块属于 stock_adjust 执行器内部仓储层（repo）。
 # - 业务服务（Inbound/Outbound/Pick/Scan/Dev tools 等）不得直接调用这些函数，
-#   必须统一走 StockService.adjust -> adjust_lot_impl，避免绕过合同/幂等/台账。
+#   必须统一走 lot-only 库存写入原语，避免绕过合同/幂等/台账。
 # - 这里的 SQL 只做“slot 原语 + balance 写入”，不负责 batch/lot 合同裁决。
 
 

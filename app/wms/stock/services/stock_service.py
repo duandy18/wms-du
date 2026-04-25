@@ -21,7 +21,7 @@ class StockService:
     终态收口：
     - adjust_lot：lot-only 原语入口，调用方必须先解析 lot_id；
     - lot_resolver：保留给上层服务做合同裁决 + lot_id 解析；
-    - 旧 StockService.adjust(batch_code=...) 合同入口已退役。
+    - 旧 batch_code 合同写入口已退役。
     """
 
     def __init__(self, lot_resolver: Optional[LotResolver] = None) -> None:

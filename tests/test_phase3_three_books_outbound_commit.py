@@ -124,7 +124,7 @@ async def test_phase3_outbound_commit_three_books_strict(session: AsyncSession):
     item_id = await _pick_item_for_stock_in(session)
     batch_code = "B-PH3-OUT"
 
-    # 入库造数：给足库存，避免出库不足。测试造数统一走 lot-only helper，不再调用 StockService.adjust。
+    # 入库造数：给足库存，避免出库不足。测试造数统一走 lot-only helper。
     await set_stock_qty(
         session,
         item_id=item_id,

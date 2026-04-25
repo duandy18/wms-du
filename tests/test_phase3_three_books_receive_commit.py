@@ -372,7 +372,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         expiry_date=exp,
     )
 
-    # 2) 写入入库动作（ledger+stocks_lot）。测试造数统一走 lot-only 原语，不再调用 StockService.adjust。
+    # 2) 写入入库动作（ledger+stocks_lot）。测试造数统一走 lot-only 原语。
     ref = "RCPT-PH3-UT"
     await adjust_lot_impl(
         session=session,

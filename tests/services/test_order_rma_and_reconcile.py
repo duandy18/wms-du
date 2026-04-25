@@ -117,7 +117,7 @@ async def _ensure_stock_lot_for_adjust(
     expiry_date: Optional[date],
 ) -> int:
     """
-    测试造数专用：把原先 StockService.adjust(batch_code=...) 的 lot 解析提前显式化。
+    测试造数专用：把 lot 解析提前显式化。
     """
     if batch_code is not None:
         return await _ensure_supplier_lot(

@@ -117,7 +117,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
 
     场景：
     1. 确保最小维度存在；
-    2. 通过正式写入口（StockService.adjust）做入库 +5；
+    2. 通过 lot-only 写入口做入库 +5；
     3. 断言：
        - stocks_lot 的 qty 变化正确；
        - stock_ledger 中对应 ref/ref_line 的 after_qty 与余额一致。
