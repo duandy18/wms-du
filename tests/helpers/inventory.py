@@ -217,7 +217,7 @@ async def seed_supplier_lot_slot(
         ref_line=1,
         occurred_at=None,
         meta=None,
-        batch_code=code_raw,
+        lot_code=code_raw,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=None,

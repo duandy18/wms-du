@@ -336,7 +336,7 @@ class ReturnTaskServiceImpl:
                 ref=str(task.order_id),
                 ref_line=ref_line,
                 occurred_at=ts,
-                batch_code=None,
+                lot_code=None,
                 production_date=lot_snapshot.get("production_date"),
                 expiry_date=lot_snapshot.get("expiry_date"),
                 trace_id=trace_id,

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
 from app.wms.stock.services.lot_guard import assert_lot_belongs_to
-from app.wms.stock.services.stock_adjust.batch_keys import norm_batch_code
+from app.wms.stock.services.stock_adjust.lot_code_keys import norm_lot_code
 from app.wms.stock.services.stock_adjust.date_rules import resolve_and_validate_dates_for_inbound
 from app.wms.stock.services.stock_adjust.db_items import item_requires_batch
 from app.wms.stock.services.stock_adjust.idempotency import idem_hit_by_lot_key
@@ -41,7 +41,7 @@ async def adjust_lot_impl(
     ref_line: Optional[Union[int, str]] = None,
     occurred_at: Optional[datetime] = None,
     meta: Optional[Dict[str, Any]] = None,
-    batch_code: Optional[str] = None,
+    lot_code: Optional[str] = None,
     production_date: Optional[date] = None,
     expiry_date: Optional[date] = None,
     trace_id: Optional[str],
@@ -74,9 +74,9 @@ async def adjust_lot_impl(
         raise ValueError("lot_id is required in lot-only world.")
 
     requires_batch = await item_requires_batch(session, item_id=int(item_id))
-    bc_norm = norm_batch_code(batch_code)
+    lot_code_norm = norm_lot_code(lot_code)
 
-    # 终态：批次受控商品允许 batch_code 为空（展示码），但 lot_id 必须存在
+    # 终态：批次受控商品允许 lot_code 为空（展示码），但 lot_id 必须存在
     if requires_batch and not lot_id:
         raise ValueError("批次受控商品必须指定 lot_id。")
 
@@ -91,7 +91,7 @@ async def adjust_lot_impl(
         session=session,
         item_id=int(item_id),
         delta=int(delta),
-        batch_code_norm=bc_norm,
+        lot_code_norm=lot_code_norm,
         production_date=production_date,
         expiry_date=expiry_date,
     )
@@ -136,8 +136,8 @@ async def adjust_lot_impl(
             raise ValueError(f"insufficient stock(lot): before={before_qty}, delta={delta}")
 
     # 展示码：优先用 lot_id 对应的 lots.lot_code（若存在）
-    if not bc_norm:
-        bc_norm = await load_lot_code_for_lot_id(session, lot_id=int(lot_id))
+    if not lot_code_norm:
+        lot_code_norm = await load_lot_code_for_lot_id(session, lot_id=int(lot_id))
 
     # audit-consistency：记账必须通过白名单入口（stock_service_adjust.write_ledger_infra）
     # 这里必须用 lazy import，避免 stock_service_adjust <-> stock_adjust 循环导入

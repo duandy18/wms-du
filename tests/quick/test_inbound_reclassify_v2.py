@@ -93,7 +93,7 @@ async def _write_delta(
         ref_line=int(ref_line),
         occurred_at=datetime.now(UTC),
         meta=None,
-        batch_code=None,
+        lot_code=None,
         production_date=None,
         expiry_date=None,
         trace_id=None,

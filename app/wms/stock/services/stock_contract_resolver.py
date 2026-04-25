@@ -16,7 +16,7 @@ async def resolve_lot_for_stock_adjust(
     lot_resolver: LotResolver,
     item_id: int,
     warehouse_id: int,
-    batch_code: Optional[str],
+    lot_code: Optional[str],
     lot_id: Optional[int],
     ref: str,
     occurred_at: Optional[datetime],
@@ -37,9 +37,9 @@ async def resolve_lot_for_stock_adjust(
     - REQUIRED 商品：若需要创建 / 解析 SUPPLIER lot，必须携带 production_date
     """
     requires_batch = await lot_resolver.requires_batch(session, item_id=int(item_id))
-    bc_norm = validate_lot_code_contract(requires_batch=requires_batch, lot_code=batch_code)
+    lot_code_norm = validate_lot_code_contract(requires_batch=requires_batch, lot_code=lot_code)
 
-    if bc_norm is None:
+    if lot_code_norm is None:
         resolved_lot_id = lot_id or await lot_resolver.ensure_internal_lot_id(
             session,
             warehouse_id=int(warehouse_id),
@@ -52,10 +52,10 @@ async def resolve_lot_for_stock_adjust(
             session,
             warehouse_id=int(warehouse_id),
             item_id=int(item_id),
-            lot_code=bc_norm,
+            lot_code=lot_code_norm,
             occurred_at=occurred_at,
             production_date=production_date,
             expiry_date=expiry_date,
         )
 
-    return int(resolved_lot_id), bc_norm
+    return int(resolved_lot_id), lot_code_norm

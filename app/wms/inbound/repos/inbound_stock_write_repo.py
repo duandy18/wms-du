@@ -22,7 +22,7 @@ async def apply_inbound_stock(
     ref: str,
     ref_line: int,
     occurred_at: datetime | None,
-    batch_code: str | None,
+    lot_code: str | None,
     production_date: date | None,
     expiry_date: date | None,
     event_id: int | None = None,
@@ -60,7 +60,7 @@ async def apply_inbound_stock(
         ref=str(ref),
         ref_line=int(ref_line),
         occurred_at=occurred_at,
-        batch_code=batch_code,
+        lot_code=lot_code,
         meta={
             "sub_reason": "ATOMIC_INBOUND",
             "event_id": int(event_id) if event_id is not None else None,

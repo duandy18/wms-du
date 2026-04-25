@@ -14,21 +14,21 @@ async def resolve_and_validate_dates_for_inbound(
     session: AsyncSession,
     item_id: int,
     delta: int,
-    batch_code_norm: Optional[str],
+    lot_code_norm: Optional[str],
     production_date: Optional[date],
     expiry_date: Optional[date],
 ) -> tuple[Optional[date], Optional[date]]:
     """
     入库侧日期裁决：
 
-    - 有 batch_code 的路径，统一走 normalize_batch_dates_for_item
+    - 有 lot_code 的路径，统一走 normalize_batch_dates_for_item
     - 不再私自用 date.today() 补 production_date
     - 对 delta>0（入库正增量），若最终仍无法形成 canonical production/expiry，则明确报错
     """
     pd = production_date
     ed = expiry_date
 
-    if batch_code_norm is None:
+    if lot_code_norm is None:
         return None, None
 
     pd, ed, _resolution_mode = await normalize_batch_dates_for_item(

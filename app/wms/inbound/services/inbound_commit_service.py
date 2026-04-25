@@ -383,7 +383,7 @@ async def commit_inbound(
             ref=str(event.event_no),
             ref_line=int(line.line_no),
             occurred_at=payload.occurred_at,
-            batch_code=line.lot_code_input,
+            lot_code=line.lot_code_input,
             production_date=line.production_date,
             expiry_date=line.expiry_date,
             event_id=int(event.id),

@@ -187,7 +187,7 @@ async def _seed_manual_doc_and_stock(
         ref_line=1,
         occurred_at=datetime.now(UTC),
         meta=None,
-        batch_code=batch_code,
+        lot_code=batch_code,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=None,

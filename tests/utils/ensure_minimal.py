@@ -287,7 +287,7 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
         ref_line=1,
         occurred_at=None,
         meta=None,
-        batch_code=bc_norm,
+        lot_code=bc_norm,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=None,

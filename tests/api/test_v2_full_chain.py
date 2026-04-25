@@ -450,7 +450,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         ref=f"UNIT-TEST-IN-3001-{uniq}",
         ref_line=1,
         occurred_at=now,
-        batch_code=lot_code,
+        lot_code=lot_code,
         production_date=now.date(),
         expiry_date=None,
         trace_id=None,

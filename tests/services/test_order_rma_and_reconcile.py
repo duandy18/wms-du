@@ -172,7 +172,7 @@ async def _write_stock_delta_for_test(
         ref_line=int(ref_line),
         occurred_at=occurred_at,
         meta=None,
-        batch_code=batch_code,
+        lot_code=batch_code,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=None,

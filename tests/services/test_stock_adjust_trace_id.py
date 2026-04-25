@@ -60,7 +60,7 @@ async def test_stock_adjust_writes_trace_id(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         meta=None,
-        batch_code="B-UT-1",
+        lot_code="B-UT-1",
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=trace_id,
