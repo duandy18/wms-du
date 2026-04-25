@@ -14,6 +14,7 @@ from app.db.deps import get_async_session as get_session
 from app.wms.inventory_adjustment.count.services.count_freeze_guard_service import (
     ensure_warehouse_not_frozen,
 )
+from app.wms.stock.services.stock_contract_resolver import resolve_lot_for_stock_adjust
 
 router = APIRouter()
 
@@ -101,14 +102,28 @@ async def stock_recount(
         delta = int(req.actual) - on_hand
 
         if delta != 0:
-            await svc.adjust(
+            resolved_lot_id, resolved_lot_code = await resolve_lot_for_stock_adjust(
+                session,
+                lot_resolver=svc.lot_resolver,
+                item_id=int(req.item_id),
+                warehouse_id=int(req.warehouse_id),
+                batch_code=code,
+                lot_id=None,
+                ref=scan_ref,
+                occurred_at=occurred_at,
+                production_date=None,
+                expiry_date=None,
+            )
+
+            await svc.adjust_lot(
                 session=session,
                 item_id=int(req.item_id),
                 warehouse_id=int(req.warehouse_id),
+                lot_id=int(resolved_lot_id),
                 delta=delta,
                 reason="COUNT",
                 ref=scan_ref,
-                batch_code=code,
+                batch_code=resolved_lot_code,
             )
 
         ev_id = await _insert_event(
