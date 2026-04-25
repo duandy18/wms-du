@@ -58,6 +58,9 @@ class SkuPurchaseLedgerRow(BaseModel):
     supplier_id: int
     supplier_name: str
 
+    warehouse_id: int
+    warehouse_name: str | None = None
+
     purchase_time: datetime
     purchase_date: date
 
@@ -73,3 +76,26 @@ class SkuPurchaseLedgerRow(BaseModel):
 
 class SkuPurchaseLedgerResponse(BaseModel):
     rows: list[SkuPurchaseLedgerRow]
+
+
+class SkuPurchaseLedgerItemOption(BaseModel):
+    item_id: int
+    item_sku: str | None = None
+    item_name: str | None = None
+    spec_text: str | None = None
+
+
+class SkuPurchaseLedgerSupplierOption(BaseModel):
+    supplier_id: int
+    supplier_name: str
+
+
+class SkuPurchaseLedgerWarehouseOption(BaseModel):
+    warehouse_id: int
+    warehouse_name: str
+
+
+class SkuPurchaseLedgerOptionsResponse(BaseModel):
+    items: list[SkuPurchaseLedgerItemOption]
+    suppliers: list[SkuPurchaseLedgerSupplierOption]
+    warehouses: list[SkuPurchaseLedgerWarehouseOption]
