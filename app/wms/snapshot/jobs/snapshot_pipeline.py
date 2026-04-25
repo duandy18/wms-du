@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_event
-from app.diagnostics.services.inventory_anomaly_service import InventoryAnomalyService
+from app.wms.snapshot.services.inventory_anomaly_service import InventoryAnomalyService
 from app.wms.snapshot.services.snapshot_v3_service import SnapshotV3Service
 
 

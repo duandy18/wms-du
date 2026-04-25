@@ -15,11 +15,8 @@ def mount_routers(app: FastAPI) -> None:
     from app.wms.inventory_adjustment.summary.routers.summary import (
         router as inventory_adjustment_summary_router,
     )
-    from app.diagnostics.routers.debug_trace import router as debug_trace_router
     from app.analytics.routers.finance_overview import router as finance_overview_router
-    from app.diagnostics.routers.flow_replay import router as flow_replay_router
     from app.tms.routers.geo_cn import router as geo_router
-    from app.diagnostics.routers.intelligence import router as intelligence_router
     from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
     from app.pms.items.routers.item_uoms import router as item_uoms_router
@@ -33,10 +30,7 @@ def mount_routers(app: FastAPI) -> None:
         router as pms_public_suppliers_read_router,
     )
     from app.wms.analysis.routers.ledger_reconcile_v2 import router as ledger_reconcile_v2_router
-    from app.wms.ledger.routers.ledger_timeline import router as ledger_timeline_router
-    from app.diagnostics.routers.lifecycle import router as lifecycle_router
     from app.oms.routers.meta_platforms import router as meta_router
-    from app.diagnostics.routers.metrics import router as metrics_router
     from app.wms.outbound.routers.orders_fulfillment_debug import (
         router as orders_fulfillment_debug_router,
     )
@@ -166,8 +160,6 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(tms_records_router)
     app.include_router(tms_billing_router)
 
-    app.include_router(debug_trace_router)
-    app.include_router(metrics_router)
     app.include_router(stock_inventory_router)
 
     app.include_router(stock_ledger_router)
@@ -179,10 +171,6 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(admin_router)
 
     app.include_router(ledger_reconcile_v2_router)
-    app.include_router(ledger_timeline_router)
     app.include_router(snapshot_v3_router)
-    app.include_router(flow_replay_router)
-    app.include_router(lifecycle_router)
-    app.include_router(intelligence_router)
 
     app.include_router(finance_overview_router)

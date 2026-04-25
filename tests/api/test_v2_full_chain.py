@@ -364,7 +364,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     2) 人工履约决策：调用 manual-assign 指定执行仓，并标记可进入履约
     3) 入库（为后续 pick/ship 准备库存）
     4) pick → ship-with-waybill
-    5) debug trace：至少出现 ORDER_CREATED + SHIPMENT/SHIP_COMMIT
+    5) ship-with-waybill：完成发货执行并返回运输事实
     """
     plat = "PDD"
     shop_id = "1"
@@ -537,19 +537,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     assert str(ship_data["tracking_no"]).strip() != ""
     assert ship_data["status"] == "IN_TRANSIT"
 
-    # 6) trace
-    trace_id2 = trace_id
-    assert trace_id2
-
-    # 7) trace
-    resp = await client.get(f"/debug/trace/{trace_id2}")
-    print("[HTTP] /debug/trace status:", resp.status_code)
-    assert resp.status_code == 200, resp.text
-    trace = resp.json()
-    events = trace["events"]
-    kinds = [e["kind"] for e in events]
-    summaries = [e["summary"] for e in events]
-
-    assert any("ORDER_CREATED" in s for s in summaries), summaries
-    assert any(k == "SHIPMENT" for k in kinds), kinds
-    assert any("SHIP_COMMIT" in s for s in summaries), summaries
+    # diagnostics trace endpoint has been retired.
+    # The full-chain contract now ends at shipment execution; trace_id remains
+    # a persisted data field, not a debug API dependency.
+    assert trace_id

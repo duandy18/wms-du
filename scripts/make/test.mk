@@ -206,7 +206,6 @@ test-diagnostics-core: venv
 	WMS_DATABASE_URL=$(TEST_DB_DSN) \
 	WMS_TEST_DATABASE_URL=$(TEST_DB_DSN) \
 	PYTHONPATH=. $(PYTEST) -q \
-		tests/api/test_debug_trace_api.py \
 		tests/api/test_devconsole_orders_api.py
 
 # =================================
