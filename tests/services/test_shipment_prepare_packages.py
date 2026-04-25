@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.tms.shipment.service_prepare_packages import ShipmentPreparePackagesService
+from app.shipping_assist.shipment.service_prepare_packages import ShipmentPreparePackagesService
 from tests.services.pick._seed_orders import insert_min_order
 from tests.utils.ensure_minimal import ensure_warehouse
 

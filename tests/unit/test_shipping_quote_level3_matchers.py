@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
-from app.tms.quote.matchers import (
+from app.shipping_assist.quote.matchers import (
     _match_destination_group,
     _match_pricing_matrix,
 )
-from app.tms.quote.types import Dest
+from app.shipping_assist.quote.types import Dest
 
 
 @dataclass

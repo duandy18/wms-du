@@ -1,7 +1,7 @@
 # tests/unit/test_tms_phase1_boundary.py
 from __future__ import annotations
 
-from app.tms.phase1_boundary import (
+from app.shipping_assist.phase1_boundary import (
     DomainOwner,
     TmsSubdomain,
     find_file_ownership,
@@ -38,7 +38,7 @@ def test_order_owned_by_oms() -> None:
 
 
 def test_tms_quote_router_is_frozen_as_shipping_assist_quote() -> None:
-    rule = find_file_ownership("app/tms/quote/router.py")
+    rule = find_file_ownership("app/shipping_assist/quote/router.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -46,7 +46,7 @@ def test_tms_quote_router_is_frozen_as_shipping_assist_quote() -> None:
 
 
 def test_tms_alerts_service_is_frozen_as_shipping_assist_quote() -> None:
-    rule = find_file_ownership("app/tms/alerts/service.py")
+    rule = find_file_ownership("app/shipping_assist/alerts/service.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -54,7 +54,7 @@ def test_tms_alerts_service_is_frozen_as_shipping_assist_quote() -> None:
 
 
 def test_tms_waybill_service_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/waybill_service.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/waybill_service.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -62,7 +62,7 @@ def test_tms_waybill_service_is_frozen_as_shipping_assist_shipment() -> None:
 
 
 def test_tms_shipment_calc_route_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/routes_calc.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/routes_calc.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -70,7 +70,7 @@ def test_tms_shipment_calc_route_is_frozen_as_shipping_assist_shipment() -> None
 
 
 def test_tms_shipment_prepare_route_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/routes_prepare.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/routes_prepare.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -78,7 +78,7 @@ def test_tms_shipment_prepare_route_is_frozen_as_shipping_assist_shipment() -> N
 
 
 def test_tms_shipment_router_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/router.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/router.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -86,7 +86,7 @@ def test_tms_shipment_router_is_frozen_as_shipping_assist_shipment() -> None:
 
 
 def test_tms_orders_v2_shipment_router_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/orders_v2_router.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/orders_v2_router.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -94,7 +94,7 @@ def test_tms_orders_v2_shipment_router_is_frozen_as_shipping_assist_shipment() -
 
 
 def test_ship_with_waybill_is_frozen_as_shipping_assist_shipment() -> None:
-    rule = find_file_ownership("app/tms/shipment/routes_ship_with_waybill.py")
+    rule = find_file_ownership("app/shipping_assist/shipment/routes_ship_with_waybill.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -102,7 +102,7 @@ def test_ship_with_waybill_is_frozen_as_shipping_assist_shipment() -> None:
 
 
 def test_tms_records_router_is_frozen_as_shipping_assist_records() -> None:
-    rule = find_file_ownership("app/tms/records/router.py")
+    rule = find_file_ownership("app/shipping_assist/records/router.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS
@@ -110,7 +110,7 @@ def test_tms_records_router_is_frozen_as_shipping_assist_records() -> None:
 
 
 def test_tms_reports_router_is_frozen_as_shipping_assist_reports() -> None:
-    rule = find_file_ownership("app/tms/reports/router.py")
+    rule = find_file_ownership("app/shipping_assist/reports/router.py")
 
     assert rule is not None
     assert rule.owner_domain == DomainOwner.TMS

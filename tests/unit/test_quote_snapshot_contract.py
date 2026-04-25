@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.tms.quote_snapshot import (
+from app.shipping_assist.quote_snapshot import (
     build_quote_snapshot,
     extract_cost_estimated,
     extract_quote_snapshot,

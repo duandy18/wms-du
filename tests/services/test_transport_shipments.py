@@ -8,12 +8,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.tms.quote_snapshot import (
+from app.shipping_assist.quote_snapshot import (
     extract_cost_estimated,
     extract_freight_estimated,
     extract_surcharge_estimated,
 )
-from app.tms.shipment import (
+from app.shipping_assist.shipment import (
     ShipmentApplicationError,
     ShipWithWaybillCommand,
     TransportShipmentService,

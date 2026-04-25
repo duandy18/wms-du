@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.tms.shipment import ShipCommitAuditCommand, TransportShipmentService
+from app.shipping_assist.shipment import ShipCommitAuditCommand, TransportShipmentService
 
 pytestmark = pytest.mark.asyncio
 
