@@ -12,7 +12,7 @@ from app.wms.shared.enums import MovementType
 from app.oms.orders.services.order_reconcile_service import OrderReconcileService
 from app.oms.services.order_service import OrderService
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 UTC = timezone.utc
 
@@ -104,6 +104,79 @@ async def _ensure_internal_lot_for_receipt(session: AsyncSession, *, warehouse_i
         warehouse_id=int(warehouse_id),
         source_receipt_id=int(receipt_id),
         source_line_no=1,
+    )
+
+
+async def _ensure_stock_lot_for_adjust(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code: Optional[str],
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> int:
+    """
+    测试造数专用：把原先 StockService.adjust(batch_code=...) 的 lot 解析提前显式化。
+    """
+    if batch_code is not None:
+        return await _ensure_supplier_lot(
+            session,
+            warehouse_id=int(warehouse_id),
+            item_id=int(item_id),
+            code=str(batch_code),
+        )
+
+    return int(
+        await ensure_internal_lot_singleton(
+            session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            source_receipt_id=None,
+            source_line_no=None,
+        )
+    )
+
+
+async def _write_stock_delta_for_test(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    batch_code: Optional[str],
+    delta: int,
+    reason: MovementType,
+    ref: str,
+    ref_line: int,
+    occurred_at: datetime,
+    production_date: Optional[date],
+    expiry_date: Optional[date],
+) -> None:
+    lot_id = await _ensure_stock_lot_for_adjust(
+        session,
+        warehouse_id=int(warehouse_id),
+        item_id=int(item_id),
+        batch_code=batch_code,
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+
+    await adjust_lot_impl(
+        session=session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_id=int(lot_id),
+        delta=int(delta),
+        reason=reason,
+        ref=str(ref),
+        ref_line=int(ref_line),
+        occurred_at=occurred_at,
+        meta=None,
+        batch_code=batch_code,
+        production_date=production_date,
+        expiry_date=expiry_date,
+        trace_id=None,
+        utc_now=lambda: datetime.now(UTC),
     )
 
 
@@ -392,11 +465,9 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     order_id = int(result["id"])
     order_ref = result["ref"]  # 形如 ORD:PDD:SHOP:EXT
 
-    stock_svc = StockService()
-
     # 2) 先做一笔入库，保证库存足够
-    await stock_svc.adjust(
-        session=session,
+    await _write_stock_delta_for_test(
+        session,
         item_id=item_id,
         warehouse_id=1,
         delta=2,
@@ -410,8 +481,8 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     )
 
     # 3) 模拟发货 shipped=2（只统计负数 delta，用于 shipped 计算）
-    await stock_svc.adjust(
-        session=session,
+    await _write_stock_delta_for_test(
+        session,
         item_id=item_id,
         warehouse_id=1,
         delta=-2,
@@ -528,11 +599,9 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
     order_id = int(result["id"])
     order_ref = result["ref"]
 
-    stock_svc = StockService()
-
     # 2) 入库 + 发货 shipped=2
-    await stock_svc.adjust(
-        session=session,
+    await _write_stock_delta_for_test(
+        session,
         item_id=item_id,
         warehouse_id=1,
         delta=2,
@@ -544,8 +613,8 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
         production_date=pd,
         expiry_date=ed,
     )
-    await stock_svc.adjust(
-        session=session,
+    await _write_stock_delta_for_test(
+        session,
         item_id=item_id,
         warehouse_id=1,
         delta=-2,
