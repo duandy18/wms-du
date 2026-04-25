@@ -60,75 +60,46 @@ class PurchaseCostSource:
 
         if from_date is not None:
             params["from_date"] = from_date
-            where_clauses.append("DATE(po.purchase_time) >= :from_date")
+            where_clauses.append("purchase_date >= :from_date")
 
         if to_date is not None:
             params["to_date"] = to_date
-            where_clauses.append("DATE(po.purchase_time) <= :to_date")
+            where_clauses.append("purchase_date <= :to_date")
 
         if supplier_id is not None:
             params["supplier_id"] = int(supplier_id)
-            where_clauses.append("po.supplier_id = :supplier_id")
+            where_clauses.append("supplier_id = :supplier_id")
 
         if warehouse_id is not None:
             params["warehouse_id"] = int(warehouse_id)
-            where_clauses.append("po.warehouse_id = :warehouse_id")
+            where_clauses.append("warehouse_id = :warehouse_id")
 
         where_sql = "\n               AND ".join(where_clauses)
 
         sql = text(
             f"""
-            WITH ledger AS (
-              SELECT
-                pol.id AS po_line_id,
-                po.id AS po_id,
-                po.po_no AS po_no,
-                pol.line_no AS line_no,
-
-                pol.item_id AS item_id,
-                pol.item_sku AS item_sku,
-                pol.item_name AS item_name,
-                pol.spec_text AS spec_text,
-
-                po.supplier_id AS supplier_id,
-                COALESCE(po.supplier_name, '') AS supplier_name,
-
-                po.warehouse_id AS warehouse_id,
-                COALESCE(wh.name, '') AS warehouse_name,
-
-                po.purchase_time AS purchase_time,
-                DATE(po.purchase_time) AS purchase_date,
-
-                pol.qty_ordered_input AS qty_ordered_input,
-                pol.purchase_uom_name_snapshot AS purchase_uom_name_snapshot,
-                pol.purchase_ratio_to_base_snapshot AS purchase_ratio_to_base_snapshot,
-                pol.qty_ordered_base AS qty_ordered_base,
-
-                pol.supply_price AS purchase_unit_price,
-                {self._line_amount_expr()}::numeric(14, 2) AS planned_line_amount
-
-                FROM purchase_orders po
-                JOIN purchase_order_lines pol ON pol.po_id = po.id
-                JOIN warehouses wh ON wh.id = po.warehouse_id
-               WHERE {where_sql}
-                 AND (
-                   :item_keyword = ''
-                   OR pol.item_sku ILIKE :item_keyword_like
-                   OR pol.item_name ILIKE :item_keyword_like
-                   OR pol.spec_text ILIKE :item_keyword_like
-                   OR CAST(pol.item_id AS text) = :item_keyword
-                 )
+            WITH filtered AS (
+              SELECT *
+              FROM finance_purchase_price_ledger_lines
+              WHERE {where_sql}
+                AND (
+                  :item_keyword = ''
+                  OR item_sku ILIKE :item_keyword_like
+                  OR item_name ILIKE :item_keyword_like
+                  OR spec_text ILIKE :item_keyword_like
+                  OR CAST(item_id AS text) = :item_keyword
+                )
             ),
             weighted AS (
               SELECT
-                ledger.*,
-                SUM(ledger.planned_line_amount) OVER (
-                  PARTITION BY ledger.item_id
+                filtered.*,
+                SUM(filtered.planned_line_amount) OVER (
+                  PARTITION BY filtered.item_id
                 ) AS item_purchase_amount,
-                SUM(ledger.qty_ordered_base) OVER (
-                  PARTITION BY ledger.item_id
+                SUM(filtered.qty_ordered_base) OVER (
+                  PARTITION BY filtered.item_id
                 ) AS item_base_qty
-              FROM ledger
+              FROM filtered
             )
             SELECT
               po_line_id,
@@ -158,7 +129,6 @@ class PurchaseCostSource:
               END AS accounting_unit_price
             FROM weighted
             ORDER BY
-              item_sku ASC NULLS LAST,
               item_id ASC,
               purchase_time DESC,
               po_id DESC,
@@ -212,13 +182,13 @@ class PurchaseCostSource:
                 text(
                     """
                     SELECT
-                      pol.item_id,
-                      MAX(pol.item_sku) AS item_sku,
-                      MAX(pol.item_name) AS item_name,
-                      MAX(pol.spec_text) AS spec_text
-                    FROM purchase_order_lines pol
-                    GROUP BY pol.item_id
-                    ORDER BY MAX(pol.item_sku) ASC NULLS LAST, pol.item_id ASC
+                      item_id,
+                      MAX(item_sku) AS item_sku,
+                      MAX(item_name) AS item_name,
+                      MAX(spec_text) AS spec_text
+                    FROM finance_purchase_price_ledger_lines
+                    GROUP BY item_id
+                    ORDER BY MAX(item_sku) ASC NULLS LAST, item_id ASC
                     LIMIT 500
                     """
                 )
@@ -230,12 +200,11 @@ class PurchaseCostSource:
                 text(
                     """
                     SELECT
-                      po.supplier_id,
-                      COALESCE(po.supplier_name, '') AS supplier_name
-                    FROM purchase_orders po
-                    JOIN purchase_order_lines pol ON pol.po_id = po.id
-                    GROUP BY po.supplier_id, COALESCE(po.supplier_name, '')
-                    ORDER BY supplier_name ASC, po.supplier_id ASC
+                      supplier_id,
+                      COALESCE(supplier_name, '') AS supplier_name
+                    FROM finance_purchase_price_ledger_lines
+                    GROUP BY supplier_id, COALESCE(supplier_name, '')
+                    ORDER BY supplier_name ASC, supplier_id ASC
                     """
                 )
             )
@@ -246,13 +215,11 @@ class PurchaseCostSource:
                 text(
                     """
                     SELECT
-                      po.warehouse_id,
-                      COALESCE(wh.name, '') AS warehouse_name
-                    FROM purchase_orders po
-                    JOIN purchase_order_lines pol ON pol.po_id = po.id
-                    JOIN warehouses wh ON wh.id = po.warehouse_id
-                    GROUP BY po.warehouse_id, COALESCE(wh.name, '')
-                    ORDER BY warehouse_name ASC, po.warehouse_id ASC
+                      warehouse_id,
+                      COALESCE(warehouse_name, '') AS warehouse_name
+                    FROM finance_purchase_price_ledger_lines
+                    GROUP BY warehouse_id, COALESCE(warehouse_name, '')
+                    ORDER BY warehouse_name ASC, warehouse_id ASC
                     """
                 )
             )
