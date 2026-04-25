@@ -9,6 +9,7 @@ from app.wms.inventory_adjustment.count.services.count_freeze_guard_service impo
     ensure_warehouse_not_frozen,
 )
 from app.wms.shared.services.lot_code_contract import validate_lot_code_contract
+from app.wms.stock.services.stock_contract_resolver import resolve_lot_for_stock_adjust
 from app.wms.stock.services.stock_service import StockService
 
 
@@ -49,11 +50,24 @@ class CountService:
                 "expiry-policy REQUIRED item requires production_date or expiry_date (at least one)."
             )
 
+        resolved_lot_id, resolved_lot_code = await resolve_lot_for_stock_adjust(
+            session,
+            lot_resolver=self.stock.lot_resolver,
+            item_id=int(req.item_id),
+            warehouse_id=int(req.warehouse_id),
+            batch_code=lot_code,
+            lot_id=None,
+            ref=str(req.ref),
+            occurred_at=req.occurred_at,
+            production_date=req.production_date,
+            expiry_date=req.expiry_date,
+        )
+
         current = await self.repo.get_current_qty_by_lot_code(
             session,
             item_id=int(req.item_id),
             warehouse_id=int(req.warehouse_id),
-            lot_code=lot_code,
+            lot_code=resolved_lot_code,
         )
         delta = int(req.qty) - int(current)
 
@@ -63,16 +77,17 @@ class CountService:
         if delta == 0:
             meta["allow_zero_delta_ledger"] = True
 
-        res = await self.stock.adjust(
+        res = await self.stock.adjust_lot(
             session=session,
-            item_id=req.item_id,
-            warehouse_id=req.warehouse_id,
+            item_id=int(req.item_id),
+            warehouse_id=int(req.warehouse_id),
+            lot_id=int(resolved_lot_id),
             delta=delta,
             reason=MovementType.COUNT,
-            ref=req.ref,
+            ref=str(req.ref),
             ref_line=1,
             occurred_at=req.occurred_at,
-            batch_code=lot_code,
+            batch_code=resolved_lot_code,
             production_date=req.production_date,
             expiry_date=req.expiry_date,
             meta=meta,
@@ -86,6 +101,6 @@ class CountService:
             ref=req.ref,
             item_id=req.item_id,
             warehouse_id=req.warehouse_id,
-            lot_code=lot_code,
+            lot_code=resolved_lot_code,
             occurred_at=req.occurred_at,
         )
