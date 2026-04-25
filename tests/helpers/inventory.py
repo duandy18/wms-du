@@ -227,7 +227,7 @@ async def seed_supplier_lot_slot(
 
 async def seed_many(session: AsyncSession, entries: Iterable[Tuple[int, int, str, int, int]]) -> None:
     for item, loc, code, qty, days in entries:
-        await seed_supplier_lot_slot(session, item=item, loc=loc, lot_lot_code=code, qty=qty, days=days)
+        await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code=code, qty=qty, days=days)
 
 
 async def sum_on_hand(session: AsyncSession, *, item: int, loc: int) -> int:
