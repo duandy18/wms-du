@@ -29600,6 +29600,7 @@
             "title": "Lines"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "ManualOutboundSubmitIn",
         "description": "手动出库提交：整单请求体"
@@ -29626,19 +29627,6 @@
             "minimum": 1.0,
             "title": "Lot Id"
           },
-          "lot_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lot Code"
-          },
           "remark": {
             "anyOf": [
               {
@@ -29652,6 +29640,7 @@
             "title": "Remark"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "manual_doc_line_id",
@@ -30926,6 +30915,7 @@
             "title": "Lines"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "warehouse_id"
@@ -30955,19 +30945,6 @@
             "minimum": 1.0,
             "title": "Lot Id"
           },
-          "lot_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lot Code"
-          },
           "remark": {
             "anyOf": [
               {
@@ -30981,6 +30958,7 @@
             "title": "Remark"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "order_line_id",

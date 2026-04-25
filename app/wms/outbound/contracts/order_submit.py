@@ -11,13 +11,12 @@ class OrderOutboundSubmitLineIn(BaseModel):
     """
     订单出库提交：单行实际出库事实
     """
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     order_line_id: int = Field(..., ge=1)
     item_id: int = Field(..., ge=1)
     qty_outbound: int = Field(..., gt=0)
     lot_id: int = Field(..., ge=1)
-    lot_code: Optional[str] = Field(default=None, min_length=1, max_length=64)
     remark: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -25,7 +24,7 @@ class OrderOutboundSubmitIn(BaseModel):
     """
     订单出库提交：整单请求体
     """
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     warehouse_id: int = Field(..., ge=1)
     remark: Optional[str] = Field(default=None, max_length=255)

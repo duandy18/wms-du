@@ -216,7 +216,6 @@ async def test_manual_outbound_submit_writes_event_and_ledger(
                     "item_id": item_id,
                     "qty_outbound": 2,
                     "lot_id": lot_id,
-                    "lot_code": None,
                     "remark": "line remark",
                 }
             ],
@@ -254,7 +253,7 @@ async def test_manual_outbound_submit_writes_event_and_ledger(
         await session.execute(
             text(
                 """
-                SELECT manual_doc_line_id, item_id, qty_outbound, lot_id
+                SELECT manual_doc_line_id, item_id, qty_outbound, lot_id, lot_code_snapshot
                 FROM outbound_event_lines
                 WHERE event_id = :event_id
                 ORDER BY ref_line ASC
@@ -269,6 +268,13 @@ async def test_manual_outbound_submit_writes_event_and_ledger(
     assert int(line[1]) == item_id
     assert int(line[2]) == 2
     assert int(line[3]) == lot_id
+    expected_lot_code = (
+        await session.execute(
+            text("SELECT lot_code FROM lots WHERE id = :lot_id"),
+            {"lot_id": int(lot_id)},
+        )
+    ).scalar_one()
+    assert line[4] == expected_lot_code
 
     led = (
         await session.execute(
@@ -346,7 +352,6 @@ async def test_manual_outbound_submit_keeps_doc_released_when_partially_submitte
                     "item_id": item_id,
                     "qty_outbound": 2,
                     "lot_id": lot_id,
-                    "lot_code": None,
                     "remark": "partial line remark",
                 }
             ],
@@ -374,3 +379,34 @@ async def test_manual_outbound_submit_keeps_doc_released_when_partially_submitte
         )
     ).scalar_one()
     assert str(doc_status) == "RELEASED"
+
+
+async def test_manual_outbound_submit_rejects_lot_code_and_batch_code_extras(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    headers = await _login_admin_headers(client)
+    doc_id, doc_line_id, _warehouse_id, lot_id, item_id = await _seed_manual_doc_and_stock(session)
+
+    resp = await client.post(
+        f"/wms/outbound/manual/{doc_id}/submit",
+        headers=headers,
+        json={
+            "remark": "UT manual outbound submit rejects extras",
+            "lines": [
+                {
+                    "manual_doc_line_id": doc_line_id,
+                    "item_id": item_id,
+                    "qty_outbound": 1,
+                    "lot_id": lot_id,
+                    "lot_code": "SHOULD-NOT-BE-ACCEPTED",
+                    "batch_code": "SHOULD-NOT-BE-ACCEPTED",
+                    "remark": "line remark",
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 422, resp.text
+    body = resp.text
+    assert "Extra inputs are not permitted" in body
