@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.utils.ensure_minimal import ensure_batch_with_stock
+from tests.utils.ensure_minimal import ensure_supplier_lot_with_stock
 
 
 async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
@@ -21,14 +21,14 @@ async def test_outbound_lot_candidates_returns_seeded_positive_supplier_lot(
 ) -> None:
     warehouse_id = 1
     item_id = 910001
-    batch_code = "UT-OUTBOUND-LOT-CAND-1"
+    lot_code = "UT-OUTBOUND-LOT-CAND-1"
     qty = 7
 
-    await ensure_batch_with_stock(
+    await ensure_supplier_lot_with_stock(
         session,
         item_id=item_id,
         warehouse_id=warehouse_id,
-        batch_code=batch_code,
+        lot_code=lot_code,
         qty=qty,
     )
     await session.commit()
@@ -49,7 +49,7 @@ async def test_outbound_lot_candidates_returns_seeded_positive_supplier_lot(
     assert data["candidates"], "seeded positive supplier lot should be returned"
 
     matched = next(
-        (row for row in data["candidates"] if row["lot_code"] == batch_code),
+        (row for row in data["candidates"] if row["lot_code"] == lot_code),
         None,
     )
     assert matched is not None, data
