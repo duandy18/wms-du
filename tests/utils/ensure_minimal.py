@@ -295,21 +295,42 @@ async def set_stock_qty(session: AsyncSession, *, item_id: int, warehouse_id: in
     )
 
 
-# ---------- legacy-named helpers (kept for compatibility) ----------
-async def ensure_batch(session: AsyncSession, *, item_id: int, warehouse_id: int, batch_code: str) -> None:
-    _ = await ensure_supplier_lot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), lot_code=str(batch_code))
-
-
-async def ensure_batch_with_stock(
+# ---------- lot-code-named test helpers ----------
+async def ensure_supplier_lot_with_stock(
     session: AsyncSession,
     *,
     item_id: int,
     warehouse_id: int,
-    batch_code: str,
+    lot_code: str,
     qty: int,
 ) -> None:
+    """
+    Test helper: create a SUPPLIER lot by display lot_code and set its stocks_lot qty.
+
+    lot_code is display/input text only; stock identity remains lot_id.
+    """
+    code_raw = str(lot_code).strip()
+    if not code_raw:
+        raise ValueError("lot_code empty")
+
     await ensure_item(session, id=int(item_id))
     await ensure_warehouse(session, id=int(warehouse_id))
-    await ensure_batch(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code))
-    await ensure_stock_slot(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code))
-    await set_stock_qty(session, item_id=int(item_id), warehouse_id=int(warehouse_id), batch_code=str(batch_code), qty=int(qty))
+    _ = await ensure_supplier_lot(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        lot_code=code_raw,
+    )
+    await ensure_stock_slot(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        batch_code=code_raw,
+    )
+    await set_stock_qty(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(warehouse_id),
+        batch_code=code_raw,
+        qty=int(qty),
+    )
