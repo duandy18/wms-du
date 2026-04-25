@@ -166,7 +166,7 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
     item_id, may_need_expiry = await _pick_item(session)
     batch_code = "B-PH3-CNT"
 
-    # 先造库存：+5。测试造数统一走 lot-only helper，不再调用 StockService.adjust。
+    # 先造库存：+5。测试造数统一走 lot-only helper。
     await set_stock_qty(
         session,
         item_id=item_id,
@@ -242,7 +242,7 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
     item_id, may_need_expiry = await _pick_item(session)
     batch_code = "B-PH3-CNT2"
 
-    # 先造库存：+5。测试造数统一走 lot-only helper，不再调用 StockService.adjust。
+    # 先造库存：+5。测试造数统一走 lot-only helper。
     await set_stock_qty(
         session,
         item_id=item_id,

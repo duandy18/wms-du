@@ -23,7 +23,7 @@ class RebuildService:
 
         设计定位：
         - 用于 dev/test 环境的修复 / 回放 / 灾备演练
-        - 不属于业务执行路径（业务写入必须走 StockService.adjust）
+        - 不属于业务执行路径（业务写入必须走 lot-only 库存写入原语）
 
         安全护栏：
         - 默认拒绝执行，必须显式 allow_truncate=True

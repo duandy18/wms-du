@@ -94,7 +94,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         expiry_date=exp,
     )
 
-    # 1) 入库造库存：+10。测试造数统一走 lot-only 原语，不再调用 StockService.adjust。
+    # 1) 入库造库存：+10。测试造数统一走 lot-only 原语。
     await adjust_lot_impl(
         session=session,
         item_id=int(item_id),

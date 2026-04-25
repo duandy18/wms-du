@@ -13,7 +13,7 @@
 --
 -- 库存/lot 事实必须在 tests 中显式通过统一入口构造：
 --   - ensure_lot_full / ensure_internal_lot_singleton
---   - adjust_lot_impl / StockService.adjust*
+--   - adjust_lot_impl / lot-only stock write primitives
 --   - tests/helpers/inventory.py: seed_batch_slot 等
 --
 -- Pricing Phase-3：
