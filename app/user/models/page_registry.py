@@ -24,7 +24,7 @@ class PageRegistry(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "domain_code IN ('analytics', 'oms', 'pms', 'procurement', 'wms', 'tms', 'admin', 'inbound')",
+            "domain_code IN ('analytics', 'oms', 'pms', 'procurement', 'wms', 'shipping_assist', 'admin', 'inbound')",
             name="ck_page_registry_domain_code",
         ),
         CheckConstraint(

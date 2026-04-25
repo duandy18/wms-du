@@ -27,8 +27,8 @@ async def _reset_navigation_registry_state(session: AsyncSession) -> None:
             """
             UPDATE page_registry
                SET is_active = TRUE
-             WHERE code = 'tms'
-                OR code LIKE 'tms.%'
+             WHERE code = 'shipping_assist'
+                OR code LIKE 'shipping_assist.%'
             """
         )
     )
@@ -79,7 +79,7 @@ async def _reset_navigation_registry_state(session: AsyncSession) -> None:
             """
             UPDATE page_route_prefixes
                SET is_active = FALSE
-             WHERE route_prefix = '/tms/reports'
+             WHERE route_prefix = '/shipping-assist/reports'
             """
         )
     )
@@ -89,7 +89,7 @@ async def _reset_navigation_registry_state(session: AsyncSession) -> None:
             """
             UPDATE page_route_prefixes
                SET is_active = TRUE
-             WHERE route_prefix LIKE '/tms/%'
+             WHERE route_prefix LIKE '/shipping-assist/%'
                 OR route_prefix LIKE '/inventory-adjustment%'
             """
         )
@@ -357,15 +357,15 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     nodes = _walk_pages(data["pages"])
     route_map = _index_route_prefixes(data["route_prefixes"])
 
-    pricing_page = nodes["tms.pricing.bindings"]
+    pricing_page = nodes["shipping_assist.pricing.bindings"]
     items_page = nodes["wms.masterdata.items"]
     suppliers_page = nodes["wms.masterdata.suppliers"]
     inventory_page = nodes["wms.inventory.main"]
     warehouses_page = nodes["wms.warehouses"]
     inventory_adjustment_page = nodes["wms.inventory_adjustment.summary"]
 
-    assert pricing_page["effective_read_permission"] == "page.tms.read"
-    assert pricing_page["effective_write_permission"] == "page.tms.write"
+    assert pricing_page["effective_read_permission"] == "page.shipping_assist.read"
+    assert pricing_page["effective_write_permission"] == "page.shipping_assist.write"
 
     assert items_page["effective_read_permission"] == "page.pms.read"
     assert items_page["effective_write_permission"] == "page.pms.write"
@@ -382,29 +382,29 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     assert inventory_adjustment_page["effective_read_permission"] == "page.wms.read"
     assert inventory_adjustment_page["effective_write_permission"] == "page.wms.write"
 
-    pricing_route = route_map.get("/tms/pricing")
+    pricing_route = route_map.get("/shipping-assist/pricing/bindings")
     items_route = route_map.get("/items")
     suppliers_route = route_map.get("/suppliers")
     inventory_route = route_map.get("/inventory")
     warehouses_route = route_map.get("/warehouses")
     inventory_adjustment_route = route_map.get("/inventory-adjustment")
 
-    assert pricing_route is not None, "/tms/pricing should exist in route_prefixes"
+    assert pricing_route is not None, "/shipping-assist/pricing/bindings should exist in route_prefixes"
     assert items_route is not None, "/items should exist in route_prefixes"
     assert suppliers_route is not None, "/suppliers should exist in route_prefixes"
     assert inventory_route is not None, "/inventory should exist in route_prefixes"
     assert warehouses_route is not None, "/warehouses should exist in route_prefixes"
     assert inventory_adjustment_route is not None, "/inventory-adjustment should exist in route_prefixes"
 
-    assert pricing_route["page_code"] == "tms.pricing.bindings"
+    assert pricing_route["page_code"] == "shipping_assist.pricing.bindings"
     assert items_route["page_code"] == "wms.masterdata.items"
     assert suppliers_route["page_code"] == "wms.masterdata.suppliers"
     assert inventory_route["page_code"] == "wms.inventory.main"
     assert warehouses_route["page_code"] == "wms.warehouses"
     assert inventory_adjustment_route["page_code"] == "wms.inventory_adjustment.summary"
 
-    assert pricing_route["effective_read_permission"] == "page.tms.read"
-    assert pricing_route["effective_write_permission"] == "page.tms.write"
+    assert pricing_route["effective_read_permission"] == "page.shipping_assist.read"
+    assert pricing_route["effective_write_permission"] == "page.shipping_assist.write"
 
     assert items_route["effective_read_permission"] == "page.pms.read"
     assert items_route["effective_write_permission"] == "page.pms.write"
@@ -450,7 +450,7 @@ async def test_my_navigation_filters_to_only_directly_visible_parent_tree(
     await _set_user_permissions_by_names(
         session,
         username="admin",
-        permission_names=["page.tms.read"],
+        permission_names=["page.shipping_assist.read"],
     )
 
     headers = await _login_admin_headers(client)
@@ -462,48 +462,47 @@ async def test_my_navigation_filters_to_only_directly_visible_parent_tree(
     pages = data["pages"]
     route_prefixes = data["route_prefixes"]
 
-    assert [page["code"] for page in pages] == ["tms"]
+    assert [page["code"] for page in pages] == ["shipping_assist"]
 
     parent = pages[0]
     assert parent["name"] == "发货辅助"
 
     child_codes = [child["code"] for child in parent["children"]]
     assert child_codes == [
-        "tms.shipping",
-        "tms.pricing",
-        "tms.billing",
-        "tms.settings",
+        "shipping_assist.shipping",
+        "shipping_assist.pricing",
+        "shipping_assist.billing",
+        "shipping_assist.settings",
     ]
 
     nodes = _walk_pages(pages)
-    assert _child_codes(nodes["tms.shipping"]) == [
-        "tms.shipping.quote",
-        "tms.shipping.records",
+    assert _child_codes(nodes["shipping_assist.shipping"]) == [
+        "shipping_assist.shipping.quote",
+        "shipping_assist.shipping.records",
     ]
-    assert _child_codes(nodes["tms.pricing"]) == [
-        "tms.pricing.providers",
-        "tms.pricing.bindings",
-        "tms.pricing.templates",
+    assert _child_codes(nodes["shipping_assist.pricing"]) == [
+        "shipping_assist.pricing.providers",
+        "shipping_assist.pricing.bindings",
+        "shipping_assist.pricing.templates",
     ]
-    assert _child_codes(nodes["tms.billing"]) == [
-        "tms.billing.items",
-        "tms.billing.reconciliation",
+    assert _child_codes(nodes["shipping_assist.billing"]) == [
+        "shipping_assist.billing.items",
+        "shipping_assist.billing.reconciliation",
     ]
-    assert _child_codes(nodes["tms.settings"]) == [
-        "tms.settings.waybill",
+    assert _child_codes(nodes["shipping_assist.settings"]) == [
+        "shipping_assist.settings.waybill",
     ]
 
-    assert all(item["page_code"].startswith("tms.") for item in route_prefixes)
+    assert all(item["page_code"].startswith("shipping_assist.") for item in route_prefixes)
     assert [item["route_prefix"] for item in route_prefixes] == [
-        "/tms/shipment-prepare",
-        "/tms/dispatch",
-        "/tms/records",
-        "/tms/providers",
-        "/tms/pricing",
-        "/tms/templates",
-        "/tms/billing/items",
-        "/tms/reconciliation",
-        "/tms/waybill-configs",
+        "/shipping-assist/shipping/quote",
+        "/shipping-assist/shipping/records",
+        "/shipping-assist/pricing/providers",
+        "/shipping-assist/pricing/bindings",
+        "/shipping-assist/pricing/templates",
+        "/shipping-assist/billing/items",
+        "/shipping-assist/billing/reconciliation",
+        "/shipping-assist/settings/waybill",
     ]
 
 
@@ -515,7 +514,7 @@ async def test_my_navigation_keeps_parent_visible_when_no_visible_children(
     await _set_user_permissions_by_names(
         session,
         username="admin",
-        permission_names=["page.tms.read"],
+        permission_names=["page.shipping_assist.read"],
     )
 
     await session.execute(
@@ -523,7 +522,7 @@ async def test_my_navigation_keeps_parent_visible_when_no_visible_children(
             """
             UPDATE page_registry
                SET is_active = FALSE
-             WHERE code LIKE 'tms.%'
+             WHERE code LIKE 'shipping_assist.%'
             """
         )
     )
@@ -535,7 +534,7 @@ async def test_my_navigation_keeps_parent_visible_when_no_visible_children(
     assert r.status_code == 200, r.text
 
     data = r.json()
-    assert [page["code"] for page in data["pages"]] == ["tms"]
+    assert [page["code"] for page in data["pages"]] == ["shipping_assist"]
     assert data["pages"][0]["name"] == "发货辅助"
     assert data["pages"][0]["children"] == []
     assert data["route_prefixes"] == []
@@ -552,52 +551,51 @@ async def test_my_navigation_contains_shipping_assist_level3_tree(client: AsyncC
     nodes = _walk_pages(data["pages"])
     route_map = _index_route_prefixes(data["route_prefixes"])
 
-    root = nodes["tms"]
+    root = nodes["shipping_assist"]
     assert root["name"] == "发货辅助"
-    assert root["effective_read_permission"] == "page.tms.read"
-    assert root["effective_write_permission"] == "page.tms.write"
+    assert root["effective_read_permission"] == "page.shipping_assist.read"
+    assert root["effective_write_permission"] == "page.shipping_assist.write"
 
     assert _child_codes(root) == [
-        "tms.shipping",
-        "tms.pricing",
-        "tms.billing",
-        "tms.settings",
+        "shipping_assist.shipping",
+        "shipping_assist.pricing",
+        "shipping_assist.billing",
+        "shipping_assist.settings",
     ]
 
-    assert _child_codes(nodes["tms.shipping"]) == [
-        "tms.shipping.quote",
-        "tms.shipping.records",
+    assert _child_codes(nodes["shipping_assist.shipping"]) == [
+        "shipping_assist.shipping.quote",
+        "shipping_assist.shipping.records",
     ]
-    assert _child_codes(nodes["tms.pricing"]) == [
-        "tms.pricing.providers",
-        "tms.pricing.bindings",
-        "tms.pricing.templates",
+    assert _child_codes(nodes["shipping_assist.pricing"]) == [
+        "shipping_assist.pricing.providers",
+        "shipping_assist.pricing.bindings",
+        "shipping_assist.pricing.templates",
     ]
-    assert _child_codes(nodes["tms.billing"]) == [
-        "tms.billing.items",
-        "tms.billing.reconciliation",
+    assert _child_codes(nodes["shipping_assist.billing"]) == [
+        "shipping_assist.billing.items",
+        "shipping_assist.billing.reconciliation",
     ]
-    assert _child_codes(nodes["tms.settings"]) == [
-        "tms.settings.waybill",
+    assert _child_codes(nodes["shipping_assist.settings"]) == [
+        "shipping_assist.settings.waybill",
     ]
 
     expected_route_map = {
-        "/tms/shipment-prepare": "tms.shipping.quote",
-        "/tms/dispatch": "tms.shipping.quote",
-        "/tms/records": "tms.shipping.records",
-        "/tms/providers": "tms.pricing.providers",
-        "/tms/pricing": "tms.pricing.bindings",
-        "/tms/templates": "tms.pricing.templates",
-        "/tms/billing/items": "tms.billing.items",
-        "/tms/reconciliation": "tms.billing.reconciliation",
-        "/tms/waybill-configs": "tms.settings.waybill",
+        "/shipping-assist/shipping/quote": "shipping_assist.shipping.quote",
+        "/shipping-assist/shipping/records": "shipping_assist.shipping.records",
+        "/shipping-assist/pricing/providers": "shipping_assist.pricing.providers",
+        "/shipping-assist/pricing/bindings": "shipping_assist.pricing.bindings",
+        "/shipping-assist/pricing/templates": "shipping_assist.pricing.templates",
+        "/shipping-assist/billing/items": "shipping_assist.billing.items",
+        "/shipping-assist/billing/reconciliation": "shipping_assist.billing.reconciliation",
+        "/shipping-assist/settings/waybill": "shipping_assist.settings.waybill",
     }
 
     for route_prefix, page_code in expected_route_map.items():
         route = route_map.get(route_prefix)
         assert route is not None, f"{route_prefix} should exist in route_prefixes"
         assert route["page_code"] == page_code
-        assert route["effective_read_permission"] == "page.tms.read"
-        assert route["effective_write_permission"] == "page.tms.write"
+        assert route["effective_read_permission"] == "page.shipping_assist.read"
+        assert route["effective_write_permission"] == "page.shipping_assist.write"
 
-    assert "/tms/reports" not in route_map
+    assert "/shipping-assist/reports" not in route_map
