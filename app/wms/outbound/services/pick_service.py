@@ -8,6 +8,7 @@ from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
+from app.wms.stock.services.stock_contract_resolver import resolve_lot_for_stock_adjust
 from app.wms.stock.services.stock_service import StockService
 
 
@@ -24,12 +25,13 @@ class PickService:
 
     - record_pick：按 (warehouse,item,batch_code?) 扣减库存并写台账
     - SUPPLIER（batch_code 非空）：必须能解析到既有 lot_id（不允许 outflow 时隐式创建 lot）
-    - NONE（batch_code 为空）：由 StockService 走 INTERNAL 单例 lot（合同闸门裁决）
+    - NONE（batch_code 为空）：显式解析 INTERNAL 单例 lot_id 后走 adjust_lot
 
     当前中心任务收口：
     - REQUIRED lot 身份已经切到 production_date
     - batch_code / lot_code 不再是结构身份，只能作为辅助解析输入
     - 若同一个 lot_code 命中多个 SUPPLIER lots，必须显式报歧义
+    - 库存写入统一走 lot-only 原语 adjust_lot
     """
 
     def __init__(self, stock_svc: Optional[StockService] = None) -> None:
@@ -95,8 +97,8 @@ class PickService:
             * NONE 商品：必须为 None（由路由/contract 校验保证）
 
         当前阶段：
-        - SUPPLIER（batch_code 非空）路径走 StockService.adjust_lot
-        - NONE（batch_code 为空）路径继续走 StockService.adjust
+        - SUPPLIER（batch_code 非空）路径走已存在 lot_id 的 adjust_lot
+        - NONE（batch_code 为空）路径先解析 INTERNAL lot_id，再走 adjust_lot
         """
         if int(qty) <= 0:
             raise ValueError("pick_qty_must_be_positive")
@@ -113,38 +115,37 @@ class PickService:
             )
             if resolved_lot_id is None:
                 raise ValueError("lot_not_found")
-
-            res = await self.stock_svc.adjust_lot(
-                session=session,
-                item_id=int(item_id),
-                warehouse_id=int(warehouse_id),
-                lot_id=int(resolved_lot_id),
-                delta=-int(qty),
-                reason=movement_type,
-                ref=str(ref),
-                ref_line=int(start_ref_line),
-                occurred_at=occurred_at,
-                batch_code=bc_norm,
-                production_date=None,
-                expiry_date=None,
-                trace_id=trace_id,
-            )
         else:
-            res = await self.stock_svc.adjust(
-                session=session,
+            # INTERNAL：通过统一合同解析器拿到 INTERNAL 单例 lot_id。
+            # 若调用方错误地给 REQUIRED 商品传空 batch_code，这里会按合同拒绝。
+            resolved_lot_id, bc_norm = await resolve_lot_for_stock_adjust(
+                session,
+                lot_resolver=self.stock_svc.lot_resolver,
                 item_id=int(item_id),
                 warehouse_id=int(warehouse_id),
-                delta=-int(qty),
-                reason=movement_type,
-                ref=str(ref),
-                ref_line=int(start_ref_line),
-                occurred_at=occurred_at,
                 batch_code=None,
+                lot_id=None,
+                ref=str(ref),
+                occurred_at=occurred_at,
                 production_date=None,
                 expiry_date=None,
-                trace_id=trace_id,
-                lot_id=None,
             )
+
+        res = await self.stock_svc.adjust_lot(
+            session=session,
+            item_id=int(item_id),
+            warehouse_id=int(warehouse_id),
+            lot_id=int(resolved_lot_id),
+            delta=-int(qty),
+            reason=movement_type,
+            ref=str(ref),
+            ref_line=int(start_ref_line),
+            occurred_at=occurred_at,
+            batch_code=bc_norm,
+            production_date=None,
+            expiry_date=None,
+            trace_id=trace_id,
+        )
 
         return {
             "status": "OK",
