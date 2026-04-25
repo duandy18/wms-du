@@ -1,7 +1,12 @@
-# app/diagnostics/services/inventory_anomaly_service.py
+# app/wms/snapshot/services/inventory_anomaly_service.py
+#
+# Moved from app/diagnostics/services/inventory_anomaly_service.py during diagnostics retirement.
+# This service belongs to the WMS snapshot pipeline: it compares ledger, stocks_lot,
+# and stock_snapshots at lot_id granularity after snapshot rebuilds.
+
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class InventoryAnomalyService:
     @staticmethod
-    async def detect(session: AsyncSession, *, cut: str) -> Dict[str, Any]:
+    async def detect(session: AsyncSession, *, cut: str) -> dict[str, Any]:
         # ledger：lot-only，展示码来自 lots.lot_code
         ledger_sql = text(
             """
@@ -17,14 +22,14 @@ class InventoryAnomalyService:
               l.warehouse_id,
               l.item_id,
               l.lot_id,
-              lo.lot_code AS batch_code,
+              lo.lot_code AS lot_code,
               SUM(l.delta) AS qty
             FROM stock_ledger l
             JOIN lots lo
               ON lo.id = l.lot_id
             WHERE l.occurred_at <= :cut
             GROUP BY 1,2,3,4
-        """
+            """
         )
         ledger_rows = (await session.execute(ledger_sql, {"cut": cut})).mappings().all()
 
@@ -35,13 +40,13 @@ class InventoryAnomalyService:
               s.warehouse_id,
               s.item_id,
               s.lot_id,
-              lo.lot_code AS batch_code,
+              lo.lot_code AS lot_code,
               SUM(s.qty)::integer AS qty
             FROM stocks_lot s
             JOIN lots lo
               ON lo.id = s.lot_id
             GROUP BY 1,2,3,4
-        """
+            """
         )
         stocks_lot_rows = (await session.execute(stocks_lot_sql)).mappings().all()
 
@@ -52,13 +57,13 @@ class InventoryAnomalyService:
               sn.warehouse_id,
               sn.item_id,
               sn.lot_id,
-              lo.lot_code AS batch_code,
+              lo.lot_code AS lot_code,
               sn.qty
             FROM stock_snapshots sn
             JOIN lots lo
               ON lo.id = sn.lot_id
             WHERE sn.snapshot_date = :d
-        """
+            """
         )
         snap_rows = (await session.execute(snap_sql, {"d": cut.split("T")[0]})).mappings().all()
 
@@ -66,58 +71,58 @@ class InventoryAnomalyService:
             mapping: dict[tuple[int, int, int], tuple[int, str | None]] = {}
             for row in rows:
                 k = (int(row["warehouse_id"]), int(row["item_id"]), int(row["lot_id"]))
-                mapping[k] = (int(row.get(val_key) or 0), row.get("batch_code"))
+                mapping[k] = (int(row.get(val_key) or 0), row.get("lot_code"))
             return mapping
 
         ledger_map = to_map(ledger_rows, "qty")
         stocks_lot_map = to_map(stocks_lot_rows, "qty")
         snapshot_map = to_map(snap_rows, "qty")
 
-        anomalies_ledger_stocks_lot = []
-        anomalies_ledger_snapshot = []
-        anomalies_stocks_lot_snapshot = []
+        anomalies_ledger_stocks_lot: list[dict[str, Any]] = []
+        anomalies_ledger_snapshot: list[dict[str, Any]] = []
+        anomalies_stocks_lot_snapshot: list[dict[str, Any]] = []
 
         all_keys = set(ledger_map.keys()) | set(stocks_lot_map.keys()) | set(snapshot_map.keys())
 
         for key in sorted(all_keys):
-            ledger_qty, bc1 = ledger_map.get(key, (0, None))
-            stocks_lot_qty, bc2 = stocks_lot_map.get(key, (0, None))
-            snapshot_qty, bc3 = snapshot_map.get(key, (0, None))
-            batch_code = bc1 if bc1 is not None else (bc2 if bc2 is not None else bc3)
+            ledger_qty, code1 = ledger_map.get(key, (0, None))
+            stocks_lot_qty, code2 = stocks_lot_map.get(key, (0, None))
+            snapshot_qty, code3 = snapshot_map.get(key, (0, None))
+            lot_code = code1 if code1 is not None else (code2 if code2 is not None else code3)
 
             if ledger_qty != stocks_lot_qty:
                 anomalies_ledger_stocks_lot.append(
                     {
-                        "wh": key[0],
-                        "item": key[1],
+                        "warehouse_id": key[0],
+                        "item_id": key[1],
                         "lot_id": key[2],
-                        "batch": batch_code,
-                        "ledger": ledger_qty,
-                        "stocks_lot": stocks_lot_qty,
+                        "lot_code": lot_code,
+                        "ledger_qty": ledger_qty,
+                        "stocks_lot_qty": stocks_lot_qty,
                         "diff": ledger_qty - stocks_lot_qty,
                     }
                 )
             if ledger_qty != snapshot_qty:
                 anomalies_ledger_snapshot.append(
                     {
-                        "wh": key[0],
-                        "item": key[1],
+                        "warehouse_id": key[0],
+                        "item_id": key[1],
                         "lot_id": key[2],
-                        "batch": batch_code,
-                        "ledger": ledger_qty,
-                        "snapshot": snapshot_qty,
+                        "lot_code": lot_code,
+                        "ledger_qty": ledger_qty,
+                        "snapshot_qty": snapshot_qty,
                         "diff": ledger_qty - snapshot_qty,
                     }
                 )
             if stocks_lot_qty != snapshot_qty:
                 anomalies_stocks_lot_snapshot.append(
                     {
-                        "wh": key[0],
-                        "item": key[1],
+                        "warehouse_id": key[0],
+                        "item_id": key[1],
                         "lot_id": key[2],
-                        "batch": batch_code,
-                        "stocks_lot": stocks_lot_qty,
-                        "snapshot": snapshot_qty,
+                        "lot_code": lot_code,
+                        "stocks_lot_qty": stocks_lot_qty,
+                        "snapshot_qty": snapshot_qty,
                         "diff": stocks_lot_qty - snapshot_qty,
                     }
                 )
