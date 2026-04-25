@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 测试辅助：按项目实际路径导入
-from tests.helpers.inventory import ensure_wh_loc_item, qty_by_code
+from tests.helpers.inventory import ensure_wh_loc_item, qty_by_lot_code
 
 from app.wms.shared.enums import MovementType
 from app.wms.stock.services.lots import ensure_lot_full
@@ -27,7 +27,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
     - 库存真相在 stocks_lot（lot-world），因此本用例改为：
       * 先创建 SUPPLIER lot（lot_code=code）
       * 再用 StockService.adjust_lot 入库（写 stocks_lot + ledger(lot_id)）
-      * 最终用 qty_by_code（lot-world 口径）断言 qty=6
+      * 最终用 qty_by_lot_code（lot-world 口径）断言 qty=6
 
     当前终态：
     - REQUIRED lot 身份 = (warehouse_id, item_id, production_date)
@@ -75,4 +75,4 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
         )
 
     await session.commit()
-    assert await qty_by_code(session, item=item, loc=loc, code=code) == 6
+    assert await qty_by_lot_code(session, item=item, loc=loc, lot_code=code) == 6

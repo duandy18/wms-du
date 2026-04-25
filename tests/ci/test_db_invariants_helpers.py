@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import text as SA
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot, sum_on_hand
+from tests.helpers.inventory import ensure_wh_loc_item, seed_supplier_lot_slot, sum_on_hand
 
 pytestmark = pytest.mark.contract
 
@@ -37,9 +37,9 @@ async def test_lots_unique_supplier_4d(session: AsyncSession):
     wh, loc, item, code = 1, 1, 99001, "UNI-99001"
     await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
 
-    # 复用 seed_batch_slot：内部会写 lots + stocks_lot（Phase 4E+：不触碰 legacy batches/stocks）
-    await seed_batch_slot(session, item=item, loc=loc, code=code, qty=3, days=365)
-    await seed_batch_slot(session, item=item, loc=loc, code=code, qty=3, days=365)
+    # 复用 seed_supplier_lot_slot：内部会写 lots + stocks_lot（Phase 4E+：不触碰 legacy batches/stocks）
+    await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code=code, qty=3, days=365)
+    await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code=code, qty=3, days=365)
     await session.commit()
 
     # lots(SUPPLIER) 中应只有一条记录
@@ -87,8 +87,8 @@ async def test_sum_on_hand_consistency(session: AsyncSession):
     wh, loc, item = 1, 1, 99002
     await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
 
-    await seed_batch_slot(session, item=item, loc=loc, code="Q-99002-A", qty=4, days=365)
-    await seed_batch_slot(session, item=item, loc=loc, code="Q-99002-B", qty=6, days=365)
+    await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code="Q-99002-A", qty=4, days=365)
+    await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code="Q-99002-B", qty=6, days=365)
     await session.commit()
 
     assert await sum_on_hand(session, item=item, loc=loc) == 10
@@ -104,7 +104,7 @@ async def test_stocks_lot_fk_minimal(session: AsyncSession):
     """
     wh, loc, item = 1, 1, 99003
     await ensure_wh_loc_item(session, wh=wh, loc=loc, item=item)
-    await seed_batch_slot(session, item=item, loc=loc, code="FK-CHK", qty=1, days=365)
+    await seed_supplier_lot_slot(session, item=item, loc=loc, lot_code="FK-CHK", qty=1, days=365)
     await session.commit()
 
     row = await session.execute(

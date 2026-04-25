@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers.inventory import ensure_wh_loc_item, seed_batch_slot
+from tests.helpers.inventory import ensure_wh_loc_item, seed_supplier_lot_slot
 
 
 async def _login_admin_headers(client: AsyncClient) -> dict[str, str]:
@@ -71,11 +71,11 @@ async def test_stock_ledger_query_accepts_lot_code_only(
         loc=warehouse_id,
         item=item_id,
     )
-    await seed_batch_slot(
+    await seed_supplier_lot_slot(
         session,
         item=item_id,
         loc=warehouse_id,
-        code=lot_code,
+        lot_code=lot_code,
         qty=11,
         days=180,
     )
