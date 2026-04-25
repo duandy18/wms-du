@@ -21,7 +21,7 @@ from .helpers import check_perm, dims_from_payload
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         response_model=QuoteCalcOut,
         status_code=status.HTTP_200_OK,
     )
@@ -67,7 +67,7 @@ def register(router: APIRouter) -> None:
                 ref=audit_ref,
                 trace_id=None,
                 meta={
-                    "endpoint": "/shipping-quote/calc",
+                    "endpoint": "/shipping-assist/shipping/quote/calc",
                     "error_code": code,
                     "message": msg,
                     "template_id": int(payload.template_id),
@@ -90,7 +90,7 @@ def register(router: APIRouter) -> None:
                 ref=audit_ref,
                 trace_id=None,
                 meta={
-                    "endpoint": "/shipping-quote/calc",
+                    "endpoint": "/shipping-assist/shipping/quote/calc",
                     "error_code": QuoteCalcErrorCode.FAILED,
                     "message": msg,
                     "template_id": int(payload.template_id),

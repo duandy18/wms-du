@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from app.tms.records import routes_cost_analysis
 from app.tms.records import routes_read
 
-router = APIRouter(prefix="/tms/records", tags=["tms-records"])
+router = APIRouter(prefix="/shipping-assist/shipping/records", tags=["shipping-assist-records"])
 
 
 def _register_all_routes() -> None:

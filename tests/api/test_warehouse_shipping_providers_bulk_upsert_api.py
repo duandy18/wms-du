@@ -1,7 +1,7 @@
 # tests/api/test_warehouse_shipping_providers_bulk_upsert_api.py
 #
 # 合同级 smoke tests for:
-#   PUT /tms/pricing/warehouses/{warehouse_id}/bindings  (bulk upsert)
+#   PUT /shipping-assist/pricing/warehouses/{warehouse_id}/bindings  (bulk upsert)
 #
 # 目标：
 # - 覆盖 disable_missing 的关键语义：未出现的绑定会被置 inactive（不删除）
@@ -134,7 +134,7 @@ def test_bulk_upsert_contract_smoke():
             {"shipping_provider_id": pid3, "active": True, "priority": 300},
         ],
     }
-    r0 = client.put(f"/tms/pricing/warehouses/{wid}/bindings", json=payload_all3, headers=headers)
+    r0 = client.put(f"/shipping-assist/pricing/warehouses/{wid}/bindings", json=payload_all3, headers=headers)
     assert r0.status_code == 200, r0.text
     assert r0.json().get("ok") is True
 
@@ -146,7 +146,7 @@ def test_bulk_upsert_contract_smoke():
             {"shipping_provider_id": pid2, "active": True, "priority": 200},
         ],
     }
-    r1 = client.put(f"/tms/pricing/warehouses/{wid}/bindings", json=payload_2, headers=headers)
+    r1 = client.put(f"/shipping-assist/pricing/warehouses/{wid}/bindings", json=payload_2, headers=headers)
     assert r1.status_code == 200, r1.text
     body = r1.json()
     assert body.get("ok") is True
@@ -157,15 +157,15 @@ def test_bulk_upsert_contract_smoke():
     assert by_pid[pid3]["active"] is False, "pid3 should be set inactive when disable_missing=true"
 
     # Step C) 幂等：同 payload 再来一次仍 200
-    r2 = client.put(f"/tms/pricing/warehouses/{wid}/bindings", json=payload_2, headers=headers)
+    r2 = client.put(f"/shipping-assist/pricing/warehouses/{wid}/bindings", json=payload_2, headers=headers)
     assert r2.status_code == 200, r2.text
     assert r2.json().get("ok") is True
 
     # warehouse not found -> 404
-    r3 = client.put("/tms/pricing/warehouses/999999/bindings", json=payload_2, headers=headers)
+    r3 = client.put("/shipping-assist/pricing/warehouses/999999/bindings", json=payload_2, headers=headers)
     assert r3.status_code == 404
 
     # provider not found -> 404
     bad = {"disable_missing": False, "items": [{"shipping_provider_id": 999999, "active": True, "priority": 0}]}
-    r4 = client.put(f"/tms/pricing/warehouses/{wid}/bindings", json=bad, headers=headers)
+    r4 = client.put(f"/shipping-assist/pricing/warehouses/{wid}/bindings", json=bad, headers=headers)
     assert r4.status_code == 404

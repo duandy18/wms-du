@@ -55,7 +55,7 @@ def register_list_routes(router: APIRouter) -> None:
         )
 
     @router.get(
-        "/shipping-providers/{provider_id}/templates",
+        "/providers/{provider_id}/templates",
         response_model=TemplateListOut,
         name="pricing_templates_provider_list",
     )

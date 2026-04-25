@@ -10,7 +10,7 @@ from .summary.contracts import PricingListResponse
 from .summary.repository import list_pricing_view
 from .templates.router import router as templates_router
 
-router = APIRouter(prefix="/tms/pricing", tags=["tms-pricing"])
+router = APIRouter(prefix="/shipping-assist/pricing", tags=["shipping-assist-pricing"])
 
 
 @router.get("/list", response_model=PricingListResponse, name="pricing_list_view")

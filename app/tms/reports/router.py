@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from app.tms.reports import routes_aggregates
 from app.tms.reports import routes_options
 
-router = APIRouter(tags=["shipping-reports"])
+router = APIRouter(tags=["shipping-assist-reports"])
 
 
 def _register_all_routes() -> None:

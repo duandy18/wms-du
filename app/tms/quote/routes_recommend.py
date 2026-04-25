@@ -14,7 +14,7 @@ from app.tms.quote.recommend import recommend_quotes
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-quote/recommend",
+        "/shipping-assist/shipping/quote/recommend",
         response_model=QuoteRecommendOut,
         status_code=status.HTTP_200_OK,
     )

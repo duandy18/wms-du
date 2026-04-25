@@ -26,7 +26,7 @@ from .service_prepare_packages import ShipmentPreparePackagesService
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
         response_model=ShipPreparePackagesResponse,
     )
     async def list_prepare_packages(
@@ -46,7 +46,7 @@ def register(router: APIRouter) -> None:
         return ShipPreparePackagesResponse(ok=True, items=items)
 
     @router.post(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
         response_model=ShipPreparePackageCreateResponse,
     )
     async def create_prepare_package(
@@ -66,7 +66,7 @@ def register(router: APIRouter) -> None:
         return ShipPreparePackageCreateResponse(ok=True, item=item)
 
     @router.patch(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}",
         response_model=ShipPreparePackageUpdateResponse,
     )
     async def update_prepare_package(

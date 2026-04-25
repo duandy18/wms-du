@@ -23,7 +23,7 @@ from .mappers import row_to_contact, row_to_provider
 
 
 def register(router: APIRouter) -> None:
-    @router.get("/shipping-providers", response_model=ShippingProviderListOut)
+    @router.get("/shipping-assist/pricing/providers", response_model=ShippingProviderListOut)
     async def list_shipping_providers(
         active: Optional[bool] = Query(None, description="按启用状态筛选；active=true 用于下拉。"),
         q: Optional[str] = Query(None, description="按名称 / 联系人模糊搜索（基于 contacts 子表）。"),
@@ -120,7 +120,7 @@ def register(router: APIRouter) -> None:
 
         return ShippingProviderListOut(ok=True, data=data)
 
-    @router.get("/shipping-providers/{provider_id}", response_model=ShippingProviderDetailOut)
+    @router.get("/shipping-assist/pricing/providers/{provider_id}", response_model=ShippingProviderDetailOut)
     async def get_shipping_provider(
         provider_id: int = Path(..., ge=1),
         session: AsyncSession = Depends(get_session),

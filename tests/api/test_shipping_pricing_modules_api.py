@@ -26,7 +26,7 @@ async def _create_template(client: AsyncClient, token: str) -> int:
     h = auth_headers(token)
 
     r = await client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=h,
         json={
             "shipping_provider_id": 1,
@@ -54,7 +54,7 @@ async def _build_template_resources(client: AsyncClient, h, template_id: int) ->
     ]
 
     r = await client.put(
-        f"/tms/pricing/templates/{template_id}/ranges",
+        f"/shipping-assist/pricing/templates/{template_id}/ranges",
         headers=h,
         json={"ranges": ranges},
     )
@@ -64,7 +64,7 @@ async def _build_template_resources(client: AsyncClient, h, template_id: int) ->
     range_id = int(r.json()["ranges"][0]["id"])
 
     r = await client.post(
-        f"/tms/pricing/templates/{template_id}/groups",
+        f"/shipping-assist/pricing/templates/{template_id}/groups",
         headers=h,
         json={
             "sort_order": 0,
@@ -88,7 +88,7 @@ async def _build_template_resources(client: AsyncClient, h, template_id: int) ->
     ]
 
     r = await client.put(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
@@ -96,7 +96,7 @@ async def _build_template_resources(client: AsyncClient, h, template_id: int) ->
     assert r.status_code == 200, r.text
 
     r = await client.get(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=h,
     )
 
@@ -115,7 +115,7 @@ async def test_ranges_groups_cells_replace_and_detail_readable(client: AsyncClie
     await _build_template_resources(client, h, template_id)
 
     detail = await client.get(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=h,
     )
 
@@ -130,7 +130,7 @@ async def test_ranges_groups_cells_replace_and_detail_readable(client: AsyncClie
     assert isinstance(body["data"]["surcharge_configs"], list)
 
     matrix = await client.get(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=h,
     )
     assert matrix.status_code == 200, matrix.text

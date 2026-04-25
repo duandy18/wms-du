@@ -50,7 +50,7 @@ def test_shipping_quote_calc_flat_and_surcharge(client: TestClient) -> None:
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
@@ -91,7 +91,7 @@ def test_shipping_quote_calc_linear_total(client: TestClient) -> None:
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
@@ -132,7 +132,7 @@ def test_shipping_quote_calc_boundary_1kg_enters_second_pricing_matrix(client: T
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
@@ -172,7 +172,7 @@ def test_shipping_quote_calc_boundary_30kg_enters_open_ended_pricing_matrix(clie
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
@@ -212,7 +212,7 @@ def test_shipping_quote_calc_returns_level3_contract_shape(client: TestClient) -
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,
@@ -271,7 +271,7 @@ def test_shipping_quote_calc_error_code_template_not_found(client: TestClient) -
     wid = pick_warehouse_id(client, token)
 
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=auth_headers(token),
         json={
             "warehouse_id": wid,

@@ -23,7 +23,7 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
 
     # 触发一次 QUOTE_CALC_REJECT（template 不存在）
     r = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=h,
         json={
             "warehouse_id": wid,
@@ -45,12 +45,12 @@ def test_metrics_shipping_quote_failures_collects_quote_calc_reject(client: Test
     assert p["error_code"] == "QUOTE_CALC_TEMPLATE_NOT_FOUND"
 
     # 查询当日 failures（UTC day 由服务端取 created_at 统计；这里用固定 day 可能受时区影响）
-    # 为保证稳定，这里用 /metrics/shipping-quote/failures 的 day=今天（UTC）：
+    # 为保证稳定，这里用 /metrics/shipping-assist/shipping/quote/failures 的 day=今天（UTC）：
     from datetime import datetime, timezone
 
     day = datetime.now(timezone.utc).date().isoformat()
 
-    m = client.get(f"/metrics/shipping-quote/failures?day={day}&limit=50", headers=h)
+    m = client.get(f"/metrics/shipping-assist/shipping/quote/failures?day={day}&limit=50", headers=h)
     assert m.status_code == 200, m.text
     body = m.json()
 

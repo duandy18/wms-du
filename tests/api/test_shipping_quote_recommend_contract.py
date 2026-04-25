@@ -49,7 +49,7 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     wid = pick_warehouse_id(client, token)
     clear_warehouse_bindings(client, token, wid)
 
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"]
     assert pdata, "no shipping providers"
@@ -57,7 +57,7 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
 
     ids_a = create_template_bundle_for_provider(client, token, provider_a, name_suffix="A")
     cr = client.post(
-        "/shipping-quote/calc",
+        "/shipping-assist/shipping/quote/calc",
         headers=h,
         json={
             "warehouse_id": wid,
@@ -82,7 +82,7 @@ def test_shipping_quote_recommend_respects_warehouse_bound_candidates_phase3(cli
     _assert_quote_snapshot_shape(calc_body["quote_snapshot"])
 
     rr = client.post(
-        "/shipping-quote/recommend",
+        "/shipping-assist/shipping/quote/recommend",
         headers=h,
         json={
             "warehouse_id": wid,
@@ -125,7 +125,7 @@ def test_shipping_quote_recommend_provider_ids_intersect_warehouse_phase3(client
     wid = pick_warehouse_id(client, token)
     clear_warehouse_bindings(client, token, wid)
 
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"]
     assert pdata, "no shipping providers"
@@ -137,7 +137,7 @@ def test_shipping_quote_recommend_provider_ids_intersect_warehouse_phase3(client
     provider_b = ensure_second_provider(client, token)
 
     rr = client.post(
-        "/shipping-quote/recommend",
+        "/shipping-assist/shipping/quote/recommend",
         headers=h,
         json={
             "warehouse_id": wid,

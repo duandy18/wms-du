@@ -34,12 +34,12 @@ def pick_warehouse_id(client: TestClient, token: str) -> int:
 
 def clear_warehouse_bindings(client: TestClient, token: str, warehouse_id: int) -> None:
     h = auth_headers(token)
-    r = client.get(f"/tms/pricing/warehouses/{warehouse_id}/bindings", headers=h)
+    r = client.get(f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings", headers=h)
     assert r.status_code == 200, r.text
     data = r.json()["data"] or []
     for it in data:
         pid = int(it["shipping_provider_id"])
-        dr = client.delete(f"/tms/pricing/warehouses/{warehouse_id}/bindings/{pid}", headers=h)
+        dr = client.delete(f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings/{pid}", headers=h)
         assert dr.status_code in (200, 404), dr.text
 
 
@@ -53,7 +53,7 @@ def bind_provider_to_warehouse(
 ) -> None:
     h = auth_headers(token)
     r = client.post(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings",
         headers=h,
         json={
             "shipping_provider_id": int(provider_id),
@@ -70,7 +70,7 @@ def bind_provider_to_warehouse(
         if active_template_id is not None:
             patch_payload["active_template_id"] = active_template_id
         pr = client.patch(
-            f"/tms/pricing/warehouses/{warehouse_id}/bindings/{provider_id}",
+            f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings/{provider_id}",
             headers=h,
             json=patch_payload,
         )
@@ -79,14 +79,14 @@ def bind_provider_to_warehouse(
 
 def ensure_second_provider(client: TestClient, token: str) -> int:
     h = auth_headers(token)
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"] or []
     if len(pdata) >= 2:
         return int(pdata[1]["id"])
 
     cr = client.post(
-        "/shipping-providers",
+        "/shipping-assist/pricing/providers",
         headers=h,
         json={
             "name": "TEST-PROVIDER-2",
@@ -117,7 +117,7 @@ def _put_template_groups(
 
     for g in groups:
         r = client.post(
-            f"/tms/pricing/templates/{template_id}/groups",
+            f"/shipping-assist/pricing/templates/{template_id}/groups",
             headers=h,
             json={
                 "name": g["name"],
@@ -147,7 +147,7 @@ def _put_template_ranges(
     h = auth_headers(token)
 
     r = client.put(
-        f"/tms/pricing/templates/{template_id}/ranges",
+        f"/shipping-assist/pricing/templates/{template_id}/ranges",
         headers=h,
         json={"ranges": ranges},
     )
@@ -168,7 +168,7 @@ def _put_template_matrix_cells(
     h = auth_headers(token)
 
     r = client.put(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=h,
         json={"cells": cells},
     )
@@ -188,7 +188,7 @@ def _submit_template_validation(
     h = auth_headers(token)
 
     r = client.post(
-        f"/tms/pricing/templates/{template_id}/submit-validation",
+        f"/shipping-assist/pricing/templates/{template_id}/submit-validation",
         headers=h,
         json={"confirm_validated": True},
     )
@@ -294,14 +294,14 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
 
     wid = pick_warehouse_id(client, token)
 
-    pr = client.get("/shipping-providers", headers=h)
+    pr = client.get("/shipping-assist/pricing/providers", headers=h)
     assert pr.status_code == 200, pr.text
     pdata = pr.json()["data"]
     assert pdata, "no shipping providers"
     provider_id = int(pdata[0]["id"])
 
     tr = client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=h,
         json={
             "shipping_provider_id": int(provider_id),
@@ -348,7 +348,7 @@ def create_template_bundle(client: TestClient, token: str) -> Dict[str, int]:
     )
 
     sur = client.post(
-        f"/tms/pricing/templates/{template_id}/surcharge-configs",
+        f"/shipping-assist/pricing/templates/{template_id}/surcharge-configs",
         headers=h,
         json={
             "province_code": "110000",
@@ -396,7 +396,7 @@ def create_template_bundle_for_provider(
     wid = pick_warehouse_id(client, token)
 
     tr = client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=h,
         json={
             "shipping_provider_id": int(provider_id),

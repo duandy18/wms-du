@@ -27,7 +27,7 @@ async def test_pricing_list_returns_active_row_from_seed_bound_draft_template(
     token = await _login(client)
     h = _auth_headers(token)
 
-    r = await client.get("/tms/pricing/list", headers=h)
+    r = await client.get("/shipping-assist/pricing/list", headers=h)
     assert r.status_code == 200, r.text
 
     body = r.json()
@@ -58,7 +58,7 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
     h = _auth_headers(token)
 
     create_provider = await client.post(
-        "/shipping-providers",
+        "/shipping-assist/pricing/providers",
         headers=h,
         json={
             "name": "UT-SUMMARY-NO-TEMPLATE",
@@ -76,7 +76,7 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
     assert isinstance(provider_id, int) and provider_id > 0, provider_body
 
     bind = await client.post(
-        "/tms/pricing/warehouses/1/bindings",
+        "/shipping-assist/pricing/warehouses/1/bindings",
         headers=h,
         json={
             "shipping_provider_id": provider_id,
@@ -90,7 +90,7 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
 
     if bind.status_code == 409:
         patch = await client.patch(
-            f"/tms/pricing/warehouses/1/bindings/{provider_id}",
+            f"/shipping-assist/pricing/warehouses/1/bindings/{provider_id}",
             headers=h,
             json={
                 "active": True,
@@ -100,7 +100,7 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
         )
         assert patch.status_code == 200, patch.text
 
-    r = await client.get("/tms/pricing/list", headers=h)
+    r = await client.get("/shipping-assist/pricing/list", headers=h)
     assert r.status_code == 200, r.text
 
     body = r.json()

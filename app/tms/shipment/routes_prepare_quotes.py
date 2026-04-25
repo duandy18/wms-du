@@ -24,7 +24,7 @@ from .service_prepare_quotes import ShipmentPrepareQuotesService
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote",
         response_model=ShipPreparePackageQuoteResponse,
     )
     async def quote_prepare_package(
@@ -46,7 +46,7 @@ def register(router: APIRouter) -> None:
         return ShipPreparePackageQuoteResponse(ok=True, item=item)
 
     @router.post(
-        "/ship/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote/confirm",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote/confirm",
         response_model=ShipPreparePackageQuoteConfirmResponse,
     )
     async def confirm_prepare_package_quote(

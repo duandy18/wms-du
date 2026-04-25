@@ -32,7 +32,7 @@ async def _create_template(
     expected_groups_count: int = 1,
 ) -> dict:
     r = await client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=headers,
         json={
             "shipping_provider_id": int(shipping_provider_id),
@@ -68,7 +68,7 @@ async def _list_shipping_providers(
     client: AsyncClient,
     headers: dict[str, str],
 ) -> list[dict]:
-    r = await client.get("/shipping-providers", headers=headers)
+    r = await client.get("/shipping-assist/pricing/providers", headers=headers)
     assert r.status_code == 200, r.text
     rows = r.json()["data"] or []
     assert isinstance(rows, list), rows
@@ -82,7 +82,7 @@ async def _list_warehouse_bindings(
     warehouse_id: int,
 ) -> list[dict]:
     r = await client.get(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings",
         headers=headers,
     )
     assert r.status_code == 200, r.text
@@ -99,7 +99,7 @@ async def _create_shipping_provider(
     code: str,
 ) -> int:
     r = await client.post(
-        "/shipping-providers",
+        "/shipping-assist/pricing/providers",
         headers=headers,
         json={
             "name": name,
@@ -155,7 +155,7 @@ async def _build_template_resources(
     ]
 
     r1 = await client.put(
-        f"/tms/pricing/templates/{template_id}/ranges",
+        f"/shipping-assist/pricing/templates/{template_id}/ranges",
         headers=headers,
         json={"ranges": ranges},
     )
@@ -163,7 +163,7 @@ async def _build_template_resources(
     range_id = int(r1.json()["ranges"][0]["id"])
 
     r2 = await client.post(
-        f"/tms/pricing/templates/{template_id}/groups",
+        f"/shipping-assist/pricing/templates/{template_id}/groups",
         headers=headers,
         json={
             "sort_order": 0,
@@ -175,7 +175,7 @@ async def _build_template_resources(
     group_id = int(r2.json()["group"]["id"])
 
     r3 = await client.put(
-        f"/tms/pricing/templates/{template_id}/matrix-cells",
+        f"/shipping-assist/pricing/templates/{template_id}/matrix-cells",
         headers=headers,
         json={
             "cells": [
@@ -199,7 +199,7 @@ async def _submit_template_validation(
     template_id: int,
 ) -> dict:
     r = await client.post(
-        f"/tms/pricing/templates/{template_id}/submit-validation",
+        f"/shipping-assist/pricing/templates/{template_id}/submit-validation",
         headers=headers,
         json={"confirm_validated": True},
     )
@@ -219,7 +219,7 @@ async def _bind_template_to_warehouse(
     template_id: int,
 ) -> dict:
     r = await client.post(
-        f"/tms/pricing/warehouses/{warehouse_id}/bindings",
+        f"/shipping-assist/pricing/warehouses/{warehouse_id}/bindings",
         headers=headers,
         json={
             "shipping_provider_id": int(shipping_provider_id),
@@ -280,7 +280,7 @@ async def test_template_create_requires_expected_counts(client: AsyncClient) -> 
     headers = auth_headers(token)
 
     r = await client.post(
-        "/tms/pricing/templates",
+        "/shipping-assist/pricing/templates",
         headers=headers,
         json={
             "shipping_provider_id": 1,
@@ -299,7 +299,7 @@ async def test_template_update_rejects_active_status(client: AsyncClient) -> Non
     template_id = int(created["id"])
 
     r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "active"},
     )
@@ -316,7 +316,7 @@ async def test_template_can_archive_then_restore_to_draft(client: AsyncClient) -
     template_id = int(created["id"])
 
     r1 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "archived"},
     )
@@ -327,7 +327,7 @@ async def test_template_can_archive_then_restore_to_draft(client: AsyncClient) -
     assert body1["data"]["archived_at"] is not None
 
     r2 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "draft"},
     )
@@ -347,14 +347,14 @@ async def test_archived_template_cannot_modify_assets_directly(client: AsyncClie
     template_id = int(created["id"])
 
     r1 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "archived"},
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"name": "should-fail-when-archived"},
     )
@@ -371,21 +371,21 @@ async def test_restored_template_can_modify_assets_again(client: AsyncClient) ->
     template_id = int(created["id"])
 
     r1 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "archived"},
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "draft"},
     )
     assert r2.status_code == 200, r2.text
 
     r3 = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"name": "restored-template-new-name"},
     )
@@ -413,7 +413,7 @@ async def test_unbound_draft_template_can_update_expected_counts(client: AsyncCl
     template_id = int(created["id"])
 
     r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={
             "expected_ranges_count": 5,
@@ -448,7 +448,7 @@ async def test_bound_template_cannot_rename(client: AsyncClient) -> None:
     )
 
     r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"name": "bound-template-renamed"},
     )
@@ -475,7 +475,7 @@ async def test_bound_template_cannot_update_expected_counts(client: AsyncClient)
     )
 
     r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"expected_ranges_count": 2},
     )
@@ -502,7 +502,7 @@ async def test_bound_template_cannot_archive(client: AsyncClient) -> None:
     )
 
     r = await client.patch(
-        f"/tms/pricing/templates/{template_id}",
+        f"/shipping-assist/pricing/templates/{template_id}",
         headers=headers,
         json={"status": "archived"},
     )

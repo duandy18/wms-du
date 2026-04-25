@@ -30,7 +30,7 @@ from .repository_waybill_config import (
 
 
 def register(router: APIRouter) -> None:
-    @router.get("/ship/waybill-configs", response_model=WaybillConfigListOut)
+    @router.get("/shipping-assist/settings/waybill-configs", response_model=WaybillConfigListOut)
     async def list_waybill_configs_route(
         active: Optional[bool] = Query(None),
         platform: Optional[str] = Query(None),
@@ -52,7 +52,7 @@ def register(router: APIRouter) -> None:
         )
         return WaybillConfigListOut(ok=True, data=data)
 
-    @router.get("/ship/waybill-configs/{config_id}", response_model=WaybillConfigDetailOut)
+    @router.get("/shipping-assist/settings/waybill-configs/{config_id}", response_model=WaybillConfigDetailOut)
     async def get_waybill_config_route(
         config_id: int = Path(..., ge=1),
         session: AsyncSession = Depends(get_session),
@@ -65,7 +65,7 @@ def register(router: APIRouter) -> None:
             raise HTTPException(status_code=404, detail="waybill_config not found")
         return WaybillConfigDetailOut(ok=True, data=data)
 
-    @router.post("/ship/waybill-configs", response_model=WaybillConfigCreateOut, status_code=201)
+    @router.post("/shipping-assist/settings/waybill-configs", response_model=WaybillConfigCreateOut, status_code=201)
     async def create_waybill_config_route(
         payload: WaybillConfigCreateIn,
         session: AsyncSession = Depends(get_session),
@@ -98,7 +98,7 @@ def register(router: APIRouter) -> None:
             await session.rollback()
             raise HTTPException(status_code=422, detail=str(e)) from e
 
-    @router.patch("/ship/waybill-configs/{config_id}", response_model=WaybillConfigUpdateOut)
+    @router.patch("/shipping-assist/settings/waybill-configs/{config_id}", response_model=WaybillConfigUpdateOut)
     async def update_waybill_config_route(
         payload: WaybillConfigUpdateIn,
         config_id: int = Path(..., ge=1),

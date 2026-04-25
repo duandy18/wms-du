@@ -10,7 +10,7 @@ from .read.list_routes import register_list_routes
 from .surcharge_configs.routes import router as surcharge_router
 from .write.router import register as register_write_routes
 
-router = APIRouter(tags=["tms-pricing-templates"])
+router = APIRouter(tags=["shipping-assist-pricing-templates"])
 
 register_list_routes(router)
 register_detail_routes(router)

@@ -26,7 +26,7 @@ class ShipCalcErrorCode:
 
 
 def register(router: APIRouter) -> None:
-    @router.post("/ship/calc", response_model=ShipCalcResponse)
+    @router.post("/shipping-assist/shipping/calc", response_model=ShipCalcResponse)
     async def calc_shipping_quotes(
         payload: ShipCalcRequest,
         db: Session = Depends(get_db),

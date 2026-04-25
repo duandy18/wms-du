@@ -250,13 +250,13 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         path_prefix="app/tms/shipment/contracts_calc.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.SHIPPING_ASSIST_SHIPMENT,
-        note="发货辅助 /ship/calc 合同定义。",
+        note="发货辅助 /shipping-assist/shipping/calc 合同定义。",
     ),
     FileOwnershipRule(
         path_prefix="app/tms/shipment/contracts_prepare.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.SHIPPING_ASSIST_SHIPMENT,
-        note="发货辅助 /ship/prepare-from-order 合同定义。",
+        note="发货辅助 /shipping-assist/shipping/prepare-from-order 合同定义。",
     ),
     FileOwnershipRule(
         path_prefix="app/tms/shipment/router.py",
@@ -268,13 +268,13 @@ FILE_OWNERSHIP_RULES: tuple[FileOwnershipRule, ...] = (
         path_prefix="app/tms/shipment/routes_calc.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.SHIPPING_ASSIST_SHIPMENT,
-        note="发货辅助 /ship/calc 路由实现。",
+        note="发货辅助 /shipping-assist/shipping/calc 路由实现。",
     ),
     FileOwnershipRule(
         path_prefix="app/tms/shipment/routes_prepare.py",
         owner_domain=DomainOwner.TMS,
         owner_subdomain=TmsSubdomain.SHIPPING_ASSIST_SHIPMENT,
-        note="发货辅助 /ship/prepare-from-order 路由实现。",
+        note="发货辅助 /shipping-assist/shipping/prepare-from-order 路由实现。",
     ),
     FileOwnershipRule(
         path_prefix="app/tms/shipment/routes_ship_with_waybill.py",
