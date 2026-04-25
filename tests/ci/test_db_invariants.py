@@ -75,7 +75,7 @@ async def _seed_wh_item_lot_stock(
         ref_line=1,
         occurred_at=datetime.now(timezone.utc),
         meta=None,
-        batch_code=str(lot_code),
+        lot_code=str(lot_code),
         production_date=prod,
         expiry_date=exp,
         trace_id=None,

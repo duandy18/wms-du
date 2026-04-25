@@ -154,7 +154,7 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
         ref_line=1,
         occurred_at=datetime.now(timezone.utc),
         meta=None,
-        batch_code=BATCH,
+        lot_code=BATCH,
         production_date=production_date,
         expiry_date=expiry_date,
         trace_id=None,

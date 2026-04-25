@@ -148,7 +148,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             ref=f"UT-SEED-{item_id}-{wh}-INTERNAL",
             ref_line=1,
             occurred_at=now,
-            batch_code=None,
+            lot_code=None,
         )
     else:
         lot_id = await _ensure_supplier_lot(session, wh=int(wh), item_id=int(item_id), code=str(code))
@@ -163,7 +163,7 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
             ref=f"UT-SEED-{item_id}-{wh}-{code}",
             ref_line=1,
             occurred_at=now,
-            batch_code=str(code),
+            lot_code=str(code),
             production_date=prod,
             expiry_date=exp,
         )
@@ -193,7 +193,7 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
         ref="UT-IN-1",
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code=code,
+        lot_code=code,
         production_date=prod,
         expiry_date=exp,
     )
@@ -238,7 +238,7 @@ async def test_adjust_idempotent(session: AsyncSession):
         ref="UT-IN-2",
         ref_line=1,
         occurred_at=now,
-        batch_code=code,
+        lot_code=code,
         production_date=prod,
         expiry_date=exp,
     )
@@ -253,7 +253,7 @@ async def test_adjust_idempotent(session: AsyncSession):
         ref="UT-IN-2",
         ref_line=1,
         occurred_at=now,
-        batch_code=code,
+        lot_code=code,
         production_date=prod,
         expiry_date=exp,
     )
@@ -307,7 +307,7 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
         ref="UT-OUT-2",
         ref_line=1,
         occurred_at=datetime.now(UTC),
-        batch_code=code,
+        lot_code=code,
     )
     assert int(r["after"]) == int(before) - 1
 
@@ -323,7 +323,7 @@ async def test_adjust_outbound_and_insufficient(session: AsyncSession):
             ref="UT-OUT-3",
             ref_line=1,
             occurred_at=datetime.now(UTC),
-            batch_code=code,
+            lot_code=code,
         )
 
 
@@ -374,7 +374,7 @@ async def test_adjust_rejects_lot_mismatch(session: AsyncSession):
             ref="UT-LOT-MISMATCH-1",
             ref_line=1,
             occurred_at=datetime.now(UTC),
-            batch_code="B-LOT",
+            lot_code="B-LOT",
             production_date=prod,
             expiry_date=exp,
         )
@@ -402,7 +402,7 @@ async def test_adjust_rejects_lot_not_found(session: AsyncSession):
             ref="UT-LOT-NOTFOUND-1",
             ref_line=1,
             occurred_at=datetime.now(UTC),
-            batch_code="B-LOT2",
+            lot_code="B-LOT2",
             production_date=prod,
             expiry_date=exp,
         )

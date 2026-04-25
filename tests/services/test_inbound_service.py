@@ -69,7 +69,7 @@ async def test_inbound_creates_batch_and_increases_stock(session: AsyncSession):
             reason=MovementType.RECEIPT,
             ref=ref,
             occurred_at=datetime.now(UTC),
-            batch_code=code,
+            lot_code=code,
             production_date=prod,
             expiry_date=exp,
         )

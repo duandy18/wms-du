@@ -284,7 +284,7 @@ async def reverse_inbound_event(
             ref=str(event.event_no),
             ref_line=line_no,
             occurred_at=occurred_at,
-            batch_code=None,
+            lot_code=None,
             production_date=None,
             expiry_date=None,
             trace_id=str(trace_id),

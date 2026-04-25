@@ -385,7 +385,7 @@ async def test_phase3_receive_commit_three_books_strict(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         meta=None,
-        batch_code=batch_code,
+        lot_code=batch_code,
         production_date=prod,
         expiry_date=exp,
         trace_id="PH3-UT-TRACE",

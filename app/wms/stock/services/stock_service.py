@@ -21,7 +21,7 @@ class StockService:
     终态收口：
     - adjust_lot：lot-only 原语入口，调用方必须先解析 lot_id；
     - lot_resolver：保留给上层服务做合同裁决 + lot_id 解析；
-    - 旧 batch_code 合同写入口已退役。
+    - 旧 batch_code 合同写入口已退役；公开语义统一为 lot_code。
     """
 
     def __init__(self, lot_resolver: Optional[LotResolver] = None) -> None:
@@ -40,14 +40,14 @@ class StockService:
         ref_line: Optional[Union[int, str]] = None,
         occurred_at: Optional[datetime] = None,
         meta: Optional[Dict[str, Any]] = None,
-        batch_code: Optional[str] = None,
+        lot_code: Optional[str] = None,
         production_date: Optional[date] = None,
         expiry_date: Optional[date] = None,
         trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         lot-only 原语入口：
-        - 不做 batch_code 合同裁决；
+        - 不做 lot_code 合同裁决；
         - 调用方必须传入已解析且合法的 lot_id；
         - 保留 ValueError 语义，供服务层/测试按 lot-only 终态处理。
         """
@@ -62,7 +62,7 @@ class StockService:
             ref_line=ref_line,
             occurred_at=occurred_at,
             meta=meta,
-            batch_code=batch_code,
+            lot_code=lot_code,
             production_date=production_date,
             expiry_date=expiry_date,
             trace_id=trace_id,

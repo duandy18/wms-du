@@ -107,7 +107,7 @@ async def stock_recount(
                 lot_resolver=svc.lot_resolver,
                 item_id=int(req.item_id),
                 warehouse_id=int(req.warehouse_id),
-                batch_code=code,
+                lot_code=code,
                 lot_id=None,
                 ref=scan_ref,
                 occurred_at=occurred_at,
@@ -123,7 +123,7 @@ async def stock_recount(
                 delta=delta,
                 reason="COUNT",
                 ref=scan_ref,
-                batch_code=resolved_lot_code,
+                lot_code=resolved_lot_code,
             )
 
         ev_id = await _insert_event(
