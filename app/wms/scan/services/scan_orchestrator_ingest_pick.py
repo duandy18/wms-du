@@ -30,7 +30,7 @@ async def run_pick_flow(
     - 只做条码 / 商品 / 包装识别；
     - 不扣库存；
     - 不写出库执行事实；
-    - 真正执行入口是 /orders/{platform}/{shop_id}/{ext_order_no}/pick。
+    - 真正执行入口已迁移到正式 WMS 出库提交链路；/scan 仅保留 probe，不承担落账。
     """
     parse_kwargs = {
         "item_id": item_id,

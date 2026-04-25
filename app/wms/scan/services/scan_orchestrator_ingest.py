@@ -175,7 +175,7 @@ async def ingest(scan: Dict[str, Any], session: Optional[AsyncSession]) -> Dict[
                 "event_id": ev,
                 "source": "scan_feature_disabled",
                 "evidence": [{"source": "scan_feature_disabled", "db": True}],
-                "errors": [{"stage": "ingest", "error": "FEATURE_DISABLED: scan_is_probe_only_use_/orders/{platform}/{shop_id}/{ext_order_no}/pick"}],
+                "errors": [{"stage": "ingest", "error": "FEATURE_DISABLED: scan_is_probe_only_use_formal_outbound_submit"}],
                 "item_id": item_id,
                 "item_uom_id": item_uom_id,
                 "ratio_to_base": ratio_to_base,
