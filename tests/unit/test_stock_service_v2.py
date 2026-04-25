@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.wms.shared.enums import MovementType
+from app.wms.shared.services.lot_code_contract import validate_lot_code_contract
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
 from app.wms.stock.services.stock_service import StockService
 
@@ -206,22 +207,9 @@ async def test_adjust_inbound_auto_resolves_dates(session: AsyncSession):
     assert res_exp == exp
 
 
-@pytest.mark.asyncio
-async def test_adjust_outbound_requires_batch(session: AsyncSession):
-    svc = StockService()
-
+def test_lot_code_contract_requires_lot_code_for_required_item() -> None:
     with pytest.raises(HTTPException) as exc:
-        await svc.adjust(
-            session=session,
-            item_id=3001,
-            delta=-1,
-            reason=MovementType.OUTBOUND,
-            ref="UT-OUT-1",
-            ref_line=1,
-            occurred_at=datetime.now(UTC),
-            batch_code="",
-            warehouse_id=1,
-        )
+        validate_lot_code_contract(requires_batch=True, lot_code="")
 
     assert exc.value.status_code == 422
     assert isinstance(exc.value.detail, dict)
