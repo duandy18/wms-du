@@ -10,21 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.wms.stock.services.lots import ensure_internal_lot_singleton, ensure_lot_full
 
 
-def _norm_lot_code(v: str | None) -> str | None:
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    return s
-
-
 class LotResolver:
     """
     只负责“lot 决议 + lot 创建/复用”的纯服务：
     - supplier lot: ensure_lot_full
     - internal lot: ensure_internal_lot_singleton（(warehouse,item) 单例）
-    - 可用量估算：仅用于错误提示/诊断（不参与扣减决策）
 
     当前阶段：
     - REQUIRED lot 身份已切到 (warehouse_id, item_id, production_date)
@@ -81,60 +71,3 @@ class LotResolver:
             source_receipt_id=None,
             source_line_no=None,
         )
-
-    async def load_on_hand_qty(
-        self,
-        session: AsyncSession,
-        *,
-        warehouse_id: int,
-        item_id: int,
-        batch_code: Optional[str],
-    ) -> int:
-        """
-        只用于错误提示/诊断的“可用量”估算：
-        - batch_code 为空：聚合该 item 在该仓的总余额
-        - batch_code 非空：按展示码 lots.lot_code 聚合 SUPPLIER lot 的余额
-
-        注意：
-        - lot_code 不再是结构身份
-        - 这里按 lot_code 聚合只是为了提示用户，不参与扣减裁决
-        """
-        if batch_code is None:
-            row = (
-                await session.execute(
-                    SA(
-                        """
-                        SELECT COALESCE(SUM(s.qty), 0) AS qty
-                          FROM stocks_lot s
-                         WHERE s.warehouse_id = :w
-                           AND s.item_id      = :i
-                        """
-                    ),
-                    {"w": int(warehouse_id), "i": int(item_id)},
-                )
-            ).first()
-        else:
-            code = _norm_lot_code(batch_code) or ""
-            row = (
-                await session.execute(
-                    SA(
-                        """
-                        SELECT COALESCE(SUM(s.qty), 0) AS qty
-                          FROM stocks_lot s
-                          JOIN lots lo ON lo.id = s.lot_id
-                         WHERE s.warehouse_id = :w
-                           AND s.item_id      = :i
-                           AND lo.lot_code_source = 'SUPPLIER'
-                           AND lo.lot_code = :code
-                        """
-                    ),
-                    {"w": int(warehouse_id), "i": int(item_id), "code": str(code)},
-                )
-            ).first()
-
-        if not row:
-            return 0
-        try:
-            return int(row[0] or 0)
-        except Exception:
-            return 0
