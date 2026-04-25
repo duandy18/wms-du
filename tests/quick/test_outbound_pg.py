@@ -1,14 +1,15 @@
 # tests/quick/test_outbound_pg.py — v2: warehouse + batch_code 口径
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.enums import MovementType
 from app.wms.outbound.services.outbound_commit_service import ship_commit
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_lot_full
+from tests.utils.ensure_minimal import set_stock_qty
 from tests.services._helpers import ensure_store
 
 UTC = timezone.utc
@@ -104,42 +105,17 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
     - code=None  => NULL 槽位（lot_id IS NULL）
     - code=str   => 批次槽位（lot_code 展示码），入库需日期
     """
-    svc = StockService()
-    now = datetime.now(UTC)
-
     before = await _qty(session, item_id, wh, code)
     if before >= qty:
         return
 
-    need = qty - before
-    if code is None:
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-{item_id}-{wh}-NULL",
-            ref_line=1,
-            occurred_at=now,
-            batch_code=None,
-        )
-    else:
-        prod = date.today()
-        exp = prod + timedelta(days=365)
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-{item_id}-{wh}-{code}",
-            ref_line=1,
-            occurred_at=now,
-            batch_code=str(code),
-            production_date=prod,
-            expiry_date=exp,
-        )
+    await set_stock_qty(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        batch_code=code,
+        qty=int(qty),
+    )
     await session.commit()
 
 
@@ -196,30 +172,20 @@ async def test_outbound_insufficient_stock(session: AsyncSession):
     """
     item_id = 1
     wh = 1
-    code = await _slot_code(session, item_id)
-
-    # 先确保槽位存在，再把 qty 清到 0
-    await _ensure_stock_seed(session, item_id=item_id, wh=wh, code=code, qty=1)
-
-    cur = await _qty(session, item_id, wh, code)
-    if cur != 0:
-        svc = StockService()
-        zero_prod = date.today() if code is not None else None
-        zero_exp = (zero_prod + timedelta(days=365)) if zero_prod is not None else None
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(-cur),
-            reason=MovementType.COUNT,
-            ref=f"UT-ZERO-{item_id}-{wh}-{code or 'NULL'}",
-            ref_line=1,
-            occurred_at=datetime.now(UTC),
-            batch_code=code,
-            production_date=zero_prod,
-            expiry_date=zero_exp,
-        )
-        await session.commit()
+    # 使用唯一批次码，并只创建 lot 不造库存：
+    # 这样出库能命中既有 lot_id，然后稳定进入 insufficient_stock 分支。
+    code = f"UT-OUT-PG-INS-{uuid4().hex[:8].upper()}"
+    production_date = datetime.now(UTC).date()
+    expiry_date = production_date.replace(year=production_date.year + 1)
+    await ensure_lot_full(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        lot_code=str(code),
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+    await session.commit()
 
     order_id = "UT:PH3:SO-INS-001"
     await _ensure_order_ref_exists(session, order_ref=order_id)

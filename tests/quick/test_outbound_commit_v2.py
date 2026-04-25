@@ -5,9 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.enums import MovementType
 from app.wms.outbound.services.outbound_commit_service import ship_commit
-from app.wms.stock.services.stock_service import StockService
+from tests.utils.ensure_minimal import set_stock_qty
 from tests.services._helpers import ensure_store
 
 
@@ -104,39 +103,17 @@ async def _ensure_stock_seed(session: AsyncSession, *, item_id: int, wh: int, co
     """
     强护栏下不要依赖 conftest 的隐式基线库存，测试必须显式 seed 目标槽位。
     """
-    svc = StockService()
     before = await _qty(session, item_id, wh, code)
     if before >= qty:
         return
 
-    need = qty - before
-    if code is None:
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-QOUT-{item_id}-{wh}-NULL",
-            ref_line=1,
-            occurred_at=None,
-            batch_code=None,
-        )
-    else:
-        prod, exp = _required_dates_for_code(str(code))
-        await svc.adjust(
-            session=session,
-            item_id=int(item_id),
-            warehouse_id=int(wh),
-            delta=int(need),
-            reason=MovementType.INBOUND,
-            ref=f"UT-SEED-QOUT-{item_id}-{wh}-{code}",
-            ref_line=1,
-            occurred_at=None,
-            batch_code=str(code),
-            production_date=prod,
-            expiry_date=exp,
-        )
+    await set_stock_qty(
+        session,
+        item_id=int(item_id),
+        warehouse_id=int(wh),
+        batch_code=code,
+        qty=int(qty),
+    )
     await session.commit()
 
 

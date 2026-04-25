@@ -1,11 +1,11 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.wms.shared.enums import MovementType
-from app.wms.stock.services.stock_service import StockService
+from app.wms.stock.services.lots import ensure_lot_full
+from app.wms.stock.services.stock_adjust import adjust_lot_impl
 
 pytestmark = pytest.mark.asyncio
 
@@ -130,22 +130,35 @@ async def test_inbound_ledger_snapshot_smoke(session: AsyncSession):
     # 1) 确保最小域存在
     await _ensure_min_domain_v2(session, warehouse_id=WH, item_id=ITEM)
 
-    svc = StockService()
-
     before = await _qty_lot(session, warehouse_id=WH, item_id=ITEM, batch_code=BATCH)
 
-    # 2) 入库 +5（走 ledger 写入口）
-    await svc.adjust(
+    # 2) 入库 +5（走 lot-only ledger 写入口）
+    production_date = date.today()
+    expiry_date = production_date + timedelta(days=30)
+    lot_id = await ensure_lot_full(
+        session,
+        item_id=int(ITEM),
+        warehouse_id=int(WH),
+        lot_code=str(BATCH),
+        production_date=production_date,
+        expiry_date=expiry_date,
+    )
+    await adjust_lot_impl(
         session=session,
-        warehouse_id=WH,
-        item_id=ITEM,
+        warehouse_id=int(WH),
+        item_id=int(ITEM),
+        lot_id=int(lot_id),
         delta=5,
-        reason=MovementType.INBOUND,
+        reason="INBOUND",
         ref="SMOKE-INBOUND",
         ref_line=1,
         occurred_at=datetime.now(timezone.utc),
+        meta=None,
         batch_code=BATCH,
-        production_date=date.today(),
+        production_date=production_date,
+        expiry_date=expiry_date,
+        trace_id=None,
+        utc_now=lambda: datetime.now(timezone.utc),
     )
     await session.commit()
 
