@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.tms.pricing.summary.service import compute_pricing_status
+from app.shipping_assist.pricing.summary.service import compute_pricing_status
 
 
 def test_compute_pricing_status_provider_disabled() -> None:

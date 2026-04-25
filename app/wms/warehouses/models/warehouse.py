@@ -8,10 +8,10 @@ from sqlalchemy import Boolean, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
-from app.tms.providers.models.warehouse_shipping_provider import WarehouseShippingProvider  # noqa: F401
+from app.shipping_assist.providers.models.warehouse_shipping_provider import WarehouseShippingProvider  # noqa: F401
 
 if TYPE_CHECKING:
-    from app.tms.providers.models.warehouse_shipping_provider import WarehouseShippingProvider
+    from app.shipping_assist.providers.models.warehouse_shipping_provider import WarehouseShippingProvider
 
 
 class WarehouseCode:

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
 from app.wms.outbound.services.order_fulfillment_manual_assign import manual_assign_fulfillment_warehouse
-from app.tms.shipment.router_helpers import get_order_ref_and_trace_id
+from app.shipping_assist.shipment.router_helpers import get_order_ref_and_trace_id
 
 
 class ManualAssignRequest(BaseModel):

@@ -1,14 +1,14 @@
 # tests/unit/test_surcharge_city_wins_selection.py
 from __future__ import annotations
 
-from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
+from app.shipping_assist.pricing.templates.models.shipping_provider_pricing_template_surcharge_config import (
     ShippingProviderPricingTemplateSurchargeConfig,
 )
-from app.tms.pricing.templates.models.shipping_provider_pricing_template_surcharge_config_city import (
+from app.shipping_assist.pricing.templates.models.shipping_provider_pricing_template_surcharge_config_city import (
     ShippingProviderPricingTemplateSurchargeConfigCity,
 )
-from app.tms.quote.calc_quote_level3 import _select_surcharge_from_configs
-from app.tms.quote.types import Dest
+from app.shipping_assist.quote.calc_quote_level3 import _select_surcharge_from_configs
+from app.shipping_assist.quote.types import Dest
 
 
 def _cfg_province(

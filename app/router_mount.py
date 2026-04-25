@@ -16,7 +16,7 @@ def mount_routers(app: FastAPI) -> None:
         router as inventory_adjustment_summary_router,
     )
     from app.analytics.routers.finance_overview import router as finance_overview_router
-    from app.tms.routers.geo_cn import router as geo_router
+    from app.shipping_assist.routers.geo_cn import router as geo_router
     from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
     from app.pms.items.routers.item_uoms import router as item_uoms_router
@@ -66,14 +66,14 @@ def mount_routers(app: FastAPI) -> None:
 
     from app.oms.router import router as oms_router
 
-    from app.tms.billing.router import router as tms_billing_router
-    from app.tms.pricing.router import router as tms_pricing_router
-    from app.tms.providers.router import router as tms_providers_router
-    from app.tms.quote.router import router as tms_quote_router
-    from app.tms.records.router import router as tms_records_router
-    from app.tms.reports.router import router as tms_reports_router
-    from app.tms.shipment.orders_v2_router import router as tms_orders_shipment_v2_router
-    from app.tms.shipment.router import router as tms_shipment_router
+    from app.shipping_assist.billing.router import router as tms_billing_router
+    from app.shipping_assist.pricing.router import router as tms_pricing_router
+    from app.shipping_assist.providers.router import router as tms_providers_router
+    from app.shipping_assist.quote.router import router as tms_quote_router
+    from app.shipping_assist.records.router import router as tms_records_router
+    from app.shipping_assist.reports.router import router as tms_reports_router
+    from app.shipping_assist.shipment.orders_v2_router import router as tms_orders_shipment_v2_router
+    from app.shipping_assist.shipment.router import router as tms_shipment_router
 
     # ---------------------------------------------------------------------------
     # scan routes
