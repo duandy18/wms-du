@@ -15,7 +15,7 @@ class SnapshotV3Service:
     Phase 3 终态（lot-only）：
     - 快照 grain： (snapshot_date, warehouse_id, item_id, lot_id)
     - 台账聚合维度： (warehouse_id, item_id, lot_id)
-    - batch_code 仅为展示码（lots.lot_code），不参与任何维度事实/聚合键
+    - lot_code 仅为展示码（lots.lot_code），不参与任何维度事实/聚合键
     """
 
     @staticmethod
@@ -29,7 +29,7 @@ class SnapshotV3Service:
 
         注意：
         - 维度事实为 lot_id
-        - batch_code 仅为展示：lots.lot_code（可能为 NULL）
+        - lot_code 仅为展示：lots.lot_code（可能为 NULL）
         """
         await session.execute(text("DROP TABLE IF EXISTS snapshot_cut_result"))
         await session.execute(
@@ -40,7 +40,7 @@ class SnapshotV3Service:
                   l.warehouse_id,
                   l.item_id,
                   l.lot_id,
-                  lo.lot_code AS batch_code,
+                  lo.lot_code AS lot_code,
                   SUM(l.delta) AS qty
                 FROM stock_ledger l
                 JOIN lots lo ON lo.id = l.lot_id
@@ -155,7 +155,7 @@ class SnapshotV3Service:
                 l.warehouse_id,
                 l.item_id,
                 l.lot_id,
-                lo.lot_code AS batch_code,
+                lo.lot_code AS lot_code,
                 SUM(l.delta) AS ledger_qty
             FROM stock_ledger l
             JOIN lots lo ON lo.id = l.lot_id
@@ -175,7 +175,7 @@ class SnapshotV3Service:
             x.warehouse_id,
             x.item_id,
             x.lot_id,
-            x.batch_code,
+            x.lot_code,
             x.ledger_qty,
             COALESCE(sn.qty, 0) AS snapshot_qty,
             COALESCE(la.qty, 0) AS stocks_lot_qty,

@@ -20,12 +20,12 @@ class Allocation(TypedDict):
 
     语义：
     - stock_id   : lot_id
-    - batch_code : lots.lot_code（展示用）
+    - lot_code   : lots.lot_code（展示用）
     - expiry_date: lots.expiry_date（canonical）
     """
 
     stock_id: int
-    batch_code: Optional[str]
+    lot_code: Optional[str]
     take_qty: int
     expiry_date: Optional[date]
 
@@ -66,7 +66,7 @@ class ExpiryAnalyticsAllocator:
             plan.append(
                 Allocation(
                     stock_id=int(r["stock_id"]),
-                    batch_code=r.get("batch_code"),
+                    lot_code=r.get("lot_code"),
                     take_qty=take_int,
                     expiry_date=r.get("expiry_date"),
                 )
@@ -88,7 +88,7 @@ class ExpiryAnalyticsAllocator:
         sql = """
             SELECT
                 s.lot_id AS stock_id,
-                l.lot_code AS batch_code,
+                l.lot_code AS lot_code,
                 GREATEST(COALESCE(s.qty, 0), 0) AS avail,
                 l.expiry_date AS expiry_date
             FROM   stocks_lot s

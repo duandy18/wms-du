@@ -16,7 +16,7 @@ class MultiReconcileService:
     Phase 3 终态（lot-only）：
     - three_books_compare：stocks 侧为 stocks_lot（lot-world）
     - 对齐维度： (warehouse_id, item_id, lot_id)
-    - batch_code 仅为展示值：lots.lot_code
+    - lot_code 仅为展示值：lots.lot_code
     """
 
     @staticmethod
@@ -31,7 +31,7 @@ class MultiReconcileService:
                 l.warehouse_id,
                 l.item_id,
                 l.lot_id,
-                lo.lot_code AS batch_code,
+                lo.lot_code AS lot_code,
                 SUM(l.delta) AS qty
             FROM stock_ledger l
             JOIN lots lo ON lo.id = l.lot_id
@@ -130,7 +130,7 @@ class MultiReconcileService:
                 x.warehouse_id,
                 x.item_id,
                 x.lot_id,
-                x.batch_code,
+                x.lot_code,
                 x.ledger_qty,
                 COALESCE(st.qty, 0) AS stock_qty,
                 COALESCE(sn.qty, 0) AS snapshot_qty,
@@ -141,7 +141,7 @@ class MultiReconcileService:
                     l.warehouse_id,
                     l.item_id,
                     l.lot_id,
-                    lo.lot_code AS batch_code,
+                    lo.lot_code AS lot_code,
                     SUM(l.delta) AS ledger_qty
                 FROM stock_ledger l
                 JOIN lots lo

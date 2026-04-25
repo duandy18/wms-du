@@ -28,7 +28,7 @@ class OutboundMetricsV2(BaseModel):
 
     - expiry_pick_hit_rate
         “临期优先”贴合度（%）：
-        仅用于风险分析口径：对比拣货实际 batch_code 与“当前仍有库存的最早到期 lot_code”。
+        仅用于风险分析口径：对比拣货实际 lot_code 与“当前仍有库存的最早到期 lot_code”。
 
     - distribution      当天按小时的出库分布（orders + pick_qty）
     """
