@@ -67,7 +67,7 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
 
     ⚠️ 重要：避免 join 放大导致同一 ledger 行重复（ref_line 重复）。
     做法：先把 inbound_receipt_lines 按 (receipt_id,item_id,lot_id) 聚合成唯一映射。
-    batch_code 仅展示字段，不参与 identity。
+    lot_code 仅展示字段，不参与 identity。
     """
     po = await _load_po_exists(session, po_id)
     if po is None:
@@ -97,7 +97,7 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
               sl.ref_line,
               sl.warehouse_id,
               sl.item_id,
-              COALESCE(lo.lot_code, '') AS batch_code,
+              lo.lot_code AS lot_code,
               sl.delta,
               sl.after_qty,
               sl.occurred_at,
@@ -144,7 +144,7 @@ async def list_po_receipt_events(session: AsyncSession, po_id: int) -> List[Purc
                 warehouse_id=int(r["warehouse_id"]),
                 item_id=item_id,
                 line_no=int(po_line_no) if po_line_no is not None else None,
-                batch_code=r.get("batch_code"),
+                lot_code=r.get("lot_code"),
                 qty=int(r["delta"]),
                 after_qty=int(r["after_qty"]),
                 occurred_at=r["occurred_at"],
