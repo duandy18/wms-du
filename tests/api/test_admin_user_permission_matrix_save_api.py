@@ -113,7 +113,7 @@ def test_admin_can_save_user_permission_matrix(client: TestClient) -> None:
     user_id = created["id"]
 
     page_codes = _get_matrix_page_codes(client, headers)
-    assert {"admin", "wms", "oms", "shipping_assist", "analytics", "pms"} <= set(page_codes)
+    assert {"admin", "wms", "oms", "shipping_assist", "finance", "pms"} <= set(page_codes)
 
     pages = _build_empty_pages(page_codes)
     pages["wms"] = {"read": False, "write": True}
