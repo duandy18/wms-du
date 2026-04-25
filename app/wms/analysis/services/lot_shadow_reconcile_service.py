@@ -14,7 +14,7 @@ class LotShadowReconcileService:
     """
     Phase 3（结构收口后的 ledger-only 影子对账）：
 
-    - 只读 stock_ledger（lots 不再承载日期字段；batch_code_key 语义已退场）
+    - 只读 stock_ledger（lots 不再承载日期字段；历史 batch key 语义已退场）
     - 给出：
       1) lot 覆盖率（整体 + receipt 口径）
       2) 按 lot 聚合的 sum(delta)（影子余额）
@@ -29,7 +29,7 @@ class LotShadowReconcileService:
         item_id: int,
         time_from: datetime,
         time_to: datetime,
-        batch_code: Optional[str] = None,
+        lot_code: Optional[str] = None,
         lot_id: Optional[int] = None,
         violation_limit: int = 50,
     ) -> Dict[str, Any]:
@@ -46,11 +46,11 @@ class LotShadowReconcileService:
             cond.append("l.lot_id=:lot")
             params["lot"] = int(lot_id)
 
-        # batch_code 视为展示码 lots.lot_code（支持 NULL 语义）
-        if batch_code is not None:
-            norm_bc = normalize_optional_lot_code(batch_code)
-            cond.append("lo.lot_code IS NOT DISTINCT FROM :bc")
-            params["bc"] = norm_bc
+        # lot_code 为展示码 lots.lot_code（支持 NULL 语义）
+        if lot_code is not None:
+            norm_lot_code = normalize_optional_lot_code(lot_code)
+            cond.append("lo.lot_code IS NOT DISTINCT FROM :lot_code")
+            params["lot_code"] = norm_lot_code
 
         join_lots = "JOIN lots lo ON lo.id = l.lot_id"
 
