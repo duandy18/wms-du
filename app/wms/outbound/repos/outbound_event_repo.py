@@ -150,7 +150,7 @@ async def insert_outbound_event_lines(
                         "item_id": int(ln["item_id"]),
                         "qty_outbound": int(ln["qty_outbound"]),
                         "lot_id": int(ln["lot_id"]),
-                        "lot_code_snapshot": ln.get("lot_code"),
+                        "lot_code_snapshot": ln.get("lot_code_snapshot"),
                         "order_line_id": ln.get("order_line_id"),
                         "manual_doc_line_id": ln.get("manual_doc_line_id"),
                         "item_name_snapshot": ln.get("item_name_snapshot"),
