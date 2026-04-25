@@ -1,7 +1,7 @@
 # tests/test_phase3_three_books_count_contract.py
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.wms.inventory_adjustment.count.contracts.count import CountRequest
 from app.wms.inventory_adjustment.count.services.count_service import CountService
 from app.wms.snapshot.services.snapshot_run import run_snapshot
-from app.wms.stock.services.stock_service import StockService
 from app.wms.shared.services.three_books_consistency import verify_commit_three_books
+from tests.utils.ensure_minimal import set_stock_qty
 
 
 def _date_to_utc_datetime(d: date) -> datetime:
@@ -39,6 +39,48 @@ async def _pick_item(session: AsyncSession) -> tuple[int, bool]:
     if not row2:
         raise RuntimeError("测试库没有 items 种子数据，无法运行盘点合同测试")
     return int(row2[0]), True
+
+
+async def _load_lot_dates_by_code(
+    session: AsyncSession,
+    *,
+    warehouse_id: int,
+    item_id: int,
+    lot_code: str,
+) -> tuple[int, date | None, date | None]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, production_date, expiry_date
+                  FROM lots
+                 WHERE warehouse_id = :warehouse_id
+                   AND item_id = :item_id
+                   AND lot_code_source = 'SUPPLIER'
+                   AND lot_code = :lot_code
+                 ORDER BY id DESC
+                 LIMIT 1
+                """
+            ),
+            {
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_code": str(lot_code),
+            },
+        )
+    ).first()
+
+    if row is None:
+        raise AssertionError(
+            {
+                "msg": "seeded supplier lot not found",
+                "warehouse_id": int(warehouse_id),
+                "item_id": int(item_id),
+                "lot_code": str(lot_code),
+            }
+        )
+
+    return int(row[0]), row[1], row[2]
 
 
 async def _load_ledger_lot_id(
@@ -119,29 +161,25 @@ async def test_phase3_count_confirm_delta_zero_records_ledger(session: AsyncSess
     utc = timezone.utc
     now = datetime.now(utc)
 
-    stock = StockService()
     service = CountService()
     warehouse_id = 1
     item_id, may_need_expiry = await _pick_item(session)
     batch_code = "B-PH3-CNT"
 
-    prod = now.date()
-    exp = (prod + timedelta(days=30)) if may_need_expiry else None
-
-    # 先造库存：+5
-    await stock.adjust(
-        session=session,
+    # 先造库存：+5。测试造数统一走 lot-only helper，不再调用 StockService.adjust。
+    await set_stock_qty(
+        session,
         item_id=item_id,
         warehouse_id=warehouse_id,
         batch_code=batch_code,
-        delta=5,
-        reason="RECEIPT",
-        ref="UT:PH3:CNT:IN",
-        ref_line=1,
-        occurred_at=now,
-        production_date=prod,
-        expiry_date=exp,
-        meta={"sub_reason": "UT_STOCK_IN"},
+        qty=5,
+    )
+
+    _seed_lot_id, prod, exp = await _load_lot_dates_by_code(
+        session,
+        warehouse_id=warehouse_id,
+        item_id=item_id,
+        lot_code=batch_code,
     )
 
     # 盘点确认：qty == current（delta == 0），也必须写账
@@ -199,29 +237,25 @@ async def test_phase3_count_adjust_delta_nonzero_updates_stock(session: AsyncSes
     utc = timezone.utc
     now = datetime.now(utc)
 
-    stock = StockService()
     service = CountService()
     warehouse_id = 1
     item_id, may_need_expiry = await _pick_item(session)
     batch_code = "B-PH3-CNT2"
 
-    prod = now.date()
-    exp = (prod + timedelta(days=30)) if may_need_expiry else None
-
-    # 先造库存：+5
-    await stock.adjust(
-        session=session,
+    # 先造库存：+5。测试造数统一走 lot-only helper，不再调用 StockService.adjust。
+    await set_stock_qty(
+        session,
         item_id=item_id,
         warehouse_id=warehouse_id,
         batch_code=batch_code,
-        delta=5,
-        reason="RECEIPT",
-        ref="UT:PH3:CNT2:IN",
-        ref_line=1,
-        occurred_at=now,
-        production_date=prod,
-        expiry_date=exp,
-        meta={"sub_reason": "UT_STOCK_IN"},
+        qty=5,
+    )
+
+    _seed_lot_id, prod, exp = await _load_lot_dates_by_code(
+        session,
+        warehouse_id=warehouse_id,
+        item_id=item_id,
+        lot_code=batch_code,
     )
 
     # 盘点调整：qty = 7（delta = +2）
