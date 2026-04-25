@@ -16,7 +16,7 @@ class ReturnTaskLineOut(BaseModel):
     item_id: int
     lot_id: int
     item_name: Optional[str]
-    batch_code: str
+    lot_code_snapshot: str
 
     expected_qty: Optional[int]
     picked_qty: int
@@ -85,7 +85,7 @@ class ReturnOrderRefSummaryLine(BaseModel):
     warehouse_id: int
     item_id: int
     item_name: Optional[str] = None  # ✅ 新增：用于详情展示（作业人员视角）
-    batch_code: str
+    lot_code_snapshot: str
     shipped_qty: int
 
 

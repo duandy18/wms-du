@@ -118,16 +118,17 @@ def register_order_refs(router: APIRouter) -> None:
             wh_cond = "AND l.warehouse_id = :wid"
             params["wid"] = int(warehouse_id)
 
-        # 维度封板：GROUP BY lot_id；batch_code 仅展示（用 MAX 聚合）
+        # 维度封板：GROUP BY lot_id；lot_code_snapshot 仅展示，来自 lots.lot_code
         sql = f"""
         SELECT l.warehouse_id,
                l.item_id,
                i.name AS item_name,
                l.lot_id,
-               MAX(l.batch_code) AS batch_code,
+               MAX(lo.lot_code) AS lot_code_snapshot,
                COALESCE(SUM(-l.delta), 0)::int AS shipped_qty
           FROM stock_ledger l
           LEFT JOIN items i ON i.id = l.item_id
+          LEFT JOIN lots lo ON lo.id = l.lot_id
          WHERE l.ref = :ref
            AND l.delta < 0
            AND l.reason = ANY(:reasons)

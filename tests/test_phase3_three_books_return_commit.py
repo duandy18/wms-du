@@ -69,8 +69,8 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     关键点：
     - create_for_order 只认 ledger 出库事实：必须先写 OUTBOUND_SHIP delta<0；
     - return_task_lines.lot_id 必须来自原出库 stock_ledger.lot_id；
-    - return_task_lines.batch_code 仅是 lots.lot_code 展示快照；
-    - return commit 必须使用同一个 lot_id 回仓，而不是靠 batch_code 二次反查。
+    - return_task_lines.lot_code_snapshot 仅是 lots.lot_code 展示快照；
+    - return commit 必须使用同一个 lot_id 回仓，而不是靠 lot_code_snapshot 二次反查。
     """
     now = datetime.now(UTC)
 
@@ -78,7 +78,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
 
     wh_id = 1
     item_id, may_need_expiry = await _pick_item_for_stock_in(session)
-    batch_code = "B-PH3-RET"
+    lot_code_snapshot = "B-PH3-RET"
     prod = now.date()
     exp = (prod + timedelta(days=30)) if may_need_expiry else None
 
@@ -89,7 +89,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         session,
         warehouse_id=wh_id,
         item_id=item_id,
-        lot_code=batch_code,
+        lot_code=lot_code_snapshot,
         production_date=prod,
         expiry_date=exp,
     )
@@ -106,7 +106,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         meta={"sub_reason": "UT_STOCK_IN"},
-        batch_code=batch_code,
+        batch_code=lot_code_snapshot,
         production_date=prod,
         expiry_date=exp,
         trace_id=trace_id,
@@ -128,7 +128,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
         ref_line=1,
         occurred_at=now,
         meta={"sub_reason": "ORDER_SHIP"},
-        batch_code=batch_code,
+        batch_code=lot_code_snapshot,
         production_date=None,
         expiry_date=None,
         trace_id=trace_id,
@@ -171,13 +171,13 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
 
     assert task_line is not None
     assert int(task_line.lot_id) == shipped_lot_id
-    assert str(task_line.batch_code) == batch_code
+    assert str(task_line.lot_code_snapshot) == lot_code_snapshot
 
     stored_task_line = (
         await session.execute(
             text(
                 """
-                SELECT rtl.lot_id, rtl.batch_code, lo.lot_code
+                SELECT rtl.lot_id, rtl.lot_code_snapshot, lo.lot_code
                   FROM return_task_lines rtl
                   JOIN lots lo
                     ON lo.id = rtl.lot_id
@@ -189,7 +189,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
     ).first()
     assert stored_task_line is not None
     assert int(stored_task_line[0]) == shipped_lot_id
-    assert str(stored_task_line[1]) == str(stored_task_line[2]) == batch_code
+    assert str(stored_task_line[1]) == str(stored_task_line[2]) == lot_code_snapshot
 
     # 4) 录入回仓数量
     task = await svc.record_receive(session, task_id=int(task.id), item_id=item_id, qty=2)
@@ -255,7 +255,7 @@ async def test_phase3_return_commit_three_books_strict(session: AsyncSession):
                 "warehouse_id": wh_id,
                 "item_id": item_id,
                 "lot_id": lot_id_val,
-                "lot_code": batch_code,
+                "lot_code": lot_code_snapshot,
                 "qty": 2,
                 "ref": order_ref,
                 "ref_line": ref_line,
