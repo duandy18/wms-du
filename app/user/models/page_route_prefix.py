@@ -15,7 +15,7 @@ class PageRoutePrefix(Base):
 
     当前主线：
     - route_prefix 真相源 = page_route_prefixes
-    - 当前应指向二级页面
+    - route_prefix 应指向具体业务页；三级页面存在时优先指向三级 page_code
     """
 
     __tablename__ = "page_route_prefixes"
