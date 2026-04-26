@@ -91,6 +91,8 @@ class ShippingCostSource:
               dest_province,
               dest_city,
               gross_weight_kg,
+              freight_estimated,
+              surcharge_estimated,
               cost_estimated
             FROM finance_shipping_cost_lines f
             WHERE {where_sql}
