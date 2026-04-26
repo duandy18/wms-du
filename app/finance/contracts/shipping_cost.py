@@ -74,6 +74,8 @@ class ShippingCostLedgerRow(BaseModel):
     dest_city: str | None = None
 
     gross_weight_kg: Decimal | None = None
+    freight_estimated: Decimal | None = None
+    surcharge_estimated: Decimal | None = None
     cost_estimated: Decimal | None = None
 
 

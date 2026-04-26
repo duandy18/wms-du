@@ -62,6 +62,8 @@ class FinanceShippingCostLine(Base):
     dest_city: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
     gross_weight_kg: Mapped[Decimal | None] = mapped_column(sa.Numeric(10, 3), nullable=True)
+    freight_estimated: Mapped[Decimal | None] = mapped_column(sa.Numeric(12, 2), nullable=True)
+    surcharge_estimated: Mapped[Decimal | None] = mapped_column(sa.Numeric(12, 2), nullable=True)
     cost_estimated: Mapped[Decimal | None] = mapped_column(sa.Numeric(12, 2), nullable=True)
 
     source_updated_at: Mapped[datetime | None] = mapped_column(

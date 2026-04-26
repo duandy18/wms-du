@@ -119,6 +119,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
                   warehouse_name,
                   shipping_provider_code,
                   shipping_provider_name,
+                  freight_estimated,
+                  surcharge_estimated,
                   cost_estimated
                 FROM finance_shipping_cost_lines
                 WHERE shipping_record_id = :shipping_record_id
@@ -133,6 +135,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
     assert db_row["warehouse_name"] == "WH-1"
     assert db_row["shipping_provider_code"] == "UT-CAR-1"
     assert db_row["shipping_provider_name"] == "UT-CARRIER-1"
+    assert Decimal(str(db_row["freight_estimated"])) == Decimal("10.00")
+    assert Decimal(str(db_row["surcharge_estimated"])) == Decimal("2.34")
     assert Decimal(str(db_row["cost_estimated"])) == Decimal("12.34")
 
     resp = await client.get(
@@ -169,6 +173,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
         "dest_province",
         "dest_city",
         "gross_weight_kg",
+        "freight_estimated",
+        "surcharge_estimated",
         "cost_estimated",
     }
 
@@ -188,6 +194,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
     assert row["dest_province"] == "河北省"
     assert row["dest_city"] == "廊坊市"
     assert Decimal(str(row["gross_weight_kg"])) == Decimal("1.250")
+    assert Decimal(str(row["freight_estimated"])) == Decimal("10.00")
+    assert Decimal(str(row["surcharge_estimated"])) == Decimal("2.34")
     assert Decimal(str(row["cost_estimated"])) == Decimal("12.34")
 
 
