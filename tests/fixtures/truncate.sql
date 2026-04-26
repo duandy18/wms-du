@@ -17,6 +17,11 @@
 -- - tests 清库不再触碰 shipping_provider_surcharges 旧表。
 
 TRUNCATE TABLE
+  -- finance facts
+  finance_order_sales_lines,
+  finance_shipping_cost_lines,
+  finance_purchase_price_ledger_lines,
+
   -- orders / order_items
   order_items,
   orders,

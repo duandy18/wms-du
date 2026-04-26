@@ -276,6 +276,134 @@ async def test_finance_order_sales_reads_physical_sales_lines(client, session):
     assert Decimal(str(item["line_amount"])) == Decimal("39.90")
 
 
+async def test_finance_order_sales_single_line_uses_order_pay_amount_when_line_amount_missing(client, session):
+    platform = "PDD"
+    store_code = f"FIN-ORDER-FALLBACK-{uuid4().hex[:8]}"
+    ext_order_no = f"FIN-ORDER-FALLBACK-{uuid4().hex[:8]}"
+
+    store_row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO stores (
+                  platform,
+                  store_code,
+                  store_name,
+                  active,
+                  created_at,
+                  updated_at
+                )
+                VALUES (
+                  :platform,
+                  :store_code,
+                  :store_name,
+                  TRUE,
+                  now(),
+                  now()
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "platform": platform,
+                "store_code": store_code,
+                "store_name": "FIN-订单销售单行兜底店铺",
+            },
+        )
+    ).mappings().one()
+
+    order_row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO orders (
+                  platform,
+                  store_id,
+                  store_code,
+                  ext_order_no,
+                  status,
+                  order_amount,
+                  pay_amount,
+                  created_at,
+                  updated_at
+                )
+                VALUES (
+                  :platform,
+                  :store_id,
+                  :store_code,
+                  :ext_order_no,
+                  'PAID',
+                  20.00,
+                  20.00,
+                  '2026-01-04 10:00:00+00',
+                  '2026-01-04 10:00:00+00'
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "platform": platform,
+                "store_id": int(store_row["id"]),
+                "store_code": store_code,
+                "ext_order_no": ext_order_no,
+            },
+        )
+    ).mappings().one()
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO order_items (
+              order_id,
+              item_id,
+              qty,
+              sku_id,
+              title,
+              price,
+              discount,
+              amount,
+              extras,
+              shipped_qty,
+              returned_qty
+            )
+            VALUES (
+              :order_id,
+              1,
+              2,
+              'FIN-FALLBACK-SKU',
+              '订单销售单行金额兜底商品',
+              0,
+              0,
+              0,
+              '{}'::jsonb,
+              0,
+              0
+            )
+            """
+        ),
+        {"order_id": int(order_row["id"])},
+    )
+
+    await session.commit()
+
+    headers = await _headers(client)
+    resp = await client.get(
+        "/finance/order-sales"
+        f"?from_date=2026-01-01&to_date=2026-01-07&order_no={ext_order_no}",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["total"] == 1, body
+    assert Decimal(str(body["summary"]["revenue"])) == Decimal("20.00")
+
+    item = body["items"][0]
+    assert item["ext_order_no"] == ext_order_no
+    assert Decimal(str(item["line_amount"])) == Decimal("20.00")
+    assert Decimal(str(item["pay_amount"])) == Decimal("20.00")
+
+
 async def test_finance_purchase_costs_contract(client):
     headers = await _headers(client)
 
