@@ -45,8 +45,8 @@ def recommend_quotes(
             """
             SELECT
               sp.id AS provider_id,
-              sp.code AS provider_code,
-              sp.name AS provider_name,
+              sp.shipping_provider_code AS shipping_provider_code,
+              sp.name AS shipping_provider_name,
               wsp.active_template_id,
               tpl.name AS template_name
             FROM warehouse_shipping_providers AS wsp
@@ -73,8 +73,8 @@ def recommend_quotes(
             """
             SELECT
               sp.id AS provider_id,
-              sp.code AS provider_code,
-              sp.name AS provider_name,
+              sp.shipping_provider_code AS shipping_provider_code,
+              sp.name AS shipping_provider_name,
               wsp.active_template_id,
               tpl.name AS template_name
             FROM warehouse_shipping_providers AS wsp
@@ -119,8 +119,8 @@ def recommend_quotes(
         results.append(
             {
                 "provider_id": int(row["provider_id"]),
-                "carrier_code": row.get("provider_code"),
-                "carrier_name": str(row["provider_name"]),
+                "shipping_provider_code": row.get("shipping_provider_code"),
+                "shipping_provider_name": str(row["shipping_provider_name"]),
                 "template_id": template_id,
                 "template_name": row.get("template_name"),
                 "total_amount": float(r["total_amount"]),
@@ -140,7 +140,7 @@ def recommend_quotes(
     results.sort(
         key=lambda x: (
             float(x["total_amount"]),
-            str(x.get("carrier_code") or ""),
+            str(x.get("shipping_provider_code") or ""),
         )
     )
 

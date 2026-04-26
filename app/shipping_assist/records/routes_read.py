@@ -54,7 +54,7 @@ def register(router: APIRouter) -> None:
         to_date: str | None = Query(None),
         order_ref: str | None = Query(None),
         tracking_no: str | None = Query(None),
-        carrier_code: str | None = Query(None),
+        shipping_provider_code: str | None = Query(None),
         shipping_provider_id: int | None = Query(None, ge=1),
         province: str | None = Query(None),
         city: str | None = Query(None),
@@ -72,7 +72,7 @@ def register(router: APIRouter) -> None:
             to_date=_parse_date_param(to_date),
             order_ref=order_ref,
             tracking_no=tracking_no,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
             shipping_provider_id=shipping_provider_id,
             province=province,
             city=city,
@@ -96,7 +96,7 @@ def register(router: APIRouter) -> None:
         to_date: str | None = Query(None),
         order_ref: str | None = Query(None),
         tracking_no: str | None = Query(None),
-        carrier_code: str | None = Query(None),
+        shipping_provider_code: str | None = Query(None),
         shipping_provider_id: int | None = Query(None, ge=1),
         province: str | None = Query(None),
         city: str | None = Query(None),
@@ -112,7 +112,7 @@ def register(router: APIRouter) -> None:
             to_date=_parse_date_param(to_date),
             order_ref=order_ref,
             tracking_no=tracking_no,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
             shipping_provider_id=shipping_provider_id,
             province=province,
             city=city,
@@ -143,14 +143,14 @@ def register(router: APIRouter) -> None:
         for row in rows:
             created_at = row.get("created_at")
             provider_text = ""
-            carrier_name = row.get("carrier_name")
-            carrier_code = row.get("carrier_code")
-            if carrier_name and carrier_code:
-                provider_text = f"{carrier_name}（{carrier_code}）"
-            elif carrier_name:
-                provider_text = str(carrier_name)
-            elif carrier_code:
-                provider_text = str(carrier_code)
+            shipping_provider_name = row.get("shipping_provider_name")
+            shipping_provider_code = row.get("shipping_provider_code")
+            if shipping_provider_name and shipping_provider_code:
+                provider_text = f"{shipping_provider_name}（{shipping_provider_code}）"
+            elif shipping_provider_name:
+                provider_text = str(shipping_provider_name)
+            elif shipping_provider_code:
+                provider_text = str(shipping_provider_code)
 
             writer.writerow(
                 [

@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 class ShipQuoteOut(BaseModel):
     provider_id: int
-    carrier_code: Optional[str] = None
-    carrier_name: str
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: str
 
     template_id: int
     template_name: Optional[str] = None
@@ -36,7 +36,7 @@ class ShipCalcRequest(BaseModel):
 
 class ShipRecommendedOut(BaseModel):
     provider_id: int
-    carrier_code: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
     template_id: int
     est_cost: Optional[float] = None
     currency: Optional[str] = None

@@ -1,7 +1,7 @@
 -- tests/fixtures/shipping_seed.sql
 -- 目标：让 pricing quote 相关测试有最小可用数据
 -- 策略：
--- - 幂等：以 shipping_providers.code 作为幂等键（uq_shipping_providers_code）
+-- - 幂等：以 shipping_providers.shipping_provider_code 作为幂等键（uq_shipping_providers_shipping_provider_code）
 -- - 最小：1 provider / 1 template / 1 range set / 1 destination_group / 2 pricing_matrix cells
 --
 -- 最新合同：
@@ -54,9 +54,9 @@ WITH wh AS (
   SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
 ),
 sp AS (
-  INSERT INTO shipping_providers (name, code, active, priority, address)
+  INSERT INTO shipping_providers (name, shipping_provider_code, active, priority, address)
   VALUES ('UT-SP-1', 'UT-SP-1', TRUE, 100, 'UT-ADDR-SP-1')
-  ON CONFLICT ON CONSTRAINT uq_shipping_providers_code DO UPDATE
+  ON CONFLICT ON CONSTRAINT uq_shipping_providers_shipping_provider_code DO UPDATE
     SET name = EXCLUDED.name,
         active = TRUE,
         priority = EXCLUDED.priority,
@@ -66,7 +66,7 @@ sp AS (
 sp2 AS (
   SELECT id FROM sp
   UNION ALL
-  SELECT id FROM shipping_providers WHERE code = 'UT-SP-1' LIMIT 1
+  SELECT id FROM shipping_providers WHERE shipping_provider_code = 'UT-SP-1' LIMIT 1
 ),
 tpl AS (
   INSERT INTO shipping_provider_pricing_templates (
@@ -183,7 +183,7 @@ WITH wh AS (
   SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
 ),
 sp2 AS (
-  SELECT id FROM shipping_providers WHERE code = 'UT-SP-1' LIMIT 1
+  SELECT id FROM shipping_providers WHERE shipping_provider_code = 'UT-SP-1' LIMIT 1
 ),
 tpl2 AS (
   SELECT t.id
@@ -216,7 +216,7 @@ WITH wh AS (
   SELECT id FROM warehouses ORDER BY id ASC LIMIT 1
 ),
 sp2 AS (
-  SELECT id FROM shipping_providers WHERE code = 'UT-SP-1' LIMIT 1
+  SELECT id FROM shipping_providers WHERE shipping_provider_code = 'UT-SP-1' LIMIT 1
 ),
 tpl2 AS (
   SELECT t.id

@@ -42,8 +42,8 @@ async def test_pricing_list_returns_active_row_from_seed_bound_draft_template(
             break
 
     assert seed_row is not None, rows
-    assert seed_row["provider_code"] == "UT-CAR-1"
-    assert seed_row["provider_name"] == "UT-CARRIER-1"
+    assert seed_row["shipping_provider_code"] == "UT-CAR-1"
+    assert seed_row["shipping_provider_name"] == "UT-CARRIER-1"
     assert seed_row["binding_active"] is True
     assert int(seed_row["active_template_id"]) == 1
     assert seed_row["active_template_name"] == "UT-TEMPLATE-1"
@@ -62,7 +62,7 @@ async def test_pricing_list_returns_no_active_template_for_bound_provider_withou
         headers=h,
         json={
             "name": "UT-SUMMARY-NO-TEMPLATE",
-            "code": "UTSUMNOTPL",
+            "shipping_provider_code": "UTSUMNOTPL",
             "active": True,
             "priority": 50,
             "address": "UT-ADDR-NO-TEMPLATE",

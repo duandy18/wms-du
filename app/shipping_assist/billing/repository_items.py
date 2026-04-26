@@ -4,7 +4,7 @@
 - carrier_bill_items（账单明细表）相关操作
 
 设计原则：
-- carrier_code + tracking_no 为业务唯一键（幂等导入核心）
+- shipping_provider_code + tracking_no 为业务唯一键（幂等导入核心）
 - 不再依赖 import_batch_id
 - 不再保留 import_batch_no
 - 导入采用 UPSERT（ON CONFLICT），实现幂等增量补录
@@ -26,13 +26,13 @@ async def insert_carrier_bill_items(
     session: AsyncSession,
     *,
     rows: list[dict[str, object]],
-    carrier_code: str,
+    shipping_provider_code: str,
     bill_month: str | None,
 ) -> int:
     sql = text(
         """
         INSERT INTO carrier_bill_items (
-            carrier_code,
+            shipping_provider_code,
             bill_month,
             tracking_no,
             business_time,
@@ -51,7 +51,7 @@ async def insert_carrier_bill_items(
             raw_payload
         )
         VALUES (
-            :carrier_code,
+            :shipping_provider_code,
             :bill_month,
             :tracking_no,
             :business_time,
@@ -69,7 +69,7 @@ async def insert_carrier_bill_items(
             :parent_customer,
             CAST(:raw_payload AS jsonb)
         )
-        ON CONFLICT (carrier_code, tracking_no)
+        ON CONFLICT (shipping_provider_code, tracking_no)
         DO UPDATE SET
             bill_month = EXCLUDED.bill_month,
 
@@ -117,7 +117,7 @@ async def insert_carrier_bill_items(
         await session.execute(
             sql,
             {
-                "carrier_code": carrier_code,
+                "shipping_provider_code": shipping_provider_code,
                 "bill_month": bill_month,
                 "tracking_no": row.get("tracking_no"),
                 "business_time": row.get("business_time"),
@@ -144,7 +144,7 @@ async def insert_carrier_bill_items(
 async def list_carrier_bill_items(
     session: AsyncSession,
     *,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     tracking_no: str | None,
     limit: int,
     offset: int,
@@ -152,9 +152,9 @@ async def list_carrier_bill_items(
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
 
-    if carrier_code:
-        where_parts.append("upper(cbi.carrier_code) = upper(:carrier_code)")
-        params["carrier_code"] = carrier_code
+    if shipping_provider_code:
+        where_parts.append("upper(cbi.shipping_provider_code) = upper(:shipping_provider_code)")
+        params["shipping_provider_code"] = shipping_provider_code
 
     if tracking_no:
         where_parts.append("cbi.tracking_no = :tracking_no")
@@ -176,7 +176,7 @@ async def list_carrier_bill_items(
         f"""
         SELECT
             cbi.id,
-            cbi.carrier_code,
+            cbi.shipping_provider_code,
             cbi.bill_month,
             cbi.tracking_no,
             cbi.business_time,
@@ -208,7 +208,7 @@ async def list_carrier_bill_items(
 async def list_carrier_bill_items_for_reconcile(
     session: AsyncSession,
     *,
-    carrier_code: str,
+    shipping_provider_code: str,
 ) -> list[dict[str, Any]]:
     sql = text(
         """
@@ -220,7 +220,7 @@ async def list_carrier_bill_items_for_reconcile(
             b.freight_amount,
             b.surcharge_amount
         FROM carrier_bill_items b
-        WHERE upper(b.carrier_code) = upper(:carrier_code)
+        WHERE upper(b.shipping_provider_code) = upper(:shipping_provider_code)
           AND NOT EXISTS (
               SELECT 1
               FROM shipping_bill_reconciliation_histories h
@@ -232,7 +232,7 @@ async def list_carrier_bill_items_for_reconcile(
     rows = (
         await session.execute(
             sql,
-            {"carrier_code": carrier_code},
+            {"shipping_provider_code": shipping_provider_code},
         )
     ).mappings().all()
 

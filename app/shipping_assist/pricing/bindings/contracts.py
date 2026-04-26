@@ -12,7 +12,7 @@ from app.shipping_assist.pricing.runtime_policy import PricingStatus
 class ShippingProviderLiteOut(BaseModel):
     id: int
     name: str
-    code: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
     active: bool = True
 
 
@@ -120,7 +120,7 @@ class WarehouseShippingProviderBulkUpsertOut(BaseModel):
 
 class ActiveCarrierOut(BaseModel):
     provider_id: int
-    code: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
     name: str
     priority: int
 

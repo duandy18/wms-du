@@ -22,7 +22,7 @@ from .contracts import (
 from .mappers import row_to_contact, row_to_provider
 
 
-def _norm_code(raw: Optional[str]) -> Optional[str]:
+def _norm_shipping_provider_code(raw: Optional[str]) -> Optional[str]:
     if raw is None:
         return None
     s = raw.strip()
@@ -38,21 +38,21 @@ def _norm_nullable_text(raw: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
-async def _assert_code_unique_or_409(
+async def _assert_shipping_provider_code_unique_or_409(
     session: AsyncSession,
-    code: str,
+    shipping_provider_code: str,
     *,
     exclude_provider_id: Optional[int] = None,
 ) -> None:
     if exclude_provider_id is None:
-        sql = text("SELECT 1 FROM shipping_providers WHERE code = :code LIMIT 1")
-        exists = (await session.execute(sql, {"code": code})).first()
+        sql = text("SELECT 1 FROM shipping_providers WHERE shipping_provider_code = :shipping_provider_code LIMIT 1")
+        exists = (await session.execute(sql, {"shipping_provider_code": shipping_provider_code})).first()
     else:
-        sql = text("SELECT 1 FROM shipping_providers WHERE code = :code AND id <> :sid LIMIT 1")
-        exists = (await session.execute(sql, {"code": code, "sid": int(exclude_provider_id)})).first()
+        sql = text("SELECT 1 FROM shipping_providers WHERE shipping_provider_code = :shipping_provider_code AND id <> :sid LIMIT 1")
+        exists = (await session.execute(sql, {"shipping_provider_code": shipping_provider_code, "sid": int(exclude_provider_id)})).first()
 
     if exists:
-        raise HTTPException(status_code=409, detail=f"shipping_provider code already exists: {code}")
+        raise HTTPException(status_code=409, detail=f"shipping_provider_code already exists: {shipping_provider_code}")
 
 
 def register(router: APIRouter) -> None:
@@ -69,11 +69,11 @@ def register(router: APIRouter) -> None:
     ) -> ShippingProviderCreateOut:
         check_config_perm(db, current_user, ["config.store.write"])
 
-        code = _norm_code(payload.code)
-        if code is None:
-            raise HTTPException(status_code=422, detail="code is required")
+        shipping_provider_code = _norm_shipping_provider_code(payload.shipping_provider_code)
+        if shipping_provider_code is None:
+            raise HTTPException(status_code=422, detail="shipping_provider_code is required")
 
-        await _assert_code_unique_or_409(session, code)
+        await _assert_shipping_provider_code_unique_or_409(session, shipping_provider_code)
 
         name = payload.name.strip()
         if not name:
@@ -86,11 +86,11 @@ def register(router: APIRouter) -> None:
         sql = text(
             """
             INSERT INTO shipping_providers
-              (name, code, company_code, resource_code, address, active, priority)
+              (name, shipping_provider_code, company_code, resource_code, address, active, priority)
             VALUES
-              (:name, :code, :company_code, :resource_code, :address, :active, :priority)
+              (:name, :shipping_provider_code, :company_code, :resource_code, :address, :active, :priority)
             RETURNING
-              id, name, code, company_code, resource_code, address, active, priority
+              id, name, shipping_provider_code, company_code, resource_code, address, active, priority
             """
         )
 
@@ -100,7 +100,7 @@ def register(router: APIRouter) -> None:
                     sql,
                     {
                         "name": name,
-                        "code": code,
+                        "shipping_provider_code": shipping_provider_code,
                         "company_code": company_code,
                         "resource_code": resource_code,
                         "address": addr,
@@ -135,12 +135,12 @@ def register(router: APIRouter) -> None:
             name = payload.name.strip()
             fields["name"] = name if name else None
 
-        if payload.code is not None:
-            code = _norm_code(payload.code)
-            if code is None:
-                raise HTTPException(status_code=422, detail="code is required")
-            await _assert_code_unique_or_409(session, code, exclude_provider_id=provider_id)
-            fields["code"] = code
+        if payload.shipping_provider_code is not None:
+            shipping_provider_code = _norm_shipping_provider_code(payload.shipping_provider_code)
+            if shipping_provider_code is None:
+                raise HTTPException(status_code=422, detail="shipping_provider_code is required")
+            await _assert_shipping_provider_code_unique_or_409(session, shipping_provider_code, exclude_provider_id=provider_id)
+            fields["shipping_provider_code"] = shipping_provider_code
 
         if payload.company_code is not None:
             fields["company_code"] = _norm_nullable_text(payload.company_code)
@@ -163,7 +163,7 @@ def register(router: APIRouter) -> None:
                 SELECT
                   s.id,
                   s.name,
-                  s.code,
+                  s.shipping_provider_code,
                   s.company_code,
                   s.resource_code,
                   s.address,
@@ -213,7 +213,7 @@ def register(router: APIRouter) -> None:
                    updated_at = now()
              WHERE id = :sid
             RETURNING
-              id, name, code, company_code, resource_code, address, active, priority
+              id, name, shipping_provider_code, company_code, resource_code, address, active, priority
             """
         )
 

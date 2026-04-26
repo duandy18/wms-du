@@ -11,8 +11,8 @@ from app.shipping_assist.pricing.runtime_policy import PricingStatus
 
 class PricingListRow(BaseModel):
     provider_id: int
-    provider_code: str
-    provider_name: str
+    shipping_provider_code: str
+    shipping_provider_name: str
     provider_active: bool
 
     warehouse_id: int

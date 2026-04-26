@@ -90,7 +90,7 @@ def ensure_second_provider(client: TestClient, token: str) -> int:
         headers=h,
         json={
             "name": "TEST-PROVIDER-2",
-            "code": "TP2",
+            "shipping_provider_code": "TP2",
             "active": True,
             "priority": 100,
             "pricing_model": None,

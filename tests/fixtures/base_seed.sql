@@ -48,7 +48,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== shipping_providers (minimal) =====
-INSERT INTO shipping_providers (id, name, code, active, priority, address)
+INSERT INTO shipping_providers (id, name, shipping_provider_code, active, priority, address)
 VALUES
   (1, 'UT-CARRIER-1', 'UT-CAR-1', true, 100, 'UT-ADDR-1'),
   (2, 'Fake Express', 'FAKE', true, 100, 'UT-ADDR-FAKE')

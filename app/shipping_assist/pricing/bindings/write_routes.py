@@ -68,7 +68,7 @@ async def pricing_bind_provider_to_warehouse(
 
     prow = (
         await session.execute(
-            text("SELECT id, name, code, active FROM shipping_providers WHERE id=:pid"),
+            text("SELECT id, name, shipping_provider_code, active FROM shipping_providers WHERE id=:pid"),
             {"pid": int(payload.shipping_provider_id)},
         )
     ).mappings().first()

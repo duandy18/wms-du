@@ -12,7 +12,7 @@ async def insert_shipping_bill_reconciliation_history(
     *,
     carrier_bill_item_id: int,
     shipping_record_id: int | None,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     result_status: str,
     weight_diff_kg: object | None,
@@ -27,7 +27,7 @@ async def insert_shipping_bill_reconciliation_history(
             INSERT INTO shipping_bill_reconciliation_histories (
                 carrier_bill_item_id,
                 shipping_record_id,
-                carrier_code,
+                shipping_provider_code,
                 tracking_no,
                 result_status,
                 weight_diff_kg,
@@ -40,7 +40,7 @@ async def insert_shipping_bill_reconciliation_history(
             VALUES (
                 :carrier_bill_item_id,
                 :shipping_record_id,
-                :carrier_code,
+                :shipping_provider_code,
                 :tracking_no,
                 :result_status,
                 :weight_diff_kg,
@@ -56,7 +56,7 @@ async def insert_shipping_bill_reconciliation_history(
         {
             "carrier_bill_item_id": carrier_bill_item_id,
             "shipping_record_id": shipping_record_id,
-            "carrier_code": carrier_code,
+            "shipping_provider_code": shipping_provider_code,
             "tracking_no": tracking_no,
             "result_status": result_status,
             "weight_diff_kg": weight_diff_kg,
@@ -106,7 +106,7 @@ async def get_shipping_bill_reconciliation_history_exists(
 async def list_shipping_bill_reconciliation_histories(
     session: AsyncSession,
     *,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     tracking_no: str | None,
     result_status: str | None,
     limit: int,
@@ -115,9 +115,9 @@ async def list_shipping_bill_reconciliation_histories(
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
 
-    if carrier_code:
-        where_parts.append("upper(h.carrier_code) = upper(:carrier_code)")
-        params["carrier_code"] = carrier_code
+    if shipping_provider_code:
+        where_parts.append("upper(h.shipping_provider_code) = upper(:shipping_provider_code)")
+        params["shipping_provider_code"] = shipping_provider_code
 
     if tracking_no:
         where_parts.append("h.tracking_no = :tracking_no")
@@ -145,7 +145,7 @@ async def list_shipping_bill_reconciliation_histories(
             h.id,
             h.carrier_bill_item_id,
             h.shipping_record_id,
-            h.carrier_code,
+            h.shipping_provider_code,
             h.tracking_no,
             h.result_status,
             h.weight_diff_kg,

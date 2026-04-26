@@ -80,7 +80,7 @@ async def list_waybill_configs(
                 OR c.customer_code ILIKE :q
                 OR c.sender_name ILIKE :q
                 OR sp.name ILIKE :q
-                OR sp.code ILIKE :q
+                OR sp.shipping_provider_code ILIKE :q
             )"""
         )
         params["q"] = f"%{q.strip()}%"

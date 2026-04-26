@@ -27,7 +27,7 @@ def row_to_provider(row: Any, contacts: list[ShippingProviderContactOut]) -> Shi
     return ShippingProviderOut(
         id=row["id"],
         name=name,
-        code=row["code"],
+        shipping_provider_code=row["shipping_provider_code"],
         display_label=display,
         company_code=row.get("company_code"),
         resource_code=row.get("resource_code"),

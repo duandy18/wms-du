@@ -17,14 +17,17 @@ class ShippingProvider(Base):
     语义说明：
     - 本表一行 = 实际合作的运输网点（非快递公司总部）
     - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
-    - code 为内部业务键（可修改，但仍需规范化且全局唯一）
+    - shipping_provider_code 为物流网点号码 / 网点编码（由网点提供，仍需规范化且全局唯一）
     - company_code / resource_code 为电子面单固定接入参数，不承载店铺维度配置
     """
 
     __tablename__ = "shipping_providers"
     __table_args__ = (
         UniqueConstraint("name", name="uq_shipping_providers_name"),
-        UniqueConstraint("code", name="uq_shipping_providers_code"),
+        UniqueConstraint(
+            "shipping_provider_code",
+            name="uq_shipping_providers_shipping_provider_code",
+        ),
         {"info": {"skip_autogen": True}},
     )
 
@@ -32,8 +35,8 @@ class ShippingProvider(Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    # 内部业务键（DB 侧仍保持：NOT NULL + UNIQUE + upper/trim）
-    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 物流网点号码 / 网点编码（DB 侧保持：NOT NULL + UNIQUE + upper/trim）
+    shipping_provider_code: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # 电子面单固定接入参数（非店铺维度）
     company_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -82,13 +85,13 @@ class ShippingProvider(Base):
         passive_deletes=True,
     )
 
-    @validates("code")
-    def _validate_code(self, _key: str, value: str) -> str:
+    @validates("shipping_provider_code")
+    def _validate_shipping_provider_code(self, _key: str, value: str) -> str:
         if value is None:
-            raise ValueError("shipping_provider.code 不能为空")
+            raise ValueError("shipping_provider.shipping_provider_code 不能为空")
         v = value.strip().upper()
         if v == "":
-            raise ValueError("shipping_provider.code 不能为空白")
+            raise ValueError("shipping_provider.shipping_provider_code 不能为空白")
         return v
 
     @validates("name")

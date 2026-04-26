@@ -44,8 +44,8 @@ def _build_quote_snapshot(
             "template_id": 1,
             "template_name": "UT-TEMPLATE-1",
             "provider_id": provider_id,
-            "carrier_code": "UT-CAR-1",
-            "carrier_name": "UT-CARRIER-1",
+            "shipping_provider_code": "UT-CAR-1",
+            "shipping_provider_name": "UT-CARRIER-1",
             "currency": "CNY",
             "total_amount": total_amount,
             "weight": {"billable_weight_kg": 1.25},
@@ -558,8 +558,8 @@ async def _load_shipping_record(
                   warehouse_id,
                   shipping_provider_id,
                   tracking_no,
-                  carrier_code,
-                  carrier_name,
+                  shipping_provider_code,
+                  shipping_provider_name,
                   freight_estimated,
                   surcharge_estimated,
                   cost_estimated,
@@ -679,8 +679,8 @@ async def test_ship_with_waybill_writes_shipping_record_ledger_at_package_grain(
     )
     assert int(record["warehouse_id"]) == int(ctx["warehouse_id"])
     assert int(record["shipping_provider_id"]) == int(ctx["provider_id"])
-    assert str(record["carrier_code"]) == "UT-CAR-1"
-    assert str(record["carrier_name"]) == "UT-CARRIER-1"
+    assert str(record["shipping_provider_code"]) == "UT-CAR-1"
+    assert str(record["shipping_provider_name"]) == "UT-CARRIER-1"
     assert float(record["gross_weight_kg"]) == pytest.approx(1.25)
     assert record["length_cm"] is None
     assert record["width_cm"] is None
@@ -1015,8 +1015,8 @@ async def test_shipping_record_accepts_current_terminal_columns_with_package_no(
                 package_no,
                 warehouse_id,
                 shipping_provider_id,
-                carrier_code,
-                carrier_name,
+                shipping_provider_code,
+                shipping_provider_name,
                 tracking_no,
                 gross_weight_kg,
                 freight_estimated,

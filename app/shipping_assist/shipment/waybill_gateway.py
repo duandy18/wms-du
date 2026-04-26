@@ -13,7 +13,7 @@ from .waybill_service import WaybillRequest, WaybillResult
 async def request_waybill(
     *,
     shipping_provider_id: int,
-    provider_code: str | None,
+    shipping_provider_code: str | None,
     company_code: str | None,
     customer_code: str | None,
     platform: str,
@@ -33,7 +33,7 @@ async def request_waybill(
 
     req = WaybillRequest(
         shipping_provider_id=shipping_provider_id,
-        provider_code=provider_code,
+        shipping_provider_code=shipping_provider_code,
         company_code=company_code,
         customer_code=customer_code,
         platform=platform.upper(),

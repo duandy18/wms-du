@@ -11,27 +11,27 @@ from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
 
 from .contracts import (
-    ReconcileCarrierBillCommand,
-    ReconcileCarrierBillIn,
-    ReconcileCarrierBillResult,
+    ReconcileShippingProviderBillCommand,
+    ReconcileShippingProviderBillIn,
+    ReconcileShippingProviderBillResult,
 )
-from .service import CarrierBillReconcileService
+from .service import ShippingProviderBillReconcileService
 
 
 def register(router: APIRouter) -> None:
     @router.post(
         "/reconcile",
-        response_model=ReconcileCarrierBillResult,
+        response_model=ReconcileShippingProviderBillResult,
     )
     async def reconcile_shipping_bill(
-        payload: ReconcileCarrierBillIn,
+        payload: ReconcileShippingProviderBillIn,
         session: AsyncSession = Depends(get_session),
         _current_user: Any = Depends(get_current_user),
-    ) -> ReconcileCarrierBillResult:
-        service = CarrierBillReconcileService(session)
+    ) -> ReconcileShippingProviderBillResult:
+        service = ShippingProviderBillReconcileService(session)
 
         return await service.reconcile(
-            ReconcileCarrierBillCommand(
-                carrier_code=payload.carrier_code,
+            ReconcileShippingProviderBillCommand(
+                shipping_provider_code=payload.shipping_provider_code,
             )
         )

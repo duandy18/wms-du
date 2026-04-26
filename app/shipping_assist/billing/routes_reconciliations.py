@@ -46,7 +46,7 @@ def register(router: APIRouter) -> None:
         response_model=ShippingBillReconciliationsResponse,
     )
     async def get_shipping_bill_reconciliations(
-        carrier_code: str | None = Query(None),
+        shipping_provider_code: str | None = Query(None),
         tracking_no: str | None = Query(None),
         status: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -62,9 +62,9 @@ def register(router: APIRouter) -> None:
 
         total, rows = await list_shipping_bill_reconciliations(
             session,
-            carrier_code=(
-                carrier_code.strip()
-                if isinstance(carrier_code, str) and carrier_code.strip()
+            shipping_provider_code=(
+                shipping_provider_code.strip()
+                if isinstance(shipping_provider_code, str) and shipping_provider_code.strip()
                 else None
             ),
             tracking_no=(
@@ -83,7 +83,7 @@ def register(router: APIRouter) -> None:
                 ShippingBillReconciliationRowOut(
                     reconciliation_id=int(r["reconciliation_id"]),
                     status=str(r["status"]),
-                    carrier_code=str(r["carrier_code"]),
+                    shipping_provider_code=str(r["shipping_provider_code"]),
                     tracking_no=str(r["tracking_no"]),
                     shipping_record_id=(
                         int(r["shipping_record_id"])
@@ -109,7 +109,7 @@ def register(router: APIRouter) -> None:
         response_model=ShippingBillReconciliationHistoriesResponse,
     )
     async def get_shipping_bill_reconciliation_histories(
-        carrier_code: str | None = Query(None),
+        shipping_provider_code: str | None = Query(None),
         tracking_no: str | None = Query(None),
         result_status: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -128,9 +128,9 @@ def register(router: APIRouter) -> None:
 
         total, rows = await list_shipping_bill_reconciliation_histories(
             session,
-            carrier_code=(
-                carrier_code.strip()
-                if isinstance(carrier_code, str) and carrier_code.strip()
+            shipping_provider_code=(
+                shipping_provider_code.strip()
+                if isinstance(shipping_provider_code, str) and shipping_provider_code.strip()
                 else None
             ),
             tracking_no=(
@@ -154,7 +154,7 @@ def register(router: APIRouter) -> None:
                         if r.get("shipping_record_id") is not None
                         else None
                     ),
-                    carrier_code=str(r["carrier_code"]),
+                    shipping_provider_code=str(r["shipping_provider_code"]),
                     tracking_no=str(r["tracking_no"]),
                     result_status=str(r["result_status"]),
                     approved_reason_code=str(r["approved_reason_code"]),
@@ -227,7 +227,7 @@ def register(router: APIRouter) -> None:
                 if row.get("shipping_record_id") is not None
                 else None
             ),
-            carrier_code=str(row["carrier_code"]),
+            shipping_provider_code=str(row["shipping_provider_code"]),
             tracking_no=str(row["tracking_no"]),
             result_status=str(row["approved_reason_code"]),
             weight_diff_kg=row.get("weight_diff_kg"),

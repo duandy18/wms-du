@@ -49,7 +49,7 @@ def register(router: APIRouter) -> None:
             where_clauses.append(
                 """(
                   s.name ILIKE :q
-                  OR s.code ILIKE :q
+                  OR s.shipping_provider_code ILIKE :q
                   OR s.company_code ILIKE :q
                   OR s.resource_code ILIKE :q
                   OR EXISTS (
@@ -69,7 +69,7 @@ def register(router: APIRouter) -> None:
             SELECT
               s.id,
               s.name,
-              s.code,
+              s.shipping_provider_code,
               s.company_code,
               s.resource_code,
               s.address,
@@ -139,7 +139,7 @@ def register(router: APIRouter) -> None:
             SELECT
               s.id,
               s.name,
-              s.code,
+              s.shipping_provider_code,
               s.company_code,
               s.resource_code,
               s.address,

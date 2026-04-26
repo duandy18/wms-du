@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 
 class ShipPrepareQuoteCandidateOut(BaseModel):
     provider_id: int
-    carrier_code: Optional[str] = None
-    carrier_name: str
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: str
     template_id: int
     template_name: Optional[str] = None
     quote_status: str

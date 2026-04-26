@@ -30,8 +30,8 @@ class ShipWithWaybillResponse(BaseModel):
     tracking_no: str
 
     shipping_provider_id: int
-    carrier_code: Optional[str] = None
-    carrier_name: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: Optional[str] = None
 
     status: str = "IN_TRANSIT"
 

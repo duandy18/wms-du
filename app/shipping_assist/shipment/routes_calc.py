@@ -60,8 +60,8 @@ def register(router: APIRouter) -> None:
             quotes.append(
                 ShipQuoteOut(
                     provider_id=int(q["provider_id"]),
-                    carrier_code=q.get("carrier_code"),
-                    carrier_name=str(q.get("carrier_name") or ""),
+                    shipping_provider_code=q.get("shipping_provider_code"),
+                    shipping_provider_name=str(q.get("shipping_provider_name") or ""),
                     template_id=int(q["template_id"]),
                     template_name=q.get("template_name"),
                     quote_status=str(q.get("quote_status") or ""),
@@ -78,7 +78,7 @@ def register(router: APIRouter) -> None:
             top = quotes[0]
             recommended = ShipRecommendedOut(
                 provider_id=top.provider_id,
-                carrier_code=top.carrier_code,
+                shipping_provider_code=top.shipping_provider_code,
                 template_id=top.template_id,
                 est_cost=top.est_cost,
                 currency=top.currency,

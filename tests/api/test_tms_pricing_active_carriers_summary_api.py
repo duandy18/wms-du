@@ -73,7 +73,7 @@ async def _create_shipping_provider(
         headers=headers,
         json={
             "name": name,
-            "code": code,
+            "shipping_provider_code": code,
             "active": True,
             "priority": 0,
             "pricing_model": None,

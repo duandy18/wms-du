@@ -58,7 +58,7 @@ def test_shipping_provider_create_then_bind_to_warehouse_contract():
     # 1) 创建网点实体（不需要 warehouse_id）
     r1 = c.post(
         "/shipping-assist/pricing/providers",
-        json={"name": name, "code": code, "active": True, "priority": 100},
+        json={"name": name, "shipping_provider_code": code, "active": True, "priority": 100},
         headers=headers,
     )
     assert r1.status_code == 201, r1.text
@@ -66,7 +66,7 @@ def test_shipping_provider_create_then_bind_to_warehouse_contract():
     assert body1.get("ok") is True
     provider_id = int(body1["data"]["id"])
     assert body1["data"]["name"] == name
-    assert body1["data"]["code"] == code
+    assert body1["data"]["shipping_provider_code"] == code
 
     # 2) 绑定到仓库（M:N）
     r2 = c.post(

@@ -51,8 +51,8 @@ async def list_warehouses_active_carriers_summary(
         SELECT
           wsp.warehouse_id,
           sp.id   AS provider_id,
-          sp.code AS provider_code,
-          sp.name AS provider_name,
+          sp.shipping_provider_code AS shipping_provider_code,
+          sp.name AS shipping_provider_name,
           wsp.priority AS wsp_priority,
           sp.priority  AS sp_priority
         FROM warehouse_shipping_providers AS wsp
@@ -74,8 +74,8 @@ async def list_warehouses_active_carriers_summary(
         by_wid.setdefault(wid, []).append(
             ActiveCarrierOut(
                 provider_id=int(r["provider_id"]),
-                code=r.get("provider_code"),
-                name=str(r["provider_name"]),
+                shipping_provider_code=r.get("shipping_provider_code"),
+                name=str(r["shipping_provider_name"]),
                 priority=int(r.get("wsp_priority") or 0),
             )
         )
