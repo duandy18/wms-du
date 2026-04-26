@@ -71,7 +71,7 @@ async def _build_order_view_response(
     order: Dict[str, Any] = {
         "id": oid,
         "platform": str(head["platform"]),
-        "shop_id": str(head["shop_id"]),
+        "store_code": str(head["store_code"]),
         "ext_order_no": str(head["ext_order_no"]),
         "status": str(head["status"]) if head.get("status") is not None else None,
         "created_at": head["created_at"],
@@ -90,17 +90,17 @@ async def _build_order_view_response(
 
 def register(router) -> None:
     @router.get(
-        "/orders/{platform}/{shop_id}/{ext_order_no}/view",
+        "/orders/{platform}/{store_code}/{ext_order_no}/view",
         response_model=OrderViewResponse,
     )
     async def order_view(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
     ) -> OrderViewResponse:
         head = await load_order_head_by_keys(
-            session, platform=platform, shop_id=shop_id, ext_order_no=ext_order_no
+            session, platform=platform, store_code=store_code, ext_order_no=ext_order_no
         )
         return await _build_order_view_response(session, order_id=int(head["id"]))
 
@@ -115,24 +115,24 @@ def register(router) -> None:
         return await _build_order_view_response(session, order_id=int(order_id))
 
     @router.get(
-        "/orders/{platform}/{shop_id}/{ext_order_no}/facts",
+        "/orders/{platform}/{store_code}/{ext_order_no}/facts",
         response_model=OrderFactsResponse,
     )
     async def order_facts(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
     ) -> OrderFactsResponse:
         head = await load_order_head_by_keys(
-            session, platform=platform, shop_id=shop_id, ext_order_no=ext_order_no
+            session, platform=platform, store_code=store_code, ext_order_no=ext_order_no
         )
         facts = await load_order_facts_full(session, order_id=int(head["id"]))
         return OrderFactsResponse(
             ok=True,
             order_id=int(facts["order_id"]),
             platform=str(facts["platform"]),
-            shop_id=str(facts["shop_id"]),
+            store_code=str(facts["store_code"]),
             ext_order_no=str(facts["ext_order_no"]),
             issues=list(facts["issues"]),
             items=[OrderFactItemOut(**x) for x in facts["items"]],
@@ -151,7 +151,7 @@ def register(router) -> None:
             ok=True,
             order_id=int(facts["order_id"]),
             platform=str(facts["platform"]),
-            shop_id=str(facts["shop_id"]),
+            store_code=str(facts["store_code"]),
             ext_order_no=str(facts["ext_order_no"]),
             issues=list(facts["issues"]),
             items=[OrderFactItemOut(**x) for x in facts["items"]],

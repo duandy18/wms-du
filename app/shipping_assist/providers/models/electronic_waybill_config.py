@@ -24,18 +24,18 @@ class ElectronicWaybillConfig(Base):
     __table_args__ = (
         UniqueConstraint(
             "platform",
-            "shop_id",
+            "store_code",
             "shipping_provider_id",
-            name="uq_electronic_waybill_configs_platform_shop_provider",
+            name="uq_electronic_waybill_configs_platform_store_provider",
         ),
         Index("ix_electronic_waybill_configs_shipping_provider_id", "shipping_provider_id"),
-        Index("ix_electronic_waybill_configs_platform_shop", "platform", "shop_id"),
+        Index("ix_electronic_waybill_configs_platform_store", "platform", "store_code"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(64), nullable=False)
 
     shipping_provider_id: Mapped[int] = mapped_column(
         ForeignKey("shipping_providers.id", ondelete="RESTRICT"),
@@ -86,13 +86,13 @@ class ElectronicWaybillConfig(Base):
             raise ValueError("electronic_waybill_configs.platform 不能为空白")
         return v
 
-    @validates("shop_id")
-    def _validate_shop_id(self, _key: str, value: str) -> str:
+    @validates("store_code")
+    def _validate_store_code(self, _key: str, value: str) -> str:
         if value is None:
-            raise ValueError("electronic_waybill_configs.shop_id 不能为空")
+            raise ValueError("electronic_waybill_configs.store_code 不能为空")
         v = value.strip()
         if v == "":
-            raise ValueError("electronic_waybill_configs.shop_id 不能为空白")
+            raise ValueError("electronic_waybill_configs.store_code 不能为空白")
         return v
 
     @validates("customer_code")
@@ -107,6 +107,6 @@ class ElectronicWaybillConfig(Base):
     def __repr__(self) -> str:
         return (
             f"<ElectronicWaybillConfig id={self.id} "
-            f"platform={self.platform!r} shop_id={self.shop_id!r} "
+            f"platform={self.platform!r} store_code={self.store_code!r} "
             f"shipping_provider_id={self.shipping_provider_id} active={self.active}>"
         )

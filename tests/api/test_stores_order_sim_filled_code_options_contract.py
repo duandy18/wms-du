@@ -42,7 +42,7 @@ def _try_get_options(client: TestClient, *, token: str, store_id: int) -> Tuple[
 
 def _list_stores(client: TestClient, *, token: str) -> List[Dict[str, Any]]:
     """
-    通过 /stores 列表拿到 shop_type，用于选择 TEST store。
+    通过 /stores 列表拿到 store_type，用于选择 TEST store。
     兼容返回形态：
       - { ok: true, data: [...] }
       - { ok: true, data: { items: [...] } }
@@ -88,8 +88,8 @@ def _extract_store_id(row: Dict[str, Any]) -> Optional[int]:
 
 
 def _is_test_store_row(row: Dict[str, Any]) -> bool:
-    # /stores 已显性化 shop_type: TEST | PROD
-    st = str(row.get("shop_type") or "").strip().upper()
+    # /stores 已显性化 store_type: TEST | PROD
+    st = str(row.get("store_type") or "").strip().upper()
     return st == "TEST"
 
 
@@ -103,7 +103,7 @@ def _find_existing_store_id(client: TestClient, *, token: str) -> Optional[int]:
          - 必须存在（非 404）
          - 且必须能 200 访问 order-sim（即 TEST store）
          否则 fail，提示修正 seed 或 env。
-      2) 否则从 /stores 中挑选第一个 shop_type=TEST 的 store_id，并验证其能 200 访问 order-sim。
+      2) 否则从 /stores 中挑选第一个 store_type=TEST 的 store_id，并验证其能 200 访问 order-sim。
       3) 若找不到 TEST store，则跳过（说明该测试环境未 seed TEST stores）。
     """
     v = (os.getenv("STORE_ID_FOR_CONTRACT") or "").strip()

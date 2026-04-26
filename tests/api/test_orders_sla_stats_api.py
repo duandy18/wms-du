@@ -18,15 +18,15 @@ async def _seed_shipped_order(
     session: AsyncSession,
     *,
     platform: str = "PDD",
-    shop_id: str = "UT-SLA-SHOP",
+    store_code: str = "UT-SLA-STORE",
     created_at: datetime,
     shipped_at: datetime,
 ) -> int:
     store_id = await ensure_store(
         session,
         platform=platform,
-        shop_id=shop_id,
-        name=f"UT-{platform}-{shop_id}",
+        store_code=store_code,
+        name=f"UT-{platform}-{store_code}",
     )
     ext_order_no = f"UT-SLA-{uuid4().hex[:10]}"
     row = await session.execute(
@@ -34,7 +34,7 @@ async def _seed_shipped_order(
             """
             INSERT INTO orders(
               platform,
-              shop_id,
+              store_code,
               store_id,
               ext_order_no,
               status,
@@ -43,7 +43,7 @@ async def _seed_shipped_order(
             )
             VALUES (
               :platform,
-              :shop_id,
+              :store_code,
               :store_id,
               :ext_order_no,
               'CREATED',
@@ -55,7 +55,7 @@ async def _seed_shipped_order(
         ),
         {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "store_id": int(store_id),
             "ext_order_no": ext_order_no,
             "created_at": created_at,
@@ -119,7 +119,7 @@ async def test_orders_sla_stats_uses_order_fulfillment_shipped_at(
             "time_from": (shipped_at - timedelta(minutes=1)).isoformat(),
             "time_to": (shipped_at + timedelta(minutes=1)).isoformat(),
             "platform": "PDD",
-            "shop_id": "UT-SLA-SHOP",
+            "store_code": "UT-SLA-STORE",
             "sla_hours": 2,
         },
     )
@@ -142,7 +142,7 @@ async def test_orders_sla_stats_filters_by_shipped_at_window(
     await _seed_shipped_order(
         session,
         platform="PDD",
-        shop_id="UT-SLA-WINDOW",
+        store_code="UT-SLA-WINDOW",
         created_at=now - timedelta(hours=5),
         shipped_at=now - timedelta(hours=4),
     )
@@ -153,7 +153,7 @@ async def test_orders_sla_stats_filters_by_shipped_at_window(
             "time_from": (now - timedelta(hours=2)).isoformat(),
             "time_to": now.isoformat(),
             "platform": "PDD",
-            "shop_id": "UT-SLA-WINDOW",
+            "store_code": "UT-SLA-WINDOW",
         },
     )
 

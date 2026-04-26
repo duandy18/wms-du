@@ -12,18 +12,18 @@ from app.oms.services.platform_order_resolve_utils import (
     ResolvedLine,
     dec_to_int_qty as dec_to_int_qty,
     norm_platform as norm_platform,
-    norm_shop_id as norm_shop_id,
+    norm_store_code as norm_store_code,
     to_dec as to_dec,
     to_int_pos as to_int_pos,
 )
 
 # ✅ Public re-exports (保持旧 import 不炸)
-# - 旧代码可能 import: norm_platform / norm_shop_id / to_int_pos / to_dec / dec_to_int_qty
+# - 旧代码可能 import: norm_platform / norm_store_code / to_int_pos / to_dec / dec_to_int_qty
 # - 解析主入口也仍旧从此文件 import
 __all__ = [
     "ResolvedLine",
     "norm_platform",
-    "norm_shop_id",
+    "norm_store_code",
     "to_int_pos",
     "to_dec",
     "dec_to_int_qty",
@@ -37,10 +37,10 @@ async def resolve_store_id(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     store_name: Optional[str],
 ) -> int:
-    return await _resolve_store_id(session, platform=platform, shop_id=shop_id, store_name=store_name)
+    return await _resolve_store_id(session, platform=platform, store_code=store_code, store_name=store_name)
 
 
 async def load_items_brief(

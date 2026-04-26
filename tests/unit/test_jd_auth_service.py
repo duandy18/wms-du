@@ -91,7 +91,7 @@ async def test_handle_callback_success(session, monkeypatch):
             "access_token": "access-token-001",
             "refresh_token": "refresh-token-001",
             "uid": "uid-001",
-            "user_nick": "shop-001",
+            "user_nick": "store-001",
             "expires_in": 3600,
             "scope": "jingdong.pop.order.search,jingdong.pop.order.get",
         }
@@ -149,7 +149,7 @@ async def test_handle_callback_success(session, monkeypatch):
     assert result.platform == "jd"
     assert result.store_id == 321
     assert result.uid == "uid-001"
-    assert result.uid_display == "shop-001"
+    assert result.uid_display == "store-001"
     assert result.access_token == "access-token-001"
     assert result.refresh_token == "refresh-token-001"
     assert isinstance(result.expires_at, datetime)
@@ -162,7 +162,7 @@ async def test_handle_callback_success(session, monkeypatch):
     assert captured_credential["scope"] == "jingdong.pop.order.search,jingdong.pop.order.get"
     assert captured_credential["granted_identity_type"] == "jd_uid"
     assert captured_credential["granted_identity_value"] == "uid-001"
-    assert captured_credential["granted_identity_display"] == "shop-001"
+    assert captured_credential["granted_identity_display"] == "store-001"
 
     assert captured_connection["store_id"] == 321
     assert captured_connection["platform"] == "jd"
@@ -185,7 +185,7 @@ async def test_handle_callback_rejects_missing_access_token(session, monkeypatch
         return {
             "refresh_token": "refresh-token-001",
             "uid": "uid-001",
-            "user_nick": "shop-001",
+            "user_nick": "store-001",
             "expires_in": 3600,
         }
 

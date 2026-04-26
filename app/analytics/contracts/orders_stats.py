@@ -16,9 +16,9 @@ class OrdersDailyStatsModel(BaseModel):
         None,
         description="可选平台过滤（如 PDD），大写",
     )
-    shop_id: Optional[str] = Field(
+    store_code: Optional[str] = Field(
         None,
-        description="可选店铺过滤（字符串，与 orders.shop_id 一致）",
+        description="可选店铺过滤（字符串，与 orders.store_code 一致）",
     )
     orders_created: int = Field(..., description="当天创建的订单数量")
     orders_shipped: int = Field(

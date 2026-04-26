@@ -34,7 +34,7 @@ class InboundReceiptReturnSourceOut(_Base):
     order_id: Annotated[int, Field(ge=1, description="OMS 订单 ID")]
     order_ref: Annotated[str, Field(min_length=1, max_length=128, description="规范订单键")]
     platform: Annotated[str | None, Field(default=None, max_length=32, description="平台")]
-    shop_id: Annotated[str | None, Field(default=None, max_length=64, description="店铺 ID")]
+    store_code: Annotated[str | None, Field(default=None, max_length=64, description="店铺 ID")]
     ext_order_no: Annotated[str | None, Field(default=None, max_length=128, description="原订单号")]
     warehouse_id: Annotated[int, Field(ge=1, description="退货入库仓库 ID")]
     warehouse_name_snapshot: Annotated[str | None, Field(default=None, max_length=255, description="仓库名快照")]

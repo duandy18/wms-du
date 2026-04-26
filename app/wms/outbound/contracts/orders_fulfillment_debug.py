@@ -39,7 +39,7 @@ class FulfillmentDebugOut(BaseModel):
 
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: Optional[str] = None
 
     address: FulfillmentDebugAddress = Field(default_factory=FulfillmentDebugAddress)

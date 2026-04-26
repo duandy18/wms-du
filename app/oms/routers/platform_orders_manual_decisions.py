@@ -13,7 +13,7 @@ from app.db.deps import get_async_session as get_session
 from app.core.problem import make_problem
 from app.oms.contracts.platform_orders_manual_decisions import ManualDecisionOrdersOut
 from app.oms.services.platform_order_resolve_service import norm_platform
-from app.oms.services.test_shop_testset_guard_service import TestShopTestSetGuardService
+from app.oms.services.test_store_testset_guard_service import TestShopTestSetGuardService
 
 router = APIRouter(tags=["platform-orders"])
 
@@ -30,14 +30,14 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _load_shop_id_by_store_id(session: AsyncSession, *, platform: str, store_id: int) -> Optional[str]:
+async def _load_store_code_by_store_id(session: AsyncSession, *, platform: str, store_id: int) -> Optional[str]:
     plat = norm_platform(platform)
     row = (
         (
             await session.execute(
                 text(
                     """
-                    SELECT shop_id
+                    SELECT store_code
                       FROM stores
                      WHERE id = :sid
                        AND platform = :p
@@ -52,7 +52,7 @@ async def _load_shop_id_by_store_id(session: AsyncSession, *, platform: str, sto
     )
     if not row:
         return None
-    v = row.get("shop_id")
+    v = row.get("store_code")
     s = str(v).strip() if v is not None else ""
     return s or None
 
@@ -145,13 +145,13 @@ async def list_latest_manual_decisions(
             order_ids.append(oid)
     order_ids = sorted(set(order_ids))
 
-    order_shop_map: Dict[int, str] = {}
+    order_store_map: Dict[int, str] = {}
     if order_ids:
         o_rows = (
             await session.execute(
                 text(
                     """
-                    SELECT id, shop_id
+                    SELECT id, store_code
                       FROM orders
                      WHERE id = ANY(:order_ids)
                     """
@@ -163,7 +163,7 @@ async def list_latest_manual_decisions(
             oid = _as_int(o.get("id"))
             if oid is None:
                 continue
-            order_shop_map[oid] = str(o.get("shop_id") or "")
+            order_store_map[oid] = str(o.get("store_code") or "")
 
     batch_latest_map: Dict[str, Any] = {}
     for br in batch_rows:
@@ -175,7 +175,7 @@ async def list_latest_manual_decisions(
         bid = str(r.get("batch_id"))
         if bid not in grouped:
             oid = _as_int(r.get("order_id"))
-            shop_id = order_shop_map.get(oid, "") if oid is not None else ""
+            store_code = order_store_map.get(oid, "") if oid is not None else ""
             ext = str(r.get("ext_order_no") or "")
             p = str(r.get("platform") or plat)
 
@@ -184,9 +184,9 @@ async def list_latest_manual_decisions(
                 "created_at": batch_latest_map.get(bid) or r.get("created_at"),
                 "order_id": int(oid) if oid is not None else 0,
                 "platform": p,
-                "shop_id": shop_id,
+                "store_code": store_code,
                 "ext_order_no": ext,
-                "ref": f"ORD:{p}:{shop_id}:{ext}",
+                "ref": f"ORD:{p}:{store_code}:{ext}",
                 "store_id": int(r.get("store_id") or sid),
                 "manual_reason": r.get("manual_reason") if isinstance(r.get("manual_reason"), str) else None,
                 "risk_flags": [],
@@ -243,14 +243,14 @@ async def manual_bind_merchant_code(
             ),
         )
 
-    shop_id = await _load_shop_id_by_store_id(session, platform=plat, store_id=store_id)
-    if not shop_id:
+    store_code = await _load_store_code_by_store_id(session, platform=plat, store_id=store_id)
+    if not store_code:
         raise HTTPException(
             status_code=404,
             detail=make_problem(
                 status_code=404,
                 error_code="not_found",
-                message="store_id 不存在或未绑定 shop_id",
+                message="store_id 不存在或未绑定 store_code",
                 context={"platform": plat, "store_id": store_id},
             ),
         )
@@ -291,19 +291,19 @@ async def manual_bind_merchant_code(
                 context={
                     "platform": plat,
                     "store_id": store_id,
-                    "shop_id": shop_id,
+                    "store_code": store_code,
                     "fsku_id": int(payload.fsku_id),
                     "fsku_status": st,
                 },
             ),
         )
 
-    # ✅ 宇宙边界（以 platform_test_shops 为唯一真相）：
+    # ✅ 宇宙边界（以 platform_test_stores 为唯一真相）：
     #    - 有 components 才校验；无 components 直接放行（合同兼容）
     guard = TestShopTestSetGuardService(session)
-    await guard.guard_fsku_components_by_shop(
+    await guard.guard_fsku_components_by_store(
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         store_id=store_id,
         fsku_id=int(payload.fsku_id),
         set_code="DEFAULT",
@@ -318,21 +318,21 @@ async def manual_bind_merchant_code(
         text(
             """
             INSERT INTO merchant_code_fsku_bindings(
-              platform, shop_id, merchant_code,
+              platform, store_code, merchant_code,
               fsku_id, reason, created_at, updated_at
             )
             VALUES (
-              :p, :shop_id, :code,
+              :p, :store_code, :code,
               :fsku_id, :reason, :now, :now
             )
-            ON CONFLICT (platform, shop_id, merchant_code)
+            ON CONFLICT (platform, store_code, merchant_code)
             DO UPDATE SET
               fsku_id = EXCLUDED.fsku_id,
               reason = EXCLUDED.reason,
               updated_at = EXCLUDED.updated_at
             """
         ),
-        {"p": plat, "shop_id": shop_id, "code": filled_code, "fsku_id": int(payload.fsku_id), "now": now, "reason": reason},
+        {"p": plat, "store_code": store_code, "code": filled_code, "fsku_id": int(payload.fsku_id), "now": now, "reason": reason},
     )
 
     await session.commit()
@@ -342,7 +342,7 @@ async def manual_bind_merchant_code(
         "data": {
             "platform": plat,
             "store_id": store_id,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "merchant_code": filled_code,
             "fsku_id": int(payload.fsku_id),
             "reason": reason,

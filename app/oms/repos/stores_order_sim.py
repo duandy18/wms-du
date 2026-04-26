@@ -15,12 +15,12 @@ def _normalize_platform(p: str) -> str:
     return s
 
 
-async def load_store_platform_shop_id(session: AsyncSession, *, store_id: int) -> Tuple[str, str]:
+async def load_store_platform_store_id(session: AsyncSession, *, store_id: int) -> Tuple[str, str]:
     row = (
         await session.execute(
             text(
                 """
-                SELECT platform, shop_id
+                SELECT platform, store_code
                   FROM stores
                  WHERE id = :sid
                  LIMIT 1
@@ -31,7 +31,7 @@ async def load_store_platform_shop_id(session: AsyncSession, *, store_id: int) -
     ).mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="store not found")
-    return _normalize_platform(str(row.get("platform") or "")), str(row.get("shop_id") or "")
+    return _normalize_platform(str(row.get("platform") or "")), str(row.get("store_code") or "")
 
 
 async def get_merchant_lines(session: AsyncSession, *, store_id: int) -> List[Dict[str, Any]]:

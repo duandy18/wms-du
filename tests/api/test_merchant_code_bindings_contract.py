@@ -17,7 +17,7 @@ def _assert_row_shape(row: Dict[str, Any]) -> None:
     assert set(row.keys()) == {
         "id",
         "platform",
-        "shop_id",
+        "store_code",
         "store",  # ✅ 新增
         "merchant_code",
         "fsku_id",
@@ -28,7 +28,7 @@ def _assert_row_shape(row: Dict[str, Any]) -> None:
     }
 
     store = row["store"]
-    assert set(store.keys()) == {"id", "name"}
+    assert set(store.keys()) == {"id", "store_name"}
 
     f = row["fsku"]
     assert set(f.keys()) == {"id", "code", "name", "status"}
@@ -96,7 +96,7 @@ async def test_list_filters_are_accepted(client):
     resp = await client.get(
         "/oms/merchant-code-bindings"
         "?platform=DEMO"
-        "&shop_id=1"
+        "&store_code=1"
         "&merchant_code=ABC"
         "&current_only=true"
         "&fsku_id=1"
@@ -119,7 +119,7 @@ async def test_list_filters_are_accepted(client):
 async def test_bind_contract_success_or_problem(client):
     payload = {
         "platform": "DEMO",
-        "shop_id": "1",
+        "store_code": "1",
         "merchant_code": "UT-MC-001",
         "fsku_id": 1,
         "reason": "UT contract",
@@ -162,7 +162,7 @@ async def test_retire_is_blocked_when_fsku_is_referenced_by_merchant_code_bindin
     mc = "UT-MC-RETIRE-LOCK-001"
     payload = {
         "platform": "DEMO",
-        "shop_id": "1",
+        "store_code": "1",
         "merchant_code": mc,
         "fsku_id": int(f["id"]),
         "reason": "UT: lock retire when referenced",

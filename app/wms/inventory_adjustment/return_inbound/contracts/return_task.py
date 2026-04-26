@@ -122,7 +122,7 @@ class ReturnOrderRefShippingOut(BaseModel):
 class ReturnOrderRefDetailOut(BaseModel):
     order_ref: str
     platform: Optional[str] = None
-    shop_id: Optional[str] = None
+    store_code: Optional[str] = None
     ext_order_no: Optional[str] = None
 
     remaining_qty: Optional[int] = None

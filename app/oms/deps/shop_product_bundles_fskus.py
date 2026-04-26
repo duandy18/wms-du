@@ -1,4 +1,4 @@
-# app/oms/deps/shop_product_bundles_fskus.py
+# app/oms/deps/store_product_bundles_fskus.py
 from __future__ import annotations
 
 from fastapi import Depends

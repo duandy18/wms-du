@@ -124,7 +124,7 @@ async def get_fulfillment_debug(
                 SELECT
                   id,
                   platform,
-                  shop_id,
+                  store_code,
                   ext_order_no
                 FROM orders
                 WHERE id = :oid
@@ -139,7 +139,7 @@ async def get_fulfillment_debug(
         raise HTTPException(status_code=404, detail="order not found")
 
     plat = str(row.get("platform") or "").upper().strip()
-    shop_id = str(row.get("shop_id") or "").strip()
+    store_code = str(row.get("store_code") or "").strip()
     ext_order_no = (str(row.get("ext_order_no") or "").strip() or None)
 
     addr = await _load_order_address(session, int(order_id))
@@ -155,7 +155,7 @@ async def get_fulfillment_debug(
         version=FULFILLMENT_DEBUG_VERSION,
         order_id=int(row["id"]),
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         address=addr,
         service=service_dbg,

@@ -17,7 +17,7 @@ async def get_waybill_shipping_record(
     *,
     order_ref: str,
     platform: str,
-    shop_id: str,
+    store_code: str,
     package_no: int,
 ) -> dict[str, Any] | None:
     row = (
@@ -27,7 +27,7 @@ async def get_waybill_shipping_record(
                 SELECT
                     order_ref,
                     platform,
-                    shop_id,
+                    store_code,
                     package_no,
                     warehouse_id,
                     shipping_provider_id,
@@ -39,7 +39,7 @@ async def get_waybill_shipping_record(
                     dest_city
                 FROM shipping_records
                 WHERE platform = :platform
-                  AND shop_id = :shop_id
+                  AND store_code = :store_code
                   AND order_ref = :order_ref
                   AND package_no = :package_no
                 LIMIT 1
@@ -47,7 +47,7 @@ async def get_waybill_shipping_record(
             ),
             {
                 "platform": platform.upper(),
-                "shop_id": shop_id,
+                "store_code": store_code,
                 "order_ref": order_ref,
                 "package_no": int(package_no),
             },
@@ -61,7 +61,7 @@ async def upsert_waybill_shipping_record(
     *,
     order_ref: str,
     platform: str,
-    shop_id: str,
+    store_code: str,
     package_no: int,
     warehouse_id: int,
     shipping_provider_id: int,
@@ -85,7 +85,7 @@ async def upsert_waybill_shipping_record(
             INSERT INTO shipping_records (
                 order_ref,
                 platform,
-                shop_id,
+                store_code,
                 package_no,
                 warehouse_id,
                 shipping_provider_id,
@@ -106,7 +106,7 @@ async def upsert_waybill_shipping_record(
             VALUES (
                 :order_ref,
                 :platform,
-                :shop_id,
+                :store_code,
                 :package_no,
                 :warehouse_id,
                 :shipping_provider_id,
@@ -124,7 +124,7 @@ async def upsert_waybill_shipping_record(
                 :dest_province,
                 :dest_city
             )
-            ON CONFLICT (platform, shop_id, order_ref, package_no) DO UPDATE SET
+            ON CONFLICT (platform, store_code, order_ref, package_no) DO UPDATE SET
                 warehouse_id = EXCLUDED.warehouse_id,
                 shipping_provider_id = EXCLUDED.shipping_provider_id,
                 shipping_provider_code = EXCLUDED.shipping_provider_code,
@@ -145,7 +145,7 @@ async def upsert_waybill_shipping_record(
         {
             "order_ref": order_ref,
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
             "package_no": int(package_no),
             "warehouse_id": warehouse_id,
             "shipping_provider_id": shipping_provider_id,

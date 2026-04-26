@@ -38,15 +38,19 @@ def _pdd_app_config(
 def _store_row_sql(store_id: int) -> str:
     return f"""
     INSERT INTO stores (
-        id, platform, shop_id, store_code, name, active
-    ) VALUES (
-        {store_id},
-        'pdd',
-        'shop-{store_id}',
-        'SC{store_id}',
-        'store-{store_id}',
-        true
-    )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  {store_id},
+  'pdd',
+  'store-{store_id}',
+  'store-{store_id}',
+  true
+)
     ON CONFLICT (id) DO NOTHING
     """
 
@@ -118,7 +122,7 @@ async def test_check_pull_ready_returns_credential_expired_when_token_expired(se
             raw_payload_json={"source": "test"},
             granted_identity_type="pdd_owner_id",
             granted_identity_value="owner-303",
-            granted_identity_display="shop-303",
+            granted_identity_display="store-303",
         )
     )
     await session.commit()
@@ -156,7 +160,7 @@ async def test_check_pull_ready_returns_real_pull_not_implemented_when_credentia
             raw_payload_json={"source": "test"},
             granted_identity_type="pdd_owner_id",
             granted_identity_value="owner-304",
-            granted_identity_display="shop-304",
+            granted_identity_display="store-304",
         )
     )
     await session.commit()

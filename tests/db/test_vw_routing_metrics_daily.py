@@ -3,7 +3,7 @@
 
 验证点：
 - 基于 orders.created_at 做 day 聚合
-- 按 (platform, shop_id, route_mode, warehouse_id) 聚合
+- 按 (platform, store_code, route_mode, warehouse_id) 聚合
 - routed_orders: warehouse_id 非空的订单数
 - failed_orders: warehouse_id 为空的订单数
 
@@ -20,20 +20,20 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def _insert_store(session: AsyncSession, *, platform: str, shop_id: str, route_mode: str) -> None:
+async def _insert_store(session: AsyncSession, *, platform: str, store_code: str, route_mode: str) -> None:
     await session.execute(
         sa.text(
             """
-            INSERT INTO stores (platform, shop_id, name, route_mode, created_at, updated_at)
+            INSERT INTO stores (platform, store_code, store_name, route_mode, created_at, updated_at)
             VALUES (:p, :s, :name, :mode, now(), now())
-            ON CONFLICT (platform, shop_id) DO UPDATE
+            ON CONFLICT (platform, store_code) DO UPDATE
                 SET route_mode = EXCLUDED.route_mode
             """
         ),
         {
             "p": platform,
-            "s": shop_id,
-            "name": f"{platform}-{shop_id}",
+            "s": store_code,
+            "name": f"{platform}-{store_code}",
             "mode": route_mode,
         },
     )
@@ -43,7 +43,7 @@ async def _insert_order(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
     created_at: datetime,
     warehouse_id: int | None,
@@ -59,11 +59,11 @@ async def _insert_order(
             SELECT id
               FROM stores
              WHERE platform = :p
-               AND shop_id = :s
+               AND store_code = :s
              LIMIT 1
             """
         ),
-        {"p": platform, "s": shop_id},
+        {"p": platform, "s": store_code},
     )
     store_id = int(store_row.scalar_one())
 
@@ -72,7 +72,7 @@ async def _insert_order(
             """
             INSERT INTO orders (
                 platform,
-                shop_id,
+                store_code,
                 store_id,
                 ext_order_no,
                 status,
@@ -90,13 +90,13 @@ async def _insert_order(
                 '10', '10',
                 :at, :at
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO UPDATE
               SET store_id = EXCLUDED.store_id,
                   updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
-        {"p": platform, "s": shop_id, "store_id": int(store_id), "o": ext_order_no, "at": created_at},
+        {"p": platform, "s": store_code, "store_id": int(store_id), "o": ext_order_no, "at": created_at},
     )
     order_id = int(row.scalar_one())
 
@@ -153,13 +153,13 @@ async def test_vw_routing_metrics_daily_basic(db_session_like_pg: AsyncSession) 
     day = datetime(2025, 11, 19, 8, 0, 0, tzinfo=timezone.utc)
 
     # 1) 准备 store
-    await _insert_store(session, platform="PDD", shop_id="1", route_mode="FALLBACK")
+    await _insert_store(session, platform="PDD", store_code="1", route_mode="FALLBACK")
 
     # 2) 准备三条订单，两条成功路由，一条失败（warehouse_id=NULL）
     await _insert_order(
         session,
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         ext_order_no="ORD-1",
         created_at=day,
         warehouse_id=1,
@@ -167,7 +167,7 @@ async def test_vw_routing_metrics_daily_basic(db_session_like_pg: AsyncSession) 
     await _insert_order(
         session,
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         ext_order_no="ORD-2",
         created_at=day,
         warehouse_id=1,
@@ -175,7 +175,7 @@ async def test_vw_routing_metrics_daily_basic(db_session_like_pg: AsyncSession) 
     await _insert_order(
         session,
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         ext_order_no="ORD-3",
         created_at=day,
         warehouse_id=None,
@@ -190,14 +190,14 @@ async def test_vw_routing_metrics_daily_basic(db_session_like_pg: AsyncSession) 
             SELECT
                 day,
                 platform,
-                shop_id,
+                store_code,
                 route_mode,
                 warehouse_id,
                 routed_orders,
                 failed_orders
               FROM vw_routing_metrics_daily
              WHERE platform = :p
-               AND shop_id  = :s
+               AND store_code  = :s
              ORDER BY warehouse_id NULLS LAST
             """
         ),

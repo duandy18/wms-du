@@ -93,7 +93,7 @@ async def test_ingest_assigns_service_warehouse_by_province(db_session_like_pg, 
     res = await OrderService.ingest(
         session,
         platform="PDD",
-        shop_id="SVC-1",
+        store_code="SVC-1",
         ext_order_no="SVC-PROV-1",
         occurred_at=datetime.now(timezone.utc),
         buyer_name="A",
@@ -136,7 +136,7 @@ async def test_ingest_blocks_when_city_split_but_city_missing(db_session_like_pg
     res = await OrderService.ingest(
         session,
         platform="PDD",
-        shop_id="SVC-2",
+        store_code="SVC-2",
         ext_order_no="SVC-CITY-MISS-1",
         occurred_at=datetime.now(timezone.utc),
         buyer_name="B",

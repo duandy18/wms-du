@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
 from app.oms.repos.stores_order_sim_bindings import build_components_summary_by_filled_code, list_bound_filled_code_options
-from app.oms.repos.stores_order_sim import get_merchant_lines, load_store_platform_shop_id, upsert_merchant_line
+from app.oms.repos.stores_order_sim import get_merchant_lines, load_store_platform_store_id, upsert_merchant_line
 from app.oms.services.stores_bindings_helpers import check_store_perm, ensure_store_exists
-from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
+from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_store_code_gate, enforce_order_sim_test_store_id_gate
 from app.oms.services.stores_order_sim import norm_row_no
 from app.oms.contracts.stores_order_sim import (
     OrderSimFilledCodeOptionsOut,
@@ -32,12 +32,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
-        enforce_order_sim_test_store_gate(store_id=int(store_id))
+        enforce_order_sim_test_store_id_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.read"])
         await ensure_store_exists(session, store_id)
 
-        _, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
-        enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+        _, store_code = await load_store_platform_store_id(session, store_id=int(store_id))
+        enforce_order_sim_test_store_code_gate(store_code=str(store_code))
 
         items = await get_merchant_lines(session, store_id=store_id)
         return OrderSimMerchantLinesGetOut(ok=True, data={"store_id": int(store_id), "items": items})
@@ -52,14 +52,14 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
-        enforce_order_sim_test_store_gate(store_id=int(store_id))
+        enforce_order_sim_test_store_id_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.read"])
         await ensure_store_exists(session, store_id)
 
-        platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
-        enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+        platform, store_code = await load_store_platform_store_id(session, store_id=int(store_id))
+        enforce_order_sim_test_store_code_gate(store_code=str(store_code))
 
-        items = await list_bound_filled_code_options(session, platform=platform, shop_id=shop_id)
+        items = await list_bound_filled_code_options(session, platform=platform, store_code=store_code)
         return OrderSimFilledCodeOptionsOut(ok=True, data={"items": items})
 
     @router.put(
@@ -73,12 +73,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
-        enforce_order_sim_test_store_gate(store_id=int(store_id))
+        enforce_order_sim_test_store_id_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
 
-        platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
-        enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+        platform, store_code = await load_store_platform_store_id(session, store_id=int(store_id))
+        enforce_order_sim_test_store_code_gate(store_code=str(store_code))
 
         seen: set[int] = set()
         for it in payload.items or []:
@@ -92,7 +92,7 @@ def register(router: APIRouter) -> None:
                 spec_summary = await build_components_summary_by_filled_code(
                     session,
                     platform=platform,
-                    shop_id=shop_id,
+                    store_code=store_code,
                     filled_code=str(it.filled_code).strip(),
                 )
 

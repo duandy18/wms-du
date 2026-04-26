@@ -53,7 +53,7 @@ async def _seed_prepare_quote_case(
 ) -> dict[str, object]:
     uniq = uuid4().hex[:10]
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     ext_order_no = f"QUOTE-UT-{uniq}"
     trace_id = f"TRACE-{uniq}"
 
@@ -66,7 +66,7 @@ async def _seed_prepare_quote_case(
     order_id = await insert_min_order(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         warehouse_id=warehouse_id,
         fulfillment_status="SERVICE_ASSIGNED",
@@ -183,7 +183,7 @@ async def _seed_prepare_quote_case(
     return {
         "order_id": int(order_id),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
         "warehouse_id": warehouse_id,
         "provider_id": provider_id,
@@ -198,7 +198,7 @@ async def test_quote_prepare_package_returns_candidates(
 
     out = await svc.quote_prepare_package(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         package_no=1,
     )
@@ -219,7 +219,7 @@ async def test_quote_prepare_package_rejects_when_address_not_ready(
     with pytest.raises(Exception) as exc_info:
         await svc.quote_prepare_package(
             platform=str(ctx["platform"]),
-            shop_id=str(ctx["shop_id"]),
+            store_code=str(ctx["store_code"]),
             ext_order_no=str(ctx["ext_order_no"]),
             package_no=1,
         )
@@ -236,7 +236,7 @@ async def test_quote_prepare_package_rejects_when_weight_missing(
     with pytest.raises(Exception) as exc_info:
         await svc.quote_prepare_package(
             platform=str(ctx["platform"]),
-            shop_id=str(ctx["shop_id"]),
+            store_code=str(ctx["store_code"]),
             ext_order_no=str(ctx["ext_order_no"]),
             package_no=1,
         )
@@ -252,7 +252,7 @@ async def test_confirm_prepare_package_quote_writes_snapshot(
 
     out = await svc.confirm_prepare_package_quote(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         package_no=1,
         provider_id=int(ctx["provider_id"]),

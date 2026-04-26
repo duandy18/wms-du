@@ -31,7 +31,7 @@ def extract_expanded_item_ids(out_dict: dict) -> list[int]:
     return sorted(ids)
 
 
-async def assert_order_sim_all_items_in_test_set(*, session, out_dict: dict, platform: str, shop_id: str, store_id: int) -> None:
+async def assert_order_sim_all_items_in_test_set(*, session, out_dict: dict, platform: str, store_code: str, store_id: int) -> None:
     """
     ✅ 测试域硬隔离护栏：order-sim 必须“全部是测试商品”（DEFAULT 集合）
     """
@@ -46,7 +46,7 @@ async def assert_order_sim_all_items_in_test_set(*, session, out_dict: dict, pla
                 status_code=500,
                 error_code="internal_error",
                 message=f"测试集合不可用：{e.message}",
-                context={"platform": platform, "shop_id": shop_id, "store_id": int(store_id), "set_code": "DEFAULT"},
+                context={"platform": platform, "store_code": store_code, "store_id": int(store_id), "set_code": "DEFAULT"},
             ),
         )
     except ItemTestSetService.Conflict as e:
@@ -58,7 +58,7 @@ async def assert_order_sim_all_items_in_test_set(*, session, out_dict: dict, pla
                 message=e.message,
                 context={
                     "platform": platform,
-                    "shop_id": shop_id,
+                    "store_code": store_code,
                     "store_id": int(store_id),
                     "set_code": e.set_code,
                     "out_of_set_item_ids": e.out_of_set_item_ids,

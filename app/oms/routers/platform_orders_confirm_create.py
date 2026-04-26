@@ -25,7 +25,7 @@ from app.oms.contracts.platform_orders_confirm_create import (
 from app.oms.repos.platform_orders_fact import (
     line_key_from_inputs,
     load_fact_lines_for_order,
-    load_shop_id_by_store_id,
+    load_store_code_by_store_id,
 )
 from app.oms.services.platform_orders_shared import (
     collect_risk_flags_from_unresolved,
@@ -141,7 +141,7 @@ async def confirm_and_create_platform_order(
             )
 
     try:
-        shop_id = await load_shop_id_by_store_id(session, store_id=store_id)
+        store_code = await load_store_code_by_store_id(session, store_id=store_id)
     except LookupError:
         raise HTTPException(
             status_code=404,
@@ -232,7 +232,7 @@ async def confirm_and_create_platform_order(
         out_tail = await PlatformOrderIngestFlow.run_tail_from_items_payload(
             session,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             store_id=store_id,
             ext_order_no=ext,
             occurred_at=None,
@@ -250,7 +250,7 @@ async def confirm_and_create_platform_order(
         )
 
         oid = int(out_tail.get("id") or 0) if out_tail.get("id") is not None else None
-        ref = str(out_tail.get("ref") or f"ORD:{plat}:{shop_id}:{ext}")
+        ref = str(out_tail.get("ref") or f"ORD:{plat}:{store_code}:{ext}")
         status = str(out_tail.get("status") or "OK").strip().upper()
 
         if status == "IDEMPOTENT" and oid is not None:
@@ -326,7 +326,7 @@ async def confirm_and_create_platform_order(
     return PlatformOrderConfirmCreateOut(
         status=str(out_tail.get("status") or "OK"),
         id=oid,
-        ref=str(ref or f"ORD:{plat}:{shop_id}:{ext}"),
+        ref=str(ref or f"ORD:{plat}:{store_code}:{ext}"),
         platform=plat,
         store_id=store_id,
         ext_order_no=ext,

@@ -70,7 +70,7 @@ def derive_next_actions(out_dict: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """
     actions: List[Dict[str, Any]] = []
     platform = _as_str(out_dict.get("platform") or out_dict.get("plat") or "").strip() or None
-    shop_id = _as_str(out_dict.get("shop_id") or "").strip() or None
+    store_code = _as_str(out_dict.get("store_code") or "").strip() or None
     store_id = out_dict.get("store_id")
 
     reason_code = derive_reason_code(out_dict)
@@ -93,7 +93,7 @@ def derive_next_actions(out_dict: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 "action": "bind_merchant_code",
                 "label": "去绑定填写码 → FSKU",
                 "target": "merchant_code_bindings",
-                "params": {"platform": platform, "shop_id": shop_id, "store_id": store_id, "filled_code": filled},
+                "params": {"platform": platform, "store_code": store_code, "store_id": store_id, "filled_code": filled},
             }
         )
 
@@ -137,7 +137,7 @@ def derive_next_actions(out_dict: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return actions
 
 
-def attach_reason_and_actions(out_dict: Dict[str, Any], *, platform: str, shop_id: str) -> Dict[str, Any]:
+def attach_reason_and_actions(out_dict: Dict[str, Any], *, platform: str, store_code: str) -> Dict[str, Any]:
     """
     在 Flow 输出最后一步挂载 Phase D 字段。
     注意：platform_orders/ingest 的 response_model 若严格，会丢弃 extra 字段；
@@ -146,7 +146,7 @@ def attach_reason_and_actions(out_dict: Dict[str, Any], *, platform: str, shop_i
     """
     out = dict(out_dict)
     out.setdefault("platform", platform)
-    out.setdefault("shop_id", shop_id)
+    out.setdefault("store_code", store_code)
 
     out["reason_code"] = derive_reason_code(out)
     out["next_actions"] = derive_next_actions(out)

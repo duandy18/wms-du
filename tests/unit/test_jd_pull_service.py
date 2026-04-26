@@ -46,15 +46,19 @@ def _jd_app_config(
 def _store_row_sql(store_id: int) -> str:
     return f"""
     INSERT INTO stores (
-        id, platform, shop_id, store_code, name, active
-    ) VALUES (
-        {store_id},
-        'jd',
-        'shop-{store_id}',
-        'SC{store_id}',
-        'store-{store_id}',
-        true
-    )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  {store_id},
+  'jd',
+  'store-{store_id}',
+  'store-{store_id}',
+  true
+)
     ON CONFLICT (id) DO NOTHING
     """
 
@@ -126,7 +130,7 @@ async def test_check_pull_ready_returns_credential_expired_when_token_expired(se
             raw_payload_json={"source": "test"},
             granted_identity_type="jd_uid",
             granted_identity_value="uid-803",
-            granted_identity_display="shop-803",
+            granted_identity_display="store-803",
         )
     )
     await session.commit()
@@ -164,7 +168,7 @@ async def test_check_pull_ready_returns_real_pull_ok_when_summary_and_detail_loa
             raw_payload_json={"source": "test"},
             granted_identity_type="jd_uid",
             granted_identity_value="uid-804",
-            granted_identity_display="shop-804",
+            granted_identity_display="store-804",
         )
     )
     await session.commit()

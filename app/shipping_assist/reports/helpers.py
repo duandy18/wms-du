@@ -42,7 +42,7 @@ def build_where_clause(
     from_dt: Optional[date],
     to_dt: Optional[date],
     platform: Optional[str],
-    shop_id: Optional[str],
+    store_code: Optional[str],
     shipping_provider_code: Optional[str],
     province: Optional[str],
     warehouse_id: Optional[int],
@@ -59,11 +59,11 @@ def build_where_clause(
         NOT EXISTS (
           SELECT 1
             FROM stores s
-            JOIN platform_test_shops pts
+            JOIN platform_test_stores pts
               ON pts.store_id = s.id
              AND pts.code = 'DEFAULT'
            WHERE upper(s.platform) = upper(sr.platform)
-             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(sr.shop_id AS text))
+             AND btrim(CAST(s.store_code AS text)) = btrim(CAST(sr.store_code AS text))
         )
         """.strip()
     )
@@ -77,9 +77,9 @@ def build_where_clause(
     if platform:
         conditions.append("sr.platform = :platform")
         params["platform"] = platform
-    if shop_id:
-        conditions.append("sr.shop_id = :shop_id")
-        params["shop_id"] = shop_id
+    if store_code:
+        conditions.append("sr.store_code = :store_code")
+        params["store_code"] = store_code
     if shipping_provider_code:
         conditions.append("sr.shipping_provider_code = :shipping_provider_code")
         params["shipping_provider_code"] = shipping_provider_code

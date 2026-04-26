@@ -34,7 +34,7 @@ def register(router: APIRouter) -> None:
     async def list_waybill_configs_route(
         active: Optional[bool] = Query(None),
         platform: Optional[str] = Query(None),
-        shop_id: Optional[str] = Query(None),
+        store_code: Optional[str] = Query(None),
         shipping_provider_id: Optional[int] = Query(None, ge=1),
         q: Optional[str] = Query(None),
         session: AsyncSession = Depends(get_session),
@@ -46,7 +46,7 @@ def register(router: APIRouter) -> None:
             session,
             active=active,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             shipping_provider_id=shipping_provider_id,
             q=q,
         )
@@ -77,7 +77,7 @@ def register(router: APIRouter) -> None:
             data = await create_waybill_config(
                 session,
                 platform=payload.platform,
-                shop_id=payload.shop_id,
+                store_code=payload.store_code,
                 shipping_provider_id=payload.shipping_provider_id,
                 customer_code=payload.customer_code,
                 sender_name=payload.sender_name,
@@ -112,7 +112,7 @@ def register(router: APIRouter) -> None:
                 session,
                 config_id=config_id,
                 platform=payload.platform,
-                shop_id=payload.shop_id,
+                store_code=payload.store_code,
                 shipping_provider_id=payload.shipping_provider_id,
                 customer_code=payload.customer_code,
                 sender_name=payload.sender_name,

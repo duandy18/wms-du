@@ -28,7 +28,7 @@ class InboundReceiptCreateFromReturnOrderIn(_Base):
         Field(
             min_length=1,
             max_length=128,
-            description="订单键：支持 ORD:PLAT:SHOP:EXT / PLAT:SHOP:EXT / 唯一 ext_order_no",
+            description="订单键：支持 ORD:PLAT:STORE:EXT / PLAT:STORE:EXT / 唯一 ext_order_no",
         ),
     ]
     remark: Annotated[str | None, Field(default=None, max_length=500, description="头备注")]

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.oms.services.platform_order_resolve_service import norm_platform, norm_shop_id
+from app.oms.services.platform_order_resolve_service import norm_platform, norm_store_code
 
 
 def _line_key(*, filled_code: str | None, line_no: int) -> str:
@@ -48,7 +48,7 @@ async def upsert_platform_order_lines(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     store_id: Optional[int],
     ext_order_no: str,
     lines: List[Dict[str, Any]],
@@ -59,7 +59,7 @@ async def upsert_platform_order_lines(
     返回：本次 upsert 的行数（按输入行数计）。
     """
     plat = norm_platform(platform)
-    sid = norm_shop_id(shop_id)
+    sid = norm_store_code(store_code)
     ext = str(ext_order_no or "").strip()
     if not ext:
         raise ValueError("ext_order_no is required")
@@ -79,7 +79,7 @@ async def upsert_platform_order_lines(
             text(
                 """
                 INSERT INTO platform_order_lines(
-                  platform, shop_id, store_id, ext_order_no,
+                  platform, store_code, store_id, ext_order_no,
                   line_no, line_key,
                   locator_kind, locator_value,
                   filled_code, qty, title, spec,
@@ -87,14 +87,14 @@ async def upsert_platform_order_lines(
                   created_at, updated_at
                 )
                 VALUES(
-                  :platform, :shop_id, :store_id, :ext_order_no,
+                  :platform, :store_code, :store_id, :ext_order_no,
                   :line_no, :line_key,
                   :locator_kind, :locator_value,
                   :filled_code, :qty, :title, :spec,
                   (:extras)::jsonb, (:raw_payload)::jsonb,
                   now(), now()
                 )
-                ON CONFLICT (platform, shop_id, ext_order_no, line_key)
+                ON CONFLICT (platform, store_code, ext_order_no, line_key)
                 DO UPDATE SET
                   store_id       = EXCLUDED.store_id,
                   locator_kind   = EXCLUDED.locator_kind,
@@ -110,7 +110,7 @@ async def upsert_platform_order_lines(
             ),
             {
                 "platform": plat,
-                "shop_id": sid,
+                "store_code": sid,
                 "store_id": int(store_id) if store_id is not None else None,
                 "ext_order_no": ext,
                 "line_no": line_no,

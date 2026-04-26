@@ -30,25 +30,25 @@ class OrderSalesSource:
         from_date: date,
         to_date: date,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
     ) -> dict[str, Any]:
         params = {
             "from_date": from_date,
             "to_date": to_date,
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
         }
 
         summary = await self._summary(params)
         daily = await self._daily(params)
-        by_shop = await self._by_shop(params)
+        by_store = await self._by_store(params)
         by_item = await self._by_item(params)
         top_orders = await self._top_orders(params)
 
         return {
             "summary": summary,
             "daily": daily,
-            "by_shop": by_shop,
+            "by_store": by_store,
             "by_item": by_item,
             "top_orders": top_orders,
         }
@@ -57,13 +57,13 @@ class OrderSalesSource:
         return """
         DATE(o.created_at) BETWEEN :from_date AND :to_date
         AND (:platform = '' OR o.platform = :platform)
-        AND (:shop_id = '' OR o.shop_id = :shop_id)
+        AND (:store_code = '' OR o.store_code = :store_code)
         AND NOT EXISTS (
           SELECT 1
-            FROM platform_test_shops pts
+            FROM platform_test_stores pts
            WHERE pts.code = 'DEFAULT'
              AND upper(pts.platform) = upper(o.platform)
-             AND btrim(CAST(pts.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+             AND btrim(CAST(pts.store_code AS text)) = btrim(CAST(o.store_code AS text))
         )
         """
 
@@ -129,25 +129,25 @@ class OrderSalesSource:
             for row in rows
         ]
 
-    async def _by_shop(self, params: dict[str, object]) -> list[dict[str, object]]:
+    async def _by_store(self, params: dict[str, object]) -> list[dict[str, object]]:
         sql = text(
             f"""
             SELECT
               o.platform,
-              o.shop_id,
+              o.store_code,
               COUNT(*) AS order_count,
               COALESCE(SUM(COALESCE(o.pay_amount, o.order_amount, 0)), 0) AS revenue
               FROM orders o
              WHERE {self._base_where()}
-             GROUP BY o.platform, o.shop_id
-             ORDER BY revenue DESC, o.platform ASC, o.shop_id ASC
+             GROUP BY o.platform, o.store_code
+             ORDER BY revenue DESC, o.platform ASC, o.store_code ASC
             """
         )
         rows = (await self.session.execute(sql, params)).mappings().all()
         return [
             {
                 "platform": str(row["platform"]),
-                "shop_id": str(row["shop_id"]),
+                "store_code": str(row["store_code"]),
                 "order_count": int(row["order_count"] or 0),
                 "revenue": to_decimal(row["revenue"]),
             }
@@ -190,7 +190,7 @@ class OrderSalesSource:
             SELECT
               o.id AS order_id,
               o.platform,
-              o.shop_id,
+              o.store_code,
               o.ext_order_no,
               COALESCE(o.pay_amount, o.order_amount, 0) AS order_value,
               o.created_at
@@ -205,7 +205,7 @@ class OrderSalesSource:
             {
                 "order_id": int(row["order_id"]),
                 "platform": str(row["platform"]),
-                "shop_id": str(row["shop_id"]),
+                "store_code": str(row["store_code"]),
                 "ext_order_no": str(row["ext_order_no"]),
                 "order_value": to_decimal(row["order_value"]),
                 "created_at": row["created_at"],

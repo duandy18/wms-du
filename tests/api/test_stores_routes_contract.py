@@ -88,8 +88,8 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             payload = {
                 "platform": "PDD",
-                "shop_id": "UT-SHOP-STORES-01",
-                "name": "拼多多自营-合同测试",
+                "store_code": "UT-STORE-STORES-01",
+                "store_name": "拼多多自营-合同测试",
             }
             r = await client.post("/oms/stores", json=payload)
             assert r.status_code == 200
@@ -97,7 +97,7 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
             assert resp["ok"] is True
             store_id = resp["data"]["store_id"]
             assert resp["data"]["platform"] == "PDD"
-            assert resp["data"]["shop_id"] == "UT-SHOP-STORES-01"
+            assert resp["data"]["store_code"] == "UT-STORE-STORES-01"
 
             # 2) 绑定两个仓：/stores/{id}/warehouses/bind
             r2 = await client.post(
@@ -123,7 +123,7 @@ async def test_stores_create_bind_and_default(session, monkeypatch):
             assert r5.status_code == 200
             detail = r5.json()["data"]
             assert detail["platform"] == "PDD"
-            assert detail["shop_id"] == "UT-SHOP-STORES-01"
+            assert detail["store_code"] == "UT-STORE-STORES-01"
 
             # bindings 至少包含两个仓，且第一个是默认仓
             bindings = detail["bindings"]

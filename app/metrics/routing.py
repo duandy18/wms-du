@@ -14,7 +14,7 @@ _registry: CollectorRegistry = REGISTRY
 @dataclass(frozen=True)
 class RoutingDecision:
     platform: str
-    shop_id: str
+    store_code: str
     route_mode: str  # "FALLBACK" / "STRICT_TOP" / ...
     result: str  # "ok" / "no_candidate"
     selected_warehouse_id: Optional[int]
@@ -30,7 +30,7 @@ class RoutingDecision:
 _ROUTING_REQUESTS_TOTAL = Counter(
     "wmsdu_routing_requests_total",
     "Total routing requests received",
-    ["platform", "shop_id", "route_mode"],
+    ["platform", "store_code", "route_mode"],
     registry=_registry,
 )
 
@@ -38,7 +38,7 @@ _ROUTING_REQUESTS_TOTAL = Counter(
 _ROUTING_DECISIONS_TOTAL = Counter(
     "wmsdu_routing_decisions_total",
     "Total routing decisions made (success or failure)",
-    ["platform", "shop_id", "route_mode", "result", "selected_warehouse_id"],
+    ["platform", "store_code", "route_mode", "result", "selected_warehouse_id"],
     registry=_registry,
 )
 
@@ -49,7 +49,7 @@ _ROUTING_FALLBACK_TOTAL = Counter(
     "fallback warehouse selected instead)",
     [
         "platform",
-        "shop_id",
+        "store_code",
         "route_mode",
         "from_warehouse_id",
         "to_warehouse_id",
@@ -62,7 +62,7 @@ _ROUTING_FALLBACK_TOTAL = Counter(
 _ROUTING_NO_WAREHOUSE_TOTAL = Counter(
     "wmsdu_routing_no_warehouse_total",
     "Total routing failures where no warehouse can fulfill the order",
-    ["platform", "shop_id", "route_mode", "reason"],
+    ["platform", "store_code", "route_mode", "reason"],
     registry=_registry,
 )
 
@@ -70,18 +70,18 @@ _ROUTING_NO_WAREHOUSE_TOTAL = Counter(
 _WAREHOUSE_ROUTED_ORDERS_TOTAL = Counter(
     "wmsdu_warehouse_routed_orders_total",
     "Total number of orders routed to a warehouse",
-    ["platform", "shop_id", "route_mode", "warehouse_id", "is_fallback"],
+    ["platform", "store_code", "route_mode", "warehouse_id", "is_fallback"],
     registry=_registry,
 )
 
 
-def record_request(platform: str, shop_id: str, route_mode: str) -> None:
+def record_request(platform: str, store_code: str, route_mode: str) -> None:
     """
     在进入路由函数的第一行调用，表示有一次路由请求。
     """
     _ROUTING_REQUESTS_TOTAL.labels(
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         route_mode=route_mode,
     ).inc()
 
@@ -95,7 +95,7 @@ def record_decision(decision: RoutingDecision) -> None:
       相关快照统一写入 order_fulfillment.planned_warehouse_id / actual_warehouse_id。
     """
     platform = decision.platform
-    shop_id = decision.shop_id
+    store_code = decision.store_code
     route_mode = decision.route_mode
     result = decision.result
     selected_wh = str(decision.selected_warehouse_id or 0)
@@ -103,7 +103,7 @@ def record_decision(decision: RoutingDecision) -> None:
     # 1) 总决策
     _ROUTING_DECISIONS_TOTAL.labels(
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         route_mode=route_mode,
         result=result,
         selected_warehouse_id=selected_wh,
@@ -113,7 +113,7 @@ def record_decision(decision: RoutingDecision) -> None:
     if result == "no_candidate":
         _ROUTING_NO_WAREHOUSE_TOTAL.labels(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             route_mode=route_mode,
             reason=decision.reason or "unknown",
         ).inc()
@@ -124,7 +124,7 @@ def record_decision(decision: RoutingDecision) -> None:
     if decision.selected_warehouse_id is not None:
         _WAREHOUSE_ROUTED_ORDERS_TOTAL.labels(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             route_mode=route_mode,
             warehouse_id=str(decision.selected_warehouse_id),
             is_fallback="true" if decision.is_fallback else "false",
@@ -134,7 +134,7 @@ def record_decision(decision: RoutingDecision) -> None:
     if decision.is_fallback and decision.selected_warehouse_id is not None:
         _ROUTING_FALLBACK_TOTAL.labels(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             route_mode=route_mode,
             from_warehouse_id=str(decision.primary_warehouse_id or 0),
             to_warehouse_id=str(decision.selected_warehouse_id),

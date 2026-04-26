@@ -43,7 +43,7 @@ class ShippingRecord(Base):
     # 订单引用
     order_ref: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # 包裹定位
     package_no: Mapped[int] = mapped_column(
@@ -128,10 +128,10 @@ class ShippingRecord(Base):
     __table_args__ = (
         UniqueConstraint(
             "platform",
-            "shop_id",
+            "store_code",
             "order_ref",
             "package_no",
-            name="uq_shipping_records_platform_shop_ref_package",
+            name="uq_shipping_records_platform_store_ref_package",
         ),
         Index("ix_shipping_records_ref_time", "order_ref", "created_at"),
         Index("ix_shipping_records_tracking_no", "tracking_no"),

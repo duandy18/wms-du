@@ -113,7 +113,7 @@ async def _seed_prepare_package_case(
 ) -> dict[str, object]:
     uniq = uuid4().hex[:10]
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     ext_order_no = f"SHIP-UT-{uniq}"
     trace_id = f"TRACE-{uniq}"
 
@@ -126,7 +126,7 @@ async def _seed_prepare_package_case(
     order_id = await insert_min_order(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         warehouse_id=warehouse_id,
         fulfillment_status="SERVICE_ASSIGNED",
@@ -247,7 +247,7 @@ async def _seed_prepare_package_case(
     await _upsert_active_waybill_config(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         provider_id=provider_id,
     )
 
@@ -256,12 +256,12 @@ async def _seed_prepare_package_case(
     return {
         "order_id": int(order_id),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
         "package_no": int(package_no),
         "warehouse_id": warehouse_id,
         "provider_id": provider_id,
-        "order_ref": f"ORD:{platform}:{shop_id}:{ext_order_no}",
+        "order_ref": f"ORD:{platform}:{store_code}:{ext_order_no}",
         "quote_snapshot": quote_snapshot,
     }
 
@@ -270,7 +270,7 @@ async def _upsert_active_waybill_config(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     provider_id: int,
 ) -> None:
     await session.execute(
@@ -278,7 +278,7 @@ async def _upsert_active_waybill_config(
             """
             INSERT INTO electronic_waybill_configs (
                 platform,
-                shop_id,
+                store_code,
                 shipping_provider_id,
                 customer_code,
                 sender_name,
@@ -294,7 +294,7 @@ async def _upsert_active_waybill_config(
             )
             VALUES (
                 :platform,
-                :shop_id,
+                :store_code,
                 :provider_id,
                 'UT-CUSTOMER-CODE',
                 '张三',
@@ -308,7 +308,7 @@ async def _upsert_active_waybill_config(
                 now(),
                 now()
             )
-            ON CONFLICT (platform, shop_id, shipping_provider_id) DO UPDATE
+            ON CONFLICT (platform, store_code, shipping_provider_id) DO UPDATE
                SET customer_code = EXCLUDED.customer_code,
                    sender_name = EXCLUDED.sender_name,
                    sender_mobile = EXCLUDED.sender_mobile,
@@ -323,7 +323,7 @@ async def _upsert_active_waybill_config(
         ),
         {
             "platform": str(platform).upper(),
-            "shop_id": str(shop_id),
+            "store_code": str(store_code),
             "provider_id": int(provider_id),
         },
     )
@@ -542,7 +542,7 @@ async def _load_shipping_record(
     *,
     order_ref: str,
     platform: str,
-    shop_id: str,
+    store_code: str,
     package_no: int,
 ) -> dict[str, object]:
     record_row = (
@@ -553,7 +553,7 @@ async def _load_shipping_record(
                   id,
                   order_ref,
                   platform,
-                  shop_id,
+                  store_code,
                   package_no,
                   warehouse_id,
                   shipping_provider_id,
@@ -572,7 +572,7 @@ async def _load_shipping_record(
                   dest_city
                 FROM shipping_records
                 WHERE platform = :platform
-                  AND shop_id = :shop_id
+                  AND store_code = :store_code
                   AND order_ref = :order_ref
                   AND package_no = :package_no
                 LIMIT 1
@@ -580,7 +580,7 @@ async def _load_shipping_record(
             ),
             {
                 "platform": platform.upper(),
-                "shop_id": shop_id,
+                "store_code": store_code,
                 "order_ref": order_ref,
                 "package_no": int(package_no),
             },
@@ -596,7 +596,7 @@ async def _count_shipping_records(
     *,
     order_ref: str,
     platform: str,
-    shop_id: str,
+    store_code: str,
     package_no: int,
 ) -> int:
     value = (
@@ -606,14 +606,14 @@ async def _count_shipping_records(
                 SELECT COUNT(*) AS n
                 FROM shipping_records
                 WHERE platform = :platform
-                  AND shop_id = :shop_id
+                  AND store_code = :store_code
                   AND order_ref = :order_ref
                   AND package_no = :package_no
                 """
             ),
             {
                 "platform": platform.upper(),
-                "shop_id": shop_id,
+                "store_code": store_code,
                 "order_ref": order_ref,
                 "package_no": int(package_no),
             },
@@ -643,7 +643,7 @@ async def test_ship_with_waybill_writes_shipping_record_ledger_at_package_grain(
             order_ref=str(ctx["order_ref"]),
             trace_id=f"TRACE-{uuid4().hex[:10]}",
             platform=str(ctx["platform"]),
-            shop_id=str(ctx["shop_id"]),
+            store_code=str(ctx["store_code"]),
             ext_order_no=str(ctx["ext_order_no"]),
             package_no=int(ctx["package_no"]),
             receiver_name="张三",
@@ -668,7 +668,7 @@ async def test_ship_with_waybill_writes_shipping_record_ledger_at_package_grain(
         session,
         order_ref=str(ctx["order_ref"]),
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         package_no=int(ctx["package_no"]),
     )
 
@@ -714,7 +714,7 @@ async def test_ship_with_waybill_is_idempotent_per_order_ref_and_package_no(
         order_ref=str(ctx["order_ref"]),
         trace_id=f"TRACE-{uuid4().hex[:10]}",
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         package_no=int(ctx["package_no"]),
         receiver_name="张三",
@@ -739,7 +739,7 @@ async def test_ship_with_waybill_is_idempotent_per_order_ref_and_package_no(
         session,
         order_ref=str(ctx["order_ref"]),
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         package_no=int(ctx["package_no"]),
     )
     assert count == 1
@@ -755,7 +755,7 @@ async def test_ship_with_waybill_rejects_package_not_found(session: AsyncSession
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=999999,
                 receiver_name="李四",
@@ -800,7 +800,7 @@ async def test_ship_with_waybill_rejects_when_selected_provider_missing(
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=int(ctx["package_no"]),
                 receiver_name="王五",
@@ -845,7 +845,7 @@ async def test_ship_with_waybill_rejects_when_weight_missing(
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=int(ctx["package_no"]),
                 receiver_name="赵六",
@@ -890,7 +890,7 @@ async def test_ship_with_waybill_rejects_when_quote_snapshot_missing(
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=int(ctx["package_no"]),
                 receiver_name="钱七",
@@ -936,7 +936,7 @@ async def test_ship_with_waybill_rejects_when_pricing_not_calculated(
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=int(ctx["package_no"]),
                 receiver_name="孙八",
@@ -981,7 +981,7 @@ async def test_ship_with_waybill_rejects_when_address_not_ready(
                 order_ref=str(ctx["order_ref"]),
                 trace_id=f"TRACE-{uuid4().hex[:10]}",
                 platform=str(ctx["platform"]),
-                shop_id=str(ctx["shop_id"]),
+                store_code=str(ctx["store_code"]),
                 ext_order_no=str(ctx["ext_order_no"]),
                 package_no=int(ctx["package_no"]),
                 receiver_name="周九",
@@ -1011,7 +1011,7 @@ async def test_shipping_record_accepts_current_terminal_columns_with_package_no(
             INSERT INTO shipping_records (
                 order_ref,
                 platform,
-                shop_id,
+                store_code,
                 package_no,
                 warehouse_id,
                 shipping_provider_id,
@@ -1066,7 +1066,7 @@ async def test_shipping_record_accepts_current_terminal_columns_with_package_no(
                 SELECT
                   order_ref,
                   platform,
-                  shop_id,
+                  store_code,
                   package_no,
                   warehouse_id,
                   shipping_provider_id,
@@ -1091,7 +1091,7 @@ async def test_shipping_record_accepts_current_terminal_columns_with_package_no(
     assert row is not None
     assert row["order_ref"] == order_ref
     assert row["platform"] == "PDD"
-    assert row["shop_id"] == "1"
+    assert row["store_code"] == "1"
     assert int(row["package_no"]) == 1
     assert int(row["warehouse_id"]) == 1
     assert int(row["shipping_provider_id"]) == 1

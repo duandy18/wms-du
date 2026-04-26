@@ -29,23 +29,23 @@ class ShippingCostSource:
         from_date: date,
         to_date: date,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
     ) -> dict[str, Any]:
         params = {
             "from_date": from_date,
             "to_date": to_date,
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
         }
         summary = await self._summary(params)
         daily = await self._daily(params)
         by_provider = await self._by_provider(params)
-        by_shop = await self._by_shop(params)
+        by_store = await self._by_store(params)
         return {
             "summary": summary,
             "daily": daily,
             "by_carrier": by_provider,
-            "by_shop": by_shop,
+            "by_store": by_store,
         }
 
     async def fetch_shipping_ledger(
@@ -54,7 +54,7 @@ class ShippingCostSource:
         from_date: date | None,
         to_date: date | None,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
         warehouse_id: int | None = None,
         shipping_provider_id: int | None = None,
         order_keyword: str = "",
@@ -64,7 +64,7 @@ class ShippingCostSource:
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
             order_keyword=order_keyword,
@@ -76,8 +76,8 @@ class ShippingCostSource:
             SELECT
               shipping_record_id,
               platform,
-              shop_id,
-              shop_name,
+              store_code,
+              store_name,
               order_ref,
               package_no,
               tracking_no,
@@ -109,7 +109,7 @@ class ShippingCostSource:
         from_date: date | None,
         to_date: date | None,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
         warehouse_id: int | None = None,
         shipping_provider_id: int | None = None,
     ) -> dict[str, Any]:
@@ -117,25 +117,25 @@ class ShippingCostSource:
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
             order_keyword="",
             tracking_no="",
         )
 
-        shops = (
+        stores = (
             await self.session.execute(
                 text(
                     f"""
                     SELECT
                       platform,
-                      shop_id,
-                      MAX(shop_name) AS shop_name
+                      store_code,
+                      MAX(store_name) AS store_name
                     FROM finance_shipping_cost_lines f
                     WHERE {where_sql}
-                    GROUP BY platform, shop_id
-                    ORDER BY platform ASC, shop_id ASC
+                    GROUP BY platform, store_code
+                    ORDER BY platform ASC, store_code ASC
                     LIMIT 500
                     """
                 ),
@@ -181,7 +181,7 @@ class ShippingCostSource:
         ).mappings().all()
 
         return {
-            "shops": [dict(row) for row in shops],
+            "stores": [dict(row) for row in stores],
             "warehouses": [dict(row) for row in warehouses],
             "providers": [dict(row) for row in providers],
         }
@@ -190,24 +190,24 @@ class ShippingCostSource:
         return f"""
         {alias}.shipped_date BETWEEN :from_date AND :to_date
         AND (:platform = '' OR {alias}.platform = :platform)
-        AND (:shop_id = '' OR {alias}.shop_id = :shop_id)
+        AND (:store_code = '' OR {alias}.store_code = :store_code)
         AND NOT EXISTS (
           SELECT 1
-            FROM platform_test_shops pts
+            FROM platform_test_stores pts
            WHERE pts.code = 'DEFAULT'
              AND upper(pts.platform) = upper({alias}.platform)
-             AND btrim(CAST(pts.shop_id AS text)) = btrim(CAST({alias}.shop_id AS text))
+             AND btrim(CAST(pts.store_code AS text)) = btrim(CAST({alias}.store_code AS text))
         )
         """
 
-    def _finance_test_shop_exclusion(self, alias: str = "f") -> str:
+    def _finance_test_store_exclusion(self, alias: str = "f") -> str:
         return f"""
         NOT EXISTS (
           SELECT 1
-            FROM platform_test_shops pts
+            FROM platform_test_stores pts
            WHERE pts.code = 'DEFAULT'
              AND upper(pts.platform) = upper({alias}.platform)
-             AND btrim(CAST(pts.shop_id AS text)) = btrim(CAST({alias}.shop_id AS text))
+             AND btrim(CAST(pts.store_code AS text)) = btrim(CAST({alias}.store_code AS text))
         )
         """
 
@@ -217,7 +217,7 @@ class ShippingCostSource:
         from_date: date | None,
         to_date: date | None,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int | None,
         shipping_provider_id: int | None,
         order_keyword: str,
@@ -225,12 +225,12 @@ class ShippingCostSource:
     ) -> tuple[str, dict[str, object]]:
         params: dict[str, object] = {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "order_keyword": order_keyword.strip(),
             "order_keyword_like": f"%{order_keyword.strip()}%",
             "tracking_no": tracking_no.strip(),
         }
-        where_clauses: list[str] = [self._finance_test_shop_exclusion("f")]
+        where_clauses: list[str] = [self._finance_test_store_exclusion("f")]
 
         if from_date is not None:
             params["from_date"] = from_date
@@ -243,8 +243,8 @@ class ShippingCostSource:
         if platform:
             where_clauses.append("f.platform = :platform")
 
-        if shop_id:
-            where_clauses.append("f.shop_id = :shop_id")
+        if store_code:
+            where_clauses.append("f.store_code = :store_code")
 
         if warehouse_id is not None:
             params["warehouse_id"] = int(warehouse_id)
@@ -356,19 +356,19 @@ class ShippingCostSource:
             for row in rows
         ]
 
-    async def _by_shop(self, params: dict[str, object]) -> list[dict[str, object]]:
+    async def _by_store(self, params: dict[str, object]) -> list[dict[str, object]]:
         sql = text(
             f"""
             SELECT
               f.platform,
-              f.shop_id,
-              MAX(f.shop_name) AS shop_name,
+              f.store_code,
+              MAX(f.store_name) AS store_name,
               COUNT(*) AS shipment_count,
               COALESCE(SUM(COALESCE(f.cost_estimated, 0)), 0) AS estimated_shipping_cost
             FROM finance_shipping_cost_lines f
             WHERE {self._base_where("f")}
-            GROUP BY f.platform, f.shop_id
-            ORDER BY estimated_shipping_cost DESC, f.platform ASC, f.shop_id ASC
+            GROUP BY f.platform, f.store_code
+            ORDER BY estimated_shipping_cost DESC, f.platform ASC, f.store_code ASC
             LIMIT 100
             """
         )
@@ -376,8 +376,8 @@ class ShippingCostSource:
         return [
             {
                 "platform": str(row["platform"]),
-                "shop_id": str(row["shop_id"]),
-                "shop_name": row["shop_name"],
+                "store_code": str(row["store_code"]),
+                "store_name": row["store_name"],
                 "shipment_count": int(row["shipment_count"] or 0),
                 "estimated_shipping_cost": to_decimal(row["estimated_shipping_cost"]),
                 "billed_shipping_cost": to_decimal(0),

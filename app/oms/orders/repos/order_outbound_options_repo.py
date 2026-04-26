@@ -17,7 +17,7 @@ async def list_order_outbound_options(
     *,
     q: Optional[str],
     platform: Optional[str],
-    shop_id: Optional[str],
+    store_code: Optional[str],
     limit: int,
     offset: int,
 ) -> Dict[str, Any]:
@@ -32,7 +32,7 @@ async def list_order_outbound_options(
 
     q_norm = _normalize_text(q)
     platform_norm = _normalize_text(platform)
-    shop_id_norm = _normalize_text(shop_id)
+    store_code_norm = _normalize_text(store_code)
 
     clauses: List[str] = [
         """
@@ -56,9 +56,9 @@ async def list_order_outbound_options(
         clauses.append("UPPER(platform) = UPPER(:platform)")
         params["platform"] = platform_norm
 
-    if shop_id_norm is not None:
-        clauses.append("shop_id = :shop_id")
-        params["shop_id"] = shop_id_norm
+    if store_code_norm is not None:
+        clauses.append("store_code = :store_code")
+        params["store_code"] = store_code_norm
 
     if q_norm is not None:
         clauses.append(
@@ -90,7 +90,7 @@ async def list_order_outbound_options(
         SELECT
           id,
           platform,
-          shop_id,
+          store_code,
           ext_order_no,
           status,
           buyer_name,

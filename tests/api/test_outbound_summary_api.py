@@ -64,7 +64,7 @@ async def _seed_order_event(session: AsyncSession, warehouse_id: int) -> int:
     store_id = await ensure_store(
         session,
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         name="UT-STORE",
     )
 
@@ -72,7 +72,7 @@ async def _seed_order_event(session: AsyncSession, warehouse_id: int) -> int:
         text(
             """
             INSERT INTO orders (
-              platform, shop_id, store_id, ext_order_no, status, created_at, updated_at
+              platform, store_code, store_id, ext_order_no, status, created_at, updated_at
             )
             VALUES (
               'PDD', '1', :store_id, :ext_order_no, 'CREATED', now(), now()

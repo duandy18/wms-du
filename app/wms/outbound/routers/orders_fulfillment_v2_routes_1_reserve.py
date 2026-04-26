@@ -33,12 +33,12 @@ class ManualAssignResponse(BaseModel):
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/{platform}/{shop_id}/{ext_order_no}/fulfillment/manual-assign",
+        "/{platform}/{store_code}/{ext_order_no}/fulfillment/manual-assign",
         response_model=ManualAssignResponse,
     )
     async def fulfillment_manual_assign(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         body: ManualAssignRequest,
         session: AsyncSession = Depends(get_session),
@@ -64,7 +64,7 @@ def register(router: APIRouter) -> None:
         order_ref, trace_id = await get_order_ref_and_trace_id(
             session=session,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
 
@@ -74,7 +74,7 @@ def register(router: APIRouter) -> None:
             r = await manual_assign_fulfillment_warehouse(
                 session,
                 platform=plat,
-                shop_id=shop_id,
+                store_code=store_code,
                 ext_order_no=ext_order_no,
                 order_ref=order_ref,
                 trace_id=trace_id,

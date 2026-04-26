@@ -22,7 +22,7 @@ def register(router: APIRouter) -> None:
         from_date: Optional[str] = Query(None),
         to_date: Optional[str] = Query(None),
         platform: Optional[str] = Query(None),
-        shop_id: Optional[str] = Query(None),
+        store_code: Optional[str] = Query(None),
         shipping_provider_code: Optional[str] = Query(None),
         province: Optional[str] = Query(None),
         city: Optional[str] = Query(None),
@@ -33,7 +33,7 @@ def register(router: APIRouter) -> None:
         from_dt = parse_date_param(from_date)
         to_dt = parse_date_param(to_date)
         platform_clean = clean_opt_str(platform)
-        shop_id_clean = clean_opt_str(shop_id)
+        store_code_clean = clean_opt_str(store_code)
         shipping_provider_code_clean = clean_opt_str(shipping_provider_code)
         province_clean = clean_opt_str(province)
         city_clean = clean_opt_str(city)
@@ -42,7 +42,7 @@ def register(router: APIRouter) -> None:
             from_dt=from_dt,
             to_dt=to_dt,
             platform=platform_clean,
-            shop_id=shop_id_clean,
+            store_code=store_code_clean,
             shipping_provider_code=shipping_provider_code_clean,
             province=province_clean,
             warehouse_id=warehouse_id,

@@ -178,7 +178,7 @@ class CainiaoTopWaybillGateway(WaybillProvider):
         package_no = req.extras.get("package_no")
         if package_no is None:
             package_no = 1
-        return f"{req.platform}:{req.shop_id}:{req.ext_order_no}:{package_no}"
+        return f"{req.platform}:{req.store_code}:{req.ext_order_no}:{package_no}"
 
     def _build_waybill_cloud_print_apply_new_cols(
         self,

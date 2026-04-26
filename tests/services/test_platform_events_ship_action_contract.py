@@ -25,7 +25,7 @@ async def test_platform_ship_event_no_longer_commits_wms_stock() -> None:
             mapped={},
             task={
                 "ref": "ORD:PDD:1:UT-PLATFORM-SHIP-RETIRED",
-                "shop_id": "1",
+                "store_code": "1",
                 "lines": [
                     {
                         "item_id": 3001,

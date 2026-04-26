@@ -14,7 +14,7 @@ async def insert_order_or_get_idempotent(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     store_id: int,
     ext_order_no: str,
     occurred_at,
@@ -42,7 +42,7 @@ async def insert_order_or_get_idempotent(
             """
             INSERT INTO orders (
                 platform,
-                shop_id,
+                store_code,
                 store_id,
                 ext_order_no,
                 status,
@@ -64,13 +64,13 @@ async def insert_order_or_get_idempotent(
                 :ex,
                 :tid
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO NOTHING
             RETURNING id
             """
         )
         bind_orders = {
             "p": platform,
-            "s": shop_id,
+            "s": store_code,
             "store_id": int(store_id),
             "o": ext_order_no,
             "bn": buyer_name,
@@ -86,7 +86,7 @@ async def insert_order_or_get_idempotent(
             """
             INSERT INTO orders (
                 platform,
-                shop_id,
+                store_code,
                 store_id,
                 ext_order_no,
                 status,
@@ -106,13 +106,13 @@ async def insert_order_or_get_idempotent(
                 :at, :at,
                 :tid
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO NOTHING
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO NOTHING
             RETURNING id
             """
         )
         bind_orders = {
             "p": platform,
-            "s": shop_id,
+            "s": store_code,
             "store_id": int(store_id),
             "o": ext_order_no,
             "bn": buyer_name,
@@ -134,12 +134,12 @@ async def insert_order_or_get_idempotent(
                     SELECT id
                       FROM orders
                      WHERE platform=:p
-                       AND shop_id=:s
+                       AND store_code=:s
                        AND ext_order_no=:o
                      LIMIT 1
                     """
                 ),
-                {"p": platform, "s": shop_id, "o": ext_order_no},
+                {"p": platform, "s": store_code, "o": ext_order_no},
             )
         ).first()
         order_id = int(row[0]) if row else None

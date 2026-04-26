@@ -35,13 +35,13 @@ class FinanceOverviewService:
         from_date: date,
         to_date: date,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
     ) -> FinanceOverviewResponse:
         order_data = await OrderSalesSource(self.session).fetch(
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
         )
         purchase_data = await PurchaseCostSource(self.session).fetch(
             from_date=from_date,
@@ -51,7 +51,7 @@ class FinanceOverviewService:
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
         )
 
         order_daily = {row["day"]: row for row in order_data["daily"]}

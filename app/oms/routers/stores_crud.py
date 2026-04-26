@@ -27,7 +27,7 @@ def register(router: APIRouter) -> None:
     @router.get("/stores", response_model=StoreListOut)
     async def list_stores(
         platform: str | None = Query(None, description="平台过滤（如 PDD/TB/DEMO），大小写不敏感"),
-        q: str | None = Query(None, description="模糊搜索：name / shop_id / id"),
+        q: str | None = Query(None, description="模糊搜索：store_name / store_code / id"),
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         session: AsyncSession = Depends(get_session),
@@ -57,8 +57,8 @@ def register(router: APIRouter) -> None:
         if kw:
             where_parts.append(
                 "("
-                "s.name ILIKE :q_like "
-                "OR s.shop_id ILIKE :q_like "
+                "s.store_name ILIKE :q_like "
+                "OR s.store_code ILIKE :q_like "
                 "OR CAST(s.id AS TEXT) ILIKE :q_like"
                 ")"
             )
@@ -72,16 +72,16 @@ def register(router: APIRouter) -> None:
             SELECT
               s.id,
               s.platform,
-              s.shop_id,
-              s.name,
+              s.store_code,
+              s.store_name,
               COALESCE(s.active, TRUE) AS active,
               COALESCE(s.route_mode, 'FALLBACK') AS route_mode,
               s.email,
               s.contact_name,
               s.contact_phone,
-              CASE WHEN pts.id IS NULL THEN 'PROD' ELSE 'TEST' END AS shop_type
+              CASE WHEN pts.id IS NULL THEN 'PROD' ELSE 'TEST' END AS store_type
             FROM stores AS s
-            LEFT JOIN platform_test_shops AS pts
+            LEFT JOIN platform_test_stores AS pts
               ON pts.store_id = s.id
              AND pts.code = 'DEFAULT'
             WHERE {' AND '.join(where_parts)}
@@ -97,11 +97,11 @@ def register(router: APIRouter) -> None:
             StoreListItem(
                 id=row["id"],
                 platform=row["platform"],
-                shop_id=row["shop_id"],
-                name=row["name"],
+                store_code=row["store_code"],
+                store_name=row["store_name"],
                 active=row["active"],
                 route_mode=row["route_mode"],
-                shop_type=row.get("shop_type") or "PROD",
+                store_type=row.get("store_type") or "PROD",
                 email=row.get("email"),
                 contact_name=row.get("contact_name"),
                 contact_phone=row.get("contact_phone"),
@@ -124,38 +124,38 @@ def register(router: APIRouter) -> None:
         权限：config.store.write
 
         ✅ 合同收敛：
-        - shop_type 的唯一真相为 platform_test_shops（code='DEFAULT'）
+        - store_type 的唯一真相为 platform_test_stores（code='DEFAULT'）
         - 创建时可选择 TEST/PROD：
-          * TEST：写入/更新 platform_test_shops（绑定 store_id）
-          * PROD：确保该 store_id 不在 platform_test_shops（删除绑定）
+          * TEST：写入/更新 platform_test_stores（绑定 store_id）
+          * PROD：确保该 store_id 不在 platform_test_stores（删除绑定）
         """
         check_perm(db, current_user, ["config.store.write"])
 
         platform = payload.platform.upper().strip()
-        shop_id = str(payload.shop_id).strip()
-        shop_type = str(payload.shop_type or "PROD").strip().upper()
-        if shop_type not in ("TEST", "PROD"):
-            raise HTTPException(status_code=400, detail=f"shop_type 非法：{shop_type}")
+        store_code = str(payload.store_code).strip()
+        store_type = str(payload.store_type or "PROD").strip().upper()
+        if store_type not in ("TEST", "PROD"):
+            raise HTTPException(status_code=400, detail=f"store_type 非法：{store_type}")
 
         store_id = await StoreService.ensure_store(
             session,
             platform=platform,
-            shop_id=shop_id,
-            name=payload.name,
+            store_code=store_code,
+            store_name=payload.store_name,
         )
 
-        # ✅ 根据 shop_type 写入/清理 platform_test_shops
+        # ✅ 根据 store_type 写入/清理 platform_test_stores
         # 约束提醒：
-        # - uq_platform_test_shops_platform_code：每个平台只有一个 code='DEFAULT'
-        # - uq_platform_test_shops_store_id：store_id 只能绑定一次
-        if shop_type == "TEST":
+        # - uq_platform_test_stores_platform_code：每个平台只有一个 code='DEFAULT'
+        # - uq_platform_test_stores_store_id：store_id 只能绑定一次
+        if store_type == "TEST":
             # 1) 若该平台已存在 DEFAULT 测试店铺且不是当前 store_id，则报业务可解释错误
             row = (
                 await session.execute(
                     text(
                         """
-                        SELECT id, store_id, shop_id
-                          FROM platform_test_shops
+                        SELECT id, store_id, store_code
+                          FROM platform_test_stores
                          WHERE platform = :plat
                            AND code = 'DEFAULT'
                          LIMIT 1
@@ -169,7 +169,7 @@ def register(router: APIRouter) -> None:
                     status_code=409,
                     detail=(
                         f"平台 {platform} 已存在默认测试店铺（code=DEFAULT），"
-                        f"store_id={row.get('store_id')} shop_id={row.get('shop_id')}；"
+                        f"store_id={row.get('store_id')} store_code={row.get('store_code')}；"
                         f"不能再将 store_id={store_id} 设为 TEST。"
                     ),
                 )
@@ -178,7 +178,7 @@ def register(router: APIRouter) -> None:
             await session.execute(
                 text(
                     """
-                    UPDATE platform_test_shops
+                    UPDATE platform_test_stores
                        SET store_id = NULL
                      WHERE store_id = :sid
                        AND NOT (platform = :plat AND code = 'DEFAULT')
@@ -191,15 +191,15 @@ def register(router: APIRouter) -> None:
             await session.execute(
                 text(
                     """
-                    INSERT INTO platform_test_shops(platform, shop_id, store_id, code)
-                    VALUES (:plat, :shop, :sid, 'DEFAULT')
+                    INSERT INTO platform_test_stores(platform, store_code, store_id, code)
+                    VALUES (:plat, :store, :sid, 'DEFAULT')
                     ON CONFLICT (platform, code)
                     DO UPDATE SET
-                      shop_id = EXCLUDED.shop_id,
+                      store_code = EXCLUDED.store_code,
                       store_id = EXCLUDED.store_id
                     """
                 ),
-                {"plat": platform, "shop": shop_id, "sid": int(store_id)},
+                {"plat": platform, "store": store_code, "sid": int(store_id)},
             )
 
         else:
@@ -207,7 +207,7 @@ def register(router: APIRouter) -> None:
             await session.execute(
                 text(
                     """
-                    DELETE FROM platform_test_shops
+                    DELETE FROM platform_test_stores
                      WHERE store_id = :sid
                        AND code = 'DEFAULT'
                     """
@@ -222,9 +222,9 @@ def register(router: APIRouter) -> None:
             data={
                 "store_id": store_id,
                 "platform": platform,
-                "shop_id": shop_id,
-                "name": payload.name or f"{platform}-{shop_id}",
-                "shop_type": shop_type,
+                "store_code": store_code,
+                "store_name": payload.store_name or f"{platform}-{store_code}",
+                "store_type": store_type,
             },
         )
 
@@ -246,8 +246,8 @@ def register(router: APIRouter) -> None:
         await ensure_store_exists(session, store_id)
 
         fields: dict[str, Any] = {}
-        if payload.name is not None:
-            fields["name"] = payload.name
+        if payload.store_name is not None:
+            fields["store_name"] = payload.store_name
         if payload.active is not None:
             fields["active"] = payload.active
         if payload.route_mode is not None:
@@ -265,8 +265,8 @@ def register(router: APIRouter) -> None:
                 SELECT
                   s.id,
                   s.platform,
-                  s.shop_id,
-                  s.name,
+                  s.store_code,
+                  s.store_name,
                   s.active,
                   s.route_mode,
                   s.email,
@@ -298,8 +298,8 @@ def register(router: APIRouter) -> None:
             RETURNING
               id,
               platform,
-              shop_id,
-              name,
+              store_code,
+              store_name,
               active,
               route_mode,
               email,

@@ -15,7 +15,7 @@ from app.wms.stock.services.lots import ensure_lot_full
 from app.wms.stock.services.stock_service import StockService
 
 
-async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_id: str, province: str) -> None:
+async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, store_code: str, province: str) -> None:
     """
     该 helper 保留用于历史/可读性：配置 store_warehouse + store_province_routes。
     Phase 5 的服务归属命中依赖 warehouse_service_provinces(/cities)，与 store_province_routes 无关。
@@ -23,16 +23,24 @@ async def _ensure_store_route_to_wh1(session: AsyncSession, *, plat: str, shop_i
     await session.execute(
         text(
             """
-            INSERT INTO stores (platform, shop_id, name)
-            VALUES (:p,:s,:n)
-            ON CONFLICT (platform, shop_id) DO NOTHING
+            INSERT INTO stores (
+  platform,
+  store_code,
+  store_name
+)
+VALUES (
+  :p,
+  :s,
+  :n
+)
+            ON CONFLICT (platform, store_code) DO NOTHING
             """
         ),
-        {"p": plat.upper(), "s": shop_id, "n": f"UT-{plat.upper()}-{shop_id}"},
+        {"p": plat.upper(), "s": store_code, "n": f"UT-{plat.upper()}-{store_code}"},
     )
     row = await session.execute(
-        text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"),
-        {"p": plat.upper(), "s": shop_id},
+        text("SELECT id FROM stores WHERE platform=:p AND store_code=:s LIMIT 1"),
+        {"p": plat.upper(), "s": store_code},
     )
     store_id = int(row.scalar_one())
 
@@ -191,7 +199,7 @@ async def _upsert_active_waybill_config(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     provider_id: int,
 ) -> None:
     await session.execute(
@@ -199,7 +207,7 @@ async def _upsert_active_waybill_config(
             """
             INSERT INTO electronic_waybill_configs (
                 platform,
-                shop_id,
+                store_code,
                 shipping_provider_id,
                 customer_code,
                 sender_name,
@@ -215,7 +223,7 @@ async def _upsert_active_waybill_config(
             )
             VALUES (
                 :platform,
-                :shop_id,
+                :store_code,
                 :provider_id,
                 'UT-CUSTOMER-CODE',
                 'UT-SENDER',
@@ -229,7 +237,7 @@ async def _upsert_active_waybill_config(
                 now(),
                 now()
             )
-            ON CONFLICT (platform, shop_id, shipping_provider_id) DO UPDATE
+            ON CONFLICT (platform, store_code, shipping_provider_id) DO UPDATE
                SET customer_code = EXCLUDED.customer_code,
                    sender_name = EXCLUDED.sender_name,
                    sender_mobile = EXCLUDED.sender_mobile,
@@ -244,7 +252,7 @@ async def _upsert_active_waybill_config(
         ),
         {
             "platform": str(platform).upper(),
-            "shop_id": str(shop_id),
+            "store_code": str(store_code),
             "provider_id": int(provider_id),
         },
     )
@@ -254,7 +262,7 @@ async def _load_order_id(
     session: AsyncSession,
     *,
     plat: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
 ) -> int:
     row = await session.execute(
@@ -263,14 +271,14 @@ async def _load_order_id(
             SELECT id
             FROM orders
             WHERE platform = :platform
-              AND shop_id = :shop_id
+              AND store_code = :store_code
               AND ext_order_no = :ext_order_no
             LIMIT 1
             """
         ),
         {
             "platform": str(plat).upper(),
-            "shop_id": str(shop_id),
+            "store_code": str(store_code),
             "ext_order_no": str(ext_order_no),
         },
     )
@@ -367,17 +375,17 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     5) ship-with-waybill：完成发货执行并返回运输事实
     """
     plat = "PDD"
-    shop_id = "1"
+    store_code = "1"
     uniq = uuid4().hex[:10]
     ext = f"ORD-TEST-3001-{uniq}"
-    order_ref = f"ORD:{plat}:{shop_id}:{ext}"
+    order_ref = f"ORD:{plat}:{store_code}:{ext}"
     now = datetime.now(timezone.utc)
 
     province = "UT-PROV"
     city = "UT-CITY"
     district = "UT-DISTRICT"
 
-    await _ensure_store_route_to_wh1(db_session_like_pg, plat=plat, shop_id=shop_id, province=province)
+    await _ensure_store_route_to_wh1(db_session_like_pg, plat=plat, store_code=store_code, province=province)
     await db_session_like_pg.commit()
 
     trace_id = f"TEST-TRACE-ORDER-3001-{uniq}"
@@ -388,7 +396,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     r = await OrderService.ingest(
         db_session_like_pg,
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext,
         occurred_at=now,
         buyer_name="tester",
@@ -413,7 +421,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     order_id = await _load_order_id(
         db_session_like_pg,
         plat=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext,
     )
 
@@ -424,7 +432,7 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     headers = {"Authorization": f"Bearer {token}"}
 
     resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/fulfillment/manual-assign",
+        f"/orders/{plat}/{store_code}/{ext}/fulfillment/manual-assign",
         json={"warehouse_id": 1, "reason": "UT assign", "note": "test"},
         headers=headers,
     )
@@ -494,14 +502,14 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
     await _upsert_active_waybill_config(
         db_session_like_pg,
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         provider_id=shipping_provider_id,
     )
     await db_session_like_pg.commit()
 
     # 5) ship-with-waybill（Shipment Execution 唯一主入口）
     resp = await client.post(
-        f"/orders/{plat}/{shop_id}/{ext}/ship-with-waybill",
+        f"/orders/{plat}/{store_code}/{ext}/ship-with-waybill",
         json={
             "package_no": 1,
             "receiver_name": "X",

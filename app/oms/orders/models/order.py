@@ -27,7 +27,7 @@ class Order(Base):
 
     当前阶段定位：
     - store_id：内部统一主身份（stores.id）
-    - shop_id：兼容业务身份（暂保留，用于旧链路 / 展示 / 对账）
+    - store_code：兼容业务身份（暂保留，用于旧链路 / 展示 / 对账）
     - platform + ext_order_no：平台订单来源识别的一部分
     """
 
@@ -49,10 +49,10 @@ class Order(Base):
         comment="平台标识（如 PDD / TAOBAO / JD）",
     )
 
-    shop_id: Mapped[str] = mapped_column(
+    store_code: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        comment="店铺 ID（字符串，与 stores.shop_id 对齐）",
+        comment="店铺 ID（字符串，与 stores.store_code 对齐）",
     )
 
     ext_order_no: Mapped[str] = mapped_column(
@@ -141,6 +141,6 @@ class Order(Base):
     def __repr__(self) -> str:
         return (
             f"<Order id={self.id} store_id={self.store_id} "
-            f"{self.platform}/{self.shop_id} ext={self.ext_order_no} "
+            f"{self.platform}/{self.store_code} ext={self.ext_order_no} "
             f"status={self.status} trace={self.trace_id}>"
         )

@@ -23,11 +23,11 @@ class FakeAvailabilityProvider:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         item_id: int,
     ) -> int:
-        # 对于测试来说，忽略 platform / shop_id，只用 wh + item
+        # 对于测试来说，忽略 platform / store_code，只用 wh + item
         return int(self._data.get((warehouse_id, item_id), 0))
 
 
@@ -36,15 +36,15 @@ async def test_route_prefers_top_warehouse_when_has_stock():
     """
     主仓有货、备仓也有货时，应优先主仓。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O1")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O1")
     lines = [OrderLine(item_id=1, qty=5)]
 
     bindings = [
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=10, is_top=True, priority=10
+            platform="PDD", store_code="S1", warehouse_id=10, is_top=True, priority=10
         ),
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=20, is_top=False, priority=1
+            platform="PDD", store_code="S1", warehouse_id=20, is_top=False, priority=1
         ),
     ]
 
@@ -69,15 +69,15 @@ async def test_route_fallback_to_backup_when_top_has_no_stock():
     """
     主仓库存不足时，应落到备仓（“主仓/备仓切换”场景）。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O2")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O2")
     lines = [OrderLine(item_id=1, qty=5)]
 
     bindings = [
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=10, is_top=True, priority=10
+            platform="PDD", store_code="S1", warehouse_id=10, is_top=True, priority=10
         ),
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=20, is_top=False, priority=1
+            platform="PDD", store_code="S1", warehouse_id=20, is_top=False, priority=1
         ),
     ]
 
@@ -103,15 +103,15 @@ async def test_route_respects_priority_within_top_group():
     """
     多个主仓时，按 priority 升序选择。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O3")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O3")
     lines = [OrderLine(item_id=1, qty=5)]
 
     bindings = [
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=10, is_top=True, priority=20
+            platform="PDD", store_code="S1", warehouse_id=10, is_top=True, priority=20
         ),
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=11, is_top=True, priority=10
+            platform="PDD", store_code="S1", warehouse_id=11, is_top=True, priority=10
         ),
     ]
 
@@ -134,7 +134,7 @@ async def test_route_requires_full_order_fulfillment():
     """
     多行订单必须同仓全部满足，否则视为不可履约。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O4")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O4")
     lines = [
         OrderLine(item_id=1, qty=5),
         OrderLine(item_id=2, qty=3),
@@ -142,10 +142,10 @@ async def test_route_requires_full_order_fulfillment():
 
     bindings = [
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=10, is_top=True, priority=10
+            platform="PDD", store_code="S1", warehouse_id=10, is_top=True, priority=10
         ),
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=20, is_top=False, priority=1
+            platform="PDD", store_code="S1", warehouse_id=20, is_top=False, priority=1
         ),
     ]
 
@@ -173,7 +173,7 @@ async def test_no_warehouse_configured_raises():
     """
     无任何 store_warehouse 配置时，抛 NoWarehouseConfigured。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O5")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O5")
     lines = [OrderLine(item_id=1, qty=5)]
 
     bindings = []  # 无配置
@@ -190,15 +190,15 @@ async def test_no_warehouse_can_fulfill_raises():
     """
     所有配置仓库存都不足时，抛 NoWarehouseCanFulfill（“库存不足 fallback”终止）。
     """
-    ctx = OrderContext(platform="PDD", shop_id="S1", order_id="O6")
+    ctx = OrderContext(platform="PDD", store_code="S1", order_id="O6")
     lines = [OrderLine(item_id=1, qty=5)]
 
     bindings = [
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=10, is_top=True, priority=10
+            platform="PDD", store_code="S1", warehouse_id=10, is_top=True, priority=10
         ),
         StoreWarehouseBinding(
-            platform="PDD", shop_id="S1", warehouse_id=20, is_top=False, priority=1
+            platform="PDD", store_code="S1", warehouse_id=20, is_top=False, priority=1
         ),
     ]
 

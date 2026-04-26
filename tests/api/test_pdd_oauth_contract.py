@@ -106,7 +106,7 @@ async def test_pdd_oauth_callback_success(client, session, monkeypatch):
             platform="pdd",
             store_id=202,
             owner_id="owner-202",
-            owner_name="shop-202",
+            owner_name="store-202",
             access_token="access-token-202",
             refresh_token="refresh-token-202",
             expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
@@ -135,7 +135,7 @@ async def test_pdd_oauth_callback_success(client, session, monkeypatch):
         assert data["platform"] == "pdd"
         assert data["store_id"] == 202
         assert data["owner_id"] == "owner-202"
-        assert data["owner_name"] == "shop-202"
+        assert data["owner_name"] == "store-202"
         assert data["access_token_present"] is True
         assert data["refresh_token_present"] is True
         assert data["expires_at"] == "2030-01-01T00:00:00+00:00"

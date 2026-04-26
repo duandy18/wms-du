@@ -17,11 +17,11 @@ async def get_order_ref_and_trace_id(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
 ) -> tuple[str, Optional[str]]:
     plat = platform.upper()
-    order_ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
+    order_ref = f"ORD:{plat}:{store_code}:{ext_order_no}"
 
     trace_id: Optional[str] = None
 
@@ -29,7 +29,7 @@ async def get_order_ref_and_trace_id(
         trace_id = await OrderService.get_trace_id_for_order(
             session=session,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             ref=order_ref,
         )
     except Exception:
@@ -44,13 +44,13 @@ async def get_order_ref_and_trace_id(
                     SELECT trace_id
                       FROM orders
                      WHERE platform = :p
-                       AND shop_id  = :s
+                       AND store_code  = :s
                        AND ext_order_no = :o
                      ORDER BY id DESC
                      LIMIT 1
                     """
                     ),
-                    {"p": plat, "s": shop_id, "o": ext_order_no},
+                    {"p": plat, "s": store_code, "o": ext_order_no},
                 )
             )
             .mappings()

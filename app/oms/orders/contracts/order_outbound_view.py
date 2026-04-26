@@ -22,7 +22,7 @@ class OrderOutboundViewOrderOut(BaseModel):
 
     id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
 
     status: Optional[str] = None

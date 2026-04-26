@@ -20,7 +20,7 @@ class SandboxOrderLine:
 @dataclass
 class SandboxOrder:
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_id: str
     lines: List[SandboxOrderLine]
 
@@ -119,20 +119,18 @@ async def seed_world_phase5(session: AsyncSession) -> Tuple[int, int, int]:
     wh1, wh2, wh3 = int(wh_ids[0]), int(wh_ids[1]), int(wh_ids[2])
 
     # stores 终态约束：
-    # - UNIQUE(platform, shop_id)
     # - UNIQUE(platform, store_code)
     # 且 store_code 有默认触发器，但不能依赖触发器避免冲突；必须显式写入并用正确 conflict target。
     await session.execute(
         sa.text(
             """
-            INSERT INTO stores (platform, shop_id, store_code, name, active)
+            INSERT INTO stores (platform, store_code, store_name, active)
             VALUES
-              ('PDD','S1','S1','S1',TRUE),
-              ('PDD','S2','S2','S2',TRUE),
-              ('PDD','S3','S3','S3',TRUE)
+              ('PDD','S1','S1',TRUE),
+              ('PDD','S2','S2',TRUE),
+              ('PDD','S3','S3',TRUE)
             ON CONFLICT (platform, store_code) DO UPDATE
-              SET shop_id = EXCLUDED.shop_id,
-                  name    = EXCLUDED.name,
+              SET store_name = EXCLUDED.store_name,
                   active  = EXCLUDED.active,
                   updated_at = now();
             """
@@ -170,13 +168,13 @@ def generate_orders(n: int, *, item_ids: List[int]) -> List[SandboxOrder]:
     随机生成订单（只跑 ingest）。
     为了可复现，外部调用前应设定 random.seed。
     """
-    shops = ["S1", "S2", "S3"]
+    stores = ["S1", "S2", "S3"]
     if not item_ids:
         raise ValueError("item_ids must not be empty")
 
     orders: List[SandboxOrder] = []
     for i in range(n):
-        shop = random.choice(shops)
+        store = random.choice(stores)
         lines = [
             SandboxOrderLine(item_id=int(random.choice(item_ids)), qty=random.randint(1, 8))
             for _ in range(random.randint(1, 3))
@@ -184,7 +182,7 @@ def generate_orders(n: int, *, item_ids: List[int]) -> List[SandboxOrder]:
         orders.append(
             SandboxOrder(
                 platform="PDD",
-                shop_id=shop,
+                store_code=store,
                 ext_order_id=f"SANDBOX-{i:04d}",
                 lines=lines,
             )
@@ -205,14 +203,14 @@ async def collect_order_summary_phase5(session: AsyncSession):
             """
             SELECT
               o.platform,
-              o.shop_id,
+              o.store_code,
               f.fulfillment_status AS fulfillment_status,
               COALESCE(f.planned_warehouse_id, 0) AS service_warehouse_id,
               COUNT(*) AS n
             FROM orders o
             LEFT JOIN order_fulfillment f ON f.order_id = o.id
-            GROUP BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0)
-            ORDER BY o.platform, o.shop_id, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0);
+            GROUP BY o.platform, o.store_code, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0)
+            ORDER BY o.platform, o.store_code, f.fulfillment_status, COALESCE(f.planned_warehouse_id, 0);
             """
         )
     )
@@ -248,15 +246,15 @@ async def test_routing_sandbox_ingest_only(
     # 使用测试基线里真实存在的 item_id，避免 FK 漂移
     item_ids = await _pick_existing_item_ids(session, n=3)
 
-    shop_province = {"S1": "P-S1", "S2": "P-S2", "S3": "P-S3"}
+    store_province = {"S1": "P-S1", "S2": "P-S2", "S3": "P-S3"}
 
     orders = generate_orders(200, item_ids=item_ids)
     for order in orders:
-        province = shop_province[order.shop_id]
+        province = store_province[order.store_code]
         await OrderService.ingest(
             session,
             platform=order.platform,
-            shop_id=order.shop_id,
+            store_code=order.store_code,
             ext_order_no=order.ext_order_id,
             items=[{"item_id": line.item_id, "qty": line.qty} for line in order.lines],
             address={"province": province, "receiver_name": "X", "receiver_phone": "000"},
@@ -273,7 +271,7 @@ async def test_routing_sandbox_ingest_only(
     # ----------------------
     # S1：应全部 SERVICE_ASSIGNED 到 wh2
     # ----------------------
-    s1 = [r for r in summary if r.shop_id == "S1"]
+    s1 = [r for r in summary if r.store_code == "S1"]
     assert s1, "no S1 rows in summary"
     assert all(str(r.fulfillment_status) == "SERVICE_ASSIGNED" for r in s1)
     assert sum(int(r.n) for r in s1 if int(r.service_warehouse_id) == int(wh2)) > 0
@@ -282,7 +280,7 @@ async def test_routing_sandbox_ingest_only(
     # ----------------------
     # S2：应全部 SERVICE_ASSIGNED 到 wh3
     # ----------------------
-    s2 = [r for r in summary if r.shop_id == "S2"]
+    s2 = [r for r in summary if r.store_code == "S2"]
     assert s2, "no S2 rows in summary"
     assert all(str(r.fulfillment_status) == "SERVICE_ASSIGNED" for r in s2)
     assert sum(int(r.n) for r in s2 if int(r.service_warehouse_id) == int(wh3)) > 0
@@ -291,7 +289,7 @@ async def test_routing_sandbox_ingest_only(
     # ----------------------
     # S3：应出现 FULFILLMENT_BLOCKED，且 service_warehouse_id=0
     # ----------------------
-    s3 = [r for r in summary if r.shop_id == "S3"]
+    s3 = [r for r in summary if r.store_code == "S3"]
     assert s3, "no S3 rows in summary"
     blocked_s3 = sum(int(r.n) for r in s3 if str(r.fulfillment_status) == "FULFILLMENT_BLOCKED")
     assert blocked_s3 > 0

@@ -31,14 +31,28 @@ VALUES (1, 'WH-1', 'WH-1')
 ON CONFLICT (id) DO NOTHING;
 
 -- ===== stores (TEST gate baseline) =====
-INSERT INTO stores (id, platform, shop_id, name, active, route_mode)
-VALUES (9001, 'PDD', 'UT-TEST-SHOP-1', 'UT-TEST-STORE-1', true, 'FALLBACK')
+INSERT INTO stores (
+  id,
+  platform,
+  store_code,
+  store_name,
+  active,
+  route_mode
+)
+VALUES (
+  9001,
+  'PDD',
+  'UT-TEST-STORE-1',
+  'UT-TEST-STORE-1',
+  true,
+  'FALLBACK'
+)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO platform_test_shops (platform, shop_id, store_id, code)
-VALUES ('PDD', 'UT-TEST-SHOP-1', 9001, 'DEFAULT')
+INSERT INTO platform_test_stores (platform, store_code, store_id, code)
+VALUES ('PDD', 'UT-TEST-STORE-1', 9001, 'DEFAULT')
 ON CONFLICT (platform, code)
-DO UPDATE SET shop_id = EXCLUDED.shop_id, store_id = EXCLUDED.store_id;
+DO UPDATE SET store_code = EXCLUDED.store_code, store_id = EXCLUDED.store_id;
 
 -- ===== suppliers (minimal) =====
 INSERT INTO suppliers (id, name, code, active)

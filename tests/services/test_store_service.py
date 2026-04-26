@@ -14,7 +14,7 @@ async def test_store_crud_and_visibility(session, _db_clean_and_seed):
     - 能通过 StoreService.get_store() 读回该记录（非 None 即可）。
 
     注意：
-    - 使用随机 code / shop_id，避免与基线种子中的店铺唯一键冲突。
+    - 使用随机 code / store_code，避免与基线种子中的店铺唯一键冲突。
     """
     from app.oms.services.store_service import StoreService
 
@@ -24,7 +24,7 @@ async def test_store_crud_and_visibility(session, _db_clean_and_seed):
     name = f"测试门店-{suffix}"
     code = f"S-{suffix}"
 
-    # 创建一个基础店铺（platform / shop_id 使用内部默认）
+    # 创建一个基础店铺（platform / store_code 使用内部默认）
     store_id = await svc.create_store(
         session=session,
         name=name,
@@ -38,4 +38,4 @@ async def test_store_crud_and_visibility(session, _db_clean_and_seed):
     got = await svc.get_store(session=session, store_id=store_id)
     assert got is not None
     assert got["id"] == store_id
-    assert got["name"] == name
+    assert got["store_name"] == name

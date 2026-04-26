@@ -12,7 +12,7 @@ PddMockScenario = Literal["normal", "address_missing", "item_abnormal", "mixed"]
 class PddMockAuthorizeRequest(BaseModel):
     granted_identity_display: Optional[str] = Field(
         default=None,
-        description="授权展示名；为空时默认使用 shop_id",
+        description="授权展示名；为空时默认使用 store_code",
     )
     access_token: Optional[str] = Field(
         default=None,

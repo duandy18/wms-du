@@ -21,7 +21,7 @@ async def _seed_prepare_order_case(
 ) -> dict[str, object]:
     uniq = uuid4().hex[:10]
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     ext_order_no = f"PREPARE-UT-{uniq}"
     trace_id = f"TRACE-{uniq}"
     warehouse_id = 1
@@ -31,7 +31,7 @@ async def _seed_prepare_order_case(
     order_id = await insert_min_order(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         warehouse_id=warehouse_id,
         fulfillment_status="SERVICE_ASSIGNED",
@@ -108,7 +108,7 @@ async def _seed_prepare_order_case(
     return {
         "order_id": int(order_id),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
     }
 
@@ -121,13 +121,13 @@ async def test_get_prepare_order_detail_returns_pending_when_prepare_missing(
 
     detail = await svc.get_prepare_order_detail(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
     )
 
     assert detail.order_id == int(ctx["order_id"])
     assert detail.platform == str(ctx["platform"])
-    assert detail.shop_id == str(ctx["shop_id"])
+    assert detail.store_code == str(ctx["store_code"])
     assert detail.ext_order_no == str(ctx["ext_order_no"])
     assert detail.receiver_name == "张三"
     assert detail.receiver_phone == "13800000000"
@@ -147,7 +147,7 @@ async def test_get_prepare_order_detail_returns_existing_ready_status(
 
     detail = await svc.get_prepare_order_detail(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
     )
 
@@ -163,7 +163,7 @@ async def test_confirm_order_address_ready_creates_prepare_row_when_missing(
 
     detail = await svc.confirm_order_address_ready(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         address_ready_status="ready",
     )
@@ -204,7 +204,7 @@ async def test_confirm_order_address_ready_updates_existing_prepare_row(
 
     detail = await svc.confirm_order_address_ready(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         address_ready_status="ready",
     )

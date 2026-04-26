@@ -24,12 +24,12 @@ from .service_prepare_quotes import ShipmentPrepareQuotesService
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/packages/{package_no}/quote",
         response_model=ShipPreparePackageQuoteResponse,
     )
     async def quote_prepare_package(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
         session: AsyncSession = Depends(get_session),
@@ -39,19 +39,19 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPrepareQuotesService(session)
         item = await svc.quote_prepare_package(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=package_no,
         )
         return ShipPreparePackageQuoteResponse(ok=True, item=item)
 
     @router.post(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}/quote/confirm",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/packages/{package_no}/quote/confirm",
         response_model=ShipPreparePackageQuoteConfirmResponse,
     )
     async def confirm_prepare_package_quote(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
         payload: ShipPreparePackageQuoteConfirmRequest,
@@ -62,7 +62,7 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPrepareQuotesService(session)
         item = await svc.confirm_prepare_package_quote(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=package_no,
             provider_id=payload.provider_id,

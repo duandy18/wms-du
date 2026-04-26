@@ -29,7 +29,7 @@ def row_to_waybill_config(row: Any) -> WaybillConfigOut:
     return WaybillConfigOut(
         id=int(row["id"]),
         platform=row["platform"],
-        shop_id=row["shop_id"],
+        store_code=row["store_code"],
         shipping_provider_id=int(row["shipping_provider_id"]),
         shipping_provider_name=row.get("shipping_provider_name"),
         customer_code=row["customer_code"],
@@ -49,7 +49,7 @@ async def list_waybill_configs(
     *,
     active: Optional[bool] = None,
     platform: Optional[str] = None,
-    shop_id: Optional[str] = None,
+    store_code: Optional[str] = None,
     shipping_provider_id: Optional[int] = None,
     q: Optional[str] = None,
 ) -> List[WaybillConfigOut]:
@@ -64,9 +64,9 @@ async def list_waybill_configs(
         where.append("c.platform = :platform")
         params["platform"] = platform.strip().upper()
 
-    if shop_id:
-        where.append("c.shop_id = :shop_id")
-        params["shop_id"] = shop_id.strip()
+    if store_code:
+        where.append("c.store_code = :store_code")
+        params["store_code"] = store_code.strip()
 
     if shipping_provider_id is not None:
         where.append("c.shipping_provider_id = :shipping_provider_id")
@@ -76,7 +76,7 @@ async def list_waybill_configs(
         where.append(
             """(
                 c.platform ILIKE :q
-                OR c.shop_id ILIKE :q
+                OR c.store_code ILIKE :q
                 OR c.customer_code ILIKE :q
                 OR c.sender_name ILIKE :q
                 OR sp.name ILIKE :q
@@ -92,7 +92,7 @@ async def list_waybill_configs(
         SELECT
           c.id,
           c.platform,
-          c.shop_id,
+          c.store_code,
           c.shipping_provider_id,
           sp.name AS shipping_provider_name,
           c.customer_code,
@@ -107,7 +107,7 @@ async def list_waybill_configs(
         FROM electronic_waybill_configs c
         JOIN shipping_providers sp ON sp.id = c.shipping_provider_id
         {where_sql}
-        ORDER BY c.platform ASC, c.shop_id ASC, c.id ASC
+        ORDER BY c.platform ASC, c.store_code ASC, c.id ASC
         """
     )
     rows = (await session.execute(sql, params)).mappings().all()
@@ -120,7 +120,7 @@ async def get_waybill_config(session: AsyncSession, config_id: int) -> Optional[
         SELECT
           c.id,
           c.platform,
-          c.shop_id,
+          c.store_code,
           c.shipping_provider_id,
           sp.name AS shipping_provider_name,
           c.customer_code,
@@ -146,7 +146,7 @@ async def get_active_waybill_config_for_shipment(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     shipping_provider_id: int,
 ) -> Optional[WaybillConfigOut]:
     sql = text(
@@ -154,7 +154,7 @@ async def get_active_waybill_config_for_shipment(
         SELECT
           c.id,
           c.platform,
-          c.shop_id,
+          c.store_code,
           c.shipping_provider_id,
           sp.name AS shipping_provider_name,
           c.customer_code,
@@ -169,7 +169,7 @@ async def get_active_waybill_config_for_shipment(
         FROM electronic_waybill_configs c
         JOIN shipping_providers sp ON sp.id = c.shipping_provider_id
         WHERE c.platform = :platform
-          AND c.shop_id = :shop_id
+          AND c.store_code = :store_code
           AND c.shipping_provider_id = :shipping_provider_id
           AND c.active = true
         LIMIT 1
@@ -180,7 +180,7 @@ async def get_active_waybill_config_for_shipment(
             sql,
             {
                 "platform": _norm_required_text(platform, upper=True),
-                "shop_id": _norm_required_text(shop_id),
+                "store_code": _norm_required_text(store_code),
                 "shipping_provider_id": int(shipping_provider_id),
             },
         )
@@ -192,7 +192,7 @@ async def create_waybill_config(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     shipping_provider_id: int,
     customer_code: str,
     sender_name: Optional[str],
@@ -208,7 +208,7 @@ async def create_waybill_config(
         """
         INSERT INTO electronic_waybill_configs (
           platform,
-          shop_id,
+          store_code,
           shipping_provider_id,
           customer_code,
           sender_name,
@@ -222,7 +222,7 @@ async def create_waybill_config(
         )
         VALUES (
           :platform,
-          :shop_id,
+          :store_code,
           :shipping_provider_id,
           :customer_code,
           :sender_name,
@@ -242,7 +242,7 @@ async def create_waybill_config(
             sql,
             {
                 "platform": _norm_required_text(platform, upper=True),
-                "shop_id": _norm_required_text(shop_id),
+                "store_code": _norm_required_text(store_code),
                 "shipping_provider_id": int(shipping_provider_id),
                 "customer_code": _norm_required_text(customer_code),
                 "sender_name": _norm_optional_text(sender_name),
@@ -265,7 +265,7 @@ async def update_waybill_config(
     *,
     config_id: int,
     platform: Optional[str] = None,
-    shop_id: Optional[str] = None,
+    store_code: Optional[str] = None,
     shipping_provider_id: Optional[int] = None,
     customer_code: Optional[str] = None,
     sender_name: Optional[str] = None,
@@ -281,8 +281,8 @@ async def update_waybill_config(
 
     if platform is not None:
         fields["platform"] = _norm_required_text(platform, upper=True)
-    if shop_id is not None:
-        fields["shop_id"] = _norm_required_text(shop_id)
+    if store_code is not None:
+        fields["store_code"] = _norm_required_text(store_code)
     if shipping_provider_id is not None:
         fields["shipping_provider_id"] = int(shipping_provider_id)
     if customer_code is not None:

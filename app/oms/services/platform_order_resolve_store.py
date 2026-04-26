@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.oms.services.platform_order_resolve_utils import norm_platform, norm_shop_id
+from app.oms.services.platform_order_resolve_utils import norm_platform, norm_store_code
 from app.oms.services.store_service import StoreService
 
 
@@ -14,11 +14,11 @@ async def resolve_store_id(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     store_name: Optional[str],
 ) -> int:
     plat = norm_platform(platform)
-    sid = norm_shop_id(shop_id)
+    sid = norm_store_code(store_code)
 
     row = (
         (
@@ -28,7 +28,7 @@ async def resolve_store_id(
                     SELECT id
                       FROM stores
                      WHERE platform = :p
-                       AND shop_id  = :s
+                       AND store_code  = :s
                      LIMIT 1
                     """
                 ),
@@ -44,8 +44,8 @@ async def resolve_store_id(
     await StoreService.ensure_store(
         session,
         platform=plat,
-        shop_id=sid,
-        name=store_name or f"{plat}-{sid}",
+        store_code=sid,
+        store_name=store_name or f"{plat}-{sid}",
     )
 
     row2 = (
@@ -56,7 +56,7 @@ async def resolve_store_id(
                     SELECT id
                       FROM stores
                      WHERE platform = :p
-                       AND shop_id  = :s
+                       AND store_code  = :s
                      LIMIT 1
                     """
                 ),
@@ -67,18 +67,18 @@ async def resolve_store_id(
         .first()
     )
     if not row2 or row2.get("id") is None:
-        raise RuntimeError(f"ensure_store failed: platform={plat} shop_id={sid}")
+        raise RuntimeError(f"ensure_store failed: platform={plat} store_code={sid}")
     return int(row2["id"])
 
 
-async def load_shop_id_by_store_id(
+async def load_store_code_by_store_id(
     session: AsyncSession,
     *,
     platform: str,
     store_id: int,
 ) -> Optional[str]:
     """
-    用 store_id 反查平台 shop_id（绑定表唯一域是 platform+shop_id+merchant_code）。
+    用 store_id 反查平台 store_code（绑定表唯一域是 platform+store_code+merchant_code）。
     """
     plat = norm_platform(platform)
     row = (
@@ -86,7 +86,7 @@ async def load_shop_id_by_store_id(
             await session.execute(
                 text(
                     """
-                    SELECT shop_id
+                    SELECT store_code
                       FROM stores
                      WHERE id = :sid
                        AND platform = :p
@@ -101,5 +101,5 @@ async def load_shop_id_by_store_id(
     )
     if not row:
         return None
-    v = row.get("shop_id")
-    return norm_shop_id(str(v)) if v is not None else None
+    v = row.get("store_code")
+    return norm_store_code(str(v)) if v is not None else None

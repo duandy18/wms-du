@@ -11,13 +11,13 @@ from app.oms.contracts.platform_orders_ingest import PlatformOrderIngestIn
 from app.oms.services.order_ingest_normalize import normalize_province_name
 
 
-async def load_shop_id_by_store_id(session: AsyncSession, *, store_id: int, platform: str) -> str:
+async def load_store_code_by_store_id(session: AsyncSession, *, store_id: int, platform: str) -> str:
     row = (
         (
             await session.execute(
                 text(
                     """
-                    SELECT shop_id, platform
+                    SELECT store_code, platform
                       FROM stores
                      WHERE id = :id
                      LIMIT 1
@@ -31,13 +31,13 @@ async def load_shop_id_by_store_id(session: AsyncSession, *, store_id: int, plat
     )
     if not row:
         raise LookupError("store not found")
-    shop = row.get("shop_id")
+    store = row.get("store_code")
     plat = (row.get("platform") or "").strip().upper()
-    if not shop:
-        raise LookupError("store shop_id empty")
+    if not store:
+        raise LookupError("store store_code empty")
     if plat and plat != norm_platform(platform):
         raise ValueError(f"platform mismatch: store.platform={plat} req.platform={norm_platform(platform)}")
-    return str(shop)
+    return str(store)
 
 
 def build_address(payload: PlatformOrderIngestIn) -> Optional[Dict[str, str]]:

@@ -6,14 +6,14 @@ from typing import Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.oms.services.platform_order_resolve_utils import norm_platform, norm_shop_id
+from app.oms.services.platform_order_resolve_utils import norm_platform, norm_store_code
 
 
 async def resolve_fsku_id_by_binding(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     merchant_code: str,
 ) -> Tuple[Optional[int], Optional[str]]:
     """
@@ -25,7 +25,7 @@ async def resolve_fsku_id_by_binding(
       - CODE_NOT_BOUND: 未找到绑定
     """
     plat = norm_platform(platform)
-    sid = norm_shop_id(shop_id)
+    sid = norm_store_code(store_code)
     code = (merchant_code or "").strip()
     if not code:
         return (None, "CODE_NOT_BOUND")
@@ -40,13 +40,13 @@ async def resolve_fsku_id_by_binding(
                       FROM merchant_code_fsku_bindings b
                       JOIN fskus f ON f.id = b.fsku_id
                      WHERE b.platform = :p
-                       AND b.shop_id = :shop_id
+                       AND b.store_code = :store_code
                        AND b.merchant_code = :code
                        AND f.status = 'published'
                      LIMIT 1
                     """
                 ),
-                {"p": plat, "shop_id": sid, "code": code},
+                {"p": plat, "store_code": sid, "code": code},
             )
         )
         .mappings()
@@ -65,12 +65,12 @@ async def resolve_fsku_id_by_binding(
                       FROM merchant_code_fsku_bindings b
                       LEFT JOIN fskus f ON f.id = b.fsku_id
                      WHERE b.platform = :p
-                       AND b.shop_id = :shop_id
+                       AND b.store_code = :store_code
                        AND b.merchant_code = :code
                      LIMIT 1
                     """
                 ),
-                {"p": plat, "shop_id": sid, "code": code},
+                {"p": plat, "store_code": sid, "code": code},
             )
         )
         .mappings()

@@ -23,7 +23,7 @@ async def _get_order_id_and_current_actual_wh(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
 ) -> Tuple[int, Optional[int]]:
     """
@@ -39,16 +39,16 @@ async def _get_order_id_and_current_actual_wh(
             FROM orders o
             LEFT JOIN order_fulfillment f ON f.order_id = o.id
             WHERE o.platform = :p
-              AND o.shop_id  = :s
+              AND o.store_code  = :s
               AND o.ext_order_no = :o
             LIMIT 1
             """
         ),
-        {"p": platform, "s": shop_id, "o": ext_order_no},
+        {"p": platform, "s": store_code, "o": ext_order_no},
     )
     rec = row.mappings().first()
     if rec is None:
-        raise ValueError(f"order not found: platform={platform}, shop_id={shop_id}, ext_order_no={ext_order_no}")
+        raise ValueError(f"order not found: platform={platform}, store_code={store_code}, ext_order_no={ext_order_no}")
 
     oid = int(rec["order_id"])
     wid = rec.get("actual_warehouse_id")
@@ -88,7 +88,7 @@ async def _check_can_fulfill_whole_order_soft(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     warehouse_id: int,
     lines: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -102,7 +102,7 @@ async def _check_can_fulfill_whole_order_soft(
     if not lines:
         raise ValueError("manual-assign blocked: order has no lines")
 
-    ctx = OrderContext(platform=str(platform), shop_id=str(shop_id), order_id="manual_assign")
+    ctx = OrderContext(platform=str(platform), store_code=str(store_code), order_id="manual_assign")
     router = WarehouseRouter(availability_provider=StockAvailabilityProvider(session))
     order_lines = [OrderLine(item_id=int(x["item_id"]), qty=int(x["qty"])) for x in lines if int(x["qty"]) > 0]
     r = await router.check_whole_order(ctx=ctx, warehouse_id=int(warehouse_id), lines=order_lines)
@@ -117,7 +117,7 @@ async def manual_assign_fulfillment_warehouse(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
     order_ref: str,
     trace_id: Optional[str],
@@ -143,7 +143,7 @@ async def manual_assign_fulfillment_warehouse(
       - 额外记录 soft-check 的 insufficient（不阻断）
     """
     plat = str(platform or "").upper().strip()
-    sid = str(shop_id or "").strip()
+    sid = str(store_code or "").strip()
     wid = int(warehouse_id)
     if wid <= 0:
         raise ValueError("manual-assign blocked: warehouse_id must be > 0")
@@ -152,13 +152,13 @@ async def manual_assign_fulfillment_warehouse(
         raise ValueError("manual-assign blocked: reason is required")
 
     order_id, from_wh = await _get_order_id_and_current_actual_wh(
-        session, platform=plat, shop_id=sid, ext_order_no=ext_order_no
+        session, platform=plat, store_code=sid, ext_order_no=ext_order_no
     )
     lines = await _load_order_lines_sum(session, order_id=order_id)
 
     # ✅ soft-check：不阻断，只记录不足明细
     insufficient = await _check_can_fulfill_whole_order_soft(
-        session, platform=plat, shop_id=sid, warehouse_id=wid, lines=lines
+        session, platform=plat, store_code=sid, warehouse_id=wid, lines=lines
     )
 
     # 写 order_fulfillment：upsert（最小事实）
@@ -198,7 +198,7 @@ async def manual_assign_fulfillment_warehouse(
     # 审计事件：MANUAL_WAREHOUSE_ASSIGNED
     meta: Dict[str, Any] = {
         "platform": plat,
-        "shop": sid,
+        "store": sid,
         "from_warehouse_id": from_wh,
         "to_warehouse_id": int(wid),
         "reason": rsn,

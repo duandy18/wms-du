@@ -87,7 +87,7 @@ async def test_handle_callback_success(session, monkeypatch):
         return {
             "pop_auth_token_create_response": {
                 "owner_id": "owner-001",
-                "owner_name": "shop-001",
+                "owner_name": "store-001",
                 "access_token": "access-token-001",
                 "refresh_token": "refresh-token-001",
                 "expires_at": 1893456000,
@@ -150,7 +150,7 @@ async def test_handle_callback_success(session, monkeypatch):
     assert result.platform == "pdd"
     assert result.store_id == 321
     assert result.owner_id == "owner-001"
-    assert result.owner_name == "shop-001"
+    assert result.owner_name == "store-001"
     assert result.access_token == "access-token-001"
     assert result.refresh_token == "refresh-token-001"
     assert isinstance(result.expires_at, datetime)
@@ -163,7 +163,7 @@ async def test_handle_callback_success(session, monkeypatch):
     assert captured_credential["scope"] == "pdd.order.list.get,pdd.goods.list.get"
     assert captured_credential["granted_identity_type"] == "pdd_owner_id"
     assert captured_credential["granted_identity_value"] == "owner-001"
-    assert captured_credential["granted_identity_display"] == "shop-001"
+    assert captured_credential["granted_identity_display"] == "store-001"
     assert "pop_auth_token_create_response" in captured_credential["raw_payload_json"]
 
     assert captured_connection["store_id"] == 321
@@ -187,7 +187,7 @@ async def test_handle_callback_rejects_missing_access_token(session, monkeypatch
         return {
             "pop_auth_token_create_response": {
                 "owner_id": "owner-001",
-                "owner_name": "shop-001",
+                "owner_name": "store-001",
                 "refresh_token": "refresh-token-001",
                 "expires_at": 1893456000,
             }

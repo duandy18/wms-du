@@ -17,13 +17,13 @@ async def write_ship_commit_audit(
     *,
     ref: str,
     platform: str,
-    shop_id: str,
+    store_code: str,
     trace_id: str | None,
     meta: dict[str, object] | None,
 ) -> None:
     payload: dict[str, object] = {
         "platform": platform.upper(),
-        "shop_id": shop_id,
+        "store_code": store_code,
     }
     if meta:
         payload.update(meta)

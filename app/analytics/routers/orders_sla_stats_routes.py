@@ -34,9 +34,9 @@ def register(router: APIRouter) -> None:
             None,
             description="可选平台过滤（如 PDD），大写/小写均可",
         ),
-        shop_id: Optional[str] = Query(
+        store_code: Optional[str] = Query(
             None,
-            description="可选店铺过滤（字符串，与 orders.shop_id 一致）",
+            description="可选店铺过滤（字符串，与 orders.store_code 一致）",
         ),
         sla_hours: float = Query(
             24.0,
@@ -55,7 +55,7 @@ def register(router: APIRouter) -> None:
         只统计在给定时间窗口内发货的订单（按 order_fulfillment.shipped_at 过滤）。
 
         ✅ PROD-only（简化口径）：
-        - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
+        - 排除测试店铺（platform_test_stores.code='DEFAULT'，以 store_id 为事实锚点）
         """
         start, end = normalize_window(time_from, time_to)
 
@@ -66,7 +66,7 @@ def register(router: APIRouter) -> None:
           SELECT
             o.id                    AS order_id,
             o.platform              AS platform,
-            o.shop_id               AS shop_id,
+            o.store_code               AS store_code,
             o.created_at            AS created_at,
             f.shipped_at            AS shipped_at,
             EXTRACT(EPOCH FROM (f.shipped_at - o.created_at)) / 3600.0
@@ -81,12 +81,12 @@ def register(router: APIRouter) -> None:
             -- ----------------- PROD-only：测试店铺门禁（store_id 级别） -----------------
             AND NOT EXISTS (
               SELECT 1
-                FROM platform_test_shops pts
+                FROM platform_test_stores pts
                WHERE pts.store_id = o.store_id
                  AND pts.code = 'DEFAULT'
             )
         {plat_clause}
-        {shop_clause}
+        {store_clause}
         )
         SELECT
           COUNT(*)                         AS total_orders,
@@ -105,18 +105,18 @@ def register(router: APIRouter) -> None:
         }
 
         plat_clause = ""
-        shop_clause = ""
+        store_clause = ""
 
         if plat:
             plat_clause = "  AND o.platform = :p"
             params["p"] = plat
-        if shop_id:
-            shop_clause = "  AND o.shop_id = :s"
-            params["s"] = shop_id
+        if store_code:
+            store_clause = "  AND o.store_code = :s"
+            params["s"] = store_code
 
         sql = base_sql.format(
             plat_clause=plat_clause,
-            shop_clause=shop_clause,
+            store_clause=store_clause,
         )
 
         res = await session.execute(text(sql), params)

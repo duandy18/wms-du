@@ -28,23 +28,21 @@ if TYPE_CHECKING:
 class Store(Base):
     __tablename__ = "stores"
     __table_args__ = (
-        UniqueConstraint("platform", "shop_id", name="uq_stores_platform_shop"),
         UniqueConstraint("platform", "store_code", name="uq_stores_platform_store_code"),
         Index("ix_stores_platform_active", "platform", "active"),
-        Index("ix_stores_shop", "shop_id"),
+        Index("ix_stores_store_code", "store_code"),
+        Index("ix_stores_platform_store_name", "platform", "store_name"),
         {"info": {"skip_autogen": True}},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     platform: Mapped[str] = mapped_column(String(16), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    name: Mapped[str] = mapped_column(String(256), nullable=False, default="NO-STORE")
-
-    # ✅ 对外稳定短码：用于 PSKU code 生成（平台后台填写）
-    store_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    store_name: Mapped[str] = mapped_column(String(256), nullable=False, default="NO-STORE")
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    route_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="FALLBACK")
 
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     contact_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -87,7 +85,7 @@ class Store(Base):
     def __repr__(self) -> str:
         return (
             f"<Store id={self.id} platform={self.platform} "
-            f"shop_id={self.shop_id!r} active={self.active}>"
+            f"store_code={self.store_code!r} active={self.active}>"
         )
 
 

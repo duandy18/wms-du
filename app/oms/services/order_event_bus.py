@@ -16,7 +16,7 @@ class OrderEventBus:
     统一写入 audit_events(flow="ORDER", event="ORDER_*")，保证：
       - flow 固定为 "ORDER"
       - event 使用 ORDER_* 命名
-      - meta 至少包含 platform / shop_id / order_id / warehouse_id / lines 等关键信息
+      - meta 至少包含 platform / store_code / order_id / warehouse_id / lines 等关键信息
       - trace_id 透传
 
     注意：目前只负责 ORDER 流程，OUTBOUND 等其他 flow 仍由原有调用负责。
@@ -28,7 +28,7 @@ class OrderEventBus:
         *,
         ref: str,
         platform: str,
-        shop_id: str,
+        store_code: str,
         order_id: int,
         order_amount: str,
         pay_amount: str,
@@ -37,7 +37,7 @@ class OrderEventBus:
     ) -> None:
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
             "order_id": order_id,
             "order_amount": order_amount,
             "pay_amount": pay_amount,
@@ -59,7 +59,7 @@ class OrderEventBus:
         *,
         ref: str,
         platform: str,
-        shop_id: str,
+        store_code: str,
         order_id: int,
         warehouse_id: int,
         lines: int,
@@ -72,7 +72,7 @@ class OrderEventBus:
         """
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
             "order_id": order_id,
             "warehouse_id": warehouse_id,
             "lines": lines,
@@ -93,14 +93,14 @@ class OrderEventBus:
         *,
         ref: str,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         status: str,
         trace_id: Optional[str] = None,
     ) -> None:
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
             "warehouse_id": warehouse_id,
             "status": status,
         }
@@ -120,7 +120,7 @@ class OrderEventBus:
         *,
         ref: str,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         lines: List[Dict[str, int]],
         occurred_at: datetime,
@@ -128,7 +128,7 @@ class OrderEventBus:
     ) -> None:
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
             "warehouse_id": warehouse_id,
             "occurred_at": occurred_at.isoformat(),
             "lines": lines,
@@ -174,7 +174,7 @@ class OrderEventBus:
         *,
         ref: str,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int | None = None,
         delivered_at: datetime | None = None,
         trace_id: Optional[str] = None,
@@ -184,12 +184,12 @@ class OrderEventBus:
 
         - flow="ORDER"
         - event="ORDER_DELIVERED"
-        - meta 至少包含 platform / shop_id
+        - meta 至少包含 platform / store_code
         - warehouse_id / delivered_at 可选
         """
         meta: Dict[str, Any] = {
             "platform": platform.upper(),
-            "shop_id": shop_id,
+            "store_code": store_code,
         }
         if warehouse_id is not None:
             meta["warehouse_id"] = warehouse_id
