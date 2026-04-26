@@ -15,10 +15,11 @@ class OrderSalesSource:
     订单销售只读来源。
 
     边界：
-    - 只读 OMS 订单事实：orders / order_items
-    - 不读取采购
-    - 不读取发货辅助
-    - 不计算利润
+    - 只读财务侧订单销售事实表 finance_order_sales_lines；
+    - 不让 finance read API 直接跨 OMS 表拼装页面数据；
+    - 不读取采购；
+    - 不读取发货辅助；
+    - 不计算利润。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -31,61 +32,91 @@ class OrderSalesSource:
         to_date: date,
         platform: str = "",
         store_code: str = "",
+        order_no: str = "",
+        limit: int = 100,
+        offset: int = 0,
     ) -> dict[str, Any]:
         params = {
             "from_date": from_date,
             "to_date": to_date,
             "platform": platform,
             "store_code": store_code,
+            "order_no": order_no,
+            "limit": int(limit),
+            "offset": int(offset),
         }
 
         summary = await self._summary(params)
         daily = await self._daily(params)
         by_store = await self._by_store(params)
         by_item = await self._by_item(params)
-        top_orders = await self._top_orders(params)
+        items = await self._items(params)
+        total = await self._total(params)
 
         return {
             "summary": summary,
             "daily": daily,
             "by_store": by_store,
             "by_item": by_item,
-            "top_orders": top_orders,
+            "items": items,
+            "total": total,
+            "limit": int(limit),
+            "offset": int(offset),
         }
 
-    def _base_where(self) -> str:
-        return """
-        DATE(o.created_at) BETWEEN :from_date AND :to_date
-        AND (:platform = '' OR o.platform = :platform)
-        AND (:store_code = '' OR o.store_code = :store_code)
+    def _base_where(self, alias: str = "f") -> str:
+        return f"""
+        {alias}.order_date BETWEEN :from_date AND :to_date
+        AND (:platform = '' OR {alias}.platform = :platform)
+        AND (:store_code = '' OR {alias}.store_code = :store_code)
+        AND (
+          :order_no = ''
+          OR {alias}.ext_order_no ILIKE ('%' || :order_no || '%')
+          OR {alias}.order_ref ILIKE ('%' || :order_no || '%')
+        )
         AND NOT EXISTS (
           SELECT 1
             FROM platform_test_stores pts
            WHERE pts.code = 'DEFAULT'
-             AND upper(pts.platform) = upper(o.platform)
-             AND btrim(CAST(pts.store_code AS text)) = btrim(CAST(o.store_code AS text))
+             AND (
+               (pts.store_id IS NOT NULL AND pts.store_id = {alias}.store_id)
+               OR (
+                 upper(pts.platform) = upper({alias}.platform)
+                 AND btrim(CAST(pts.store_code AS text)) = btrim(CAST({alias}.store_code AS text))
+               )
+             )
         )
         """
 
     async def _summary(self, params: dict[str, object]) -> dict[str, object]:
         sql = text(
             f"""
-            WITH order_values AS (
-              SELECT COALESCE(o.pay_amount, o.order_amount, 0) AS order_value
-                FROM orders o
-               WHERE {self._base_where()}
+            WITH filtered AS (
+              SELECT *
+                FROM finance_order_sales_lines f
+               WHERE {self._base_where("f")}
+            ),
+            order_values AS (
+              SELECT
+                order_id,
+                MAX(COALESCE(pay_amount, order_amount, 0)) AS order_value
+                FROM filtered
+               GROUP BY order_id
             )
             SELECT
-              COUNT(*) AS order_count,
-              COALESCE(SUM(order_value), 0) AS revenue,
-              CASE WHEN COUNT(*) > 0 THEN AVG(order_value) ELSE NULL END AS avg_order_value,
-              percentile_disc(0.5) WITHIN GROUP (ORDER BY order_value) AS median_order_value
-              FROM order_values
+              (SELECT COUNT(*) FROM order_values) AS order_count,
+              (SELECT COUNT(*) FROM filtered) AS line_count,
+              (SELECT COALESCE(SUM(qty_sold), 0) FROM filtered) AS qty_sold,
+              (SELECT COALESCE(SUM(order_value), 0) FROM order_values) AS revenue,
+              (SELECT CASE WHEN COUNT(*) > 0 THEN AVG(order_value) ELSE NULL END FROM order_values) AS avg_order_value,
+              (SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY order_value) FROM order_values) AS median_order_value
             """
         )
         row = (await self.session.execute(sql, params)).mappings().one()
         return {
             "order_count": int(row["order_count"] or 0),
+            "line_count": int(row["line_count"] or 0),
+            "qty_sold": int(row["qty_sold"] or 0),
             "revenue": to_decimal(row["revenue"]),
             "avg_order_value": to_decimal(row["avg_order_value"]).quantize(Decimal("0.01"))
             if row["avg_order_value"] is not None
@@ -101,21 +132,44 @@ class OrderSalesSource:
             WITH day_dim AS (
               SELECT generate_series(:from_date, :to_date, interval '1 day')::date AS day
             ),
-            agg AS (
+            filtered AS (
+              SELECT *
+                FROM finance_order_sales_lines f
+               WHERE {self._base_where("f")}
+            ),
+            order_values AS (
               SELECT
-                DATE(o.created_at) AS day,
+                order_date AS day,
+                order_id,
+                MAX(COALESCE(pay_amount, order_amount, 0)) AS order_value
+                FROM filtered
+               GROUP BY order_date, order_id
+            ),
+            order_agg AS (
+              SELECT
+                day,
                 COUNT(*) AS order_count,
-                COALESCE(SUM(COALESCE(o.pay_amount, o.order_amount, 0)), 0) AS revenue
-                FROM orders o
-               WHERE {self._base_where()}
-               GROUP BY DATE(o.created_at)
+                COALESCE(SUM(order_value), 0) AS revenue
+                FROM order_values
+               GROUP BY day
+            ),
+            line_agg AS (
+              SELECT
+                order_date AS day,
+                COUNT(*) AS line_count,
+                COALESCE(SUM(qty_sold), 0) AS qty_sold
+                FROM filtered
+               GROUP BY order_date
             )
             SELECT
               d.day,
-              COALESCE(a.order_count, 0) AS order_count,
-              COALESCE(a.revenue, 0) AS revenue
+              COALESCE(oa.order_count, 0) AS order_count,
+              COALESCE(la.line_count, 0) AS line_count,
+              COALESCE(la.qty_sold, 0) AS qty_sold,
+              COALESCE(oa.revenue, 0) AS revenue
               FROM day_dim d
-              LEFT JOIN agg a ON a.day = d.day
+              LEFT JOIN order_agg oa ON oa.day = d.day
+              LEFT JOIN line_agg la ON la.day = d.day
              ORDER BY d.day ASC
             """
         )
@@ -124,6 +178,8 @@ class OrderSalesSource:
             {
                 "day": row["day"],
                 "order_count": int(row["order_count"] or 0),
+                "line_count": int(row["line_count"] or 0),
+                "qty_sold": int(row["qty_sold"] or 0),
                 "revenue": to_decimal(row["revenue"]),
             }
             for row in rows
@@ -132,15 +188,55 @@ class OrderSalesSource:
     async def _by_store(self, params: dict[str, object]) -> list[dict[str, object]]:
         sql = text(
             f"""
+            WITH filtered AS (
+              SELECT *
+                FROM finance_order_sales_lines f
+               WHERE {self._base_where("f")}
+            ),
+            order_values AS (
+              SELECT
+                platform,
+                store_code,
+                store_name,
+                order_id,
+                MAX(COALESCE(pay_amount, order_amount, 0)) AS order_value
+                FROM filtered
+               GROUP BY platform, store_code, store_name, order_id
+            ),
+            order_agg AS (
+              SELECT
+                platform,
+                store_code,
+                store_name,
+                COUNT(*) AS order_count,
+                COALESCE(SUM(order_value), 0) AS revenue
+                FROM order_values
+               GROUP BY platform, store_code, store_name
+            ),
+            line_agg AS (
+              SELECT
+                platform,
+                store_code,
+                store_name,
+                COUNT(*) AS line_count,
+                COALESCE(SUM(qty_sold), 0) AS qty_sold
+                FROM filtered
+               GROUP BY platform, store_code, store_name
+            )
             SELECT
-              o.platform,
-              o.store_code,
-              COUNT(*) AS order_count,
-              COALESCE(SUM(COALESCE(o.pay_amount, o.order_amount, 0)), 0) AS revenue
-              FROM orders o
-             WHERE {self._base_where()}
-             GROUP BY o.platform, o.store_code
-             ORDER BY revenue DESC, o.platform ASC, o.store_code ASC
+              oa.platform,
+              oa.store_code,
+              oa.store_name,
+              oa.order_count,
+              COALESCE(la.line_count, 0) AS line_count,
+              COALESCE(la.qty_sold, 0) AS qty_sold,
+              oa.revenue
+              FROM order_agg oa
+              LEFT JOIN line_agg la
+                ON la.platform = oa.platform
+               AND la.store_code = oa.store_code
+               AND COALESCE(la.store_name, '') = COALESCE(oa.store_name, '')
+             ORDER BY oa.revenue DESC, oa.platform ASC, oa.store_code ASC
             """
         )
         rows = (await self.session.execute(sql, params)).mappings().all()
@@ -148,7 +244,10 @@ class OrderSalesSource:
             {
                 "platform": str(row["platform"]),
                 "store_code": str(row["store_code"]),
+                "store_name": row["store_name"],
                 "order_count": int(row["order_count"] or 0),
+                "line_count": int(row["line_count"] or 0),
+                "qty_sold": int(row["qty_sold"] or 0),
                 "revenue": to_decimal(row["revenue"]),
             }
             for row in rows
@@ -158,17 +257,16 @@ class OrderSalesSource:
         sql = text(
             f"""
             SELECT
-              oi.item_id,
-              MAX(oi.sku_id) AS sku_id,
-              MAX(oi.title) AS title,
-              COALESCE(SUM(COALESCE(oi.qty, 0)), 0) AS qty_sold,
-              COALESCE(SUM(COALESCE(oi.amount, COALESCE(oi.qty, 0) * COALESCE(oi.price, 0))), 0) AS revenue
-              FROM orders o
-              JOIN order_items oi ON oi.order_id = o.id
-             WHERE {self._base_where()}
-             GROUP BY oi.item_id
-             HAVING COALESCE(SUM(COALESCE(oi.qty, 0)), 0) > 0
-             ORDER BY revenue DESC, oi.item_id ASC
+              f.item_id,
+              MAX(f.sku_id) AS sku_id,
+              MAX(f.title) AS title,
+              COALESCE(SUM(f.qty_sold), 0) AS qty_sold,
+              COALESCE(SUM(f.line_amount), 0) AS revenue
+              FROM finance_order_sales_lines f
+             WHERE {self._base_where("f")}
+             GROUP BY f.item_id
+             HAVING COALESCE(SUM(f.qty_sold), 0) > 0
+             ORDER BY revenue DESC, f.item_id ASC
              LIMIT 100
             """
         )
@@ -184,31 +282,79 @@ class OrderSalesSource:
             for row in rows
         ]
 
-    async def _top_orders(self, params: dict[str, object]) -> list[dict[str, object]]:
+    async def _total(self, params: dict[str, object]) -> int:
+        sql = text(
+            f"""
+            SELECT COUNT(*) AS total
+              FROM finance_order_sales_lines f
+             WHERE {self._base_where("f")}
+            """
+        )
+        return int((await self.session.execute(sql, params)).scalar_one() or 0)
+
+    async def _items(self, params: dict[str, object]) -> list[dict[str, object]]:
         sql = text(
             f"""
             SELECT
-              o.id AS order_id,
-              o.platform,
-              o.store_code,
-              o.ext_order_no,
-              COALESCE(o.pay_amount, o.order_amount, 0) AS order_value,
-              o.created_at
-              FROM orders o
-             WHERE {self._base_where()}
-             ORDER BY order_value DESC, o.created_at DESC, o.id DESC
-             LIMIT 50
+              f.id,
+              f.order_id,
+              f.order_item_id,
+              f.platform,
+              f.store_id,
+              f.store_code,
+              f.store_name,
+              f.ext_order_no,
+              f.order_ref,
+              f.order_status,
+              f.order_created_at,
+              f.order_date,
+              f.receiver_province,
+              f.receiver_city,
+              f.receiver_district,
+              f.item_id,
+              f.sku_id,
+              f.title,
+              f.qty_sold,
+              f.unit_price,
+              f.discount_amount,
+              f.line_amount,
+              f.order_amount,
+              f.pay_amount
+              FROM finance_order_sales_lines f
+             WHERE {self._base_where("f")}
+             ORDER BY f.order_created_at DESC, f.id DESC
+             LIMIT :limit OFFSET :offset
             """
         )
         rows = (await self.session.execute(sql, params)).mappings().all()
         return [
             {
+                "id": int(row["id"]),
                 "order_id": int(row["order_id"]),
+                "order_item_id": int(row["order_item_id"]),
                 "platform": str(row["platform"]),
+                "store_id": int(row["store_id"]),
                 "store_code": str(row["store_code"]),
+                "store_name": row["store_name"],
                 "ext_order_no": str(row["ext_order_no"]),
-                "order_value": to_decimal(row["order_value"]),
-                "created_at": row["created_at"],
+                "order_ref": str(row["order_ref"]),
+                "order_status": row["order_status"],
+                "order_created_at": row["order_created_at"],
+                "order_date": row["order_date"],
+                "receiver_province": row["receiver_province"],
+                "receiver_city": row["receiver_city"],
+                "receiver_district": row["receiver_district"],
+                "item_id": int(row["item_id"]),
+                "sku_id": row["sku_id"],
+                "title": row["title"],
+                "qty_sold": int(row["qty_sold"] or 0),
+                "unit_price": to_decimal(row["unit_price"]) if row["unit_price"] is not None else None,
+                "discount_amount": to_decimal(row["discount_amount"])
+                if row["discount_amount"] is not None
+                else None,
+                "line_amount": to_decimal(row["line_amount"]),
+                "order_amount": to_decimal(row["order_amount"]) if row["order_amount"] is not None else None,
+                "pay_amount": to_decimal(row["pay_amount"]) if row["pay_amount"] is not None else None,
             }
             for row in rows
         ]

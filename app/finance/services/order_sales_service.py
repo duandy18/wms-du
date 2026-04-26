@@ -19,6 +19,9 @@ class FinanceOrderSalesService:
         to_date: date,
         platform: str = "",
         store_code: str = "",
+        order_no: str = "",
+        limit: int = 100,
+        offset: int = 0,
     ) -> OrderSalesResponse:
         source = OrderSalesSource(self.session)
         data = await source.fetch(
@@ -26,5 +29,8 @@ class FinanceOrderSalesService:
             to_date=to_date,
             platform=platform,
             store_code=store_code,
+            order_no=order_no,
+            limit=limit,
+            offset=offset,
         )
         return OrderSalesResponse(**data)

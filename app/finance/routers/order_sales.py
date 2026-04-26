@@ -30,6 +30,9 @@ def register(router: APIRouter) -> None:
         to_date: str | None = Query(None, description="结束日期 YYYY-MM-DD，默认今天"),
         platform: str | None = Query(None, description="平台过滤，可选"),
         store_code: str | None = Query(None, description="店铺过滤，可选"),
+        order_no: str | None = Query(None, description="订单号 / 订单引用模糊搜索，可选"),
+        limit: int = Query(100, ge=1, le=500, description="分页大小"),
+        offset: int = Query(0, ge=0, description="分页偏移量"),
     ) -> OrderSalesResponse:
         _ = current_user
         from_dt, to_dt = await ensure_default_range(
@@ -42,4 +45,7 @@ def register(router: APIRouter) -> None:
             to_date=to_dt,
             platform=clean_platform(platform),
             store_code=clean_store_code(store_code),
+            order_no=(order_no or "").strip(),
+            limit=int(limit),
+            offset=int(offset),
         )
