@@ -38,7 +38,7 @@ async def _pick_any_item_id(session: AsyncSession) -> int:
 
 async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     uniq = uuid4().hex[:10]
     ext_order_no = f"OUT-VIEW-{uniq}"
 
@@ -47,8 +47,8 @@ async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
     store_id = await ensure_store(
         session,
         platform=platform,
-        shop_id=shop_id,
-        name=f"UT-{platform}-{shop_id}",
+        store_code=store_code,
+        name=f"UT-{platform}-{store_code}",
     )
 
     row = await session.execute(
@@ -56,7 +56,7 @@ async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
             """
             INSERT INTO orders (
                 platform,
-                shop_id,
+                store_code,
                 store_id,
                 ext_order_no,
                 status,
@@ -69,7 +69,7 @@ async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
             )
             VALUES (
                 :platform,
-                :shop_id,
+                :store_code,
                 :store_id,
                 :ext_order_no,
                 'CREATED',
@@ -80,7 +80,7 @@ async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
                 now(),
                 now()
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO UPDATE
               SET store_id = EXCLUDED.store_id,
                   updated_at = now()
             RETURNING id
@@ -88,7 +88,7 @@ async def _seed_order(session: AsyncSession) -> tuple[int, int, int]:
         ),
         {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "store_id": int(store_id),
             "ext_order_no": ext_order_no,
         },
@@ -137,7 +137,7 @@ async def test_order_outbound_view_reads_orders_and_order_lines_only(
     assert data["ok"] is True
     assert data["order"]["id"] == order_id
     assert data["order"]["platform"] == "PDD"
-    assert data["order"]["shop_id"] == "1"
+    assert data["order"]["store_code"] == "1"
     assert data["order"]["status"] == "CREATED"
 
     assert isinstance(data["lines"], list)

@@ -13,7 +13,7 @@ SHIP_OUT_REASONS = ("SHIPMENT", "OUTBOUND_SHIP")
 
 def parse_ext_order_no(order_ref: str) -> Optional[str]:
     """
-    约定：ORD:{PLAT}:{shop_id}:{ext_order_no}
+    约定：ORD:{PLAT}:{store_code}:{ext_order_no}
     ext_order_no 内部不应包含冒号；若包含，则保守处理为 split(":",3) 后取最后段。
     """
     s = str(order_ref or "").strip()

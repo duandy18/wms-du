@@ -10,7 +10,7 @@ from app.core.audit import new_trace
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.oms.services.platform_order_resolve_service import norm_platform
 
-from app.oms.repos.platform_orders_fact import load_fact_lines_for_order, load_shop_id_by_store_id
+from app.oms.repos.platform_orders_fact import load_fact_lines_for_order, load_store_code_by_store_id
 from app.oms.contracts.platform_orders_replay import PlatformOrderReplayIn, PlatformOrderReplayOut
 
 router = APIRouter(tags=["platform-orders"])
@@ -42,7 +42,7 @@ async def replay_platform_order(
     trace = new_trace("http:/platform-orders/replay")
 
     try:
-        shop_id = await load_shop_id_by_store_id(session, store_id=store_id)
+        store_code = await load_store_code_by_store_id(session, store_id=store_id)
     except LookupError:
         raise HTTPException(
             status_code=404,
@@ -60,7 +60,7 @@ async def replay_platform_order(
         return PlatformOrderReplayOut(
             status="NOT_FOUND",
             id=None,
-            ref=f"ORD:{plat}:{shop_id}:{ext}",
+            ref=f"ORD:{plat}:{store_code}:{ext}",
             platform=plat,
             store_id=store_id,
             ext_order_no=ext,
@@ -87,7 +87,7 @@ async def replay_platform_order(
         return PlatformOrderReplayOut(
             status="UNRESOLVED",
             id=None,
-            ref=f"ORD:{plat}:{shop_id}:{ext}",
+            ref=f"ORD:{plat}:{store_code}:{ext}",
             platform=plat,
             store_id=store_id,
             ext_order_no=ext,
@@ -101,7 +101,7 @@ async def replay_platform_order(
     out_dict = await PlatformOrderIngestFlow.run_tail_from_items_payload(
         session,
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         store_id=store_id,
         ext_order_no=ext,
         occurred_at=None,
@@ -122,7 +122,7 @@ async def replay_platform_order(
     return PlatformOrderReplayOut(
         status=str(out_dict.get("status") or "OK"),
         id=out_dict.get("id"),
-        ref=str(out_dict.get("ref") or f"ORD:{plat}:{shop_id}:{ext}"),
+        ref=str(out_dict.get("ref") or f"ORD:{plat}:{store_code}:{ext}"),
         platform=plat,
         store_id=store_id,
         ext_order_no=ext,

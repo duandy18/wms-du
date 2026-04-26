@@ -16,7 +16,7 @@ class PlatformEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     platform: Mapped[str] = mapped_column(Text, nullable=False)
-    shop_id: Mapped[str] = mapped_column(Text, nullable=False)
+    store_code: Mapped[str] = mapped_column(Text, nullable=False)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'NEW'"))
 

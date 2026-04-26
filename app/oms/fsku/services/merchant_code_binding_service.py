@@ -23,7 +23,7 @@ def normalize_merchant_code(v: Optional[str]) -> Optional[str]:
     return s or None
 
 
-def normalize_shop_id(v: str | int | None) -> str | None:
+def normalize_store_code(v: str | int | None) -> str | None:
     if v is None:
         return None
     if isinstance(v, int):
@@ -50,13 +50,13 @@ class MerchantCodeBindingService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         merchant_code: str,
         fsku_id: int,
         reason: Optional[str],
     ) -> MerchantCodeFskuBinding:
         """
-        一码一对一：同一 (platform, shop_id, merchant_code) 永远只有一条记录。
+        一码一对一：同一 (platform, store_code, merchant_code) 永远只有一条记录。
         - 若存在：覆盖 fsku_id / reason / updated_at
         - 若不存在：插入 created_at/updated_at
         """
@@ -64,9 +64,9 @@ class MerchantCodeBindingService:
         if cd is None:
             raise self.BadInput("merchant_code 不能为空")
 
-        sid = normalize_shop_id(shop_id)
+        sid = normalize_store_code(store_code)
         if sid is None:
-            raise self.BadInput("shop_id 不能为空")
+            raise self.BadInput("store_code 不能为空")
 
         f = await self.session.get(Fsku, int(fsku_id))
         if f is None:
@@ -82,7 +82,7 @@ class MerchantCodeBindingService:
                 await self.session.execute(
                     select(MerchantCodeFskuBinding).where(
                         MerchantCodeFskuBinding.platform == platform,
-                        MerchantCodeFskuBinding.shop_id == sid,
+                        MerchantCodeFskuBinding.store_code == sid,
                         MerchantCodeFskuBinding.merchant_code == cd,
                     )
                 )
@@ -94,7 +94,7 @@ class MerchantCodeBindingService:
         if row is None:
             obj = MerchantCodeFskuBinding(
                 platform=platform,
-                shop_id=sid,
+                store_code=sid,
                 merchant_code=cd,
                 fsku_id=int(fsku_id),
                 reason=rsn,
@@ -122,7 +122,7 @@ class MerchantCodeBindingService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         merchant_code: str,
     ) -> MerchantCodeFskuBinding:
         """
@@ -133,16 +133,16 @@ class MerchantCodeBindingService:
         if cd is None:
             raise self.BadInput("merchant_code 不能为空")
 
-        sid = normalize_shop_id(shop_id)
+        sid = normalize_store_code(store_code)
         if sid is None:
-            raise self.BadInput("shop_id 不能为空")
+            raise self.BadInput("store_code 不能为空")
 
         row = (
             (
                 await self.session.execute(
                     select(MerchantCodeFskuBinding).where(
                         MerchantCodeFskuBinding.platform == platform,
-                        MerchantCodeFskuBinding.shop_id == sid,
+                        MerchantCodeFskuBinding.store_code == sid,
                         MerchantCodeFskuBinding.merchant_code == cd,
                     )
                 )
@@ -159,7 +159,7 @@ class MerchantCodeBindingService:
         return row
 
     async def resolve_fsku_id(
-        self, *, platform: str, shop_id: str, merchant_code: Optional[str]
+        self, *, platform: str, store_code: str, merchant_code: Optional[str]
     ) -> tuple[bool, str | None, int | None]:
         cd = normalize_merchant_code(merchant_code)
         if cd is None:
@@ -167,7 +167,7 @@ class MerchantCodeBindingService:
         if len(cd) > 128:
             return (False, "INVALID_CODE_FORMAT", None)
 
-        sid = normalize_shop_id(shop_id)
+        sid = normalize_store_code(store_code)
         if sid is None:
             return (False, "MISSING_CODE", None)
 
@@ -176,7 +176,7 @@ class MerchantCodeBindingService:
                 await self.session.execute(
                     select(MerchantCodeFskuBinding).where(
                         MerchantCodeFskuBinding.platform == platform,
-                        MerchantCodeFskuBinding.shop_id == sid,
+                        MerchantCodeFskuBinding.store_code == sid,
                         MerchantCodeFskuBinding.merchant_code == cd,
                     )
                 )

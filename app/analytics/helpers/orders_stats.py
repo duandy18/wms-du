@@ -14,7 +14,7 @@ async def calc_daily_stats(
     *,
     day: _date,
     platform: Optional[str],
-    shop_id: Optional[str],
+    store_code: Optional[str],
 ) -> tuple[int, int, int]:
     """
     计算单日的：
@@ -25,7 +25,7 @@ async def calc_daily_stats(
       以 released_at 落在自然日内的 distinct source_doc_id 计数）
 
     ✅ PROD-only（简化口径）：
-    - 排除测试店铺（platform_test_shops.code='DEFAULT'，以 store_id 为事实锚点）
+    - 排除测试店铺（platform_test_stores.code='DEFAULT'，以 store_id 为事实锚点）
     """
     start = datetime.combine(day, time(0, 0, 0), tzinfo=timezone.utc)
     end = start + timedelta(days=1)
@@ -39,20 +39,20 @@ async def calc_daily_stats(
     if plat:
         clauses.append("platform = :p")
         params["p"] = plat
-    if shop_id:
-        clauses.append("shop_id = :s")
-        params["s"] = shop_id
+    if store_code:
+        clauses.append("store_code = :s")
+        params["s"] = store_code
 
     clauses.append(
         """
         NOT EXISTS (
           SELECT 1
             FROM stores s
-            JOIN platform_test_shops pts
+            JOIN platform_test_stores pts
               ON pts.store_id = s.id
              AND pts.code = 'DEFAULT'
            WHERE upper(s.platform) = upper(orders.platform)
-             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(orders.shop_id AS text))
+             AND btrim(CAST(s.store_code AS text)) = btrim(CAST(orders.store_code AS text))
         )
         """.strip()
     )
@@ -78,20 +78,20 @@ async def calc_daily_stats(
     if plat:
         shipped_clauses.append("upper(o.platform) = :p")
         params2["p"] = plat
-    if shop_id:
-        shipped_clauses.append("btrim(CAST(o.shop_id AS text)) = btrim(CAST(:s AS text))")
-        params2["s"] = shop_id
+    if store_code:
+        shipped_clauses.append("btrim(CAST(o.store_code AS text)) = btrim(CAST(:s AS text))")
+        params2["s"] = store_code
 
     shipped_clauses.append(
         """
         NOT EXISTS (
           SELECT 1
             FROM stores s
-            JOIN platform_test_shops pts
+            JOIN platform_test_stores pts
               ON pts.store_id = s.id
              AND pts.code = 'DEFAULT'
            WHERE upper(s.platform) = upper(o.platform)
-             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+             AND btrim(CAST(s.store_code AS text)) = btrim(CAST(o.store_code AS text))
         )
         """.strip()
     )
@@ -102,7 +102,7 @@ async def calc_daily_stats(
           FROM stock_ledger l
           JOIN orders o
             ON upper(o.platform) = upper(split_part(l.ref, ':', 2))
-           AND btrim(CAST(o.shop_id AS text)) = btrim(split_part(l.ref, ':', 3))
+           AND btrim(CAST(o.store_code AS text)) = btrim(split_part(l.ref, ':', 3))
            AND btrim(CAST(o.ext_order_no AS text)) = btrim(regexp_replace(l.ref, '^ORD:[^:]+:[^:]+:', ''))
           {where_sql2}
     """
@@ -121,20 +121,20 @@ async def calc_daily_stats(
     if plat:
         returned_clauses.append("o.platform = :p")
         params3["p"] = plat
-    if shop_id:
-        returned_clauses.append("o.shop_id = :s")
-        params3["s"] = shop_id
+    if store_code:
+        returned_clauses.append("o.store_code = :s")
+        params3["s"] = store_code
 
     returned_clauses.append(
         """
         NOT EXISTS (
           SELECT 1
             FROM stores s
-            JOIN platform_test_shops pts
+            JOIN platform_test_stores pts
               ON pts.store_id = s.id
              AND pts.code = 'DEFAULT'
            WHERE upper(s.platform) = upper(o.platform)
-             AND btrim(CAST(s.shop_id AS text)) = btrim(CAST(o.shop_id AS text))
+             AND btrim(CAST(s.store_code AS text)) = btrim(CAST(o.store_code AS text))
         )
         """.strip()
     )

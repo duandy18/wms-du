@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.oms.services.platform_order_resolve_binding import resolve_fsku_id_by_binding
 from app.oms.services.platform_order_resolve_loaders import load_fsku_components
-from app.oms.services.platform_order_resolve_store import load_shop_id_by_store_id
+from app.oms.services.platform_order_resolve_store import load_store_code_by_store_id
 from app.oms.services.platform_order_resolve_utils import (
     ResolvedLine,
     dec_to_int_qty,
@@ -61,7 +61,7 @@ async def resolve_platform_lines_to_items(
 
     plat = norm_platform(platform)
     sid = int(store_id)
-    shop_id = await load_shop_id_by_store_id(session, platform=plat, store_id=sid)
+    store_code = await load_store_code_by_store_id(session, platform=plat, store_id=sid)
 
     for ln in lines or []:
         filled_code = str(ln.get("filled_code") or "").strip()
@@ -91,11 +91,11 @@ async def resolve_platform_lines_to_items(
         fsku_id: Optional[int] = None
 
         # 1) 优先走 binding（一对一）
-        if shop_id:
+        if store_code:
             bid_fsku_id, bid_reason = await resolve_fsku_id_by_binding(
                 session,
                 platform=plat,
-                shop_id=shop_id,
+                store_code=store_code,
                 merchant_code=filled_code,
             )
             if bid_fsku_id is not None:

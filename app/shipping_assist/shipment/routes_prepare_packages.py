@@ -26,12 +26,12 @@ from .service_prepare_packages import ShipmentPreparePackagesService
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/packages",
         response_model=ShipPreparePackagesResponse,
     )
     async def list_prepare_packages(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
@@ -40,18 +40,18 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPreparePackagesService(session)
         items = await svc.list_prepare_packages(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
         return ShipPreparePackagesResponse(ok=True, items=items)
 
     @router.post(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/packages",
         response_model=ShipPreparePackageCreateResponse,
     )
     async def create_prepare_package(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
@@ -60,18 +60,18 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPreparePackagesService(session)
         item = await svc.create_prepare_package(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
         return ShipPreparePackageCreateResponse(ok=True, item=item)
 
     @router.patch(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/packages/{package_no}",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/packages/{package_no}",
         response_model=ShipPreparePackageUpdateResponse,
     )
     async def update_prepare_package(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
         payload: ShipPreparePackageUpdateRequest,
@@ -82,7 +82,7 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPreparePackagesService(session)
         item = await svc.update_prepare_package(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=package_no,
             weight_kg=payload.weight_kg,

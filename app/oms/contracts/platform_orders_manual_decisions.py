@@ -50,7 +50,7 @@ class ManualDecisionOrderOut(BaseModel):
 
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     ref: str
 

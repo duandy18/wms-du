@@ -45,7 +45,7 @@ class PlatformOrderIngestIn(BaseModel):
     store_id: Optional[int] = None
 
     # 外部兼容
-    shop_id: Optional[constr(min_length=1)] = None
+    store_code: Optional[constr(min_length=1)] = None
 
     ext_order_no: constr(min_length=1)
     occurred_at: Optional[datetime] = None

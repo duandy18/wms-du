@@ -23,7 +23,7 @@ def _auth_headers(token: str) -> Dict[str, str]:
 async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
     """
     合同测试：
-    - 先用 shop_id 路径 ingest 落事实（UNRESOLVED）
+    - 先用 store_code 路径 ingest 落事实（UNRESOLVED）
     - 再 confirm-and-create 生成人工救火 orders（manual_override=true 写入 extras）
     - 再调用 manual-decisions/latest，能查回这笔证据
 
@@ -35,15 +35,15 @@ async def test_platform_orders_manual_decisions_latest_contract(client) -> None:
     headers = _auth_headers(token)
 
     platform = "DEMO"
-    shop_id = "UT-SHOP-MD-1"
+    store_code = "UT-STORE-MD-1"
     ext_order_no = "E2E-MD-0001"
 
     # 1) ingest 落事实（刻意构造 UNRESOLVED：缺填写码 / 找不到 published FSKU）
     ingest_payload = {
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
-        "store_name": "UT-SHOP-MD-1",
+        "store_name": "UT-STORE-MD-1",
         "province": "广东省",
         "lines": [
             {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},

@@ -151,7 +151,7 @@ class ItemTestSetService:
 
     async def assert_items_not_in_test_set(self, *, item_ids: List[int], set_code: str = "DEFAULT") -> None:
         """
-        Async 版：用于 async guard（test_shop_testset_guard_service 等）。
+        Async 版：用于 async guard（test_store_testset_guard_service 等）。
 
         规则：
         - set 不存在：raise ItemTestSetService.NotFound

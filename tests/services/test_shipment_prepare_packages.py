@@ -18,7 +18,7 @@ pytestmark = pytest.mark.asyncio
 async def _seed_order_only(session: AsyncSession) -> dict[str, object]:
     uniq = uuid4().hex[:10]
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     ext_order_no = f"PREPARE-PKG-{uniq}"
     trace_id = f"TRACE-{uniq}"
     warehouse_id = 1
@@ -28,7 +28,7 @@ async def _seed_order_only(session: AsyncSession) -> dict[str, object]:
     order_id = await insert_min_order(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         warehouse_id=warehouse_id,
         fulfillment_status="SERVICE_ASSIGNED",
@@ -40,7 +40,7 @@ async def _seed_order_only(session: AsyncSession) -> dict[str, object]:
     return {
         "order_id": int(order_id),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
     }
 
@@ -114,12 +114,12 @@ async def test_create_prepare_package_increments_package_no(
 
     item1 = await svc.create_prepare_package(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
     )
     item2 = await svc.create_prepare_package(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
     )
 
@@ -141,7 +141,7 @@ async def test_list_prepare_packages_returns_ordered_rows(
 
     items = await svc.list_prepare_packages(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
     )
 
@@ -168,7 +168,7 @@ async def test_update_prepare_package_writes_weight_and_warehouse(
 
     item = await svc.update_prepare_package(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         package_no=1,
         weight_kg=3.21,
@@ -202,7 +202,7 @@ async def test_update_prepare_package_resets_quote_related_fields(
 
     item = await svc.update_prepare_package(
         platform=str(ctx["platform"]),
-        shop_id=str(ctx["shop_id"]),
+        store_code=str(ctx["store_code"]),
         ext_order_no=str(ctx["ext_order_no"]),
         package_no=1,
         weight_kg=2.22,

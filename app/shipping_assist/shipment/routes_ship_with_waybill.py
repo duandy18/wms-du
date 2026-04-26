@@ -19,12 +19,12 @@ from app.shipping_assist.shipment.router_helpers import get_order_ref_and_trace_
 
 def register(router: APIRouter) -> None:
     @router.post(
-        "/{platform}/{shop_id}/{ext_order_no}/ship-with-waybill",
+        "/{platform}/{store_code}/{ext_order_no}/ship-with-waybill",
         response_model=ShipWithWaybillResponse,
     )
     async def order_ship_with_waybill(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         body: ShipWithWaybillRequest,
         session: AsyncSession = Depends(get_session),
@@ -33,7 +33,7 @@ def register(router: APIRouter) -> None:
         order_ref, trace_id = await get_order_ref_and_trace_id(
             session=session,
             platform=platform_norm,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
 
@@ -42,7 +42,7 @@ def register(router: APIRouter) -> None:
             order_ref=order_ref,
             trace_id=trace_id,
             platform=platform_norm,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=int(body.package_no),
             receiver_name=body.receiver_name,

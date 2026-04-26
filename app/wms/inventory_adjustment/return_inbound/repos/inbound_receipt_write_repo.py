@@ -534,12 +534,12 @@ async def create_inbound_receipt_from_return_order_repo(
         raise HTTPException(status_code=409, detail="return_order_has_no_refundable_lines")
 
     counterparty_name_snapshot = None
-    if source.platform and source.shop_id:
-        counterparty_name_snapshot = f"{source.platform}:{source.shop_id}"
+    if source.platform and source.store_code:
+        counterparty_name_snapshot = f"{source.platform}:{source.store_code}"
     elif source.platform:
         counterparty_name_snapshot = source.platform
-    elif source.shop_id:
-        counterparty_name_snapshot = source.shop_id
+    elif source.store_code:
+        counterparty_name_snapshot = source.store_code
 
     receipt_no = _new_return_receipt_no(int(source.order_id))
 

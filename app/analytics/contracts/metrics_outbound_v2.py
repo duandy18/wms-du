@@ -134,7 +134,7 @@ class FefoRiskMetricsResponse(BaseModel):
 
 
 class OutboundShopMetric(BaseModel):
-    shop_id: str
+    store_code: str
     total_orders: int
     success_orders: int
     success_rate: float
@@ -145,4 +145,4 @@ class OutboundShopMetric(BaseModel):
 class OutboundShopMetricsResponse(BaseModel):
     day: date
     platform: str
-    shops: List[OutboundShopMetric]
+    stores: List[OutboundShopMetric]

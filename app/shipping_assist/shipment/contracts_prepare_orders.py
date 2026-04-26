@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class ShipPrepareImportRequest(BaseModel):
     platform: str = Field(..., description="平台，例如 PDD")
-    shop_id: str = Field(..., description="店铺 ID，例如 '1'")
+    store_code: str = Field(..., description="店铺 ID，例如 '1'")
     ext_order_no: str = Field(..., description="平台订单号")
     address_ready_status: str = Field(..., description="OMS 地址状态：pending / ready")
 
@@ -19,7 +19,7 @@ class ShipPrepareImportResponse(BaseModel):
     ok: bool = True
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     address_ready_status: str
 
@@ -27,7 +27,7 @@ class ShipPrepareImportResponse(BaseModel):
 class ShipPrepareOrdersListItemOut(BaseModel):
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
 
     receiver_name: Optional[str] = None
@@ -49,7 +49,7 @@ class ShipPrepareOrdersListResponse(BaseModel):
 class ShipPrepareOrderDetailOut(BaseModel):
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
 
     receiver_name: Optional[str] = None

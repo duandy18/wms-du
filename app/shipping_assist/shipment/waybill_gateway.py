@@ -17,7 +17,7 @@ async def request_waybill(
     company_code: str | None,
     customer_code: str | None,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
     package_no: int,
     sender: dict | None,
@@ -37,7 +37,7 @@ async def request_waybill(
         company_code=company_code,
         customer_code=customer_code,
         platform=platform.upper(),
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         sender=sender,
         receiver={

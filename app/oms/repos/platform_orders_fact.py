@@ -25,13 +25,13 @@ def line_key_from_inputs(*, filled_code: Optional[str], line_no: Optional[int]) 
     return f"NO_PSKU:{int(line_no)}"
 
 
-async def load_shop_id_by_store_id(session: AsyncSession, *, store_id: int) -> str:
+async def load_store_code_by_store_id(session: AsyncSession, *, store_id: int) -> str:
     row = (
         (
             await session.execute(
                 text(
                     """
-                    SELECT shop_id
+                    SELECT store_code
                       FROM stores
                      WHERE id = :id
                      LIMIT 1
@@ -43,10 +43,10 @@ async def load_shop_id_by_store_id(session: AsyncSession, *, store_id: int) -> s
         .mappings()
         .first()
     )
-    shop = (row.get("shop_id") if row else None) if row is not None else None
-    if not shop:
+    store = (row.get("store_code") if row else None) if row is not None else None
+    if not store:
         raise LookupError(f"store not found: store_id={store_id}")
-    return str(shop)
+    return str(store)
 
 
 async def load_fact_lines_for_order(

@@ -57,7 +57,7 @@ class TransportShipmentService:
             self.session,
             ref=command.ref,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             trace_id=command.trace_id,
             meta=command.meta,
         )
@@ -69,7 +69,7 @@ class TransportShipmentService:
     ) -> ShipWithWaybillResult:
         order_id = await self._load_order_id(
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             ext_order_no=command.ext_order_no,
         )
 
@@ -170,14 +170,14 @@ class TransportShipmentService:
         waybill_config = await get_active_waybill_config_for_shipment(
             self.session,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             shipping_provider_id=int(package.selected_provider_id),
         )
         if waybill_config is None:
             self._raise(
                 status_code=409,
                 code="SHIP_WITH_WAYBILL_CONFIG_REQUIRED",
-                message="current shop has no active electronic waybill config for this shipping provider",
+                message="current store has no active electronic waybill config for this shipping provider",
             )
 
         sender: dict[str, Any] = {
@@ -194,7 +194,7 @@ class TransportShipmentService:
             self.session,
             order_ref=command.order_ref,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             package_no=int(package.package_no),
         )
         if existing_record is not None:
@@ -225,7 +225,7 @@ class TransportShipmentService:
             company_code=company_code,
             customer_code=waybill_config.customer_code,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             ext_order_no=command.ext_order_no,
             package_no=int(package.package_no),
             sender=sender,
@@ -244,7 +244,7 @@ class TransportShipmentService:
         audit_meta.update(
             {
                 "platform": command.platform.upper(),
-                "shop_id": command.shop_id,
+                "store_code": command.store_code,
                 "package_no": int(package.package_no),
                 "warehouse_id": int(package.warehouse_id),
                 "occurred_at": occurred_at.isoformat(),
@@ -276,7 +276,7 @@ class TransportShipmentService:
             self.session,
             ref=command.order_ref,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             trace_id=command.trace_id,
             meta=audit_meta,
         )
@@ -285,7 +285,7 @@ class TransportShipmentService:
             self.session,
             order_ref=command.order_ref,
             platform=command.platform,
-            shop_id=command.shop_id,
+            store_code=command.store_code,
             package_no=int(package.package_no),
             warehouse_id=int(package.warehouse_id),
             shipping_provider_id=int(package.selected_provider_id),
@@ -323,7 +323,7 @@ class TransportShipmentService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
     ) -> int:
         row = (
@@ -333,14 +333,14 @@ class TransportShipmentService:
                     SELECT id
                     FROM orders
                     WHERE platform = :platform
-                      AND shop_id = :shop_id
+                      AND store_code = :store_code
                       AND ext_order_no = :ext_order_no
                     LIMIT 1
                     """
                 ),
                 {
                     "platform": str(platform or "").strip().upper(),
-                    "shop_id": str(shop_id or "").strip(),
+                    "store_code": str(store_code or "").strip(),
                     "ext_order_no": str(ext_order_no or "").strip(),
                 },
             )

@@ -13,13 +13,13 @@ ShopTypeStr = Literal["TEST", "PROD"]
 
 class StoreCreateIn(BaseModel):
     platform: PlatformStr
-    shop_id: constr(min_length=1, max_length=128)
-    name: Optional[constr(min_length=1, max_length=256)] = None
+    store_code: constr(min_length=1, max_length=128)
+    store_name: Optional[constr(min_length=1, max_length=256)] = None
 
-    # ✅ 合同：店铺类型（唯一真相：platform_test_shops）
-    # - TEST：命中 platform_test_shops（code='DEFAULT'）
+    # ✅ 合同：店铺类型（唯一真相：platform_test_stores）
+    # - TEST：命中 platform_test_stores（code='DEFAULT'）
     # - PROD：默认（不命中）
-    shop_type: ShopTypeStr = "PROD"
+    store_type: ShopTypeStr = "PROD"
 
 
 class StoreCreateOut(BaseModel):
@@ -56,15 +56,15 @@ class StoreDetailOut(BaseModel):
 class StoreListItem(BaseModel):
     id: int
     platform: str
-    shop_id: str
-    name: str
+    store_code: str
+    store_name: str
     active: bool
     route_mode: str
 
     # ✅ 新增：店铺类型（用于区分测试/正式）
-    # - TEST：命中 platform_test_shops
+    # - TEST：命中 platform_test_stores
     # - PROD：默认
-    shop_type: str = "PROD"
+    store_type: str = "PROD"
 
     email: Optional[str] = None
     contact_name: Optional[str] = None
@@ -77,7 +77,7 @@ class StoreListOut(BaseModel):
 
 
 class StoreUpdateIn(BaseModel):
-    name: Optional[constr(min_length=1, max_length=256)] = None
+    store_name: Optional[constr(min_length=1, max_length=256)] = None
     active: Optional[bool] = None
     route_mode: Optional[constr(min_length=1, max_length=32)] = None
 

@@ -29,7 +29,7 @@ class OrderReconcileService:
 
     - 头信息来自 orders；
     - 行信息来自 order_items（qty）；
-    - shipped 来自 stock_ledger(ref=ORD:PLAT:SHOP:ext_no, delta<0)；
+    - shipped 来自 stock_ledger(ref=ORD:PLAT:STORE:ext_no, delta<0)；
     - returned 来自 inbound_receipts(source_type='RETURN_ORDER', status='RELEASED')
       + wms_inbound_operation_lines.qty_base（按 item_id 聚合）；
     - remaining_refundable = max(min(ordered, shipped) - returned, 0)。
@@ -50,14 +50,14 @@ class OrderReconcileService:
             raise ValueError(f"order not found: id={order_id}")
 
         platform = str(head["platform"]).upper()
-        shop_id = str(head["shop_id"])
+        store_code = str(head["store_code"])
         ext_order_no = str(head["ext_order_no"])
 
         items_map = await load_items(self.session, order_id)
         shipped_map = await load_shipped(
             self.session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
         returned_map = await load_returned(self.session, order_id)
@@ -102,7 +102,7 @@ class OrderReconcileService:
         return OrderReconcileResult(
             order_id=order_id,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             issues=issues,
             lines=lines,

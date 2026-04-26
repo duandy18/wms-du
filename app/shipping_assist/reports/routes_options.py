@@ -32,30 +32,30 @@ def register(router: APIRouter) -> None:
             from_dt=from_dt,
             to_dt=to_dt,
             platform=None,
-            shop_id=None,
+            store_code=None,
             shipping_provider_code=None,
             province=None,
             warehouse_id=warehouse_id,
             city=None,
         )
 
-        sql_platform_shop = text(
+        sql_platform_store = text(
             f"""
-            SELECT DISTINCT sr.platform, sr.shop_id
+            SELECT DISTINCT sr.platform, sr.store_code
             FROM shipping_records sr
             WHERE {where_sql}
             """
         )
-        res_ps = await session.execute(sql_platform_shop, params)
+        res_ps = await session.execute(sql_platform_store, params)
         ps_rows = res_ps.mappings().all()
 
         platforms_set: set[str] = set()
-        shop_ids_set: set[str] = set()
+        store_codes_set: set[str] = set()
         for r in ps_rows:
             plat = str(r["platform"])
-            shop = str(r["shop_id"])
+            store = str(r["store_code"])
             platforms_set.add(plat)
-            shop_ids_set.add(shop)
+            store_codes_set.add(store)
 
         sql_province = text(
             f"""
@@ -81,7 +81,7 @@ def register(router: APIRouter) -> None:
 
         return ShippingReportFilterOptions(
             platforms=sorted(platforms_set),
-            shop_ids=sorted(shop_ids_set),
+            store_codes=sorted(store_codes_set),
             provinces=sorted(set(provinces)),
             cities=sorted(set(cities)),
         )

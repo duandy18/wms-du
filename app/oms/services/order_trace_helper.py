@@ -7,12 +7,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def _extract_ext_order_no_from_ref(platform: str, shop_id: str, ref: str) -> Optional[str]:
+def _extract_ext_order_no_from_ref(platform: str, store_code: str, ref: str) -> Optional[str]:
     """
-    从 ORD:{PLAT}:{shop_id}:{ext_order_no} 中解析 ext_order_no，用于 status / trace 查询。
+    从 ORD:{PLAT}:{store_code}:{ext_order_no} 中解析 ext_order_no，用于 status / trace 查询。
     """
     plat = platform.upper()
-    prefix = f"ORD:{plat}:{shop_id}:"
+    prefix = f"ORD:{plat}:{store_code}:"
     if not ref.startswith(prefix):
         return None
     parts = ref.split(":", 3)
@@ -25,16 +25,16 @@ async def get_trace_id_for_order_ref(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ref: str,
 ) -> Optional[str]:
     plat = platform.upper()
 
-    ext_order_no = _extract_ext_order_no_from_ref(plat, shop_id, ref)
+    ext_order_no = _extract_ext_order_no_from_ref(plat, store_code, ref)
     if not ext_order_no:
         raise ValueError(
             f"cannot resolve order trace_id: invalid ref={ref!r}, "
-            f"expected 'ORD:{plat}:{shop_id}:{{ext_order_no}}'"
+            f"expected 'ORD:{plat}:{store_code}:{{ext_order_no}}'"
         )
 
     row = await session.execute(
@@ -43,12 +43,12 @@ async def get_trace_id_for_order_ref(
             SELECT trace_id
               FROM orders
              WHERE platform = :p
-               AND shop_id  = :s
+               AND store_code  = :s
                AND ext_order_no = :o
              LIMIT 1
             """
         ),
-        {"p": plat, "s": shop_id, "o": ext_order_no},
+        {"p": plat, "s": store_code, "o": ext_order_no},
     )
     rec = row.first()
     if rec and rec[0]:
@@ -60,7 +60,7 @@ async def set_order_status_by_ref(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ref: str,
     new_status: str,
 ) -> None:
@@ -68,7 +68,7 @@ async def set_order_status_by_ref(
     工具：根据 ref 更新 orders.status（用于 reserve/cancel/ship）。
     """
     plat = platform.upper()
-    ext_order_no = _extract_ext_order_no_from_ref(plat, shop_id, ref)
+    ext_order_no = _extract_ext_order_no_from_ref(plat, store_code, ref)
     if not ext_order_no:
         # 非订单驱动 ref，直接跳过
         return
@@ -80,9 +80,9 @@ async def set_order_status_by_ref(
                SET status = :st,
                    updated_at = NOW()
              WHERE platform = :p
-               AND shop_id  = :s
+               AND store_code  = :s
                AND ext_order_no = :o
             """
         ),
-        {"st": new_status, "p": plat, "s": shop_id, "o": ext_order_no},
+        {"st": new_status, "p": plat, "s": store_code, "o": ext_order_no},
     )

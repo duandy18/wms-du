@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
-from app.oms.repos.stores_order_sim import get_cart_lines, get_merchant_lines, load_store_platform_shop_id
+from app.oms.repos.stores_order_sim import get_cart_lines, get_merchant_lines, load_store_platform_store_id
 from app.oms.services.stores_order_sim import (
     build_ext_order_no,
     build_raw_lines_from_facts,
@@ -17,7 +17,7 @@ from app.oms.services.stores_order_sim import (
     choose_buyer_from_cart,
 )
 from app.oms.services.stores_bindings_helpers import check_store_perm, ensure_store_exists
-from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_shop_gate, enforce_order_sim_test_store_gate
+from app.oms.deps.stores_order_sim_gate import enforce_order_sim_test_store_code_gate, enforce_order_sim_test_store_id_gate
 from app.oms.contracts.stores_order_sim import (
     OrderSimGenerateOrderIn,
     OrderSimGenerateOrderOut,
@@ -55,12 +55,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
-        enforce_order_sim_test_store_gate(store_id=int(store_id))
+        enforce_order_sim_test_store_id_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
 
-        platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
-        enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+        platform, store_code = await load_store_platform_store_id(session, store_id=int(store_id))
+        enforce_order_sim_test_store_code_gate(store_code=str(store_code))
 
         merchant_items = await get_merchant_lines(session, store_id=int(store_id))
         cart_items = await get_cart_lines(session, store_id=int(store_id))
@@ -84,7 +84,7 @@ def register(router: APIRouter) -> None:
             out_dict = await PlatformOrderIngestFlow.run_from_platform_lines(
                 session,
                 platform=platform,
-                shop_id=shop_id,
+                store_code=store_code,
                 store_id=int(store_id),
                 ext_order_no=ext_order_no,
                 occurred_at=None,
@@ -111,7 +111,7 @@ def register(router: APIRouter) -> None:
                 session=session,
                 out_dict=out_dict if isinstance(out_dict, dict) else {},
                 platform=platform,
-                shop_id=str(shop_id),
+                store_code=str(store_code),
                 store_id=int(store_id),
             )
         finally:
@@ -122,7 +122,7 @@ def register(router: APIRouter) -> None:
                 "dry_run": True,
                 "store_id": int(store_id),
                 "platform": platform,
-                "shop_id": str(shop_id),
+                "store_code": str(store_code),
                 "ext_order_no": ext_order_no,
                 "buyer_name": buyer_name,
                 "buyer_phone": buyer_phone,
@@ -144,12 +144,12 @@ def register(router: APIRouter) -> None:
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
     ):
-        enforce_order_sim_test_store_gate(store_id=int(store_id))
+        enforce_order_sim_test_store_id_gate(store_id=int(store_id))
         check_store_perm(db, current_user, ["config.store.write"])
         await ensure_store_exists(session, store_id)
 
-        platform, shop_id = await load_store_platform_shop_id(session, store_id=int(store_id))
-        enforce_order_sim_test_shop_gate(shop_id=str(shop_id))
+        platform, store_code = await load_store_platform_store_id(session, store_id=int(store_id))
+        enforce_order_sim_test_store_code_gate(store_code=str(store_code))
 
         merchant_items = await get_merchant_lines(session, store_id=int(store_id))
         cart_items = await get_cart_lines(session, store_id=int(store_id))
@@ -170,7 +170,7 @@ def register(router: APIRouter) -> None:
         out_dict = await PlatformOrderIngestFlow.run_from_platform_lines(
             session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             store_id=int(store_id),
             ext_order_no=ext_order_no,
             occurred_at=None,
@@ -196,7 +196,7 @@ def register(router: APIRouter) -> None:
                 session=session,
                 out_dict=out_dict if isinstance(out_dict, dict) else {},
                 platform=platform,
-                shop_id=str(shop_id),
+                store_code=str(store_code),
                 store_id=int(store_id),
             )
         except HTTPException:

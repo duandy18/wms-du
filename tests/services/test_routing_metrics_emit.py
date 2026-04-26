@@ -46,7 +46,7 @@ def test_routing_metrics_emit_success_and_fallback():
     # -----------------------------
     decision_ok = routing_metrics.RoutingDecision(
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         route_mode="FALLBACK",
         result="ok",
         selected_warehouse_id=2,
@@ -61,7 +61,7 @@ def test_routing_metrics_emit_success_and_fallback():
     dec_call = decisions.calls[0]
     assert dec_call["count"] == 1
     assert dec_call["labels"]["platform"] == "PDD"
-    assert dec_call["labels"]["shop_id"] == "1"
+    assert dec_call["labels"]["store_code"] == "1"
     assert dec_call["labels"]["route_mode"] == "FALLBACK"
     assert dec_call["labels"]["result"] == "ok"
     assert dec_call["labels"]["selected_warehouse_id"] == "2"
@@ -86,7 +86,7 @@ def test_routing_metrics_emit_success_and_fallback():
     # -----------------------------
     decision_fail = routing_metrics.RoutingDecision(
         platform="PDD",
-        shop_id="1",
+        store_code="1",
         route_mode="FALLBACK",
         result="no_candidate",
         selected_warehouse_id=None,
@@ -106,6 +106,6 @@ def test_routing_metrics_emit_success_and_fallback():
     no_wh_call = no_wh.calls[0]
     assert no_wh_call["count"] == 1
     assert no_wh_call["labels"]["platform"] == "PDD"
-    assert no_wh_call["labels"]["shop_id"] == "1"
+    assert no_wh_call["labels"]["store_code"] == "1"
     assert no_wh_call["labels"]["route_mode"] == "FALLBACK"
     assert no_wh_call["labels"]["reason"] == "no_warehouse_can_fulfill"

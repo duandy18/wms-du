@@ -64,7 +64,7 @@ async def scan_candidate_warehouses(
     *,
     session: AsyncSession,
     platform: str,
-    shop_id: str,
+    store_code: str,
     candidate_warehouse_ids: Sequence[int],
     needs: Sequence[OrderNeedLine],
 ) -> List[WarehouseScanRow]:
@@ -88,7 +88,7 @@ async def scan_candidate_warehouses(
             available_raw = await StockAvailabilityService.get_available_for_item(
                 session,
                 platform=str(platform),
-                shop_id=str(shop_id),
+                store_code=str(store_code),
                 warehouse_id=int(wid),
                 item_id=int(line.item_id),
             )

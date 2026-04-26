@@ -43,12 +43,12 @@ def register(router: APIRouter) -> None:
         return ShipPrepareOrdersListResponse(ok=True, items=items)
 
     @router.get(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}",
         response_model=ShipPrepareOrderDetailResponse,
     )
     async def get_prepare_order_detail(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         session: AsyncSession = Depends(get_session),
         current_user: Any = Depends(get_current_user),
@@ -57,7 +57,7 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPrepareOrdersService(session)
         item = await svc.get_prepare_order_detail(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
         return ShipPrepareOrderDetailResponse(ok=True, item=item)
@@ -75,18 +75,18 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPrepareOrdersService(session)
         return await svc.import_order_to_prepare(
             platform=payload.platform,
-            shop_id=payload.shop_id,
+            store_code=payload.store_code,
             ext_order_no=payload.ext_order_no,
             address_ready_status=payload.address_ready_status,
         )
 
     @router.post(
-        "/shipping-assist/shipping/prepare/orders/{platform}/{shop_id}/{ext_order_no}/address-confirm",
+        "/shipping-assist/shipping/prepare/orders/{platform}/{store_code}/{ext_order_no}/address-confirm",
         response_model=ShipPrepareAddressConfirmResponse,
     )
     async def confirm_prepare_order_address(
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         payload: ShipPrepareAddressConfirmRequest,
         session: AsyncSession = Depends(get_session),
@@ -96,7 +96,7 @@ def register(router: APIRouter) -> None:
         svc = ShipmentPrepareOrdersService(session)
         item = await svc.confirm_order_address_ready(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             address_ready_status=payload.address_ready_status,
         )

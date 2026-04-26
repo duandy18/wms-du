@@ -11,7 +11,7 @@ class BaseOrderAdapter:
     把平台原始 payload 规范化为 ingest 可接收的参数 dict。
 
     输出统一结构：
-      - platform, shop_id, ext_order_no, occurred_at
+      - platform, store_code, ext_order_no, occurred_at
       - buyer_name, buyer_phone
       - order_amount, pay_amount
       - lines[ { sku_id, item_id, title, qty, price, discount, amount, extras } ]
@@ -23,7 +23,7 @@ class BaseOrderAdapter:
 
     def normalize(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         platform = self.platform_name
-        shop_id = str(payload.get("shop_id") or payload.get("mall_id") or "UNKNOWN")
+        store_code = str(payload.get("store_code") or payload.get("mall_id") or "UNKNOWN")
         ext_no = str(payload.get("order_sn") or payload.get("order_no") or payload.get("id") or "")
         occurred_at = parse_dt(payload.get("created_at") or payload.get("order_create_time"))
 
@@ -87,7 +87,7 @@ class BaseOrderAdapter:
 
         return {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "ext_order_no": ext_no,
             "occurred_at": occurred_at,
             "buyer_name": buyer_name,
@@ -133,7 +133,7 @@ class TemuOrderAdapter(BaseOrderAdapter):
 
 
 class ShopifyOrderAdapter(BaseOrderAdapter):
-    platform_name = "SHOPIFY"
+    platform_name = "STOREIFY"
 
 
 class AliExpOrderAdapter(BaseOrderAdapter):
@@ -149,7 +149,7 @@ _ADAPTERS: Dict[str, BaseOrderAdapter] = {
     "DOUYIN": DouyinOrderAdapter(),
     "AMAZON": AmazonOrderAdapter(),
     "TEMU": TemuOrderAdapter(),
-    "SHOPIFY": ShopifyOrderAdapter(),
+    "STOREIFY": ShopifyOrderAdapter(),
     "ALIEXPRESS": AliExpOrderAdapter(),
 }
 

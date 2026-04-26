@@ -296,16 +296,16 @@ class OrderIngestService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         payload: Dict[str, Any],
         trace_id: Optional[str] = None,
     ) -> dict:
         adapter = get_adapter(platform)
-        co = adapter.normalize({**payload, "shop_id": shop_id})
+        co = adapter.normalize({**payload, "store_code": store_code})
         return await OrderIngestService.ingest(
             session,
             platform=co["platform"],
-            shop_id=co["shop_id"],
+            store_code=co["store_code"],
             ext_order_no=co["ext_order_no"],
             occurred_at=co["occurred_at"],
             buyer_name=co.get("buyer_name"),
@@ -323,7 +323,7 @@ class OrderIngestService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         occurred_at: Optional[datetime] = None,
         buyer_name: Optional[str] = None,
@@ -337,7 +337,7 @@ class OrderIngestService:
     ) -> dict:
         plat = (platform or "").upper().strip()
         occurred_at = occurred_at or datetime.now(timezone.utc)
-        order_ref = f"ORD:{plat}:{shop_id}:{ext_order_no}"
+        order_ref = f"ORD:{plat}:{store_code}:{ext_order_no}"
 
         orders_has_extras = False
         order_items_has_extras = False
@@ -345,15 +345,15 @@ class OrderIngestService:
         store_id = await resolve_store_id(
             session,
             platform=plat,
-            shop_id=shop_id,
-            store_name=str(shop_id),
+            store_code=store_code,
+            store_name=str(store_code),
         )
 
         # 1) orders（幂等）
         ins_res = await insert_order_or_get_idempotent(
             session,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             store_id=store_id,
             ext_order_no=ext_order_no,
             occurred_at=occurred_at,
@@ -390,7 +390,7 @@ class OrderIngestService:
                     session,
                     ref=order_ref,
                     platform=plat,
-                    shop_id=shop_id,
+                    store_code=store_code,
                     order_id=order_id,
                     order_amount=to_dec_str(order_amount),
                     pay_amount=to_dec_str(pay_amount),

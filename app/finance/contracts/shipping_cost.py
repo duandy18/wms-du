@@ -34,8 +34,8 @@ class ShippingCostProviderRow(BaseModel):
 
 class ShippingCostShopRow(BaseModel):
     platform: str
-    shop_id: str
-    shop_name: str | None = None
+    store_code: str
+    store_name: str | None = None
     shipment_count: int
     estimated_shipping_cost: Decimal
     billed_shipping_cost: Decimal
@@ -46,15 +46,15 @@ class ShippingCostResponse(BaseModel):
     daily: list[ShippingCostDailyRow]
     # 保持既有 summary 接口结构，行字段已切到 shipping_provider_*。
     by_carrier: list[ShippingCostProviderRow]
-    by_shop: list[ShippingCostShopRow]
+    by_store: list[ShippingCostShopRow]
 
 
 class ShippingCostLedgerRow(BaseModel):
     shipping_record_id: int
 
     platform: str
-    shop_id: str
-    shop_name: str | None = None
+    store_code: str
+    store_name: str | None = None
 
     order_ref: str
     package_no: int
@@ -85,8 +85,8 @@ class ShippingCostLedgerResponse(BaseModel):
 
 class ShippingCostLedgerShopOption(BaseModel):
     platform: str
-    shop_id: str
-    shop_name: str | None = None
+    store_code: str
+    store_name: str | None = None
 
 
 class ShippingCostLedgerWarehouseOption(BaseModel):
@@ -101,6 +101,6 @@ class ShippingCostLedgerProviderOption(BaseModel):
 
 
 class ShippingCostLedgerOptionsResponse(BaseModel):
-    shops: list[ShippingCostLedgerShopOption]
+    stores: list[ShippingCostLedgerShopOption]
     warehouses: list[ShippingCostLedgerWarehouseOption]
     providers: list[ShippingCostLedgerProviderOption]

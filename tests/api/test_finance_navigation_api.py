@@ -106,6 +106,6 @@ async def test_finance_navigation_contract_is_terminal(client):
     assert route_by_prefix["/finance/shipping-costs"]["effective_write_permission"] == "page.finance.write"
 
     assert "/finance/overview" not in route_by_prefix
-    assert "/finance/shop" not in route_by_prefix
+    assert "/finance/store" not in route_by_prefix
     assert "/finance/sku" not in route_by_prefix
     assert "/finance/order-unit" not in route_by_prefix

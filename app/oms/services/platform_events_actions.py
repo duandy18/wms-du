@@ -35,7 +35,7 @@ async def do_pick(
     await OrderService.enter_pickable(
         session,
         platform=platform,
-        shop_id=task.get("shop_id"),
+        store_code=task.get("store_code"),
         ref=task.get("ref"),
         lines=lines,
         trace_id=trace_id,
@@ -62,7 +62,7 @@ async def do_cancel(
     await OrderService.cancel(
         session,
         platform=platform,
-        shop_id=task.get("shop_id"),
+        store_code=task.get("store_code"),
         ref=task.get("ref"),
         lines=lines,
         trace_id=trace_id,

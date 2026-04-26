@@ -428,7 +428,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
       - 再试图追加 returned=1（第二张 Receipt） -> returned>shipped 的问题被识别出来。
     """
     platform = "PDD"
-    shop_id = "RMA_TEST_SHOP"
+    store_code = "RMA_TEST_STORE"
     ext_order_no = "RMA-TEST-001"
     trace_id = "TRACE-RMA-TEST-001"
 
@@ -448,7 +448,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
     result = await OrderService.ingest(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         occurred_at=datetime.now(UTC),
         buyer_name="RMA 测试用户",
@@ -463,7 +463,7 @@ async def test_rma_cannot_exceed_shipped(session: AsyncSession) -> None:
         trace_id=trace_id,
     )
     order_id = int(result["id"])
-    order_ref = result["ref"]  # 形如 ORD:PDD:SHOP:EXT
+    order_ref = result["ref"]  # 形如 ORD:PDD:STORE:EXT
 
     # 2) 先做一笔入库，保证库存足够
     await _write_stock_delta_for_test(
@@ -562,7 +562,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
       - REQUIRED：batch_code 非空；日期可按需要填写
     """
     platform = "PDD"
-    shop_id = "RMA_TEST_SHOP2"
+    store_code = "RMA_TEST_STORE2"
     ext_order_no = "RMA-TEST-002"
     trace_id = "TRACE-RMA-TEST-002"
 
@@ -582,7 +582,7 @@ async def test_rma_receipt_updates_counters_and_status(session: AsyncSession) ->
     result = await OrderService.ingest(
         session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         ext_order_no=ext_order_no,
         occurred_at=datetime.now(UTC),
         buyer_name="RMA 测试用户2",

@@ -12,12 +12,12 @@ from app.core.audit import new_trace
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
 from app.oms.services.platform_order_resolve_service import (
     norm_platform,
-    norm_shop_id,
+    norm_store_code,
     resolve_store_id,
 )
 from app.oms.services.platform_orders_ingest_helpers import (
     build_address,
-    load_shop_id_by_store_id,
+    load_store_code_by_store_id,
 )
 from app.oms.services.platform_orders_line_normalizer import normalize_filled_code
 from app.oms.contracts.platform_orders_ingest import (
@@ -78,8 +78,8 @@ async def ingest_platform_order(
     if payload.store_id is not None:
         store_id = int(payload.store_id)
         try:
-            shop_id = norm_shop_id(
-                await load_shop_id_by_store_id(session, store_id=store_id, platform=plat)
+            store_code = norm_store_code(
+                await load_store_code_by_store_id(session, store_id=store_id, platform=plat)
             )
         except LookupError:
             raise HTTPException(
@@ -92,21 +92,21 @@ async def ingest_platform_order(
                 ),
             )
     else:
-        if payload.shop_id is None:
+        if payload.store_code is None:
             raise HTTPException(
                 status_code=422,
                 detail=make_problem(
                     status_code=422,
                     error_code="request_validation_error",
-                    message="store_id 或 shop_id 必须提供一个",
+                    message="store_id 或 store_code 必须提供一个",
                     context={"platform": plat},
                 ),
             )
-        shop_id = norm_shop_id(payload.shop_id)
+        store_code = norm_store_code(payload.store_code)
         store_id = await resolve_store_id(
             session,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             store_name=payload.store_name,
         )
 
@@ -143,7 +143,7 @@ async def ingest_platform_order(
     out_dict = await PlatformOrderIngestFlow.run_from_platform_lines(
         session,
         platform=plat,
-        shop_id=shop_id,
+        store_code=store_code,
         store_id=store_id,
         ext_order_no=payload.ext_order_no,
         occurred_at=payload.occurred_at,

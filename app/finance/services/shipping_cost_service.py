@@ -22,14 +22,14 @@ class FinanceShippingCostService:
         from_date: date,
         to_date: date,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
     ) -> ShippingCostResponse:
         source = ShippingCostSource(self.session)
         data = await source.fetch(
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
         )
         return ShippingCostResponse(**data)
 
@@ -39,7 +39,7 @@ class FinanceShippingCostService:
         from_date: date | None,
         to_date: date | None,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
         warehouse_id: int | None = None,
         shipping_provider_id: int | None = None,
         order_keyword: str = "",
@@ -50,7 +50,7 @@ class FinanceShippingCostService:
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
             order_keyword=order_keyword,
@@ -64,7 +64,7 @@ class FinanceShippingCostService:
         from_date: date | None,
         to_date: date | None,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
         warehouse_id: int | None = None,
         shipping_provider_id: int | None = None,
     ) -> ShippingCostLedgerOptionsResponse:
@@ -73,7 +73,7 @@ class FinanceShippingCostService:
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
         )

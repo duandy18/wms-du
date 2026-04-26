@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.oms.platforms.models.pdd_order import PddOrder
 from app.oms.platforms.pdd.contracts import PddOrderSummary
 from app.oms.platforms.pdd.repo_orders import (
-    load_shop_id_by_store_id_for_pdd,
+    load_store_code_by_store_id_for_pdd,
     replace_pdd_order_items,
     upsert_pdd_order,
 )
@@ -39,7 +39,7 @@ class PddOrderIngestRowResult:
 @dataclass(frozen=True)
 class PddOrderIngestPageResult:
     store_id: int
-    shop_id: str
+    store_code: str
     page: int
     page_size: int
     orders_count: int
@@ -87,13 +87,13 @@ class PddOrderIngestService:
             raise PddOrderIngestServiceError("store_id must be positive")
 
         try:
-            shop_id = await load_shop_id_by_store_id_for_pdd(
+            store_code = await load_store_code_by_store_id_for_pdd(
                 session,
                 store_id=store_id,
             )
         except Exception as exc:  # noqa: BLE001
             raise PddOrderIngestServiceError(
-                f"failed to load pdd shop_id by store_id={store_id}: {exc}"
+                f"failed to load pdd store_code by store_id={store_id}: {exc}"
             ) from exc
 
         try:
@@ -112,7 +112,7 @@ class PddOrderIngestService:
             row = await self._ingest_one_summary(
                 session=session,
                 store_id=store_id,
-                shop_id=shop_id,
+                store_code=store_code,
                 summary=summary,
             )
             rows.append(row)
@@ -123,7 +123,7 @@ class PddOrderIngestService:
 
         return PddOrderIngestPageResult(
             store_id=store_id,
-            shop_id=shop_id,
+            store_code=store_code,
             page=page_result.page,
             page_size=page_result.page_size,
             orders_count=page_result.orders_count,
@@ -140,7 +140,7 @@ class PddOrderIngestService:
         *,
         session: AsyncSession,
         store_id: int,
-        shop_id: str,
+        store_code: str,
         summary: PddOrderSummary,
     ) -> PddOrderIngestRowResult:
         order_sn = str(summary.platform_order_id or "").strip()
@@ -163,7 +163,7 @@ class PddOrderIngestService:
             pdd_order: PddOrder = await upsert_pdd_order(
                 session,
                 store_id=store_id,
-                shop_id=shop_id,
+                store_code=store_code,
                 summary_raw_payload=summary.raw_order,
                 detail=detail,
                 order_status=summary.order_status,

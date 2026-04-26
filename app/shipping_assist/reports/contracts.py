@@ -36,17 +36,17 @@ class ShippingByProvinceResponse(BaseModel):
     rows: List[ShippingByProvinceRow]
 
 
-class ShippingByShopRow(BaseModel):
+class ShippingByStoreRow(BaseModel):
     platform: str
-    shop_id: str
+    store_code: str
     ship_cnt: int
     total_cost: float
     avg_cost: float
 
 
-class ShippingByShopResponse(BaseModel):
+class ShippingByStoreResponse(BaseModel):
     ok: bool = True
-    rows: List[ShippingByShopRow]
+    rows: List[ShippingByStoreRow]
 
 
 class ShippingByWarehouseRow(BaseModel):
@@ -75,6 +75,6 @@ class ShippingDailyResponse(BaseModel):
 
 class ShippingReportFilterOptions(BaseModel):
     platforms: List[str]
-    shop_ids: List[str]
+    store_codes: List[str]
     provinces: List[str]
     cities: List[str]

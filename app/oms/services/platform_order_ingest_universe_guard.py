@@ -11,16 +11,16 @@ from app.core.problem import make_problem
 from app.pms.items.services.item_test_set_service import ItemTestSetService
 
 
-def _get_test_shop_id() -> str | None:
-    s = (os.getenv("TEST_SHOP_ID") or "").strip()
+def _get_test_store_code() -> str | None:
+    s = (os.getenv("TEST_STORE_ID") or "").strip()
     return s or None
 
 
-def is_test_shop(shop_id: str) -> bool:
-    tid = _get_test_shop_id()
+def is_test_store(store_code: str) -> bool:
+    tid = _get_test_store_code()
     if tid is None:
         return False
-    return str(shop_id) == tid
+    return str(store_code) == tid
 
 
 def extract_item_ids_from_items_payload(items_payload: Sequence[Mapping[str, Any]]) -> list[int]:
@@ -46,10 +46,10 @@ def extract_item_ids_from_items_payload(items_payload: Sequence[Mapping[str, Any
     return sorted(ids)
 
 
-async def enforce_no_test_items_in_non_test_shop(
+async def enforce_no_test_items_in_non_test_store(
     session: AsyncSession,
     *,
-    shop_id: str,
+    store_code: str,
     store_id: Optional[int],
     item_ids: list[int],
     source: str,
@@ -57,15 +57,15 @@ async def enforce_no_test_items_in_non_test_shop(
     """
     宇宙边界兜底（不污染 resolver）：
 
-    当 TEST_SHOP_ID 设置后：
-      - 非 TEST shop：禁止出现 DEFAULT Test Set items
-      - TEST shop：不在这里强制“必须全是测试商品”（那条更偏 dev/order-sim 入口约束）
+    当 TEST_STORE_ID 设置后：
+      - 非 TEST store：禁止出现 DEFAULT Test Set items
+      - TEST store：不在这里强制“必须全是测试商品”（那条更偏 dev/order-sim 入口约束）
     """
-    tid = _get_test_shop_id()
+    tid = _get_test_store_code()
     if tid is None:
         return
 
-    if is_test_shop(shop_id):
+    if is_test_store(store_code):
         return
 
     if not item_ids:
@@ -81,7 +81,7 @@ async def enforce_no_test_items_in_non_test_shop(
                 status_code=500,
                 error_code="internal_error",
                 message=f"测试集合不可用：{e.message}",
-                context={"shop_id": str(shop_id), "test_shop_id": str(tid), "set_code": "DEFAULT", "source": source},
+                context={"store_code": str(store_code), "test_store_code": str(tid), "set_code": "DEFAULT", "source": source},
             ),
         )
     except ItemTestSetService.Conflict as e:
@@ -92,8 +92,8 @@ async def enforce_no_test_items_in_non_test_shop(
                 error_code="conflict",
                 message=e.message,
                 context={
-                    "shop_id": str(shop_id),
-                    "test_shop_id": str(tid),
+                    "store_code": str(store_code),
+                    "test_store_code": str(tid),
                     "store_id": int(store_id) if store_id is not None else None,
                     "set_code": e.set_code,
                     "out_of_set_item_ids": e.out_of_set_item_ids,

@@ -12,7 +12,7 @@ from app.wms.stock.services.stock_availability_service import StockAvailabilityS
 @dataclass(frozen=True)
 class OrderContext:
     platform: str
-    shop_id: str
+    store_code: str
     order_id: str | int
 
 
@@ -25,7 +25,7 @@ class OrderLine:
 @dataclass(frozen=True)
 class StoreWarehouseBinding:
     platform: str
-    shop_id: str
+    store_code: str
     warehouse_id: int
     is_top: bool
     priority: int
@@ -34,7 +34,7 @@ class StoreWarehouseBinding:
 @dataclass(frozen=True)
 class RoutingResult:
     platform: str
-    shop_id: str
+    store_code: str
     order_id: str | int
     warehouse_id: int
     reason: str
@@ -85,7 +85,7 @@ class AvailabilityProvider(Protocol):
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         item_id: int,
     ) -> int: ...
@@ -94,7 +94,7 @@ class AvailabilityProvider(Protocol):
 class StockAvailabilityProvider(AvailabilityProvider):
     """
     ✅ 唯一可售数据源（事实层）：
-      StockAvailabilityService.get_available_for_item(session, *, platform, shop_id, warehouse_id, item_id)
+      StockAvailabilityService.get_available_for_item(session, *, platform, store_code, warehouse_id, item_id)
 
     说明：
     - get_available_for_item 的参数为 keyword-only；
@@ -109,14 +109,14 @@ class StockAvailabilityProvider(AvailabilityProvider):
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         item_id: int,
     ) -> int:
         v = await StockAvailabilityService.get_available_for_item(
             self._session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             warehouse_id=warehouse_id,
             item_id=item_id,
         )
@@ -151,14 +151,14 @@ class WarehouseRouter:
     ) -> RoutingResult:
         if not bindings:
             raise NoWarehouseConfigured(
-                f"No warehouse configured for platform={ctx.platform}, shop_id={ctx.shop_id}"
+                f"No warehouse configured for platform={ctx.platform}, store_code={ctx.store_code}"
             )
 
-        scoped = [b for b in bindings if b.platform == ctx.platform and b.shop_id == ctx.shop_id]
+        scoped = [b for b in bindings if b.platform == ctx.platform and b.store_code == ctx.store_code]
         if not scoped:
             raise NoWarehouseConfigured(
                 f"No warehouse configured for platform={ctx.platform}, "
-                f"shop_id={ctx.shop_id} (after scoping)"
+                f"store_code={ctx.store_code} (after scoping)"
             )
 
         avail_cache: Dict[Tuple[int, int], int] = {}
@@ -169,7 +169,7 @@ class WarehouseRouter:
                 return avail_cache[key]
             v = await self._availability_provider.get_available(
                 platform=ctx.platform,
-                shop_id=ctx.shop_id,
+                store_code=ctx.store_code,
                 warehouse_id=wh,
                 item_id=item,
             )
@@ -205,7 +205,7 @@ class WarehouseRouter:
             if await _can_fulfill(b.warehouse_id):
                 return RoutingResult(
                     platform=ctx.platform,
-                    shop_id=ctx.shop_id,
+                    store_code=ctx.store_code,
                     order_id=ctx.order_id,
                     warehouse_id=b.warehouse_id,
                     reason="top_warehouse_with_stock",
@@ -218,7 +218,7 @@ class WarehouseRouter:
             if await _can_fulfill(b.warehouse_id):
                 return RoutingResult(
                     platform=ctx.platform,
-                    shop_id=ctx.shop_id,
+                    store_code=ctx.store_code,
                     order_id=ctx.order_id,
                     warehouse_id=b.warehouse_id,
                     reason="backup_warehouse_with_stock",
@@ -227,7 +227,7 @@ class WarehouseRouter:
 
         raise NoWarehouseCanFulfill(
             f"No warehouse can fulfill order={ctx.order_id} "
-            f"for platform={ctx.platform}, shop_id={ctx.shop_id}. "
+            f"for platform={ctx.platform}, store_code={ctx.store_code}. "
             f"Considered warehouses={considered or '[]'}"
         )
 
@@ -254,7 +254,7 @@ class WarehouseRouter:
                 return avail_cache[key]
             v = await self._availability_provider.get_available(
                 platform=ctx.platform,
-                shop_id=ctx.shop_id,
+                store_code=ctx.store_code,
                 warehouse_id=wid,
                 item_id=int(item_id),
             )

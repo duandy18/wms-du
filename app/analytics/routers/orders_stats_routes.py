@@ -35,9 +35,9 @@ def register(router: APIRouter) -> None:
             None,
             description="可选平台过滤（如 PDD）",
         ),
-        shop_id: Optional[str] = Query(
+        store_code: Optional[str] = Query(
             None,
-            description="可选店铺过滤（字符串，与 orders.shop_id 一致）",
+            description="可选店铺过滤（字符串，与 orders.store_code 一致）",
         ),
         session: AsyncSession = Depends(get_session),
     ) -> OrdersDailyStatsModel:
@@ -52,13 +52,13 @@ def register(router: APIRouter) -> None:
             session,
             day=date_value,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
         )
         plat = platform.upper().strip() if platform else None
         return OrdersDailyStatsModel(
             date=date_value,
             platform=plat,
-            shop_id=shop_id,
+            store_code=store_code,
             orders_created=created,
             orders_shipped=shipped,
             orders_returned=returned,
@@ -73,7 +73,7 @@ def register(router: APIRouter) -> None:
             None,
             description="可选平台过滤（如 PDD）",
         ),
-        shop_id: Optional[str] = Query(
+        store_code: Optional[str] = Query(
             None,
             description="可选店铺过滤",
         ),
@@ -96,7 +96,7 @@ def register(router: APIRouter) -> None:
                 session,
                 day=d,
                 platform=plat,
-                shop_id=shop_id,
+                store_code=store_code,
             )
             rate = float(returned / shipped) if shipped > 0 else 0.0
             days.append(

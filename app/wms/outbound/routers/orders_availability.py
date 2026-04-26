@@ -74,7 +74,7 @@ async def _load_order_head(session: AsyncSession, *, order_id: int) -> dict:
                     SELECT
                       o.id,
                       o.platform,
-                      o.shop_id,
+                      o.store_code,
                       f.planned_warehouse_id AS service_warehouse_id,
                       f.actual_warehouse_id  AS warehouse_id
                     FROM orders o
@@ -94,7 +94,7 @@ async def _load_order_head(session: AsyncSession, *, order_id: int) -> dict:
     return {
         "id": int(row["id"]),
         "platform": str(row["platform"]),
-        "shop_id": str(row["shop_id"]),
+        "store_code": str(row["store_code"]),
         "service_warehouse_id": int(row["service_warehouse_id"]) if row.get("service_warehouse_id") is not None else None,
         "warehouse_id": int(row["warehouse_id"]) if row.get("warehouse_id") is not None else None,
     }
@@ -158,7 +158,7 @@ def register(router) -> None:
         lines, matrix = await OrderWarehouseAvailabilityService.build_matrix(
             session,
             platform=head["platform"],
-            shop_id=head["shop_id"],
+            store_code=head["store_code"],
             order_id=int(order_id),
             warehouse_ids=wh_ids,
         )

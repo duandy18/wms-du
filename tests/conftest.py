@@ -164,24 +164,44 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 {"wid": wh_id, "prov": prov},
             )
 
-        # ✅ Baseline 需要覆盖多条合同测试使用的 (platform, shop_id)
+        # ✅ Baseline 需要覆盖多条合同测试使用的 (platform, store_code)
         # - PDD/1：历史 UT 默认
         # - DEMO/1：merchant-code-bindings / order ingest 等合同测试依赖
         await conn.execute(
             text(
                 """
-                INSERT INTO stores(platform, shop_id, name, active)
-                VALUES ('PDD', '1', 'UT-测试店铺', TRUE)
-                ON CONFLICT (platform, shop_id) DO NOTHING
+                INSERT INTO stores (
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  'PDD',
+  '1',
+  'UT-测试店铺',
+  TRUE
+)
+                ON CONFLICT (platform, store_code) DO NOTHING
                 """
             )
         )
         await conn.execute(
             text(
                 """
-                INSERT INTO stores(platform, shop_id, name, active)
-                VALUES ('DEMO', '1', 'DEMO-1', TRUE)
-                ON CONFLICT (platform, shop_id) DO NOTHING
+                INSERT INTO stores (
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  'DEMO',
+  '1',
+  'DEMO-1',
+  TRUE
+)
+                ON CONFLICT (platform, store_code) DO NOTHING
                 """
             )
         )
@@ -191,7 +211,7 @@ async def _db_clean_and_seed(async_engine: AsyncEngine):
                 """
                 UPDATE stores
                    SET active = TRUE,
-                       name = COALESCE(NULLIF(name, ''), platform || '-' || shop_id || '-测试店铺')
+                       store_name = COALESCE(NULLIF(store_name, ''), platform || '-' || store_code || '-测试店铺')
                 """
             )
         )

@@ -17,7 +17,7 @@ class StockAvailabilityService:
     - 展示层 / UI 若要“可理解值”，再自行 max(available_raw, 0)
 
     注意：
-    - platform/shop_id 形参保留：保持调用合同稳定（当前不使用）
+    - platform/store_code 形参保留：保持调用合同稳定（当前不使用）
     """
 
     @staticmethod
@@ -25,7 +25,7 @@ class StockAvailabilityService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         item_id: int,
     ) -> int:
@@ -40,7 +40,7 @@ class StockAvailabilityService:
 
         params = {
             "platform": platform,  # 保持参数形态稳定（不使用）
-            "shop_id": shop_id,  # 保持参数形态稳定（不使用）
+            "store_code": store_code,  # 保持参数形态稳定（不使用）
             "warehouse_id": int(warehouse_id),
             "item_id": int(item_id),
         }
@@ -54,7 +54,7 @@ class StockAvailabilityService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         warehouse_id: int,
         item_ids: list[int],
     ) -> dict[int, int]:
@@ -70,7 +70,7 @@ class StockAvailabilityService:
 
         语义说明：
         - available_raw 允许为负数（与单 item 版本一致）
-        - platform / shop_id 作为形参保留，保持调用合同稳定
+        - platform / store_code 作为形参保留，保持调用合同稳定
         """
         ids = [int(x) for x in (item_ids or []) if int(x) > 0]
         if not ids:
@@ -98,7 +98,7 @@ class StockAvailabilityService:
 
         params = {
             "platform": platform,  # 保持参数形态稳定（不使用）
-            "shop_id": shop_id,  # 保持参数形态稳定（不使用）
+            "store_code": store_code,  # 保持参数形态稳定（不使用）
             "warehouse_id": int(warehouse_id),
             "item_ids": ids,
         }

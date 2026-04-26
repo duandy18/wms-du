@@ -31,15 +31,15 @@ async def test_confirm_and_create_rejects_external_line_key_input(client) -> Non
     headers = _auth_headers(token)
 
     platform = "DEMO"
-    shop_id = "UT-SHOP-REJ-LK-1"
+    store_code = "UT-STORE-REJ-LK-1"
     ext_order_no = "E2E-REJECT-LINE-KEY-0001"
 
     # 1) ingest facts (UNRESOLVED is fine)
     ingest_payload = {
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
-        "store_name": "UT-SHOP-REJ-LK-1",
+        "store_name": "UT-STORE-REJ-LK-1",
         "province": "广东省",
         "lines": [
             {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},

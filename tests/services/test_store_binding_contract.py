@@ -5,7 +5,7 @@ from app.oms.services.store_service import StoreService
 
 pytestmark = pytest.mark.asyncio
 
-PLATS = ["PDD", "TAOBAO", "TMALL", "JD", "RED", "DOUYIN", "AMAZON", "TEMU", "SHOPIFY", "ALIEXPRESS"]
+PLATS = ["PDD", "TAOBAO", "TMALL", "JD", "RED", "DOUYIN", "AMAZON", "TEMU", "STOREIFY", "ALIEXPRESS"]
 
 
 @pytest.mark.asyncio
@@ -21,9 +21,9 @@ async def test_store_auto_upsert_and_bind_multi_warehouses(session):
 
     # 为每个平台插两个店并绑定两个仓（其中一个默认）
     for i, plat in enumerate(PLATS, start=1):
-        shop = f"SHOP-{i:02d}"
+        store = f"STORE-{i:02d}"
         sid = await StoreService.ensure_store(
-            session, platform=plat, shop_id=shop, name=f"{plat}-{shop}"
+            session, platform=plat, store_code=store, store_name=f"{plat}-{store}"
         )
         await StoreService.bind_warehouse(
             session, store_id=sid, warehouse_id=1, is_default=True, priority=10
@@ -35,7 +35,7 @@ async def test_store_auto_upsert_and_bind_multi_warehouses(session):
 
     # 抽查一个平台，验证默认仓选择
     sid_row = await session.execute(
-        text("SELECT id FROM stores WHERE platform='PDD' AND shop_id='SHOP-01'")
+        text("SELECT id FROM stores WHERE platform='PDD' AND store_code='STORE-01'")
     )
     sid = sid_row.scalar_one()
     wh = await StoreService.resolve_default_warehouse(session, store_id=sid)

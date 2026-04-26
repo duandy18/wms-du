@@ -20,7 +20,7 @@ class OrderLineFact:
 class OrderReconcileResult:
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     issues: List[str]
     lines: List[OrderLineFact]

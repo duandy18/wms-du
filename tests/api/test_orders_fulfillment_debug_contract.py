@@ -9,26 +9,26 @@ from tests.services._helpers import ensure_store
 pytestmark = pytest.mark.asyncio
 
 
-async def _insert_min_order(session, *, platform: str, shop_id: str, ext_order_no: str) -> int:
+async def _insert_min_order(session, *, platform: str, store_code: str, ext_order_no: str) -> int:
     plat = platform.upper()
     store_id = await ensure_store(
         session,
         platform=plat,
-        shop_id=shop_id,
-        name=f"UT-{plat}-{shop_id}",
+        store_code=store_code,
+        name=f"UT-{plat}-{store_code}",
     )
     row = await session.execute(
         text(
             """
-            INSERT INTO orders(platform, shop_id, store_id, ext_order_no, status, created_at, updated_at)
+            INSERT INTO orders(platform, store_code, store_id, ext_order_no, status, created_at, updated_at)
             VALUES (:p, :s, :store_id, :e, 'CREATED', now(), now())
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO UPDATE
               SET store_id = EXCLUDED.store_id,
                   updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
-        {"p": plat, "s": shop_id, "store_id": int(store_id), "e": ext_order_no},
+        {"p": plat, "s": store_code, "store_id": int(store_id), "e": ext_order_no},
     )
     return int(row.scalar_one())
 
@@ -77,12 +77,12 @@ async def test_orders_fulfillment_debug_contract_shape(client_like, db_session_l
     wid = int(row.scalar_one())
 
     platform = "TB"
-    shop_id = "TEST"
+    store_code = "TEST"
     ext = "UT-FD-001"
     province = "河北省"
     city = "保定市"
 
-    order_id = await _insert_min_order(session, platform=platform, shop_id=shop_id, ext_order_no=ext)
+    order_id = await _insert_min_order(session, platform=platform, store_code=store_code, ext_order_no=ext)
     await _upsert_order_address(session, order_id=order_id, province=province, city=city)
     await _seed_service_city(session, warehouse_id=wid, province_code=province, city_code=city)
 
@@ -95,7 +95,7 @@ async def test_orders_fulfillment_debug_contract_shape(client_like, db_session_l
     assert data.get("version") == "v4-min"
     assert int(data["order_id"]) == int(order_id)
     assert data["platform"] == platform
-    assert data["shop_id"] == shop_id
+    assert data["store_code"] == store_code
 
     # 必须不存在的字段（避免复杂度回潮）
     assert "fulfillment_status" not in data
@@ -132,11 +132,11 @@ async def test_orders_fulfillment_debug_when_city_missing(client_like, db_sessio
     session = db_session_like_pg
 
     platform = "TB"
-    shop_id = "TEST"
+    store_code = "TEST"
     ext = "UT-FD-002"
     province = "河北省"
 
-    order_id = await _insert_min_order(session, platform=platform, shop_id=shop_id, ext_order_no=ext)
+    order_id = await _insert_min_order(session, platform=platform, store_code=store_code, ext_order_no=ext)
     await session.execute(
         text(
             """

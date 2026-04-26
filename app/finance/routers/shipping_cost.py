@@ -13,7 +13,7 @@ from app.finance.contracts.shipping_cost import (
 )
 from app.finance.services.common import (
     clean_platform,
-    clean_shop_id,
+    clean_store_code,
     ensure_default_range,
     parse_date_param,
 )
@@ -33,7 +33,7 @@ def register(router: APIRouter) -> None:
         from_date: str | None = Query(None, description="起始日期 YYYY-MM-DD，默认最近 30 天"),
         to_date: str | None = Query(None, description="结束日期 YYYY-MM-DD，默认今天"),
         platform: str | None = Query(None, description="平台过滤，可选"),
-        shop_id: str | None = Query(None, description="店铺过滤，可选"),
+        store_code: str | None = Query(None, description="店铺过滤，可选"),
     ) -> ShippingCostResponse:
         _ = current_user
         from_dt, to_dt = await ensure_default_range(
@@ -45,7 +45,7 @@ def register(router: APIRouter) -> None:
             from_date=from_dt,
             to_date=to_dt,
             platform=clean_platform(platform),
-            shop_id=clean_shop_id(shop_id),
+            store_code=clean_store_code(store_code),
         )
 
     @router.get(
@@ -59,7 +59,7 @@ def register(router: APIRouter) -> None:
         from_date: str | None = Query(None, description="起始日期 YYYY-MM-DD，可选"),
         to_date: str | None = Query(None, description="结束日期 YYYY-MM-DD，可选"),
         platform: str | None = Query(None, description="平台过滤，可选"),
-        shop_id: str | None = Query(None, description="店铺过滤，可选"),
+        store_code: str | None = Query(None, description="店铺过滤，可选"),
         warehouse_id: int | None = Query(None, description="仓库过滤，可选"),
         shipping_provider_id: int | None = Query(None, description="物流网点过滤，可选"),
     ) -> ShippingCostLedgerOptionsResponse:
@@ -68,7 +68,7 @@ def register(router: APIRouter) -> None:
             from_date=parse_date_param(from_date),
             to_date=parse_date_param(to_date),
             platform=clean_platform(platform),
-            shop_id=clean_shop_id(shop_id),
+            store_code=clean_store_code(store_code),
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
         )
@@ -84,7 +84,7 @@ def register(router: APIRouter) -> None:
         from_date: str | None = Query(None, description="起始日期 YYYY-MM-DD，可选"),
         to_date: str | None = Query(None, description="结束日期 YYYY-MM-DD，可选"),
         platform: str | None = Query(None, description="平台过滤，可选"),
-        shop_id: str | None = Query(None, description="店铺过滤，可选"),
+        store_code: str | None = Query(None, description="店铺过滤，可选"),
         warehouse_id: int | None = Query(None, description="仓库过滤，可选"),
         shipping_provider_id: int | None = Query(None, description="物流网点过滤，可选"),
         order_keyword: str | None = Query(None, description="订单号 / 运单号模糊过滤，可选"),
@@ -95,7 +95,7 @@ def register(router: APIRouter) -> None:
             from_date=parse_date_param(from_date),
             to_date=parse_date_param(to_date),
             platform=clean_platform(platform),
-            shop_id=clean_shop_id(shop_id),
+            store_code=clean_store_code(store_code),
             warehouse_id=warehouse_id,
             shipping_provider_id=shipping_provider_id,
             order_keyword=order_keyword or "",

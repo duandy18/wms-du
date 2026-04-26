@@ -21,7 +21,7 @@ async def test_transport_shipment_service_commit_audit_writes_audit(session: Asy
     """
     ref = "UT-SHIP-SVC-001"
     platform = "INTERNAL"
-    shop_id = "NO-STORE"
+    store_code = "NO-STORE"
     trace_id = "TRACE-UT-SHIP-001"
 
     await session.execute(
@@ -43,7 +43,7 @@ async def test_transport_shipment_service_commit_audit_writes_audit(session: Asy
         ShipCommitAuditCommand(
             ref=ref,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             trace_id=trace_id,
             meta={"carrier": "DUMMY", "tracking_no": "T123456"},
         )

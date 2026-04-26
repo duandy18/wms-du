@@ -14,7 +14,7 @@ from tests.services._helpers import ensure_store
 # ✅ Test constants (legacy exports kept for compatibility)
 # ============================================================================
 PLATFORM = "PDD"
-SHOP_ID = "1"
+STORE_ID = "1"
 WAREHOUSE_ID = 1
 
 
@@ -23,7 +23,7 @@ class BlueprintOrderSeed:
     order_id: int
     ref: str
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
 
 
@@ -31,7 +31,7 @@ async def insert_min_order(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
     warehouse_id: Optional[int] = None,
     fulfillment_status: str = "SERVICE_ASSIGNED",
@@ -50,15 +50,15 @@ async def insert_min_order(
     注意：本函数只插订单头与履约快照，不插 order_items。
     """
     plat = (platform or "").upper().strip()
-    sid = str(shop_id or "").strip()
+    sid = str(store_code or "").strip()
     ext = str(ext_order_no or "").strip()
     if not plat or not sid or not ext:
-        raise ValueError("insert_min_order: platform/shop_id/ext_order_no must be non-empty")
+        raise ValueError("insert_min_order: platform/store_code/ext_order_no must be non-empty")
 
     store_id = await ensure_store(
         session,
         platform=plat,
-        shop_id=sid,
+        store_code=sid,
         name=f"UT-{plat}-{sid}",
     )
 
@@ -66,9 +66,9 @@ async def insert_min_order(
     row = await session.execute(
         text(
             """
-            INSERT INTO orders (platform, shop_id, store_id, ext_order_no, status, trace_id, created_at, updated_at)
+            INSERT INTO orders (platform, store_code, store_id, ext_order_no, status, trace_id, created_at, updated_at)
             VALUES (:p, :s, :store_id, :ext, :st, :tid, now(), now())
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO UPDATE
               SET store_id = EXCLUDED.store_id,
                   status = EXCLUDED.status,
                   trace_id = COALESCE(EXCLUDED.trace_id, orders.trace_id),
@@ -138,7 +138,7 @@ async def insert_orders_bulk(
         oid = await insert_min_order(
             session,
             platform=str(o.get("platform") or PLATFORM),
-            shop_id=str(o.get("shop_id") or SHOP_ID),
+            store_code=str(o.get("store_code") or STORE_ID),
             ext_order_no=str(o.get("ext_order_no") or ""),
             warehouse_id=(int(o["warehouse_id"]) if o.get("warehouse_id") is not None else None),
             fulfillment_status=str(o.get("fulfillment_status") or "SERVICE_ASSIGNED"),

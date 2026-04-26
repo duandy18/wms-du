@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class WaybillConfigOut(BaseModel):
     id: int
     platform: str
-    shop_id: str
+    store_code: str
     shipping_provider_id: int
     shipping_provider_name: Optional[str] = None
     customer_code: str
@@ -37,7 +37,7 @@ class WaybillConfigDetailOut(BaseModel):
 
 class WaybillConfigCreateIn(BaseModel):
     platform: str = Field(..., min_length=1, max_length=32)
-    shop_id: str = Field(..., min_length=1, max_length=64)
+    store_code: str = Field(..., min_length=1, max_length=64)
     shipping_provider_id: int = Field(..., ge=1)
     customer_code: str = Field(..., min_length=1, max_length=64)
 
@@ -59,7 +59,7 @@ class WaybillConfigCreateOut(BaseModel):
 
 class WaybillConfigUpdateIn(BaseModel):
     platform: Optional[str] = Field(None, min_length=1, max_length=32)
-    shop_id: Optional[str] = Field(None, min_length=1, max_length=64)
+    store_code: Optional[str] = Field(None, min_length=1, max_length=64)
     shipping_provider_id: Optional[int] = Field(None, ge=1)
     customer_code: Optional[str] = Field(None, min_length=1, max_length=64)
 

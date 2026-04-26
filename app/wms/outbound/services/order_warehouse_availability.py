@@ -101,7 +101,7 @@ class OrderWarehouseAvailabilityService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         order_id: int,
         warehouse_ids: Sequence[int],
     ) -> Tuple[Tuple[AvailabilityLine, ...], Tuple[AvailabilityCell, ...]]:
@@ -129,7 +129,7 @@ class OrderWarehouseAvailabilityService:
             avail_map = await StockAvailabilityService.get_available_for_items(
                 session,
                 platform=str(platform),
-                shop_id=str(shop_id),
+                store_code=str(store_code),
                 warehouse_id=int(wid),
                 item_ids=item_ids,
             )

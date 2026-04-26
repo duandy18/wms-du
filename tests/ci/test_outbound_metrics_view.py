@@ -136,8 +136,8 @@ async def test_metrics_view_basic(session: AsyncSession) -> None:
     assert reg.scalar() is not None, "vw_outbound_metrics view must exist"
 
     platform = "PDD"
-    shop_id = "METRICS-SHOP"
-    ref = f"ORD:{platform}:{shop_id}:UT-METRICS-001"
+    store_code = "METRICS-STORE"
+    ref = f"ORD:{platform}:{store_code}:UT-METRICS-001"
 
     # 选择 baseline 已存在的 item，避免引入额外 items/stocks_lot 依赖
     item_id = 1

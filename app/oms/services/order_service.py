@@ -38,14 +38,14 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         payload: Dict[str, Any],
         trace_id: Optional[str] = None,
     ) -> dict:
         return await OrderIngestService.ingest_raw(
             session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             payload=payload,
             trace_id=trace_id,
         )
@@ -55,7 +55,7 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         occurred_at: Optional[datetime] = None,
         buyer_name: Optional[str] = None,
@@ -70,7 +70,7 @@ class OrderService:
         return await OrderIngestService.ingest(
             session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             occurred_at=occurred_at,
             buyer_name=buyer_name,
@@ -90,13 +90,13 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ref: str,
     ) -> Optional[str]:
         return await get_trace_id_for_order_ref(
             session,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ref=ref,
         )
 
@@ -107,7 +107,7 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ref: str,
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,
@@ -123,7 +123,7 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ref: str,
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,
@@ -138,7 +138,7 @@ class OrderService:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ref: str,
         lines: Sequence[Mapping[str, Any]],
         trace_id: Optional[str] = None,

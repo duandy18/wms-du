@@ -18,41 +18,43 @@ def _get_order_sim_test_store_id() -> int | None:
         return None
 
 
-def enforce_order_sim_test_store_gate(*, store_id: int) -> None:
+def enforce_order_sim_test_store_id_gate(*, store_id: int) -> None:
     tid = _get_order_sim_test_store_id()
     if tid is None:
         return
+
     if int(store_id) != int(tid):
         raise HTTPException(
             status_code=403,
             detail=make_problem(
                 status_code=403,
                 error_code="forbidden",
-                message="order-sim 已启用测试商铺门禁：仅允许 TEST store_id 访问",
+                message="order-sim 已启用测试店铺门禁：仅允许 TEST store_id 访问",
                 context={"store_id": int(store_id), "allowed_test_store_id": int(tid)},
             ),
         )
 
 
-def _get_test_shop_id() -> str | None:
-    s = (os.getenv("TEST_SHOP_ID") or "").strip()
-    return s or None
+def _get_order_sim_test_store_code() -> str | None:
+    raw = (os.getenv("TEST_STORE_CODE") or "").strip()
+    return raw or None
 
 
-def enforce_order_sim_test_shop_gate(*, shop_id: str) -> None:
-    """
-    可选：当 TEST_SHOP_ID 设置后，order-sim 入口只能用于该测试商铺。
-    """
-    tid = _get_test_shop_id()
+def enforce_order_sim_test_store_code_gate(*, store_code: str) -> None:
+    tid = _get_order_sim_test_store_code()
     if tid is None:
         return
-    if str(shop_id) != tid:
+
+    if str(store_code) != tid:
         raise HTTPException(
             status_code=403,
             detail=make_problem(
                 status_code=403,
                 error_code="forbidden",
-                message="order-sim 已启用测试商铺门禁：仅允许 TEST shop_id 访问",
-                context={"shop_id": str(shop_id), "allowed_test_shop_id": str(tid)},
+                message="order-sim 已启用测试店铺门禁：仅允许 TEST store_code 访问",
+                context={
+                    "store_code": str(store_code),
+                    "allowed_test_store_code": str(tid),
+                },
             ),
         )

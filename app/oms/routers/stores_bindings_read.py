@@ -53,21 +53,21 @@ def register(router: APIRouter) -> None:
             SELECT
               s.id AS store_id,
               s.platform,
-              s.shop_id,
-              s.name,
+              s.store_code,
+              s.store_name,
               s.email,
               s.contact_name,
               s.contact_phone,
               CASE
                 WHEN EXISTS (
                   SELECT 1
-                    FROM platform_test_shops pts
+                    FROM platform_test_stores pts
                    WHERE pts.store_id = s.id
                      AND pts.code = 'DEFAULT'
                 )
                 THEN 'TEST'
                 ELSE 'PROD'
-              END AS shop_type,
+              END AS store_type,
               COALESCE(
                 json_agg(
                   jsonb_build_object(
@@ -95,8 +95,8 @@ def register(router: APIRouter) -> None:
             GROUP BY
               s.id,
               s.platform,
-              s.shop_id,
-              s.name,
+              s.store_code,
+              s.store_name,
               s.email,
               s.contact_name,
               s.contact_phone
@@ -112,12 +112,12 @@ def register(router: APIRouter) -> None:
             data={
                 "store_id": int(row[0]),
                 "platform": row[1],
-                "shop_id": row[2],
-                "name": row[3],
+                "store_code": row[2],
+                "store_name": row[3],
                 "email": row[4],
                 "contact_name": row[5],
                 "contact_phone": row[6],
-                "shop_type": row[7],
+                "store_type": row[7],
                 "bindings": row[8],
             },
         )

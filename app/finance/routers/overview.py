@@ -9,7 +9,7 @@ from app.db.deps import get_async_session as get_session
 from app.finance.contracts.overview import FinanceOverviewResponse
 from app.finance.services.common import (
     clean_platform,
-    clean_shop_id,
+    clean_store_code,
     ensure_default_range,
     parse_date_param,
 )
@@ -29,7 +29,7 @@ def register(router: APIRouter) -> None:
         from_date: str | None = Query(None, description="起始日期 YYYY-MM-DD，默认最近 30 天"),
         to_date: str | None = Query(None, description="结束日期 YYYY-MM-DD，默认今天"),
         platform: str | None = Query(None, description="平台过滤，可选"),
-        shop_id: str | None = Query(None, description="店铺过滤，可选"),
+        store_code: str | None = Query(None, description="店铺过滤，可选"),
     ) -> FinanceOverviewResponse:
         _ = current_user
         from_dt, to_dt = await ensure_default_range(
@@ -41,5 +41,5 @@ def register(router: APIRouter) -> None:
             from_date=from_dt,
             to_date=to_dt,
             platform=clean_platform(platform),
-            shop_id=clean_shop_id(shop_id),
+            store_code=clean_store_code(store_code),
         )

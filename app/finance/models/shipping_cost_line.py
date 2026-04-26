@@ -26,8 +26,8 @@ class FinanceShippingCostLine(Base):
             "shipping_record_id",
             name="uq_finance_shipping_cost_lines_shipping_record_id",
         ),
-        sa.Index("ix_fsc_lines_platform_shop", "platform", "shop_id"),
-        sa.Index("ix_fsc_lines_shop_id", "shop_id"),
+        sa.Index("ix_fsc_lines_platform_store", "platform", "store_code"),
+        sa.Index("ix_fsc_lines_store_code", "store_code"),
         sa.Index("ix_fsc_lines_warehouse_id", "warehouse_id"),
         sa.Index("ix_fsc_lines_provider_id", "shipping_provider_id"),
         sa.Index("ix_fsc_lines_provider_code", "shipping_provider_code"),
@@ -41,8 +41,8 @@ class FinanceShippingCostLine(Base):
     shipping_record_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
 
     platform: Mapped[str] = mapped_column(sa.String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    shop_name: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
+    store_code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    store_name: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
 
     order_ref: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     package_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)

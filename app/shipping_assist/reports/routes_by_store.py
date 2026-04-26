@@ -1,4 +1,4 @@
-# app/shipping_assist/reports/routes_by_shop.py
+# app/shipping_assist/reports/routes_by_store.py
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -9,31 +9,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
-from app.shipping_assist.reports.contracts import ShippingByShopResponse, ShippingByShopRow
+from app.shipping_assist.reports.contracts import ShippingByStoreResponse, ShippingByStoreRow
 from app.shipping_assist.reports.helpers import build_where_clause, clean_opt_str, parse_date_param
 
 
 def register(router: APIRouter) -> None:
     @router.get(
-        "/shipping-assist/reports/by-shop",
-        response_model=ShippingByShopResponse,
+        "/shipping-assist/reports/by-store",
+        response_model=ShippingByStoreResponse,
     )
-    async def shipping_reports_by_shop(
+    async def shipping_reports_by_store(
         from_date: Optional[str] = Query(None),
         to_date: Optional[str] = Query(None),
         platform: Optional[str] = Query(None),
-        shop_id: Optional[str] = Query(None),
+        store_code: Optional[str] = Query(None),
         shipping_provider_code: Optional[str] = Query(None),
         province: Optional[str] = Query(None),
         city: Optional[str] = Query(None),
         warehouse_id: Optional[int] = Query(None),
         session: AsyncSession = Depends(get_session),
         _current_user: Any = Depends(get_current_user),
-    ) -> ShippingByShopResponse:
+    ) -> ShippingByStoreResponse:
         from_dt = parse_date_param(from_date)
         to_dt = parse_date_param(to_date)
         platform_clean = clean_opt_str(platform)
-        shop_id_clean = clean_opt_str(shop_id)
+        store_code_clean = clean_opt_str(store_code)
         shipping_provider_code_clean = clean_opt_str(shipping_provider_code)
         province_clean = clean_opt_str(province)
         city_clean = clean_opt_str(city)
@@ -42,7 +42,7 @@ def register(router: APIRouter) -> None:
             from_dt=from_dt,
             to_dt=to_dt,
             platform=platform_clean,
-            shop_id=shop_id_clean,
+            store_code=store_code_clean,
             shipping_provider_code=shipping_provider_code_clean,
             province=province_clean,
             warehouse_id=warehouse_id,
@@ -53,7 +53,7 @@ def register(router: APIRouter) -> None:
             f"""
             SELECT
               sr.platform,
-              sr.shop_id,
+              sr.store_code,
               COUNT(*) AS ship_cnt,
               COALESCE(SUM(sr.cost_estimated), 0)::float AS total_cost,
               CASE WHEN COUNT(*) > 0
@@ -61,20 +61,20 @@ def register(router: APIRouter) -> None:
                    ELSE 0.0 END AS avg_cost
             FROM shipping_records sr
             WHERE {where_sql}
-            GROUP BY sr.platform, sr.shop_id
-            ORDER BY total_cost DESC, sr.platform, sr.shop_id
+            GROUP BY sr.platform, sr.store_code
+            ORDER BY total_cost DESC, sr.platform, sr.store_code
             """
         )
 
         result = await session.execute(sql, params)
         rows = result.mappings().all()
 
-        return ShippingByShopResponse(
+        return ShippingByStoreResponse(
             ok=True,
             rows=[
-                ShippingByShopRow(
+                ShippingByStoreRow(
                     platform=str(r["platform"]),
-                    shop_id=str(r["shop_id"]),
+                    store_code=str(r["store_code"]),
                     ship_cnt=int(r["ship_cnt"] or 0),
                     total_cost=float(r["total_cost"] or 0.0),
                     avg_cost=float(r["avg_cost"] or 0.0),

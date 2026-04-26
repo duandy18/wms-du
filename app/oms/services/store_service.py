@@ -13,15 +13,15 @@ class StoreService:
     """
 
     # ------------------------------------------------------------------
-    # 店铺 UPSERT（store 主数据，按 platform + shop_id）
+    # 店铺 UPSERT（store 主数据，按 platform + store_code）
     # ------------------------------------------------------------------
     @staticmethod
     async def ensure_store(
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
-        name: Optional[str] = None,
+        store_code: str,
+        store_name: Optional[str] = None,
     ) -> int:
         plat = platform.upper()
 
@@ -31,11 +31,11 @@ class StoreService:
                 SELECT id
                   FROM stores
                  WHERE platform = :p
-                   AND shop_id  = :s
+                   AND store_code  = :s
                  LIMIT 1
                 """
             ),
-            {"p": plat, "s": shop_id},
+            {"p": plat, "s": store_code},
         )
         row = rec.first()
         if row is not None:
@@ -44,14 +44,14 @@ class StoreService:
         ins = await session.execute(
             text(
                 """
-                INSERT INTO stores (platform, shop_id, name)
+                INSERT INTO stores (platform, store_code, store_name)
                 VALUES (:p, :s, :n)
-                ON CONFLICT (platform, shop_id) DO UPDATE
-                SET name = COALESCE(EXCLUDED.name, stores.name)
+                ON CONFLICT (platform, store_code) DO UPDATE
+                SET store_name = COALESCE(EXCLUDED.store_name, stores.store_name)
                 RETURNING id
                 """
             ),
-            {"p": plat, "s": shop_id, "n": name or f"{plat}-{shop_id}"},
+            {"p": plat, "s": store_code, "n": store_name or f"{plat}-{store_code}"},
         )
         new_id = ins.scalar()
         return int(new_id)
@@ -199,19 +199,19 @@ class StoreService:
         return int(row[0]) if row else None
 
     @staticmethod
-    async def resolve_default_warehouse_for_platform_shop(
+    async def resolve_default_warehouse_for_platform_store(
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
     ) -> Optional[int]:
         plat = platform.upper()
 
         store_id = await StoreService.ensure_store(
             session,
             platform=plat,
-            shop_id=shop_id,
-            name=f"{plat}-{shop_id}",
+            store_code=store_code,
+            store_name=f"{plat}-{store_code}",
         )
 
         return await StoreService.resolve_default_warehouse(session, store_id=store_id)
@@ -226,20 +226,20 @@ class StoreService:
         name: str,
         code: str,
         platform: str = "INTERNAL",
-        shop_id: Optional[str] = None,
+        store_code: Optional[str] = None,
     ) -> int:
         plat = platform.upper()
-        shop = shop_id or code
+        store = store_code or code
 
         row = await session.execute(
             text(
                 """
-                INSERT INTO stores (platform, shop_id, name)
+                INSERT INTO stores (platform, store_code, store_name)
                 VALUES (:p, :s, :n)
                 RETURNING id
                 """
             ),
-            {"p": plat, "s": shop, "n": name},
+            {"p": plat, "s": store, "n": name},
         )
         store_id = row.scalar()
         return int(store_id)
@@ -255,8 +255,8 @@ class StoreService:
                 """
                 SELECT id,
                        platform,
-                       shop_id,
-                       name,
+                       store_code,
+                       store_name,
                        active,
                        email,
                        contact_name,

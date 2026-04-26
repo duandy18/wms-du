@@ -37,7 +37,7 @@ async def list_bound_filled_code_options(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
 ) -> List[Dict[str, Any]]:
     """
     只用 A：已绑定 merchant_code → published FSKU。
@@ -59,11 +59,11 @@ async def list_bound_filled_code_options(
                   ON f.id = b.fsku_id
                  AND f.status = 'published'
                WHERE b.platform = :p
-                 AND b.shop_id   = :s
+                 AND b.store_code   = :s
                ORDER BY b.merchant_code ASC
                 """
             ),
-            {"p": str(platform), "s": str(shop_id)},
+            {"p": str(platform), "s": str(store_code)},
         )
     ).mappings().all()
 
@@ -138,7 +138,7 @@ async def build_components_summary_by_filled_code(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     filled_code: str,
 ) -> Optional[str]:
     """
@@ -162,12 +162,12 @@ async def build_components_summary_by_filled_code(
                     ON f.id = b.fsku_id
                    AND f.status = 'published'
                  WHERE b.platform = :p
-                   AND b.shop_id   = :s
+                   AND b.store_code   = :s
                    AND b.merchant_code = :c
                  LIMIT 1
                 """
             ),
-            {"p": str(platform), "s": str(shop_id), "c": cd},
+            {"p": str(platform), "s": str(store_code), "c": cd},
         )
     ).mappings().first()
 

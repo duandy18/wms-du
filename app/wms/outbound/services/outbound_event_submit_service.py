@@ -104,7 +104,7 @@ async def load_order_submit_context(
 
     source_ref = (
         f"ORD:{str(head['platform']).upper()}:"
-        f"{str(head['shop_id'])}:"
+        f"{str(head['store_code'])}:"
         f"{str(head['ext_order_no'])}"
     )
 

@@ -18,13 +18,13 @@ class FinanceOrderSalesService:
         from_date: date,
         to_date: date,
         platform: str = "",
-        shop_id: str = "",
+        store_code: str = "",
     ) -> OrderSalesResponse:
         source = OrderSalesSource(self.session)
         data = await source.fetch(
             from_date=from_date,
             to_date=to_date,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
         )
         return OrderSalesResponse(**data)

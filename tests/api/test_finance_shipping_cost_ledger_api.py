@@ -19,30 +19,27 @@ async def _seed_finance_shipping_record(session) -> int:
         text(
             """
             INSERT INTO stores (
-              id,
-              platform,
-              shop_id,
-              name,
-              active,
-              route_mode,
-              store_code
-            )
-            VALUES (
-              910001,
-              'PDD',
-              'FIN-SHOP-1',
-              'FIN-SHOP-NAME-1',
-              true,
-              'FALLBACK',
-              'FIN-SHOP-1'
-            )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active,
+  route_mode
+)
+VALUES (
+  910001,
+  'PDD',
+  'FIN-STORE-1',
+  'FIN-STORE-NAME-1',
+  true,
+  'FALLBACK'
+)
             ON CONFLICT (id) DO UPDATE SET
               platform = EXCLUDED.platform,
-              shop_id = EXCLUDED.shop_id,
-              name = EXCLUDED.name,
+              store_code = EXCLUDED.store_code,
+              store_name = EXCLUDED.store_name,
               active = EXCLUDED.active,
-              route_mode = EXCLUDED.route_mode,
-              store_code = EXCLUDED.store_code
+              route_mode = EXCLUDED.route_mode
             """
         )
     )
@@ -54,7 +51,7 @@ async def _seed_finance_shipping_record(session) -> int:
                 INSERT INTO shipping_records (
                   order_ref,
                   platform,
-                  shop_id,
+                  store_code,
                   package_no,
                   warehouse_id,
                   shipping_provider_id,
@@ -76,7 +73,7 @@ async def _seed_finance_shipping_record(session) -> int:
                 VALUES (
                   'FIN-ORDER-1',
                   'PDD',
-                  'FIN-SHOP-1',
+                  'FIN-STORE-1',
                   1,
                   1,
                   1,
@@ -115,7 +112,7 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
                 """
                 SELECT
                   shipping_record_id,
-                  shop_name,
+                  store_name,
                   warehouse_name,
                   shipping_provider_code,
                   shipping_provider_name,
@@ -131,7 +128,7 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
     ).mappings().one()
 
     assert int(db_row["shipping_record_id"]) == shipping_record_id
-    assert db_row["shop_name"] == "FIN-SHOP-NAME-1"
+    assert db_row["store_name"] == "FIN-STORE-NAME-1"
     assert db_row["warehouse_name"] == "WH-1"
     assert db_row["shipping_provider_code"] == "UT-CAR-1"
     assert db_row["shipping_provider_name"] == "UT-CARRIER-1"
@@ -144,7 +141,7 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
         "?from_date=2036-02-01"
         "&to_date=2036-02-01"
         "&platform=PDD"
-        "&shop_id=FIN-SHOP-1"
+        "&store_code=FIN-STORE-1"
         "&order_keyword=FIN-ORDER-1",
         headers=headers,
     )
@@ -158,8 +155,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
     assert set(row) == {
         "shipping_record_id",
         "platform",
-        "shop_id",
-        "shop_name",
+        "store_code",
+        "store_name",
         "order_ref",
         "package_no",
         "tracking_no",
@@ -180,8 +177,8 @@ async def test_finance_shipping_ledger_reads_physical_lines(client, session):
 
     assert row["shipping_record_id"] == shipping_record_id
     assert row["platform"] == "PDD"
-    assert row["shop_id"] == "FIN-SHOP-1"
-    assert row["shop_name"] == "FIN-SHOP-NAME-1"
+    assert row["store_code"] == "FIN-STORE-1"
+    assert row["store_name"] == "FIN-STORE-NAME-1"
     assert row["order_ref"] == "FIN-ORDER-1"
     assert row["package_no"] == 1
     assert row["tracking_no"] == "FIN-TRACK-1"
@@ -213,13 +210,13 @@ async def test_finance_shipping_ledger_options(client, session):
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
-    assert set(body) == {"shops", "warehouses", "providers"}
+    assert set(body) == {"stores", "warehouses", "providers"}
 
-    assert body["shops"] == [
+    assert body["stores"] == [
         {
             "platform": "PDD",
-            "shop_id": "FIN-SHOP-1",
-            "shop_name": "FIN-SHOP-NAME-1",
+            "store_code": "FIN-STORE-1",
+            "store_name": "FIN-STORE-NAME-1",
         }
     ]
 

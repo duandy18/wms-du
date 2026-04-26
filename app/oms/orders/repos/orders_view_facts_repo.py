@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def load_order_head_by_keys(
-    session: AsyncSession, *, platform: str, shop_id: str, ext_order_no: str
+    session: AsyncSession, *, platform: str, store_code: str, ext_order_no: str
 ) -> Mapping[str, Any]:
     row = (
         (
@@ -18,7 +18,7 @@ async def load_order_head_by_keys(
                     SELECT
                       id,
                       platform,
-                      shop_id,
+                      store_code,
                       ext_order_no,
                       status,
                       created_at,
@@ -29,20 +29,20 @@ async def load_order_head_by_keys(
                       buyer_phone
                     FROM orders
                     WHERE platform = :p
-                      AND shop_id = :s
+                      AND store_code = :s
                       AND ext_order_no = :e
                     ORDER BY id DESC
                     LIMIT 1
                     """
                 ),
-                {"p": platform.upper(), "s": shop_id, "e": ext_order_no},
+                {"p": platform.upper(), "s": store_code, "e": ext_order_no},
             )
         )
         .mappings()
         .first()
     )
     if not row:
-        raise ValueError(f"order not found: {platform}/{shop_id}/{ext_order_no}")
+        raise ValueError(f"order not found: {platform}/{store_code}/{ext_order_no}")
     return row
 
 
@@ -57,7 +57,7 @@ async def load_order_head_by_id(
                     SELECT
                       id,
                       platform,
-                      shop_id,
+                      store_code,
                       ext_order_no,
                       status,
                       created_at,
@@ -163,7 +163,7 @@ async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[D
             await session.execute(
                 text(
                     """
-                    SELECT platform, shop_id, ext_order_no
+                    SELECT platform, store_code, ext_order_no
                     FROM orders
                     WHERE id = :oid
                     LIMIT 1
@@ -180,7 +180,7 @@ async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[D
         return []
 
     platform = str(head["platform"])
-    shop_id = str(head["shop_id"])
+    store_code = str(head["store_code"])
     ext = str(head["ext_order_no"])
 
     rows = (
@@ -197,12 +197,12 @@ async def load_platform_items(session: AsyncSession, *, order_id: int) -> List[D
                       raw_payload
                     FROM platform_order_lines
                     WHERE platform = :p
-                      AND shop_id = :s
+                      AND store_code = :s
                       AND ext_order_no = :e
                     ORDER BY line_no ASC
                     """
                 ),
-                {"p": platform, "s": shop_id, "e": ext},
+                {"p": platform, "s": store_code, "e": ext},
             )
         )
         .mappings()
@@ -279,16 +279,16 @@ async def load_order_facts_full(
 
     口径：
     - qty_ordered   来自 order_items.qty
-    - qty_shipped   来自 stock_ledger(ref=ORD:PLAT:SHOP:EXT, delta<0)
+    - qty_shipped   来自 stock_ledger(ref=ORD:PLAT:STORE:EXT, delta<0)
     - qty_returned  来自 RETURN_ORDER 收货执行事实（inbound_receipts + wms_inbound_operations + wms_inbound_operation_lines.qty_base）
     - qty_remaining_refundable = max(min(qty_ordered, qty_shipped) - qty_returned, 0)
     """
     head = await load_order_head_by_id(session, order_id=order_id)
 
     platform = str(head["platform"]).upper()
-    shop_id = str(head["shop_id"])
+    store_code = str(head["store_code"])
     ext_order_no = str(head["ext_order_no"])
-    order_ref = f"ORD:{platform}:{shop_id}:{ext_order_no}"
+    order_ref = f"ORD:{platform}:{store_code}:{ext_order_no}"
 
     item_rows = (
         (
@@ -409,7 +409,7 @@ async def load_order_facts_full(
     return {
         "order_id": int(head["id"]),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
         "issues": issues,
         "items": items,

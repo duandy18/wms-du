@@ -25,7 +25,7 @@ def _is_test_store(db: Session, store_id: int) -> bool:
             """
             SELECT EXISTS (
               SELECT 1
-                FROM platform_test_shops pts
+                FROM platform_test_stores pts
                WHERE pts.store_id = :sid
                  AND pts.code = 'DEFAULT'
             ) AS is_test

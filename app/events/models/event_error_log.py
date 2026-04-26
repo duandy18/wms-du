@@ -17,7 +17,7 @@ class EventErrorLog(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(64), nullable=False)
     order_no: Mapped[str] = mapped_column(String(128), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
@@ -41,6 +41,6 @@ class EventErrorLog(Base):
     )
 
     __table_args__ = (
-        Index("ix_event_error_log_key", "platform", "shop_id", "idempotency_key"),
+        Index("ix_event_error_log_key", "platform", "store_code", "idempotency_key"),
         Index("ix_event_error_log_retry", "next_retry_at"),
     )

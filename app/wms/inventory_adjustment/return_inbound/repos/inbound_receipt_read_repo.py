@@ -32,7 +32,7 @@ async def _resolve_order_identity(
         await session.execute(
             text(
                 """
-                SELECT id, platform, shop_id, ext_order_no
+                SELECT id, platform, store_code, ext_order_no
                 FROM orders
                 WHERE id = :order_id
                 LIMIT 1
@@ -46,14 +46,14 @@ async def _resolve_order_identity(
         raise HTTPException(status_code=404, detail="return_order_not_found")
 
     platform = str(row["platform"])
-    shop_id = str(row["shop_id"])
+    store_code = str(row["store_code"])
     ext_order_no = str(row["ext_order_no"])
     return {
         "order_id": int(row["id"]),
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
-        "order_ref": f"ORD:{platform}:{shop_id}:{ext_order_no}",
+        "order_ref": f"ORD:{platform}:{store_code}:{ext_order_no}",
     }
 
 
@@ -210,7 +210,7 @@ async def get_inbound_return_source_repo(
         order_id=order_id,
         order_ref=order_ref,
         platform=str(ident["platform"]),
-        shop_id=str(ident["shop_id"]),
+        store_code=str(ident["store_code"]),
         ext_order_no=str(ident["ext_order_no"]),
         warehouse_id=warehouse_id,
         warehouse_name_snapshot=warehouse_name_snapshot,

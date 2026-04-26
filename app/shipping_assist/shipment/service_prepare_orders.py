@@ -77,34 +77,34 @@ class ShipmentPrepareOrdersService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
     ) -> dict[str, object]:
         plat = (platform or "").strip().upper()
-        sid = (shop_id or "").strip()
+        sid = (store_code or "").strip()
         ext = (ext_order_no or "").strip()
 
         if not plat or not sid or not ext:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="platform / shop_id / ext_order_no are required",
+                detail="platform / store_code / ext_order_no are required",
             )
 
         row = (
             await self.session.execute(
                 text(
                     """
-                    SELECT id, platform, shop_id, ext_order_no
+                    SELECT id, platform, store_code, ext_order_no
                     FROM orders
                     WHERE platform = :platform
-                      AND shop_id = :shop_id
+                      AND store_code = :store_code
                       AND ext_order_no = :ext_order_no
                     LIMIT 1
                     """
                 ),
                 {
                     "platform": plat,
-                    "shop_id": sid,
+                    "store_code": sid,
                     "ext_order_no": ext,
                 },
             )
@@ -122,27 +122,27 @@ class ShipmentPrepareOrdersService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         address_ready_status: str,
     ) -> ShipPrepareImportResponse:
         plat = (platform or "").strip().upper()
-        sid = (shop_id or "").strip()
+        sid = (store_code or "").strip()
         ext = (ext_order_no or "").strip()
         addr_status = self._normalize_address_ready_status(address_ready_status)
 
         if not plat or not sid or not ext:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="platform / shop_id / ext_order_no are required",
+                detail="platform / store_code / ext_order_no are required",
             )
 
         order_sql = text(
             """
-            SELECT id, platform, shop_id, ext_order_no
+            SELECT id, platform, store_code, ext_order_no
             FROM orders
             WHERE platform = :platform
-              AND shop_id = :shop_id
+              AND store_code = :store_code
               AND ext_order_no = :ext_order_no
             LIMIT 1
             """
@@ -150,7 +150,7 @@ class ShipmentPrepareOrdersService:
         row = (
             await self.session.execute(
                 order_sql,
-                {"platform": plat, "shop_id": sid, "ext_order_no": ext},
+                {"platform": plat, "store_code": sid, "ext_order_no": ext},
             )
         ).mappings().first()
 
@@ -184,7 +184,7 @@ class ShipmentPrepareOrdersService:
             ok=True,
             order_id=order_id,
             platform=plat,
-            shop_id=sid,
+            store_code=sid,
             ext_order_no=ext,
             address_ready_status=addr_status,
         )
@@ -195,7 +195,7 @@ class ShipmentPrepareOrdersService:
             SELECT
                 o.id AS order_id,
                 o.platform,
-                o.shop_id,
+                o.store_code,
                 o.ext_order_no,
                 a.receiver_name,
                 a.receiver_phone,
@@ -228,7 +228,7 @@ class ShipmentPrepareOrdersService:
                 ShipPrepareOrdersListItemOut(
                     order_id=int(row["order_id"]),
                     platform=str(row["platform"]),
-                    shop_id=str(row["shop_id"]),
+                    store_code=str(row["store_code"]),
                     ext_order_no=str(row["ext_order_no"]),
                     receiver_name=self._clean_text(row.get("receiver_name")),
                     receiver_phone=self._clean_text(row.get("receiver_phone")),
@@ -251,17 +251,17 @@ class ShipmentPrepareOrdersService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
     ) -> ShipPrepareOrderDetailOut:
         plat = (platform or "").strip().upper()
-        sid = (shop_id or "").strip()
+        sid = (store_code or "").strip()
         ext = (ext_order_no or "").strip()
 
         if not plat or not sid or not ext:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="platform / shop_id / ext_order_no are required",
+                detail="platform / store_code / ext_order_no are required",
             )
 
         detail_sql = text(
@@ -269,7 +269,7 @@ class ShipmentPrepareOrdersService:
             SELECT
                 o.id AS order_id,
                 o.platform,
-                o.shop_id,
+                o.store_code,
                 o.ext_order_no,
                 a.receiver_name,
                 a.receiver_phone,
@@ -284,7 +284,7 @@ class ShipmentPrepareOrdersService:
             LEFT JOIN order_shipment_prepare p
               ON p.order_id = o.id
             WHERE o.platform = :platform
-              AND o.shop_id = :shop_id
+              AND o.store_code = :store_code
               AND o.ext_order_no = :ext_order_no
             LIMIT 1
             """
@@ -295,7 +295,7 @@ class ShipmentPrepareOrdersService:
                 detail_sql,
                 {
                     "platform": plat,
-                    "shop_id": sid,
+                    "store_code": sid,
                     "ext_order_no": ext,
                 },
             )
@@ -318,7 +318,7 @@ class ShipmentPrepareOrdersService:
         return ShipPrepareOrderDetailOut(
             order_id=int(row["order_id"]),
             platform=str(row["platform"]),
-            shop_id=str(row["shop_id"]),
+            store_code=str(row["store_code"]),
             ext_order_no=str(row["ext_order_no"]),
             receiver_name=self._clean_text(row.get("receiver_name")),
             receiver_phone=self._clean_text(row.get("receiver_phone")),
@@ -339,19 +339,19 @@ class ShipmentPrepareOrdersService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         address_ready_status: str,
     ) -> ShipPrepareOrderDetailOut:
         plat = (platform or "").strip().upper()
-        sid = (shop_id or "").strip()
+        sid = (store_code or "").strip()
         ext = (ext_order_no or "").strip()
         ready_status = self._normalize_address_confirm_status(address_ready_status)
 
         if not plat or not sid or not ext:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="platform / shop_id / ext_order_no are required",
+                detail="platform / store_code / ext_order_no are required",
             )
 
         order_sql = text(
@@ -359,7 +359,7 @@ class ShipmentPrepareOrdersService:
             SELECT id
             FROM orders
             WHERE platform = :platform
-              AND shop_id = :shop_id
+              AND store_code = :store_code
               AND ext_order_no = :ext_order_no
             LIMIT 1
             """
@@ -369,7 +369,7 @@ class ShipmentPrepareOrdersService:
                 order_sql,
                 {
                     "platform": plat,
-                    "shop_id": sid,
+                    "store_code": sid,
                     "ext_order_no": ext,
                 },
             )
@@ -403,6 +403,6 @@ class ShipmentPrepareOrdersService:
 
         return await self.get_prepare_order_detail(
             platform=plat,
-            shop_id=sid,
+            store_code=sid,
             ext_order_no=ext,
         )

@@ -27,14 +27,14 @@ async def test_transport_shipment_service_ship_commit_audit_writes_audit(session
     svc = TransportShipmentService(session)
     ref = "SHIP-UNIT-001"
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     trace_id = "TRACE-SHIP-001"
 
     result = await svc.ship_commit_audit(
         ShipCommitAuditCommand(
             ref=ref,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             trace_id=trace_id,
             meta={"foo": "bar"},
         )
@@ -69,7 +69,7 @@ async def test_transport_shipment_service_ship_commit_audit_writes_audit(session
     assert meta_db["flow"] == "OUTBOUND"
     assert meta_db["event"] == "SHIP_COMMIT"
     assert meta_db["platform"] == platform.upper()
-    assert meta_db["shop_id"] == shop_id
+    assert meta_db["store_code"] == store_code
     assert meta_db["foo"] == "bar"
 
 
@@ -79,11 +79,11 @@ async def test_transport_shipment_service_ship_commit_audit_is_not_idempotent(se
 
     - ship_commit_audit 只负责写审计事件（OUTBOUND / SHIP_COMMIT），不碰库存；
     - 每次调用都会写一条审计记录（没有幂等去重）；
-    - meta 中至少包含 platform / shop_id 字段。
+    - meta 中至少包含 platform / store_code 字段。
     """
     ref = "SHIP-AUDIT-1"
     platform = "PDD"
-    shop_id = "SHOP1"
+    store_code = "STORE1"
     trace_id = "TRACE-SHIP-AUDIT-1"
 
     await session.execute(
@@ -105,7 +105,7 @@ async def test_transport_shipment_service_ship_commit_audit_is_not_idempotent(se
         ShipCommitAuditCommand(
             ref=ref,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             trace_id=trace_id,
             meta={"carrier": "SF", "tracking_no": "SF123456"},
         )
@@ -134,7 +134,7 @@ async def test_transport_shipment_service_ship_commit_audit_is_not_idempotent(se
         ShipCommitAuditCommand(
             ref=ref,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             trace_id=trace_id,
             meta={"carrier": "SF", "tracking_no": "SF123456"},
         )
@@ -177,4 +177,4 @@ async def test_transport_shipment_service_ship_commit_audit_is_not_idempotent(se
 
     if isinstance(meta_row, dict):
         assert meta_row.get("platform") == platform
-        assert meta_row.get("shop_id") == shop_id
+        assert meta_row.get("store_code") == store_code

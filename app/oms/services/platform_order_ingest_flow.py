@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.oms.services.order_service import OrderService
 from app.oms.services.platform_order_fact_service import upsert_platform_order_lines
 from app.oms.services.platform_order_ingest_evidence import attach_reason_and_actions
-from app.oms.services.platform_order_ingest_universe_guard import enforce_no_test_items_in_non_test_shop, extract_item_ids_from_items_payload
+from app.oms.services.platform_order_ingest_universe_guard import enforce_no_test_items_in_non_test_store, extract_item_ids_from_items_payload
 from app.oms.services.platform_order_resolve_service import (
     ResolvedLine,
     load_items_brief,
     norm_platform,
-    norm_shop_id,
+    norm_store_code,
     resolve_platform_lines_to_items,
 )
 
@@ -113,7 +113,7 @@ class PlatformOrderIngestFlow:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         store_id: int,
         ext_order_no: str,
         occurred_at: Optional[datetime],
@@ -127,7 +127,7 @@ class PlatformOrderIngestFlow:
         extras: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         plat = norm_platform(platform)
-        sid = norm_shop_id(shop_id)
+        sid = norm_store_code(store_code)
         store_id_int = int(store_id)
 
         ext = str(ext_order_no or "").strip()
@@ -137,7 +137,7 @@ class PlatformOrderIngestFlow:
         facts_written = await upsert_platform_order_lines(
             session,
             platform=plat,
-            shop_id=sid,
+            store_code=sid,
             store_id=store_id_int,
             ext_order_no=ext,
             lines=raw_lines,
@@ -171,14 +171,14 @@ class PlatformOrderIngestFlow:
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
             }
-            return attach_reason_and_actions(out, platform=plat, shop_id=sid)
+            return attach_reason_and_actions(out, platform=plat, store_code=sid)
 
         item_ids = sorted(item_qty_map.keys())
 
         # ✅ 宇宙边界兜底：非 TEST 商铺禁止出现测试商品（DEFAULT Test Set）
-        await enforce_no_test_items_in_non_test_shop(
+        await enforce_no_test_items_in_non_test_store(
             session,
-            shop_id=sid,
+            store_code=sid,
             store_id=store_id_int,
             item_ids=item_ids,
             source=source,
@@ -200,7 +200,7 @@ class PlatformOrderIngestFlow:
         r = await OrderService.ingest(
             session,
             platform=plat,
-            shop_id=sid,
+            store_code=sid,
             ext_order_no=ext,
             occurred_at=occurred_at,
             buyer_name=buyer_name,
@@ -237,7 +237,7 @@ class PlatformOrderIngestFlow:
             "risk_level": risk_level,
             "risk_reason": risk_reason,
         }
-        return attach_reason_and_actions(out, platform=plat, shop_id=sid)
+        return attach_reason_and_actions(out, platform=plat, store_code=sid)
 
     # -------- Tail flow: from items_payload (replay/confirm-create) -------- #
 
@@ -246,7 +246,7 @@ class PlatformOrderIngestFlow:
         session: AsyncSession,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         store_id: Optional[int],
         ext_order_no: str,
         occurred_at: Optional[datetime],
@@ -266,7 +266,7 @@ class PlatformOrderIngestFlow:
         risk_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         plat = norm_platform(platform)
-        sid = norm_shop_id(shop_id)
+        sid = norm_store_code(store_code)
         ext = str(ext_order_no or "").strip()
         if not ext:
             raise ValueError("ext_order_no is required")
@@ -275,9 +275,9 @@ class PlatformOrderIngestFlow:
 
         # ✅ 宇宙边界兜底：tail/replay/confirm-create 也不能把测试商品写进非 TEST 商铺
         item_ids = extract_item_ids_from_items_payload(items_payload)
-        await enforce_no_test_items_in_non_test_shop(
+        await enforce_no_test_items_in_non_test_store(
             session,
-            shop_id=sid,
+            store_code=sid,
             store_id=store_id_out,
             item_ids=item_ids,
             source=source,
@@ -292,7 +292,7 @@ class PlatformOrderIngestFlow:
         r = await OrderService.ingest(
             session,
             platform=plat,
-            shop_id=sid,
+            store_code=sid,
             ext_order_no=ext,
             occurred_at=occurred_at,
             buyer_name=buyer_name,
@@ -333,4 +333,4 @@ class PlatformOrderIngestFlow:
             "risk_level": risk_level,
             "risk_reason": risk_reason,
         }
-        return attach_reason_and_actions(out, platform=plat, shop_id=sid)
+        return attach_reason_and_actions(out, platform=plat, store_code=sid)

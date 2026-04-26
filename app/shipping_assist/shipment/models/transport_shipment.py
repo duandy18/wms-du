@@ -45,7 +45,7 @@ class TransportShipment(Base):
     # 业务主身份
     order_ref: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(64), nullable=False)
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # 执行锚点
@@ -98,9 +98,9 @@ class TransportShipment(Base):
     __table_args__ = (
         UniqueConstraint(
             "platform",
-            "shop_id",
+            "store_code",
             "order_ref",
-            name="uq_transport_shipments_platform_shop_ref",
+            name="uq_transport_shipments_platform_store_ref",
         ),
         CheckConstraint("weight_kg > 0", name="ck_transport_shipments_weight_kg_positive"),
         CheckConstraint(
@@ -134,7 +134,7 @@ class TransportShipment(Base):
     def __repr__(self) -> str:
         return (
             f"<TransportShipment id={self.id} ref={self.order_ref} "
-            f"platform={self.platform} shop_id={self.shop_id} "
+            f"platform={self.platform} store_code={self.store_code} "
             f"provider_id={self.shipping_provider_id} "
             f"tracking_no={self.tracking_no} status={self.status}>"
         )

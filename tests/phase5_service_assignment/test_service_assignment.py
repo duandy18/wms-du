@@ -51,7 +51,7 @@ async def test_ingest_blocks_when_province_missing(db_session_like_pg, monkeypat
     res = await OrderService.ingest(
         session,
         platform="TB",
-        shop_id="TEST",
+        store_code="TEST",
         ext_order_no="UT-SA-001",
         occurred_at=None,
         buyer_name="A",
@@ -85,7 +85,7 @@ async def test_ingest_assigns_service_warehouse_by_province(db_session_like_pg, 
     res = await OrderService.ingest(
         session,
         platform="TB",
-        shop_id="TEST",
+        store_code="TEST",
         ext_order_no="UT-SA-002",
         occurred_at=None,
         buyer_name="B",

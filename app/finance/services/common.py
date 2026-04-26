@@ -39,7 +39,7 @@ def clean_platform(value: Optional[str]) -> str:
     return (value or "").strip().upper()
 
 
-def clean_shop_id(value: Optional[str]) -> str:
+def clean_store_code(value: Optional[str]) -> str:
     return (value or "").strip()
 
 

@@ -51,7 +51,7 @@ async def _pick_any_item_id(session: AsyncSession) -> tuple[int, bool]:
 
 async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, int, int]:
     platform = "PDD"
-    shop_id = "1"
+    store_code = "1"
     warehouse_id = 1
     uniq = uuid4().hex[:10]
     ext_order_no = f"OUT-API-{uniq}"
@@ -61,8 +61,8 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, i
     store_id = await ensure_store(
         session,
         platform=platform,
-        shop_id=shop_id,
-        name=f"UT-{platform}-{shop_id}",
+        store_code=store_code,
+        name=f"UT-{platform}-{store_code}",
     )
 
     await session.execute(
@@ -81,7 +81,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, i
             """
             INSERT INTO orders (
                 platform,
-                shop_id,
+                store_code,
                 store_id,
                 ext_order_no,
                 status,
@@ -90,14 +90,14 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, i
             )
             VALUES (
                 :platform,
-                :shop_id,
+                :store_code,
                 :store_id,
                 :ext_order_no,
                 'CREATED',
                 now(),
                 now()
             )
-            ON CONFLICT ON CONSTRAINT uq_orders_platform_shop_ext DO UPDATE
+            ON CONFLICT ON CONSTRAINT uq_orders_platform_store_ext DO UPDATE
               SET store_id = EXCLUDED.store_id,
                   updated_at = now()
             RETURNING id
@@ -105,7 +105,7 @@ async def _seed_order_and_stock(session: AsyncSession) -> tuple[int, int, int, i
         ),
         {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "store_id": int(store_id),
             "ext_order_no": ext_order_no,
         },

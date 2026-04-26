@@ -22,7 +22,7 @@ class AuditEventWriter:
         * meta     = jsonb，至少包含：
             - flow
             - event
-          其余字段任意扩展（platform / shop_id / warehouse_id / reason ...）
+          其余字段任意扩展（platform / store_code / warehouse_id / reason ...）
         * trace_id = 链路 ID，用于 TraceService 聚合。
     """
 

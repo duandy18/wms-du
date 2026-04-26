@@ -55,7 +55,7 @@ class PlatformOrderOut(BaseModel):
 
     id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     status: Optional[str] = None
     created_at: datetime
@@ -105,7 +105,7 @@ class OrderFactsResponse(BaseModel):
     ok: bool = True
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     issues: List[str] = Field(default_factory=list)
     items: List[OrderFactItemOut] = Field(default_factory=list)

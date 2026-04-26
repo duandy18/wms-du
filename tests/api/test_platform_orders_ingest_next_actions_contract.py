@@ -37,7 +37,7 @@ async def test_platform_orders_ingest_code_not_bound_returns_next_actions(client
 
     ingest_payload = {
         "platform": "DEMO",
-        "shop_id": "1",
+        "store_code": "1",
         "ext_order_no": _uniq("EXT-MC-NOT-BOUND"),
         "receiver_name": "张三",
         "receiver_phone": "13800000000",
@@ -94,7 +94,7 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
     # 0) 先 ingest 一次，确保 store 存在，并拿到真实 store_id
     ingest_seed = {
         "platform": "DEMO",
-        "shop_id": "1",
+        "store_code": "1",
         "ext_order_no": _uniq("EXT-MC-SEED"),
         "receiver_name": "张三",
         "receiver_phone": "13800000000",
@@ -130,13 +130,13 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
     assert b1.get("ok") is True
 
     # 3) DB 断言：current binding 已持久化（这是写接口最硬的契约）
-    #    注意：shop_id 来自 stores 表（语义是平台店铺ID），不能假设等于 store_id
+    #    注意：store_code 来自 stores 表（语义是平台店铺ID），不能假设等于 store_id
     async with async_session_maker() as session:
-        shop_row = (
+        store_row = (
             await session.execute(
                 text(
                     """
-                    SELECT shop_id
+                    SELECT store_code
                       FROM stores
                      WHERE id = :sid
                        AND platform = :p
@@ -146,8 +146,8 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
                 {"sid": store_id, "p": "DEMO"},
             )
         ).mappings().first()
-        assert shop_row and shop_row.get("shop_id") is not None
-        shop_id = str(shop_row.get("shop_id"))
+        assert store_row and store_row.get("store_code") is not None
+        store_code = str(store_row.get("store_code"))
 
         bind_row = (
             await session.execute(
@@ -156,12 +156,12 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
                     SELECT fsku_id
                       FROM merchant_code_fsku_bindings
                      WHERE platform = :p
-                       AND shop_id = :shop
+                       AND store_code = :store
                        AND merchant_code = :code
                      LIMIT 1
                     """
                 ),
-                {"p": "DEMO", "shop": shop_id, "code": filled_code},
+                {"p": "DEMO", "store": store_code, "code": filled_code},
             )
         ).mappings().first()
 
@@ -170,7 +170,7 @@ async def test_platform_orders_manual_bind_persists_current_binding_and_ingest_c
     # 4) 再 ingest：期望能 resolved；若仍看不到，至少不应再报 CODE_NOT_BOUND（因为 DB 已有 current）
     ingest_payload = {
         "platform": "DEMO",
-        "shop_id": "1",
+        "store_code": "1",
         "ext_order_no": _uniq("EXT-MC-BIND"),
         "receiver_name": "张三",
         "receiver_phone": "13800000000",

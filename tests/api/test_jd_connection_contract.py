@@ -15,15 +15,19 @@ pytestmark = pytest.mark.asyncio
 def _store_row_sql(store_id: int) -> str:
     return f"""
     INSERT INTO stores (
-        id, platform, shop_id, store_code, name, active
-    ) VALUES (
-        {store_id},
-        'jd',
-        'shop-{store_id}',
-        'SC{store_id}',
-        'store-{store_id}',
-        true
-    )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  {store_id},
+  'jd',
+  'store-{store_id}',
+  'store-{store_id}',
+  true
+)
     ON CONFLICT (id) DO NOTHING
     """
 
@@ -85,7 +89,7 @@ async def test_get_store_jd_connection_returns_connection_and_credential(client,
             raw_payload_json={"source": "test"},
             granted_identity_type="jd_uid",
             granted_identity_value="uid-602",
-            granted_identity_display="shop-602",
+            granted_identity_display="store-602",
         )
     )
     session.add(
@@ -118,7 +122,7 @@ async def test_get_store_jd_connection_returns_connection_and_credential(client,
     assert data["credential_expires_at"] is not None
     assert data["granted_identity_type"] == "jd_uid"
     assert data["granted_identity_value"] == "uid-602"
-    assert data["granted_identity_display"] == "shop-602"
+    assert data["granted_identity_display"] == "store-602"
     assert data["auth_source"] == "oauth"
     assert data["connection_status"] == "connected"
     assert data["credential_status"] == "valid"

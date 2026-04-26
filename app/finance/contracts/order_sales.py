@@ -21,7 +21,7 @@ class OrderSalesDailyRow(BaseModel):
 
 class OrderSalesShopRow(BaseModel):
     platform: str
-    shop_id: str
+    store_code: str
     order_count: int
     revenue: Decimal
 
@@ -37,7 +37,7 @@ class OrderSalesItemRow(BaseModel):
 class OrderSalesTopOrderRow(BaseModel):
     order_id: int
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     order_value: Decimal
     created_at: datetime
@@ -46,6 +46,6 @@ class OrderSalesTopOrderRow(BaseModel):
 class OrderSalesResponse(BaseModel):
     summary: OrderSalesSummary
     daily: list[OrderSalesDailyRow]
-    by_shop: list[OrderSalesShopRow]
+    by_store: list[OrderSalesShopRow]
     by_item: list[OrderSalesItemRow]
     top_orders: list[OrderSalesTopOrderRow]

@@ -5,7 +5,7 @@ from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events.models.event_error_log import EventErrorLog
-from app.oms.services.platform_events_extractors import extract_ref, extract_shop_id, extract_state
+from app.oms.services.platform_events_extractors import extract_ref, extract_store_code, extract_state
 
 
 async def log_error_isolated(
@@ -23,7 +23,7 @@ async def log_error_isolated(
             await session.execute(
                 insert(EventErrorLog).values(
                     platform=str(platform or ""),
-                    shop_id=extract_shop_id(raw),
+                    store_code=extract_store_code(raw),
                     order_no=extract_ref(raw),
                     idempotency_key=f"{platform}:{extract_ref(raw)}",
                     from_state=None,

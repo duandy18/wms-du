@@ -31,16 +31,16 @@ async def async_client() -> AsyncClient:
         yield client
 
 
-async def _ensure_store(session: AsyncSession, *, platform: str, shop_id: str, name: str) -> int:
+async def _ensure_store(session: AsyncSession, *, platform: str, store_code: str, name: str) -> int:
     plat = platform.strip().upper()
-    sid = shop_id.strip()
+    sid = store_code.strip()
     await session.execute(
         text(
             """
-            INSERT INTO stores(platform, shop_id, name, active, created_at, updated_at)
+            INSERT INTO stores(platform, store_code, store_name, active, created_at, updated_at)
             VALUES (:p, :s, :n, true, now(), now())
-            ON CONFLICT (platform, shop_id) DO UPDATE
-              SET name = EXCLUDED.name,
+            ON CONFLICT (platform, store_code) DO UPDATE
+              SET store_name = EXCLUDED.store_name,
                   updated_at = now();
             """
         ),
@@ -49,7 +49,7 @@ async def _ensure_store(session: AsyncSession, *, platform: str, shop_id: str, n
     row = (
         (
             await session.execute(
-                text("SELECT id FROM stores WHERE platform=:p AND shop_id=:s LIMIT 1"),
+                text("SELECT id FROM stores WHERE platform=:p AND store_code=:s LIMIT 1"),
                 {"p": plat, "s": sid},
             )
         )
@@ -71,7 +71,7 @@ async def _insert_fact_line(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     store_id: int,
     ext_order_no: str,
     line_no: int,
@@ -86,21 +86,21 @@ async def _insert_fact_line(
         text(
             """
             INSERT INTO platform_order_lines(
-              platform, shop_id, store_id, ext_order_no,
+              platform, store_code, store_id, ext_order_no,
               line_no, line_key,
               locator_kind, locator_value,
               filled_code, qty, title, spec,
               extras, raw_payload,
               created_at, updated_at
             ) VALUES (
-              :platform, :shop_id, :store_id, :ext_order_no,
+              :platform, :store_code, :store_id, :ext_order_no,
               :line_no, :line_key,
               :locator_kind, :locator_value,
               :filled_code, :qty, :title, :spec,
               (:extras)::jsonb, (:raw_payload)::jsonb,
               now(), now()
             )
-            ON CONFLICT (platform, shop_id, ext_order_no, line_key)
+            ON CONFLICT (platform, store_code, ext_order_no, line_key)
             DO UPDATE SET
               store_id=EXCLUDED.store_id,
               locator_kind=EXCLUDED.locator_kind,
@@ -116,7 +116,7 @@ async def _insert_fact_line(
         ),
         {
             "platform": platform,
-            "shop_id": shop_id,
+            "store_code": store_code,
             "store_id": int(store_id),
             "ext_order_no": ext_order_no,
             "line_no": int(line_no),
@@ -169,7 +169,7 @@ async def _create_published_fsku_with_component(session: AsyncSession, *, item_i
     return fsku_id, code
 
 
-async def _orders_count(session: AsyncSession, *, platform: str, shop_id: str, ext_order_no: str) -> int:
+async def _orders_count(session: AsyncSession, *, platform: str, store_code: str, ext_order_no: str) -> int:
     row = (
         (
             await session.execute(
@@ -178,11 +178,11 @@ async def _orders_count(session: AsyncSession, *, platform: str, shop_id: str, e
                     SELECT count(*) AS n
                       FROM orders
                      WHERE platform = :p
-                       AND shop_id = :s
+                       AND store_code = :s
                        AND ext_order_no = :e
                     """
                 ),
-                {"p": platform, "s": shop_id, "e": ext_order_no},
+                {"p": platform, "s": store_code, "e": ext_order_no},
             )
         )
         .mappings()
@@ -198,15 +198,15 @@ async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create
     _db_clean_and_seed,
 ) -> None:
     platform = "DEMO"
-    shop_id = "1"
-    store_id = await _ensure_store(db_session, platform=platform, shop_id=shop_id, name="DEMO-1")
+    store_code = "1"
+    store_id = await _ensure_store(db_session, platform=platform, store_code=store_code, name="DEMO-1")
 
     ext = f"UT-MISSING-FILLED-CODE-{uuid.uuid4().hex[:8]}"
 
     await _insert_fact_line(
         db_session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         store_id=store_id,
         ext_order_no=ext,
         line_no=1,
@@ -218,7 +218,7 @@ async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create
     )
     await db_session.commit()
 
-    n0 = await _orders_count(db_session, platform=platform, shop_id=shop_id, ext_order_no=ext)
+    n0 = await _orders_count(db_session, platform=platform, store_code=store_code, ext_order_no=ext)
 
     resp = await async_client.post(
         "/oms/platform-orders/replay",
@@ -236,7 +236,7 @@ async def test_replay_missing_filled_code_returns_unresolved_and_does_not_create
     assert len(data["unresolved"]) >= 1
     assert data["unresolved"][0].get("reason") == "MISSING_FILLED_CODE"
 
-    n1 = await _orders_count(db_session, platform=platform, shop_id=shop_id, ext_order_no=ext)
+    n1 = await _orders_count(db_session, platform=platform, store_code=store_code, ext_order_no=ext)
     assert n1 == n0, f"orders should not be created on UNRESOLVED, before={n0}, after={n1}"
 
 
@@ -247,8 +247,8 @@ async def test_replay_with_published_fsku_code_is_idempotent(
     _db_clean_and_seed,
 ) -> None:
     platform = "DEMO"
-    shop_id = "1"
-    store_id = await _ensure_store(db_session, platform=platform, shop_id=shop_id, name="DEMO-1")
+    store_code = "1"
+    store_id = await _ensure_store(db_session, platform=platform, store_code=store_code, name="DEMO-1")
 
     ext = f"UT-REPLAY-OK-{uuid.uuid4().hex[:8]}"
 
@@ -261,7 +261,7 @@ async def test_replay_with_published_fsku_code_is_idempotent(
     await _insert_fact_line(
         db_session,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         store_id=store_id,
         ext_order_no=ext,
         line_no=1,

@@ -18,7 +18,7 @@ class OrderStateSnapshot(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     order_no: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
-    shop_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

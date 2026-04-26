@@ -38,13 +38,13 @@ async def list_order_ids_by_created_at(
 
 async def load_order_head(session: AsyncSession, order_id: int) -> Optional[Dict[str, object]]:
     """
-    读取 orders 的最小头信息（service 只依赖 platform/shop_id/ext_order_no）。
+    读取 orders 的最小头信息（service 只依赖 platform/store_code/ext_order_no）。
     """
     row = (
         await session.execute(
             text(
                 """
-                SELECT id, platform, shop_id, ext_order_no
+                SELECT id, platform, store_code, ext_order_no
                   FROM orders
                  WHERE id = :oid
                  LIMIT 1
@@ -97,17 +97,17 @@ async def load_shipped(
     session: AsyncSession,
     *,
     platform: str,
-    shop_id: str,
+    store_code: str,
     ext_order_no: str,
 ) -> Dict[int, int]:
     """
-    shipped 来自 stock_ledger（ref=ORD:PLAT:SHOP:ext_no, delta<0）按 item_id 聚合。
+    shipped 来自 stock_ledger（ref=ORD:PLAT:STORE:ext_no, delta<0）按 item_id 聚合。
 
     约定：
     - 出库 delta 为负；shipped_qty = -SUM(delta) where delta<0
     - 不强绑 reason（避免历史/演进导致 reason 名称变化）
     """
-    ref = f"ORD:{str(platform).upper()}:{str(shop_id)}:{str(ext_order_no)}"
+    ref = f"ORD:{str(platform).upper()}:{str(store_code)}:{str(ext_order_no)}"
     rows = (
         await session.execute(
             text(

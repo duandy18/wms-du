@@ -54,7 +54,7 @@ async def test_finance_order_sales_contract(client):
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
-    assert set(body) == {"summary", "daily", "by_shop", "by_item", "top_orders"}
+    assert set(body) == {"summary", "daily", "by_store", "by_item", "top_orders"}
     assert set(body["summary"]) == {
         "order_count",
         "revenue",
@@ -62,7 +62,7 @@ async def test_finance_order_sales_contract(client):
         "median_order_value",
     }
     assert isinstance(body["daily"], list)
-    assert isinstance(body["by_shop"], list)
+    assert isinstance(body["by_store"], list)
     assert isinstance(body["by_item"], list)
     assert isinstance(body["top_orders"], list)
 
@@ -100,7 +100,7 @@ async def test_finance_shipping_costs_contract(client):
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
-    assert set(body) == {"summary", "daily", "by_carrier", "by_shop"}
+    assert set(body) == {"summary", "daily", "by_carrier", "by_store"}
     assert set(body["summary"]) == {
         "shipment_count",
         "estimated_shipping_cost",
@@ -110,7 +110,7 @@ async def test_finance_shipping_costs_contract(client):
     }
     assert isinstance(body["daily"], list)
     assert isinstance(body["by_carrier"], list)
-    assert isinstance(body["by_shop"], list)
+    assert isinstance(body["by_store"], list)
 
 
 async def test_legacy_finance_routes_are_not_kept(client):
@@ -118,7 +118,7 @@ async def test_legacy_finance_routes_are_not_kept(client):
 
     legacy_paths = [
         "/finance/overview/daily",
-        "/finance/shop",
+        "/finance/store",
         "/finance/sku",
         "/finance/order-unit",
     ]

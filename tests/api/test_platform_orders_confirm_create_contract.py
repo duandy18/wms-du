@@ -36,15 +36,15 @@ async def test_platform_orders_confirm_and_create_contract(client) -> None:
     headers = _auth_headers(token)
 
     platform = "DEMO"
-    shop_id = "UT-SHOP-1"
+    store_code = "UT-STORE-1"
     ext_order_no = "E2E-CONFIRM-0001"
 
     # 1) 先 ingest 落事实（本用例刻意构造 UNRESOLVED：缺填写码 / 填写码未绑定且不等于任何 published FSKU.code）
     ingest_payload = {
         "platform": platform,
-        "shop_id": shop_id,
+        "store_code": store_code,
         "ext_order_no": ext_order_no,
-        "store_name": "UT-SHOP-1",
+        "store_name": "UT-STORE-1",
         "province": "广东省",
         "lines": [
             {"qty": 1, "title": "无填写码行", "spec": "颜色:黑"},

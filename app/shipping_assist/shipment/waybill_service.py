@@ -13,7 +13,7 @@ class WaybillRequest:
     customer_code: Optional[str]
 
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
 
     sender: Optional[Dict[str, Any]]

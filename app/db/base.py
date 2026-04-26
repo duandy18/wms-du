@@ -125,7 +125,6 @@ def init_models(
         "app.oms.orders.models.order_fulfillment",
         "app.oms.stores.models.store",
         "app.wms.warehouses.models.warehouse",
-        "app.oms.stores.models.platform_shops",
     ]
     for mod in [m for m in explicit_chain if m and m not in ex]:
         if _safe_import(mod):

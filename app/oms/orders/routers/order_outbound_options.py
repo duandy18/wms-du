@@ -25,7 +25,7 @@ router = APIRouter(tags=["oms-order-outbound-options"])
 async def get_order_outbound_options(
     q: Optional[str] = Query(None),
     platform: Optional[str] = Query(None),
-    shop_id: Optional[str] = Query(None),
+    store_code: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -34,7 +34,7 @@ async def get_order_outbound_options(
         session,
         q=q,
         platform=platform,
-        shop_id=shop_id,
+        store_code=store_code,
         limit=int(limit),
         offset=int(offset),
     )

@@ -27,7 +27,7 @@ async def load_order_outbound_head(
                     SELECT
                       id,
                       platform,
-                      shop_id,
+                      store_code,
                       ext_order_no,
                       status,
                       created_at,

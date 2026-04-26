@@ -39,34 +39,34 @@ class ShipmentPrepareQuotesService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
     ) -> dict[str, Any]:
         plat = (platform or "").strip().upper()
-        sid = (shop_id or "").strip()
+        sid = (store_code or "").strip()
         ext = (ext_order_no or "").strip()
 
         if not plat or not sid or not ext:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="platform / shop_id / ext_order_no are required",
+                detail="platform / store_code / ext_order_no are required",
             )
 
         row = (
             await self.session.execute(
                 text(
                     """
-                    SELECT id, platform, shop_id, ext_order_no
+                    SELECT id, platform, store_code, ext_order_no
                     FROM orders
                     WHERE platform = :platform
-                      AND shop_id = :shop_id
+                      AND store_code = :store_code
                       AND ext_order_no = :ext_order_no
                     LIMIT 1
                     """
                 ),
                 {
                     "platform": plat,
-                    "shop_id": sid,
+                    "store_code": sid,
                     "ext_order_no": ext,
                 },
             )
@@ -84,13 +84,13 @@ class ShipmentPrepareQuotesService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
     ) -> tuple[int, OrderShipmentPrepare, OrderShipmentPreparePackage, dict[str, Any]]:
         order_row = await self._load_order_row(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
         )
         order_id = int(order_row["id"])
@@ -188,13 +188,13 @@ class ShipmentPrepareQuotesService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
     ) -> ShipPreparePackageQuoteOut:
         _, _, package, address = await self._load_prepare_and_package_and_address(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=package_no,
         )
@@ -247,14 +247,14 @@ class ShipmentPrepareQuotesService:
         self,
         *,
         platform: str,
-        shop_id: str,
+        store_code: str,
         ext_order_no: str,
         package_no: int,
         provider_id: int,
     ) -> ShipPreparePackageQuoteConfirmOut:
         _, _, package, address = await self._load_prepare_and_package_and_address(
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             package_no=package_no,
         )

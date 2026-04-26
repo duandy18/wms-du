@@ -10,7 +10,7 @@ def norm_platform(v: str) -> str:
     return (v or "").strip().upper()
 
 
-def norm_shop_id(v: str) -> str:
+def norm_store_code(v: str) -> str:
     return str(v or "").strip()
 
 

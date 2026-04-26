@@ -174,7 +174,7 @@ def register_order_refs(router: APIRouter) -> None:
                 sa.text(
                     """
                     SELECT platform,
-                           shop_id,
+                           store_code,
                            carrier_code,
                            carrier_name,
                            tracking_no,
@@ -194,13 +194,13 @@ def register_order_refs(router: APIRouter) -> None:
         ).mappings().first()
 
         platform = None
-        shop_id = None
+        store_code = None
         ext_order_no = parse_ext_order_no(order_ref)
 
         shipping = None
         if ship_row:
             platform = str(ship_row.get("platform") or "") or None
-            shop_id = str(ship_row.get("shop_id") or "") or None
+            store_code = str(ship_row.get("store_code") or "") or None
 
             meta_dict = safe_meta_to_dict(ship_row.get("meta"))
             recv_dict = meta_dict.get("receiver") if isinstance(meta_dict, dict) else None
@@ -233,7 +233,7 @@ def register_order_refs(router: APIRouter) -> None:
         return ReturnOrderRefDetailOut(
             order_ref=order_ref,
             platform=platform,
-            shop_id=shop_id,
+            store_code=store_code,
             ext_order_no=ext_order_no,
             remaining_qty=remaining_qty,
             shipping=shipping,

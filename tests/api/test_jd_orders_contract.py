@@ -24,15 +24,19 @@ pytestmark = pytest.mark.asyncio
 def _store_row_sql(store_id: int) -> str:
     return f"""
     INSERT INTO stores (
-        id, platform, shop_id, store_code, name, active
-    ) VALUES (
-        {store_id},
-        'jd',
-        'shop-{store_id}',
-        'SC{store_id}',
-        'store-{store_id}',
-        true
-    )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  {store_id},
+  'jd',
+  'store-{store_id}',
+  'store-{store_id}',
+  true
+)
     ON CONFLICT (id) DO NOTHING
     """
 

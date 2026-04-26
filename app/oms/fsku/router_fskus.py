@@ -9,7 +9,7 @@ from .router_fskus_routes_lifecycle import register as register_lifecycle
 
 
 def register(router: APIRouter) -> None:
-    r = APIRouter(prefix="/fskus", tags=["ops - shop-product-bundles"])
+    r = APIRouter(prefix="/fskus", tags=["ops - store-product-bundles"])
 
     register_crud(r)
     register_components(r)

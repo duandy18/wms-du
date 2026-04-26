@@ -1,4 +1,4 @@
-# app/oms/routers/shop_product_bundles_fskus_routes_crud.py
+# app/oms/routers/store_product_bundles_fskus_routes_crud.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,7 +10,7 @@ from app.oms.fsku.contracts.fsku import FskuCreateIn, FskuDetailOut, FskuListOut
 from app.db.deps import get_db
 from app.oms.fsku.services.fsku_service import FskuService
 
-from .shop_product_bundles_fskus_routes_base import _check_write_perm, _svc
+from .store_product_bundles_fskus_routes_base import _check_write_perm, _svc
 
 
 def register(r: APIRouter) -> None:

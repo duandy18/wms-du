@@ -16,7 +16,7 @@ class ShipmentApplicationError(Exception):
 class ShipCommitAuditCommand:
     ref: str
     platform: str
-    shop_id: str
+    store_code: str
     trace_id: str | None
     meta: dict[str, object] | None
 
@@ -34,7 +34,7 @@ class ShipWithWaybillCommand:
     trace_id: str | None
 
     platform: str
-    shop_id: str
+    store_code: str
     ext_order_no: str
     package_no: int
 

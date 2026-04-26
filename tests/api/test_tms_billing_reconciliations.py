@@ -116,7 +116,7 @@ async def _insert_shipping_record(
             INSERT INTO shipping_records (
                 order_ref,
                 platform,
-                shop_id,
+                store_code,
                 package_no,
                 shipping_provider_code,
                 cost_estimated,

@@ -24,15 +24,19 @@ pytestmark = pytest.mark.asyncio
 def _store_row_sql(store_id: int) -> str:
     return f"""
     INSERT INTO stores (
-        id, platform, shop_id, store_code, name, active
-    ) VALUES (
-        {store_id},
-        'pdd',
-        'shop-{store_id}',
-        'SC{store_id}',
-        'store-{store_id}',
-        true
-    )
+  id,
+  platform,
+  store_code,
+  store_name,
+  active
+)
+VALUES (
+  {store_id},
+  'pdd',
+  'store-{store_id}',
+  'store-{store_id}',
+  true
+)
     ON CONFLICT (id) DO NOTHING
     """
 
@@ -93,7 +97,7 @@ async def test_get_store_pdd_connection_returns_connection_and_credential(client
             raw_payload_json={"source": "test"},
             granted_identity_type="pdd_owner_id",
             granted_identity_value="owner-402",
-            granted_identity_display="shop-402",
+            granted_identity_display="store-402",
         )
     )
     session.add(
@@ -137,7 +141,7 @@ async def test_get_store_pdd_connection_returns_connection_and_credential(client
         assert data["credential"]["refresh_token_present"] is True
         assert data["credential"]["granted_identity_type"] == "pdd_owner_id"
         assert data["credential"]["granted_identity_value"] == "owner-402"
-        assert data["credential"]["granted_identity_display"] == "shop-402"
+        assert data["credential"]["granted_identity_display"] == "store-402"
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
@@ -234,7 +238,7 @@ async def test_post_store_pdd_test_pull_returns_real_pull_not_implemented(client
             raw_payload_json={"source": "test"},
             granted_identity_type="pdd_owner_id",
             granted_identity_value="owner-405",
-            granted_identity_display="shop-405",
+            granted_identity_display="store-405",
         )
     )
     await session.commit()
