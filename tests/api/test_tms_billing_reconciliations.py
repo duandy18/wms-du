@@ -33,7 +33,7 @@ async def _pick_warehouse_id(session: AsyncSession) -> int:
 async def _insert_carrier_bill_item(
     session: AsyncSession,
     *,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     billing_weight_kg: Decimal | None = None,
     freight_amount: Decimal | None = None,
@@ -44,7 +44,7 @@ async def _insert_carrier_bill_item(
         text(
             """
             INSERT INTO carrier_bill_items (
-                carrier_code,
+                shipping_provider_code,
                 bill_month,
                 tracking_no,
                 business_time,
@@ -63,7 +63,7 @@ async def _insert_carrier_bill_item(
                 raw_payload
             )
             VALUES (
-                :carrier_code,
+                :shipping_provider_code,
                 :bill_month,
                 :tracking_no,
                 now(),
@@ -85,7 +85,7 @@ async def _insert_carrier_bill_item(
             """
         ),
         {
-            "carrier_code": carrier_code,
+            "shipping_provider_code": shipping_provider_code,
             "bill_month": "2026-03",
             "tracking_no": tracking_no,
             "billing_weight_kg": billing_weight_kg,
@@ -102,7 +102,7 @@ async def _insert_carrier_bill_item(
 async def _insert_shipping_record(
     session: AsyncSession,
     *,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     gross_weight_kg: Decimal | None = None,
     cost_estimated: Decimal | None = None,
@@ -118,9 +118,9 @@ async def _insert_shipping_record(
                 platform,
                 shop_id,
                 package_no,
-                carrier_code,
+                shipping_provider_code,
                 cost_estimated,
-                carrier_name,
+                shipping_provider_name,
                 tracking_no,
                 gross_weight_kg,
                 warehouse_id,
@@ -139,7 +139,7 @@ async def _insert_shipping_record(
                 'PDD',
                 '1',
                 1,
-                :carrier_code,
+                :shipping_provider_code,
                 :cost_estimated,
                 'UT-CARRIER',
                 :tracking_no,
@@ -160,7 +160,7 @@ async def _insert_shipping_record(
         ),
         {
             "order_ref": f"UT-ORDER-{tracking_no}",
-            "carrier_code": carrier_code,
+            "shipping_provider_code": shipping_provider_code,
             "cost_estimated": cost_estimated,
             "tracking_no": tracking_no,
             "gross_weight_kg": gross_weight_kg,
@@ -177,7 +177,7 @@ async def _insert_reconciliation(
     session: AsyncSession,
     *,
     status: str,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     carrier_bill_item_id: int,
     shipping_record_id: int | None,
@@ -195,7 +195,7 @@ async def _insert_reconciliation(
                 tracking_no,
                 adjust_amount,
                 status,
-                carrier_code,
+                shipping_provider_code,
                 approved_reason_text,
                 approved_at,
                 approved_reason_code
@@ -208,7 +208,7 @@ async def _insert_reconciliation(
                 :tracking_no,
                 NULL,
                 :status,
-                :carrier_code,
+                :shipping_provider_code,
                 NULL,
                 NULL,
                 NULL
@@ -223,7 +223,7 @@ async def _insert_reconciliation(
             "cost_diff": cost_diff,
             "tracking_no": tracking_no,
             "status": status,
-            "carrier_code": carrier_code,
+            "shipping_provider_code": shipping_provider_code,
         },
     )
     reconciliation_id = row.scalar_one_or_none()
@@ -236,7 +236,7 @@ async def _insert_history(
     *,
     carrier_bill_item_id: int,
     shipping_record_id: int | None,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     result_status: str,
     approved_reason_code: str,
@@ -251,7 +251,7 @@ async def _insert_history(
             INSERT INTO shipping_bill_reconciliation_histories (
                 carrier_bill_item_id,
                 shipping_record_id,
-                carrier_code,
+                shipping_provider_code,
                 tracking_no,
                 result_status,
                 weight_diff_kg,
@@ -263,7 +263,7 @@ async def _insert_history(
             VALUES (
                 :carrier_bill_item_id,
                 :shipping_record_id,
-                :carrier_code,
+                :shipping_provider_code,
                 :tracking_no,
                 :result_status,
                 :weight_diff_kg,
@@ -278,7 +278,7 @@ async def _insert_history(
         {
             "carrier_bill_item_id": carrier_bill_item_id,
             "shipping_record_id": shipping_record_id,
-            "carrier_code": carrier_code,
+            "shipping_provider_code": shipping_provider_code,
             "tracking_no": tracking_no,
             "result_status": result_status,
             "weight_diff_kg": weight_diff_kg,
@@ -297,12 +297,12 @@ async def _insert_history(
 async def test_tms_billing_reconciliations_list_contract_is_table_only(client, session: AsyncSession) -> None:
     headers = await _login_headers(client)
 
-    carrier_code = "YTO"
+    shipping_provider_code = "YTO"
     tracking_no = "UT-RECON-LIST-001"
 
     bill_item_id = await _insert_carrier_bill_item(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         billing_weight_kg=Decimal("2.500"),
         freight_amount=Decimal("10.00"),
@@ -311,7 +311,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
     )
     shipping_record_id = await _insert_shipping_record(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         gross_weight_kg=Decimal("2.000"),
         cost_estimated=Decimal("9.50"),
@@ -319,7 +319,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
     await _insert_reconciliation(
         session,
         status="diff",
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         carrier_bill_item_id=bill_item_id,
         shipping_record_id=shipping_record_id,
@@ -329,7 +329,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
 
     resp = await client.get(
         "/shipping-assist/billing/reconciliations",
-        params={"carrier_code": carrier_code, "tracking_no": tracking_no},
+        params={"shipping_provider_code": shipping_provider_code, "tracking_no": tracking_no},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -343,7 +343,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
     expected_keys = {
         "reconciliation_id",
         "status",
-        "carrier_code",
+        "shipping_provider_code",
         "tracking_no",
         "shipping_record_id",
         "carrier_bill_item_id",
@@ -358,7 +358,7 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
     assert set(row.keys()) == expected_keys
 
     assert row["status"] == "diff"
-    assert row["carrier_code"] == carrier_code
+    assert row["shipping_provider_code"] == shipping_provider_code
     assert row["tracking_no"] == tracking_no
     assert row["shipping_record_id"] == shipping_record_id
     assert row["carrier_bill_item_id"] == bill_item_id
@@ -386,12 +386,12 @@ async def test_tms_billing_reconciliations_list_contract_is_table_only(client, s
 async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(client, session: AsyncSession) -> None:
     headers = await _login_headers(client)
 
-    carrier_code = "YTO"
+    shipping_provider_code = "YTO"
     tracking_no = "UT-HISTORY-LIST-001"
 
     bill_item_id = await _insert_carrier_bill_item(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         billing_weight_kg=Decimal("1.000"),
         freight_amount=Decimal("8.00"),
@@ -400,7 +400,7 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
     )
     shipping_record_id = await _insert_shipping_record(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         gross_weight_kg=Decimal("1.000"),
         cost_estimated=Decimal("9.00"),
@@ -409,7 +409,7 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
         session,
         carrier_bill_item_id=bill_item_id,
         shipping_record_id=shipping_record_id,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         result_status="matched",
         approved_reason_code="matched",
@@ -421,7 +421,7 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
 
     resp = await client.get(
         "/shipping-assist/billing/reconciliation-histories",
-        params={"carrier_code": carrier_code, "tracking_no": tracking_no},
+        params={"shipping_provider_code": shipping_provider_code, "tracking_no": tracking_no},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -436,7 +436,7 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
         "id",
         "carrier_bill_item_id",
         "shipping_record_id",
-        "carrier_code",
+        "shipping_provider_code",
         "tracking_no",
         "result_status",
         "approved_reason_code",
@@ -455,12 +455,12 @@ async def test_tms_billing_reconciliation_histories_list_contract_is_table_only(
 async def test_tms_billing_approve_bill_only_requires_approved_bill_only(client, session: AsyncSession) -> None:
     headers = await _login_headers(client)
 
-    carrier_code = "YTO"
+    shipping_provider_code = "YTO"
     tracking_no = "UT-APPROVE-BILL-ONLY-001"
 
     bill_item_id = await _insert_carrier_bill_item(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         billing_weight_kg=Decimal("3.000"),
         freight_amount=Decimal("15.00"),
@@ -470,7 +470,7 @@ async def test_tms_billing_approve_bill_only_requires_approved_bill_only(client,
     reconciliation_id = await _insert_reconciliation(
         session,
         status="bill_only",
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         carrier_bill_item_id=bill_item_id,
         shipping_record_id=None,
@@ -538,12 +538,12 @@ async def test_tms_billing_approve_bill_only_requires_approved_bill_only(client,
 async def test_tms_billing_approve_diff_requires_resolved(client, session: AsyncSession) -> None:
     headers = await _login_headers(client)
 
-    carrier_code = "YTO"
+    shipping_provider_code = "YTO"
     tracking_no = "UT-APPROVE-DIFF-001"
 
     bill_item_id = await _insert_carrier_bill_item(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         billing_weight_kg=Decimal("2.300"),
         freight_amount=Decimal("12.00"),
@@ -552,7 +552,7 @@ async def test_tms_billing_approve_diff_requires_resolved(client, session: Async
     )
     shipping_record_id = await _insert_shipping_record(
         session,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         gross_weight_kg=Decimal("2.000"),
         cost_estimated=Decimal("11.50"),
@@ -560,7 +560,7 @@ async def test_tms_billing_approve_diff_requires_resolved(client, session: Async
     reconciliation_id = await _insert_reconciliation(
         session,
         status="diff",
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         tracking_no=tracking_no,
         carrier_bill_item_id=bill_item_id,
         shipping_record_id=shipping_record_id,

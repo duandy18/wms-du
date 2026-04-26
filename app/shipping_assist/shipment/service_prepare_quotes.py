@@ -220,8 +220,8 @@ class ShipmentPrepareQuotesService:
             quotes.append(
                 ShipPrepareQuoteCandidateOut(
                     provider_id=int(q["provider_id"]),
-                    carrier_code=q.get("carrier_code"),
-                    carrier_name=str(q.get("carrier_name") or ""),
+                    shipping_provider_code=q.get("shipping_provider_code"),
+                    shipping_provider_name=str(q.get("shipping_provider_name") or ""),
                     template_id=int(q["template_id"]),
                     template_name=q.get("template_name"),
                     quote_status=str(q.get("quote_status") or ""),
@@ -298,8 +298,8 @@ class ShipmentPrepareQuotesService:
                 "template_id": int(selected_quote["template_id"]),
                 "template_name": selected_quote.get("template_name"),
                 "provider_id": int(selected_quote["provider_id"]),
-                "carrier_code": selected_quote.get("carrier_code"),
-                "carrier_name": str(selected_quote.get("carrier_name") or ""),
+                "shipping_provider_code": selected_quote.get("shipping_provider_code"),
+                "shipping_provider_name": str(selected_quote.get("shipping_provider_name") or ""),
                 "currency": selected_quote.get("currency"),
                 "total_amount": float(selected_quote["total_amount"]),
                 "weight": selected_quote.get("weight"),

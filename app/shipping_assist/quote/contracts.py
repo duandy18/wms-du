@@ -20,8 +20,8 @@ class QuoteSnapshotSelectedQuote(BaseModel):
     template_id: Optional[int] = None
     template_name: Optional[str] = None
     provider_id: Optional[int] = None
-    carrier_code: Optional[str] = None
-    carrier_name: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: Optional[str] = None
     currency: Optional[str] = None
     total_amount: float
 
@@ -86,8 +86,8 @@ class QuoteRecommendIn(BaseModel):
 
 class QuoteRecommendItemOut(BaseModel):
     provider_id: int
-    carrier_code: Optional[str] = None
-    carrier_name: str
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: str
 
     template_id: int
     template_name: Optional[str] = None

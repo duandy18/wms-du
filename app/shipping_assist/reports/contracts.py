@@ -12,8 +12,8 @@ from pydantic import BaseModel
 
 
 class ShippingByCarrierRow(BaseModel):
-    carrier_code: Optional[str] = None
-    carrier_name: Optional[str] = None
+    shipping_provider_code: Optional[str] = None
+    shipping_provider_name: Optional[str] = None
     ship_cnt: int
     total_cost: float
     avg_cost: float

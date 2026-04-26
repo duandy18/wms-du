@@ -59,16 +59,16 @@ class ShippingRecord(Base):
         nullable=False,
     )
 
-    # 承运网点
+    # 物流网点
     shipping_provider_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("shipping_providers.id", ondelete="RESTRICT"),
         nullable=False,
     )
 
-    # 冗余展示字段
-    carrier_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    carrier_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 物流网点快照字段
+    shipping_provider_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    shipping_provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # 运单号
     tracking_no: Mapped[str | None] = mapped_column(String(128), nullable=True)

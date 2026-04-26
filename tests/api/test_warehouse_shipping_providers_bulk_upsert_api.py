@@ -70,7 +70,7 @@ def _try_seed_shipping_providers(engine, *, need_total: int) -> None:
     suffix = int(time.time() * 1000) % 1_000_000
     insert_sql = text(
         """
-        INSERT INTO shipping_providers (name, code, active, priority, address)
+        INSERT INTO shipping_providers (name, shipping_provider_code, active, priority, address)
         VALUES (:name, :code, :active, :priority, :address)
         RETURNING id
         """
@@ -85,7 +85,7 @@ def _try_seed_shipping_providers(engine, *, need_total: int) -> None:
                 insert_sql,
                 {
                     "name": f"TEST-OUTLET-{suffix}-{i+1}",
-                    "code": f"TST{suffix}{i+1}",
+                    "shipping_provider_code": f"TST{suffix}{i+1}",
                     "active": True,
                     "priority": 0,
                     "address": None,

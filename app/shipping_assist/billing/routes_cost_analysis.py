@@ -33,7 +33,7 @@ def register(router: APIRouter) -> None:
         summary="快递账单成本分析",
     )
     async def get_billing_cost_analysis_route(
-        carrier_code: str | None = Query(None),
+        shipping_provider_code: str | None = Query(None),
         start_date: str | None = Query(None),
         end_date: str | None = Query(None),
         session: AsyncSession = Depends(get_session),
@@ -53,7 +53,7 @@ def register(router: APIRouter) -> None:
 
         data = await get_billing_cost_analysis(
             session=session,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
             start_date=start_date_parsed,
             end_date=end_date_parsed,
         )

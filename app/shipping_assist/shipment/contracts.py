@@ -56,8 +56,8 @@ class ShipWithWaybillResult:
     tracking_no: str
 
     shipping_provider_id: int
-    carrier_code: str | None
-    carrier_name: str | None
+    shipping_provider_code: str | None
+    shipping_provider_name: str | None
 
     status: str
 

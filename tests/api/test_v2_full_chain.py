@@ -92,8 +92,8 @@ async def _pick_active_shipping_provider_for_warehouse(
                 """
                 SELECT
                   sp.id AS provider_id,
-                  sp.code AS carrier_code,
-                  sp.name AS carrier_name
+                  sp.shipping_provider_code AS shipping_provider_code,
+                  sp.name AS shipping_provider_name
                 FROM warehouse_shipping_providers AS wsp
                 JOIN shipping_providers AS sp
                   ON sp.id = wsp.shipping_provider_id
@@ -115,8 +115,8 @@ def _build_quote_snapshot(
     *,
     warehouse_id: int,
     provider_id: int,
-    carrier_code: str | None,
-    carrier_name: str | None,
+    shipping_provider_code: str | None,
+    shipping_provider_name: str | None,
     province: str,
     city: str,
     district: str,
@@ -146,8 +146,8 @@ def _build_quote_snapshot(
             "template_id": 999001,
             "template_name": "UT-TEMPLATE",
             "provider_id": provider_id,
-            "carrier_code": carrier_code,
-            "carrier_name": carrier_name,
+            "shipping_provider_code": shipping_provider_code,
+            "shipping_provider_name": shipping_provider_name,
             "currency": "CNY",
             "total_amount": total_amount,
             "weight": {
@@ -468,15 +468,15 @@ async def test_v2_order_full_chain(client: AsyncClient, db_session_like_pg: Asyn
         pytest.skip("warehouse 1 has no active shipping provider binding")
 
     shipping_provider_id = int(provider["provider_id"])
-    carrier_code = provider.get("carrier_code")
-    carrier_name = provider.get("carrier_name")
+    shipping_provider_code = provider.get("shipping_provider_code")
+    shipping_provider_name = provider.get("shipping_provider_name")
     weight_kg = 1.0
 
     quote_snapshot = _build_quote_snapshot(
         warehouse_id=1,
         provider_id=shipping_provider_id,
-        carrier_code=str(carrier_code) if carrier_code is not None else None,
-        carrier_name=str(carrier_name) if carrier_name is not None else None,
+        shipping_provider_code=str(shipping_provider_code) if shipping_provider_code is not None else None,
+        shipping_provider_name=str(shipping_provider_name) if shipping_provider_name is not None else None,
         province=province,
         city=city,
         district=district,

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Protocol
 @dataclass(frozen=True)
 class WaybillRequest:
     shipping_provider_id: int
-    provider_code: Optional[str]
+    shipping_provider_code: Optional[str]
     company_code: Optional[str]
     customer_code: Optional[str]
 

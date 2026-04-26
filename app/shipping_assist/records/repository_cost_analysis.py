@@ -19,17 +19,17 @@ def _clean_opt_str(value: str | None) -> str | None:
 
 def _build_where_clause(
     *,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     start_date: date | None,
     end_date: date | None,
 ) -> tuple[str, dict[str, Any]]:
     conditions: list[str] = ["sr.cost_estimated IS NOT NULL"]
     params: dict[str, Any] = {}
 
-    carrier_code_clean = _clean_opt_str(carrier_code)
-    if carrier_code_clean:
-        conditions.append("upper(sr.carrier_code) = upper(:carrier_code)")
-        params["carrier_code"] = carrier_code_clean
+    shipping_provider_code_clean = _clean_opt_str(shipping_provider_code)
+    if shipping_provider_code_clean:
+        conditions.append("upper(sr.shipping_provider_code) = upper(:shipping_provider_code)")
+        params["shipping_provider_code"] = shipping_provider_code_clean
 
     if start_date is not None:
         conditions.append("sr.created_at::date >= :start_date")
@@ -45,12 +45,12 @@ def _build_where_clause(
 async def get_records_cost_analysis(
     session: AsyncSession,
     *,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     start_date: date | None,
     end_date: date | None,
 ) -> dict[str, object]:
     where_sql, params = _build_where_clause(
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         start_date=start_date,
         end_date=end_date,
     )
@@ -58,13 +58,13 @@ async def get_records_cost_analysis(
     by_carrier_sql = text(
         f"""
         SELECT
-          sr.carrier_code,
+          sr.shipping_provider_code,
           COUNT(*) AS ticket_count,
           COALESCE(SUM(sr.cost_estimated), 0)::float AS total_cost
         FROM shipping_records sr
         WHERE {where_sql}
-        GROUP BY sr.carrier_code
-        ORDER BY total_cost DESC, sr.carrier_code NULLS LAST
+        GROUP BY sr.shipping_provider_code
+        ORDER BY total_cost DESC, sr.shipping_provider_code NULLS LAST
         """
     )
 
@@ -83,7 +83,7 @@ async def get_records_cost_analysis(
 
     by_carrier_rows = [
         {
-            "carrier_code": row.get("carrier_code"),
+            "shipping_provider_code": row.get("shipping_provider_code"),
             "ticket_count": int(row["ticket_count"] or 0),
             "total_cost": float(row["total_cost"] or 0.0),
         }

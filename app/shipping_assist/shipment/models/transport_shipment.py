@@ -76,8 +76,8 @@ class TransportShipment(Base):
 
     # 执行结果
     tracking_no: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    carrier_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    carrier_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    shipping_provider_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    shipping_provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     delivery_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

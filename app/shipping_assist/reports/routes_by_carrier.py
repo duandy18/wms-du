@@ -23,7 +23,7 @@ def register(router: APIRouter) -> None:
         to_date: Optional[str] = Query(None),
         platform: Optional[str] = Query(None),
         shop_id: Optional[str] = Query(None),
-        carrier_code: Optional[str] = Query(None),
+        shipping_provider_code: Optional[str] = Query(None),
         province: Optional[str] = Query(None),
         city: Optional[str] = Query(None),
         warehouse_id: Optional[int] = Query(None),
@@ -34,7 +34,7 @@ def register(router: APIRouter) -> None:
         to_dt = parse_date_param(to_date)
         platform_clean = clean_opt_str(platform)
         shop_id_clean = clean_opt_str(shop_id)
-        carrier_code_clean = clean_opt_str(carrier_code)
+        shipping_provider_code_clean = clean_opt_str(shipping_provider_code)
         province_clean = clean_opt_str(province)
         city_clean = clean_opt_str(city)
 
@@ -43,7 +43,7 @@ def register(router: APIRouter) -> None:
             to_dt=to_dt,
             platform=platform_clean,
             shop_id=shop_id_clean,
-            carrier_code=carrier_code_clean,
+            shipping_provider_code=shipping_provider_code_clean,
             province=province_clean,
             warehouse_id=warehouse_id,
             city=city_clean,
@@ -52,8 +52,8 @@ def register(router: APIRouter) -> None:
         sql = text(
             f"""
             SELECT
-              sr.carrier_code,
-              sr.carrier_name,
+              sr.shipping_provider_code,
+              sr.shipping_provider_name,
               COUNT(*) AS ship_cnt,
               COALESCE(SUM(sr.cost_estimated), 0)::float AS total_cost,
               CASE WHEN COUNT(*) > 0
@@ -61,8 +61,8 @@ def register(router: APIRouter) -> None:
                    ELSE 0.0 END AS avg_cost
             FROM shipping_records sr
             WHERE {where_sql}
-            GROUP BY sr.carrier_code, sr.carrier_name
-            ORDER BY total_cost DESC, sr.carrier_code NULLS LAST
+            GROUP BY sr.shipping_provider_code, sr.shipping_provider_name
+            ORDER BY total_cost DESC, sr.shipping_provider_code NULLS LAST
             """
         )
 
@@ -73,8 +73,8 @@ def register(router: APIRouter) -> None:
             ok=True,
             rows=[
                 ShippingByCarrierRow(
-                    carrier_code=r.get("carrier_code"),
-                    carrier_name=r.get("carrier_name"),
+                    shipping_provider_code=r.get("shipping_provider_code"),
+                    shipping_provider_name=r.get("shipping_provider_name"),
                     ship_cnt=int(r["ship_cnt"] or 0),
                     total_cost=float(r["total_cost"] or 0.0),
                     avg_cost=float(r["avg_cost"] or 0.0),

@@ -7,7 +7,7 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
-from .contracts import CarrierBillImportRowErrorData
+from .contracts import ShippingProviderBillImportRowErrorData
 
 
 def _to_clean_str(value: object) -> str | None:
@@ -77,7 +77,7 @@ def _is_blank_row(values: list[object | None]) -> bool:
 
 def parse_and_normalize_carrier_bill_xlsx(
     file_bytes: bytes,
-) -> tuple[list[dict[str, object]], list[CarrierBillImportRowErrorData], int]:
+) -> tuple[list[dict[str, object]], list[ShippingProviderBillImportRowErrorData], int]:
     wb = load_workbook(
         filename=BytesIO(file_bytes),
         read_only=True,
@@ -89,12 +89,12 @@ def parse_and_normalize_carrier_bill_xlsx(
     try:
         header_row = next(iterator)
     except StopIteration:
-        return [], [CarrierBillImportRowErrorData(row_no=1, message="Excel 为空")], 0
+        return [], [ShippingProviderBillImportRowErrorData(row_no=1, message="Excel 为空")], 0
 
     headers = [_to_clean_str(v) or f"__col_{idx+1}" for idx, v in enumerate(header_row)]
 
     valid_rows: list[dict[str, object]] = []
-    errors: list[CarrierBillImportRowErrorData] = []
+    errors: list[ShippingProviderBillImportRowErrorData] = []
     skipped_count = 0
 
     for row_no, row in enumerate(iterator, start=2):
@@ -162,6 +162,6 @@ def parse_and_normalize_carrier_bill_xlsx(
                 }
             )
         except ValueError as exc:
-            errors.append(CarrierBillImportRowErrorData(row_no=row_no, message=str(exc)))
+            errors.append(ShippingProviderBillImportRowErrorData(row_no=row_no, message=str(exc)))
 
     return valid_rows, errors, skipped_count

@@ -60,7 +60,7 @@ class ShippingBillReconciliationHistory(Base):
         nullable=True,
     )
 
-    carrier_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    shipping_provider_code: Mapped[str] = mapped_column(String(32), nullable=False)
     tracking_no: Mapped[str] = mapped_column(String(128), nullable=False)
 
     result_status: Mapped[ReconciliationHistoryResultStatus] = mapped_column(
@@ -113,8 +113,8 @@ class ShippingBillReconciliationHistory(Base):
             "tracking_no",
         ),
         Index(
-            "ix_shipping_bill_reconciliation_histories_carrier_tracking",
-            "carrier_code",
+            "ix_shipping_bill_reconciliation_histories_provider_tracking",
+            "shipping_provider_code",
             "tracking_no",
         ),
     )
@@ -124,6 +124,6 @@ class ShippingBillReconciliationHistory(Base):
             f"<ShippingBillReconciliationHistory id={self.id} "
             f"bill_item_id={self.carrier_bill_item_id} "
             f"result_status={self.result_status} "
-            f"carrier_code={self.carrier_code} "
+            f"shipping_provider_code={self.shipping_provider_code} "
             f"tracking_no={self.tracking_no}>"
         )

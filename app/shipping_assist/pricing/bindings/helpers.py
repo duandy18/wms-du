@@ -27,8 +27,8 @@ LIST_SQL = text(
       wsp.disabled_at,
       tpl.name AS active_template_name,
       sp.id AS provider_id,
-      sp.name AS provider_name,
-      sp.code AS provider_code,
+      sp.name AS shipping_provider_name,
+      sp.shipping_provider_code AS shipping_provider_code,
       sp.active AS provider_active
     FROM warehouse_shipping_providers AS wsp
     JOIN shipping_providers AS sp
@@ -70,8 +70,8 @@ def row_to_out(row: Dict[str, Any]) -> WarehouseShippingProviderOut:
         runtime_status=runtime_status,
         provider=ShippingProviderLiteOut(
             id=int(row["provider_id"]),
-            name=str(row["provider_name"]),
-            code=row.get("provider_code"),
+            name=str(row["shipping_provider_name"]),
+            shipping_provider_code=row.get("shipping_provider_code"),
             active=provider_active,
         ),
     )

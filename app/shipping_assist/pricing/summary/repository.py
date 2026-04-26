@@ -13,8 +13,8 @@ from .service import compute_pricing_status
 _SQL_PRICING_LIST = """
 SELECT
   sp.id AS provider_id,
-  sp.code AS provider_code,
-  sp.name AS provider_name,
+  sp.shipping_provider_code AS shipping_provider_code,
+  sp.name AS shipping_provider_name,
   sp.active AS provider_active,
 
   wsp.warehouse_id,

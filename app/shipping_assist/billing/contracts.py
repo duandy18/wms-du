@@ -13,36 +13,36 @@ ReconciliationHistoryResultStatus = Literal["matched", "approved_bill_only", "re
 
 
 @dataclass(frozen=True, slots=True)
-class ImportCarrierBillCommand:
-    carrier_code: str
+class ImportShippingProviderBillCommand:
+    shipping_provider_code: str
     bill_month: str | None
     filename: str
     file_bytes: bytes
 
 
 @dataclass(frozen=True, slots=True)
-class CarrierBillImportRowErrorData:
+class ShippingProviderBillImportRowErrorData:
     row_no: int
     message: str
 
 
-class CarrierBillImportRowError(BaseModel):
+class ShippingProviderBillImportRowError(BaseModel):
     row_no: int = Field(..., description="Excel 行号（从 1 开始）")
     message: str = Field(..., description="错误原因")
 
 
-class CarrierBillImportResult(BaseModel):
+class ShippingProviderBillImportResult(BaseModel):
     ok: bool = True
-    carrier_code: str
+    shipping_provider_code: str
     imported_count: int
     skipped_count: int
     error_count: int
-    errors: list[CarrierBillImportRowError] = Field(default_factory=list)
+    errors: list[ShippingProviderBillImportRowError] = Field(default_factory=list)
 
 
-class CarrierBillItemOut(BaseModel):
+class ShippingProviderBillItemOut(BaseModel):
     id: int
-    carrier_code: str
+    shipping_provider_code: str
     bill_month: str | None = None
 
     tracking_no: str
@@ -67,24 +67,24 @@ class CarrierBillItemOut(BaseModel):
     created_at: datetime
 
 
-class CarrierBillItemsResponse(BaseModel):
+class ShippingProviderBillItemsResponse(BaseModel):
     ok: bool = True
-    rows: list[CarrierBillItemOut]
+    rows: list[ShippingProviderBillItemOut]
     total: int
 
 
 @dataclass(frozen=True, slots=True)
-class ReconcileCarrierBillCommand:
-    carrier_code: str
+class ReconcileShippingProviderBillCommand:
+    shipping_provider_code: str
 
 
-class ReconcileCarrierBillIn(BaseModel):
-    carrier_code: str = Field(..., description="承运商代码")
+class ReconcileShippingProviderBillIn(BaseModel):
+    shipping_provider_code: str = Field(..., description="物流网点编码")
 
 
-class ReconcileCarrierBillResult(BaseModel):
+class ReconcileShippingProviderBillResult(BaseModel):
     ok: bool = True
-    carrier_code: str
+    shipping_provider_code: str
 
     bill_item_count: int
     matched_count: int
@@ -99,7 +99,7 @@ class ShippingBillReconciliationRowOut(BaseModel):
     reconciliation_id: int
     status: ReconciliationStatus
 
-    carrier_code: str
+    shipping_provider_code: str
     tracking_no: str
 
     shipping_record_id: int | None = None
@@ -146,7 +146,7 @@ class ShippingBillReconciliationHistoryRowOut(BaseModel):
     carrier_bill_item_id: int
     shipping_record_id: int | None = None
 
-    carrier_code: str
+    shipping_provider_code: str
     tracking_no: str
 
     result_status: ReconciliationHistoryResultStatus
@@ -171,7 +171,7 @@ class BillingCostAnalysisSummaryOut(BaseModel):
 
 
 class BillingCostAnalysisByCarrierRowOut(BaseModel):
-    carrier_code: str | None = None
+    shipping_provider_code: str | None = None
     ticket_count: int
     total_cost: float
 

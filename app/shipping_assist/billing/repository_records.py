@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def list_shipping_records_for_reconcile(
     session: AsyncSession,
     *,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_nos: list[str],
 ) -> list[dict[str, Any]]:
     if not tracking_nos:
@@ -47,7 +47,7 @@ async def list_shipping_records_for_reconcile(
                 gross_weight_kg,
                 cost_estimated
             FROM shipping_records
-            WHERE upper(carrier_code) = upper(:carrier_code)
+            WHERE upper(shipping_provider_code) = upper(:shipping_provider_code)
               AND tracking_no IN :tracking_nos
             """
         ).bindparams(bindparam("tracking_nos", expanding=True))
@@ -57,7 +57,7 @@ async def list_shipping_records_for_reconcile(
         await session.execute(
             sql,
             {
-                "carrier_code": carrier_code,
+                "shipping_provider_code": shipping_provider_code,
                 "tracking_nos": tracking_nos,
             },
         )

@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .contracts import (
-    ReconcileCarrierBillCommand,
-    ReconcileCarrierBillResult,
+    ReconcileShippingProviderBillCommand,
+    ReconcileShippingProviderBillResult,
 )
 from .repository_items import list_carrier_bill_items_for_reconcile
 from .repository_records import list_shipping_records_for_reconcile
@@ -39,24 +39,24 @@ def _has_cost_diff(cost_diff: Decimal | None) -> bool:
     return cost_diff is not None and cost_diff != Decimal("0")
 
 
-class CarrierBillReconcileService:
+class ShippingProviderBillReconcileService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def reconcile(
         self,
-        command: ReconcileCarrierBillCommand,
-    ) -> ReconcileCarrierBillResult:
-        carrier_code = command.carrier_code.strip()
+        command: ReconcileShippingProviderBillCommand,
+    ) -> ReconcileShippingProviderBillResult:
+        shipping_provider_code = command.shipping_provider_code.strip()
 
         await delete_archived_shipping_record_reconciliations_by_carrier(
             self.session,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
         )
 
         bill_rows = await list_carrier_bill_items_for_reconcile(
             self.session,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
         )
         bill_item_count = len(bill_rows)
 
@@ -79,7 +79,7 @@ class CarrierBillReconcileService:
 
         record_rows = await list_shipping_records_for_reconcile(
             self.session,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
             tracking_nos=unique_tracking_nos,
         )
 
@@ -102,7 +102,7 @@ class CarrierBillReconcileService:
                 await upsert_shipping_record_reconciliation(
                     self.session,
                     status="bill_only",
-                    carrier_code=carrier_code,
+                    shipping_provider_code=shipping_provider_code,
                     tracking_no=tracking_no,
                     shipping_record_id=None,
                     carrier_bill_item_id=bill_item_id,
@@ -145,7 +145,7 @@ class CarrierBillReconcileService:
                 await upsert_shipping_record_reconciliation(
                     self.session,
                     status="diff",
-                    carrier_code=carrier_code,
+                    shipping_provider_code=shipping_provider_code,
                     tracking_no=tracking_no,
                     shipping_record_id=shipping_record_id,
                     carrier_bill_item_id=bill_item_id,
@@ -165,7 +165,7 @@ class CarrierBillReconcileService:
                 self.session,
                 carrier_bill_item_id=bill_item_id,
                 shipping_record_id=shipping_record_id,
-                carrier_code=carrier_code,
+                shipping_provider_code=shipping_provider_code,
                 tracking_no=tracking_no,
                 result_status="matched",
                 weight_diff_kg=None,
@@ -179,9 +179,9 @@ class CarrierBillReconcileService:
 
         await self.session.commit()
 
-        return ReconcileCarrierBillResult(
+        return ReconcileShippingProviderBillResult(
             ok=True,
-            carrier_code=carrier_code,
+            shipping_provider_code=shipping_provider_code,
             bill_item_count=bill_item_count,
             matched_count=matched_count,
             bill_only_count=bill_only_count,

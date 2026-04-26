@@ -25,7 +25,7 @@ async def load_active_provider(session: AsyncSession, shipping_provider_id: int)
                 """
                 SELECT
                   id,
-                  code,
+                  shipping_provider_code,
                   name,
                   company_code,
                   resource_code,
@@ -42,7 +42,7 @@ async def load_active_provider(session: AsyncSession, shipping_provider_id: int)
     if not row or not bool(row.get("active", True)):
         _raise(
             status_code=409,
-            code="SHIP_WITH_WAYBILL_CARRIER_NOT_AVAILABLE",
+            code="SHIP_WITH_WAYBILL_PROVIDER_NOT_AVAILABLE",
             message="carrier not available",
         )
 
@@ -74,7 +74,7 @@ async def ensure_warehouse_binding(
     if row is None:
         _raise(
             status_code=409,
-            code="SHIP_WITH_WAYBILL_CARRIER_NOT_ENABLED_FOR_WAREHOUSE",
+            code="SHIP_WITH_WAYBILL_PROVIDER_NOT_ENABLED_FOR_WAREHOUSE",
             message="carrier not enabled for this warehouse",
         )
 

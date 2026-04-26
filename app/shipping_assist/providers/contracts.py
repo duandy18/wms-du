@@ -23,13 +23,13 @@ class ShippingProviderOut(BaseModel):
     刚性契约（最新）：
     - 本对象语义为「运输网点实体」（保留表名 shipping_providers）
     - 与仓库为 M:N 关系，通过 warehouse_shipping_providers 表表达
-    - code 为内部业务键（允许修改，但保持唯一与规范化）
+    - shipping_provider_code 为物流网点号码 / 网点编码（由网点提供，保持唯一与规范化）
     - company_code / resource_code 为电子面单固定接入参数
     """
 
     id: int
     name: str
-    code: str
+    shipping_provider_code: str
     display_label: str
     company_code: Optional[str] = Field(None, max_length=64)
     resource_code: Optional[str] = Field(None, max_length=64)
@@ -51,7 +51,7 @@ class ShippingProviderDetailOut(BaseModel):
 
 class ShippingProviderCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    code: str = Field(..., min_length=1, max_length=64)
+    shipping_provider_code: str = Field(..., min_length=1, max_length=64)
     company_code: Optional[str] = Field(None, max_length=64)
     resource_code: Optional[str] = Field(None, max_length=64)
     address: Optional[str] = Field(None, max_length=255)
@@ -66,7 +66,7 @@ class ShippingProviderCreateOut(BaseModel):
 
 class ShippingProviderUpdateIn(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    code: Optional[str] = Field(None, min_length=1, max_length=64)
+    shipping_provider_code: Optional[str] = Field(None, min_length=1, max_length=64)
     company_code: Optional[str] = Field(None, max_length=64)
     resource_code: Optional[str] = Field(None, max_length=64)
     address: Optional[str] = Field(None, max_length=255)

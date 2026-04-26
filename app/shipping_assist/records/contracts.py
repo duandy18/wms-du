@@ -18,8 +18,8 @@ class ShippingLedgerRow(BaseModel):
     warehouse_id: int | None = Field(default=None)
     shipping_provider_id: int | None = Field(default=None)
 
-    carrier_code: str | None = None
-    carrier_name: str | None = None
+    shipping_provider_code: str | None = None
+    shipping_provider_name: str | None = None
     tracking_no: str | None = None
 
     freight_estimated: float | None = None
@@ -51,7 +51,7 @@ class RecordsCostAnalysisSummaryOut(BaseModel):
 
 
 class RecordsCostAnalysisByCarrierRowOut(BaseModel):
-    carrier_code: str | None = None
+    shipping_provider_code: str | None = None
     ticket_count: int
     total_cost: float
 

@@ -157,7 +157,7 @@ class TransportShipmentService:
             self.session,
             int(package.selected_provider_id),
         )
-        provider_code = str(provider["code"] or "")
+        shipping_provider_code = str(provider["shipping_provider_code"] or "")
         provider_name = str(provider["name"] or "")
         company_code = str(provider.get("company_code") or "").strip() or None
 
@@ -204,14 +204,14 @@ class TransportShipmentService:
                 package_no=int(package.package_no),
                 tracking_no=str(existing_record["tracking_no"]),
                 shipping_provider_id=int(existing_record["shipping_provider_id"]),
-                carrier_code=(
-                    str(existing_record["carrier_code"])
-                    if existing_record["carrier_code"] is not None
+                shipping_provider_code=(
+                    str(existing_record["shipping_provider_code"])
+                    if existing_record["shipping_provider_code"] is not None
                     else None
                 ),
-                carrier_name=(
-                    str(existing_record["carrier_name"])
-                    if existing_record["carrier_name"] is not None
+                shipping_provider_name=(
+                    str(existing_record["shipping_provider_name"])
+                    if existing_record["shipping_provider_name"] is not None
                     else None
                 ),
                 status="IN_TRANSIT",
@@ -221,7 +221,7 @@ class TransportShipmentService:
 
         result = await request_waybill(
             shipping_provider_id=int(package.selected_provider_id),
-            provider_code=provider_code or None,
+            shipping_provider_code=shipping_provider_code or None,
             company_code=company_code,
             customer_code=waybill_config.customer_code,
             platform=command.platform,
@@ -249,8 +249,8 @@ class TransportShipmentService:
                 "warehouse_id": int(package.warehouse_id),
                 "occurred_at": occurred_at.isoformat(),
                 "tracking_no": tracking_no,
-                "carrier_code": provider_code or None,
-                "carrier_name": provider_name or None,
+                "shipping_provider_code": shipping_provider_code or None,
+                "shipping_provider_name": provider_name or None,
                 "shipping_provider_id": int(package.selected_provider_id),
                 "gross_weight_kg": float(package.weight_kg),
                 "freight_estimated": freight_estimated,
@@ -289,8 +289,8 @@ class TransportShipmentService:
             package_no=int(package.package_no),
             warehouse_id=int(package.warehouse_id),
             shipping_provider_id=int(package.selected_provider_id),
-            carrier_code=provider_code or None,
-            carrier_name=provider_name or None,
+            shipping_provider_code=shipping_provider_code or None,
+            shipping_provider_name=provider_name or None,
             tracking_no=tracking_no,
             sender=str(sender.get("name") or "") or None,
             gross_weight_kg=float(package.weight_kg),
@@ -312,8 +312,8 @@ class TransportShipmentService:
             package_no=int(package.package_no),
             tracking_no=tracking_no,
             shipping_provider_id=int(package.selected_provider_id),
-            carrier_code=provider_code or None,
-            carrier_name=provider_name or None,
+            shipping_provider_code=shipping_provider_code or None,
+            shipping_provider_name=provider_name or None,
             status="IN_TRANSIT",
             print_data=result.print_data,
             template_url=result.template_url,

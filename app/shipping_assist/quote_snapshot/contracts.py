@@ -11,8 +11,8 @@ class QuoteSnapshotSelectedQuote(TypedDict):
     template_id: int | None
     template_name: str | None
     provider_id: int | None
-    carrier_code: str | None
-    carrier_name: str | None
+    shipping_provider_code: str | None
+    shipping_provider_name: str | None
     currency: str | None
     total_amount: float | int
     weight: dict[str, object]

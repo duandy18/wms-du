@@ -19,8 +19,8 @@ SELECT
   order_ref,
   warehouse_id,
   shipping_provider_id,
-  carrier_code,
-  carrier_name,
+  shipping_provider_code,
+  shipping_provider_name,
   tracking_no,
   freight_estimated,
   surcharge_estimated,
@@ -47,7 +47,7 @@ def _build_where_clause(
     to_date: date | None,
     order_ref: str | None,
     tracking_no: str | None,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
@@ -73,10 +73,10 @@ def _build_where_clause(
         conditions.append("tracking_no = :tracking_no")
         params["tracking_no"] = tracking_no_clean
 
-    carrier_code_clean = _clean_opt_str(carrier_code)
-    if carrier_code_clean:
-        conditions.append("carrier_code = :carrier_code")
-        params["carrier_code"] = carrier_code_clean
+    shipping_provider_code_clean = _clean_opt_str(shipping_provider_code)
+    if shipping_provider_code_clean:
+        conditions.append("shipping_provider_code = :shipping_provider_code")
+        params["shipping_provider_code"] = shipping_provider_code_clean
 
     if shipping_provider_id is not None:
         conditions.append("shipping_provider_id = :shipping_provider_id")
@@ -106,7 +106,7 @@ async def list_shipping_ledger(
     to_date: date | None,
     order_ref: str | None,
     tracking_no: str | None,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
@@ -119,7 +119,7 @@ async def list_shipping_ledger(
         to_date=to_date,
         order_ref=order_ref,
         tracking_no=tracking_no,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         shipping_provider_id=shipping_provider_id,
         province=province,
         city=city,
@@ -159,7 +159,7 @@ async def export_shipping_ledger_rows(
     to_date: date | None,
     order_ref: str | None,
     tracking_no: str | None,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     shipping_provider_id: int | None,
     province: str | None,
     city: str | None,
@@ -170,7 +170,7 @@ async def export_shipping_ledger_rows(
         to_date=to_date,
         order_ref=order_ref,
         tracking_no=tracking_no,
-        carrier_code=carrier_code,
+        shipping_provider_code=shipping_provider_code,
         shipping_provider_id=shipping_provider_id,
         province=province,
         city=city,

@@ -1,5 +1,5 @@
 # app/shipping_assist/billing/models/carrier_bill_item.py
-# Domain move: carrier bill item ORM belongs to TMS billing.
+# Domain move: shipping provider bill item ORM belongs to shipping billing.
 from __future__ import annotations
 
 from datetime import datetime
@@ -20,14 +20,14 @@ class CarrierBillItem(Base):
     - 当前阶段负责“幂等导入 + 查询”；
     - 不承担自动对账结果，不回写 shipping_records；
     - 不再保留 import_batch_no；
-    - 业务唯一键为 carrier_code + tracking_no。
+    - 业务唯一键为 shipping_provider_code + tracking_no。
     """
 
     __tablename__ = "carrier_bill_items"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
-    carrier_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    shipping_provider_code: Mapped[str] = mapped_column(String(32), nullable=False)
     bill_month: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     tracking_no: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -73,18 +73,22 @@ class CarrierBillItem(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "carrier_code",
+            "shipping_provider_code",
             "tracking_no",
-            name="uq_carrier_bill_items_carrier_tracking",
+            name="uq_carrier_bill_items_shipping_provider_tracking",
         ),
         Index("ix_carrier_bill_items_tracking_no", "tracking_no"),
-        Index("ix_carrier_bill_items_carrier_tracking", "carrier_code", "tracking_no"),
+        Index(
+            "ix_carrier_bill_items_shipping_provider_tracking",
+            "shipping_provider_code",
+            "tracking_no",
+        ),
         Index("ix_carrier_bill_items_business_time", "business_time"),
     )
 
     def __repr__(self) -> str:
         return (
             f"<CarrierBillItem id={self.id} "
-            f"carrier_code={self.carrier_code} "
+            f"shipping_provider_code={self.shipping_provider_code} "
             f"tracking_no={self.tracking_no}>"
         )

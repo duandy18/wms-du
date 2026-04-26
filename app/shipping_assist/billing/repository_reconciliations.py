@@ -11,7 +11,7 @@ async def upsert_shipping_record_reconciliation(
     session: AsyncSession,
     *,
     status: str,
-    carrier_code: str,
+    shipping_provider_code: str,
     tracking_no: str,
     shipping_record_id: int | None,
     carrier_bill_item_id: int,
@@ -42,7 +42,7 @@ async def upsert_shipping_record_reconciliation(
 
     params = {
         "status": status,
-        "carrier_code": carrier_code,
+        "shipping_provider_code": shipping_provider_code,
         "tracking_no": tracking_no,
         "shipping_record_id": shipping_record_id,
         "carrier_bill_item_id": carrier_bill_item_id,
@@ -57,7 +57,7 @@ async def upsert_shipping_record_reconciliation(
                 UPDATE shipping_record_reconciliations
                 SET
                     status = :status,
-                    carrier_code = :carrier_code,
+                    shipping_provider_code = :shipping_provider_code,
                     tracking_no = :tracking_no,
                     shipping_record_id = :shipping_record_id,
                     carrier_bill_item_id = :carrier_bill_item_id,
@@ -82,7 +82,7 @@ async def upsert_shipping_record_reconciliation(
             """
             INSERT INTO shipping_record_reconciliations (
                 status,
-                carrier_code,
+                shipping_provider_code,
                 tracking_no,
                 shipping_record_id,
                 carrier_bill_item_id,
@@ -95,7 +95,7 @@ async def upsert_shipping_record_reconciliation(
             )
             VALUES (
                 :status,
-                :carrier_code,
+                :shipping_provider_code,
                 :tracking_no,
                 :shipping_record_id,
                 :carrier_bill_item_id,
@@ -148,13 +148,13 @@ async def delete_shipping_record_reconciliation(
 async def delete_archived_shipping_record_reconciliations_by_carrier(
     session: AsyncSession,
     *,
-    carrier_code: str,
+    shipping_provider_code: str,
 ) -> None:
     await session.execute(
         text(
             """
             DELETE FROM shipping_record_reconciliations r
-            WHERE upper(r.carrier_code) = upper(:carrier_code)
+            WHERE upper(r.shipping_provider_code) = upper(:shipping_provider_code)
               AND EXISTS (
                   SELECT 1
                   FROM shipping_bill_reconciliation_histories h
@@ -162,7 +162,7 @@ async def delete_archived_shipping_record_reconciliations_by_carrier(
               )
             """
         ),
-        {"carrier_code": carrier_code},
+        {"shipping_provider_code": shipping_provider_code},
     )
 
 
@@ -178,7 +178,7 @@ async def get_shipping_record_reconciliation_by_id(
                 SELECT
                     id,
                     status,
-                    carrier_code,
+                    shipping_provider_code,
                     tracking_no,
                     shipping_record_id,
                     carrier_bill_item_id,
@@ -222,7 +222,7 @@ async def approve_shipping_record_reconciliation(
                 RETURNING
                     id,
                     status,
-                    carrier_code,
+                    shipping_provider_code,
                     tracking_no,
                     shipping_record_id,
                     carrier_bill_item_id,
@@ -266,7 +266,7 @@ async def delete_shipping_record_reconciliation_by_id(
 async def list_shipping_bill_reconciliations(
     session: AsyncSession,
     *,
-    carrier_code: str | None,
+    shipping_provider_code: str | None,
     tracking_no: str | None,
     status: str | None,
     limit: int,
@@ -275,9 +275,9 @@ async def list_shipping_bill_reconciliations(
     where_parts = ["1=1"]
     params: dict[str, Any] = {"limit": limit, "offset": offset}
 
-    if carrier_code:
-        where_parts.append("upper(r.carrier_code) = upper(:carrier_code)")
-        params["carrier_code"] = carrier_code
+    if shipping_provider_code:
+        where_parts.append("upper(r.shipping_provider_code) = upper(:shipping_provider_code)")
+        params["shipping_provider_code"] = shipping_provider_code
 
     if tracking_no:
         where_parts.append("r.tracking_no = :tracking_no")
@@ -305,7 +305,7 @@ async def list_shipping_bill_reconciliations(
         SELECT
             r.id AS reconciliation_id,
             r.status,
-            r.carrier_code,
+            r.shipping_provider_code,
             r.tracking_no,
             r.shipping_record_id,
             r.carrier_bill_item_id,

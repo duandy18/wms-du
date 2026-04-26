@@ -43,7 +43,7 @@ def build_where_clause(
     to_dt: Optional[date],
     platform: Optional[str],
     shop_id: Optional[str],
-    carrier_code: Optional[str],
+    shipping_provider_code: Optional[str],
     province: Optional[str],
     warehouse_id: Optional[int],
     city: Optional[str] = None,
@@ -80,9 +80,9 @@ def build_where_clause(
     if shop_id:
         conditions.append("sr.shop_id = :shop_id")
         params["shop_id"] = shop_id
-    if carrier_code:
-        conditions.append("sr.carrier_code = :carrier_code")
-        params["carrier_code"] = carrier_code
+    if shipping_provider_code:
+        conditions.append("sr.shipping_provider_code = :shipping_provider_code")
+        params["shipping_provider_code"] = shipping_provider_code
     if province:
         conditions.append("sr.dest_province = :province")
         params["province"] = province

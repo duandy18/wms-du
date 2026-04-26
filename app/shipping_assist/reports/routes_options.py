@@ -33,7 +33,7 @@ def register(router: APIRouter) -> None:
             to_dt=to_dt,
             platform=None,
             shop_id=None,
-            carrier_code=None,
+            shipping_provider_code=None,
             province=None,
             warehouse_id=warehouse_id,
             city=None,

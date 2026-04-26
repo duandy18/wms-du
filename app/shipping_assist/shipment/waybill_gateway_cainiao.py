@@ -42,7 +42,7 @@ class CainiaoTopWaybillGateway(WaybillProvider):
         self.client = TopApiClient(settings)
 
     async def request_waybill(self, req: WaybillRequest) -> WaybillResult:
-        provider_code = str(req.provider_code or "").strip().upper()
+        provider_code = str(req.shipping_provider_code or "").strip().upper()
         if not provider_code:
             raise ShipmentApplicationError(
                 status_code=409,
