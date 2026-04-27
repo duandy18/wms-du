@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 PlatformMockPlatform = Literal["pdd", "jd", "taobao"]
-PlatformMockScenario = Literal["normal", "address_missing", "item_abnormal", "mixed"]
+PlatformMockScenario = Literal["normal", "address_missing", "item_abnormal", "combo", "mixed"]
 
 
 class PlatformOrderIngestionMockAuthorizeRequest(BaseModel):
