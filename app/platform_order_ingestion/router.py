@@ -7,6 +7,7 @@ from app.platform_order_ingestion.router_status import router as platform_order_
 from app.platform_order_ingestion.jd.router_app_config import router as jd_app_config_router
 from app.platform_order_ingestion.jd.router_auth import router as jd_auth_router
 from app.platform_order_ingestion.jd.router_connection import router as jd_connection_router
+from app.platform_order_ingestion.jd.router_ingest import router as jd_ingest_router
 from app.platform_order_ingestion.jd.router_orders import router as jd_orders_router
 from app.platform_order_ingestion.jd.router_pull import router as jd_pull_router
 from app.platform_order_ingestion.pdd.router_app_config import router as pdd_app_config_router
@@ -45,4 +46,5 @@ router.include_router(jd_app_config_router)
 router.include_router(jd_auth_router)
 router.include_router(jd_connection_router)
 router.include_router(jd_pull_router)
+router.include_router(jd_ingest_router)
 router.include_router(jd_orders_router)
