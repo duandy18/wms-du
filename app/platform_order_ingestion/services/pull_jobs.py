@@ -271,6 +271,50 @@ class PlatformOrderPullJobService:
         logs = await get_pull_job_logs(session, job_id=job.id, run_id=run.id)
         return job, run, logs
 
+    async def run_job_pages(
+        self,
+        session: AsyncSession,
+        *,
+        job_id: int,
+        max_pages: int = 10,
+    ) -> tuple[
+        PlatformOrderPullJob,
+        list[PlatformOrderPullJobRun],
+        list[PlatformOrderPullJobRunLog],
+        str,
+    ]:
+        max_pages_int = int(max_pages)
+        if max_pages_int <= 0:
+            raise PlatformOrderPullJobServiceError("max_pages must be positive")
+        if max_pages_int > 100:
+            raise PlatformOrderPullJobServiceError("max_pages must be <= 100")
+
+        runs: list[PlatformOrderPullJobRun] = []
+        logs: list[PlatformOrderPullJobRunLog] = []
+        stopped_reason = "max_pages_reached"
+        job: PlatformOrderPullJob | None = None
+
+        for _ in range(max_pages_int):
+            job, run, run_logs = await self.run_job_once(
+                session,
+                job_id=job_id,
+                page=None,
+            )
+            runs.append(run)
+            logs.extend(run_logs)
+
+            if run.status == "failed":
+                stopped_reason = "failed"
+                break
+            if not run.has_more:
+                stopped_reason = "no_more"
+                break
+
+        if job is None:
+            raise PlatformOrderPullJobServiceError(f"platform order pull job not found: {job_id}")
+
+        return job, runs, logs, stopped_reason
+
     async def _run_pdd_job_page(
         self,
         *,

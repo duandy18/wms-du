@@ -17,6 +17,9 @@ from app.platform_order_ingestion.contracts_pull_jobs import (
     PlatformOrderPullJobRunDataOut,
     PlatformOrderPullJobRunEnvelopeOut,
     PlatformOrderPullJobRunLogOut,
+    PlatformOrderPullJobRunPagesCreateIn,
+    PlatformOrderPullJobRunPagesDataOut,
+    PlatformOrderPullJobRunPagesEnvelopeOut,
     PlatformOrderPullJobRunOut,
 )
 from app.platform_order_ingestion.models.pull_job import (
@@ -204,5 +207,46 @@ async def run_platform_order_pull_job_once(
             job=_job_out(job),
             run=_run_out(run),
             logs=[_log_out(row) for row in logs],
+        ),
+    )
+
+@router.post(
+    "/platform-order-ingestion/pull-jobs/{job_id}/run-pages",
+    response_model=PlatformOrderPullJobRunPagesEnvelopeOut,
+    summary="连续执行平台订单采集任务页面",
+)
+async def run_platform_order_pull_job_pages(
+    job_id: int,
+    payload: PlatformOrderPullJobRunPagesCreateIn = Body(
+        default_factory=PlatformOrderPullJobRunPagesCreateIn
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> PlatformOrderPullJobRunPagesEnvelopeOut:
+    try:
+        service = PlatformOrderPullJobService()
+        job, runs, logs, stopped_reason = await service.run_job_pages(
+            session,
+            job_id=job_id,
+            max_pages=payload.max_pages,
+        )
+        await session.commit()
+    except PlatformOrderPullJobServiceError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed to run platform order pull job pages: {exc}",
+        ) from exc
+
+    return PlatformOrderPullJobRunPagesEnvelopeOut(
+        ok=True,
+        data=PlatformOrderPullJobRunPagesDataOut(
+            job=_job_out(job),
+            runs=[_run_out(row) for row in runs],
+            logs=[_log_out(row) for row in logs],
+            pages_executed=len(runs),
+            stopped_reason=stopped_reason,
         ),
     )

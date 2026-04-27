@@ -47,6 +47,7 @@ async def _reset_store_status_state(session, *, store_id: int, platform: str) ->
         await session.execute(text("DELETE FROM taobao_app_configs"))
     elif platform_norm == "jd":
         await session.execute(text("DELETE FROM jd_app_configs"))
+    await session.execute(text("DELETE FROM store_warehouse WHERE store_id = :sid"), {"sid": store_id})
     await session.execute(text("DELETE FROM stores WHERE id = :sid"), {"sid": store_id})
     await session.commit()
 

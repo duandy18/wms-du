@@ -64,6 +64,10 @@ class PlatformOrderPullJobRunCreateIn(BaseModel):
     page: int | None = Field(default=None, gt=0)
 
 
+class PlatformOrderPullJobRunPagesCreateIn(BaseModel):
+    max_pages: int = Field(default=10, gt=0, le=100)
+
+
 class PlatformOrderPullJobOut(BaseModel):
     id: int
     platform: str
@@ -137,6 +141,14 @@ class PlatformOrderPullJobRunDataOut(BaseModel):
     logs: list[PlatformOrderPullJobRunLogOut]
 
 
+class PlatformOrderPullJobRunPagesDataOut(BaseModel):
+    job: PlatformOrderPullJobOut
+    runs: list[PlatformOrderPullJobRunOut]
+    logs: list[PlatformOrderPullJobRunLogOut]
+    pages_executed: int
+    stopped_reason: str
+
+
 class PlatformOrderPullJobEnvelopeOut(BaseModel):
     ok: bool
     data: PlatformOrderPullJobOut
@@ -155,3 +167,8 @@ class PlatformOrderPullJobDetailEnvelopeOut(BaseModel):
 class PlatformOrderPullJobRunEnvelopeOut(BaseModel):
     ok: bool
     data: PlatformOrderPullJobRunDataOut
+
+
+class PlatformOrderPullJobRunPagesEnvelopeOut(BaseModel):
+    ok: bool
+    data: PlatformOrderPullJobRunPagesDataOut
