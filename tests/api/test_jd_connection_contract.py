@@ -11,6 +11,29 @@ from app.platform_order_ingestion.models.store_platform_credential import StoreP
 
 pytestmark = pytest.mark.asyncio
 
+from app.main import app
+from app.user.deps.auth import get_current_user
+
+
+class _PlatformOrderIngestionPermissionUser:
+    id: int = 999
+    username: str = "test-user"
+    is_active: bool = True
+    permissions = [
+        "page.platform_order_ingestion.read",
+        "page.platform_order_ingestion.write",
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _override_platform_order_ingestion_user():
+    app.dependency_overrides[get_current_user] = lambda: _PlatformOrderIngestionPermissionUser()
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
 
 def _store_row_sql(store_id: int) -> str:
     return f"""

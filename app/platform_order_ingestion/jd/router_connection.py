@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_read
+from app.user.deps.auth import get_current_user
 
 from .repository import (
     get_connection_by_store_platform,
@@ -19,7 +23,11 @@ router = APIRouter(tags=["oms-jd-connection"])
 async def get_store_jd_connection(
     store_id: int = Path(..., ge=1),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_read(db, current_user)
+
     try:
         credential = await get_credential_by_store_platform(
             session,

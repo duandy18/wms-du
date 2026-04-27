@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.jd.contracts_ingest import (
     JdOrderIngestDataOut,
     JdOrderIngestEnvelopeOut,
@@ -29,7 +33,11 @@ async def ingest_store_jd_orders(
     store_id: int,
     payload: JdOrderIngestRequest = Body(default_factory=JdOrderIngestRequest),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> JdOrderIngestEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = JdOrderIngestService()
         result = await service.ingest_order_page(

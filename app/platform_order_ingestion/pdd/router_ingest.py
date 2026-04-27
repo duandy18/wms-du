@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.pdd.contracts_ingest import (
     PddOrderIngestDataOut,
     PddOrderIngestEnvelopeOut,
@@ -29,7 +33,11 @@ async def ingest_store_pdd_orders(
     store_id: int,
     payload: PddOrderIngestRequest = Body(default_factory=PddOrderIngestRequest),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PddOrderIngestEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     """
     PDD 真实订单入库入口。
 

@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.contracts_mock import (
     PlatformOrderIngestionMockAuthorizeRequest,
     PlatformOrderIngestionMockClearOrdersRequest,
@@ -23,7 +27,11 @@ async def authorize_store_mock(
     store_id: int,
     payload: PlatformOrderIngestionMockAuthorizeRequest = Body(...),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderIngestionMockService()
         result = await service.mock_authorize_store(
@@ -68,7 +76,11 @@ async def ingest_store_orders_mock(
     store_id: int,
     payload: PlatformOrderIngestionMockIngestOrdersRequest = Body(...),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderIngestionMockService()
         result = await service.mock_ingest_orders(
@@ -113,7 +125,11 @@ async def clear_store_orders_mock(
     store_id: int,
     payload: PlatformOrderIngestionMockClearOrdersRequest = Body(...),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderIngestionMockService()
         result = await service.clear_mock_orders(

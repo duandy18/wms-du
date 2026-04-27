@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.oms.services.stores_helpers import check_perm
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
 from app.user.deps.auth import get_current_user
 
 from .repository import require_enabled_taobao_app_config
@@ -91,7 +91,7 @@ async def test_store_taobao_pull(
     - 更新 connection 状态；
     - 不写 taobao_orders / taobao_order_items。
     """
-    check_perm(db, current_user, ["config.store.read"])
+    require_platform_order_ingestion_write(db, current_user)
 
     payload = payload or {}
     start_time = payload.get("start_time")

@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_async_session as get_session
 from app.db.deps import get_db
-from app.oms.services.stores_helpers import check_perm
+from app.platform_order_ingestion.permissions import (
+    require_platform_order_ingestion_read,
+    require_platform_order_ingestion_write,
+)
 
 from .repository import (
     PddAppConfigUpsertInput,
@@ -44,7 +47,7 @@ async def get_current_pdd_app_config(
     """
     读取当前启用中的拼多多系统配置。
     """
-    check_perm(db, current_user, ["config.store.read"])
+    require_platform_order_ingestion_read(db, current_user)
 
     try:
         row = await get_enabled_pdd_app_config(session)
@@ -105,7 +108,7 @@ async def put_current_pdd_app_config(
     - 若当前已有启用配置，则原地更新
     - 若 client_secret 为空字符串，则沿用原 secret（已有记录时）
     """
-    check_perm(db, current_user, ["config.store.read"])
+    require_platform_order_ingestion_write(db, current_user)
 
     client_id = str(payload.get("client_id") or "").strip()
     client_secret_raw = payload.get("client_secret")

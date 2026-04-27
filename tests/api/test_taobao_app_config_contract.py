@@ -5,13 +5,13 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-import app.platform_order_ingestion.taobao.router_app_config as taobao_router_app_config
 
 
 class _TestUser:
     id: int = 999
     username: str = "test-user"
     is_active: bool = True
+    permissions = ["page.platform_order_ingestion.read", "page.platform_order_ingestion.write"]
 
 
 pytestmark = pytest.mark.asyncio
@@ -27,7 +27,6 @@ async def test_get_current_taobao_app_config_returns_empty_shell_when_missing(cl
     await _clear_taobao_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(taobao_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/taobao/app-config/current")
@@ -56,7 +55,6 @@ async def test_put_current_taobao_app_config_create_then_get_masked(client, sess
     await _clear_taobao_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(taobao_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         payload = {
@@ -110,7 +108,6 @@ async def test_put_current_taobao_app_config_blank_secret_keeps_existing_secret(
     await _clear_taobao_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(taobao_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         create_payload = {
@@ -151,7 +148,6 @@ async def test_put_current_taobao_app_config_requires_secret_on_first_create(cli
     await _clear_taobao_app_configs(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(taobao_router_app_config, "check_perm", lambda db, current_user, required: None)
 
     try:
         payload = {

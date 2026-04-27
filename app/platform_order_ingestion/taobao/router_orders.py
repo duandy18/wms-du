@@ -16,7 +16,7 @@ from app.platform_order_ingestion.taobao.service_ledger import (
     get_taobao_order_ledger_detail,
     list_taobao_order_ledger_rows,
 )
-from app.oms.services.stores_helpers import check_perm
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_read
 
 router = APIRouter(tags=["oms-taobao-orders"])
 
@@ -29,7 +29,7 @@ async def list_taobao_orders_ledger(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    check_perm(db, current_user, ["operations.outbound"])
+    require_platform_order_ingestion_read(db, current_user)
 
     try:
         rows = await list_taobao_order_ledger_rows(
@@ -53,7 +53,7 @@ async def get_taobao_order_ledger(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    check_perm(db, current_user, ["operations.outbound"])
+    require_platform_order_ingestion_read(db, current_user)
 
     try:
         detail = await get_taobao_order_ledger_detail(

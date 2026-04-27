@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_read
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.contracts_status import (
     PlatformOrderIngestionStoreStatusEnvelopeOut,
 )
@@ -25,7 +29,11 @@ router = APIRouter(tags=["platform-order-ingestion-status"])
 async def get_store_platform_order_ingestion_status(
     store_id: int,
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderIngestionStoreStatusEnvelopeOut:
+    require_platform_order_ingestion_read(db, current_user)
+
     try:
         service = PlatformOrderIngestionStatusService()
         data = await service.get_store_status(session, store_id=store_id)

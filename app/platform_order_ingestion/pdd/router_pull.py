@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
+from app.user.deps.auth import get_current_user
 
 from .service_pull import PddPullService, PddPullServiceError
 
@@ -17,7 +21,11 @@ async def test_store_pdd_pull(
     store_id: int,
     payload: dict | None = Body(default=None),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_write(db, current_user)
+
     """
     拼多多 test-pull（第二版）。
 
