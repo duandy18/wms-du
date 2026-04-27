@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,43 @@ def _money_from_cent(raw: object) -> Decimal | None:
     except (InvalidOperation, ValueError, TypeError):
         return None
     return (value / _MONEY_SCALE).quantize(Decimal("0.01"))
+
+
+async def load_store_code_by_store_id_for_pdd(
+    session: AsyncSession,
+    *,
+    store_id: int,
+) -> str:
+    """
+    PDD 拉单入库使用的店铺编码读取入口。
+
+    边界：
+    - 只读取 stores.store_code；
+    - 只接受 platform=PDD 的店铺；
+    - 不创建店铺；
+    - 不修正平台；
+    - 找不到即抛 LookupError，由调用方转为 400。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT store_code
+                  FROM stores
+                 WHERE id = :store_id
+                   AND upper(platform) = 'PDD'
+                 LIMIT 1
+                """
+            ),
+            {"store_id": int(store_id)},
+        )
+    ).mappings().first()
+
+    store_code = row.get("store_code") if row else None
+    if not store_code:
+        raise LookupError(f"pdd store not found: store_id={int(store_id)}")
+
+    return str(store_code)
 
 
 async def get_pdd_order_by_store_and_order_sn(

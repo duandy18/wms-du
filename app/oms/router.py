@@ -9,6 +9,7 @@ from app.oms.platforms.jd.router_pull import router as jd_pull_router
 from app.oms.platforms.pdd.router_app_config import router as pdd_app_config_router
 from app.oms.platforms.pdd.router_auth import router as pdd_auth_router
 from app.oms.platforms.pdd.router_connection import router as pdd_connection_router
+from app.oms.platforms.pdd.router_ingest import router as pdd_ingest_router
 from app.oms.platforms.pdd.router_pull import router as pdd_pull_router
 from app.oms.platforms.pdd.router_orders import router as pdd_orders_router
 from app.oms.platforms.pdd.router_mock import router as pdd_mock_router
@@ -46,6 +47,7 @@ router.include_router(pdd_app_config_router)
 router.include_router(pdd_auth_router)
 router.include_router(pdd_connection_router)
 router.include_router(pdd_pull_router)
+router.include_router(pdd_ingest_router)
 router.include_router(pdd_orders_router)
 router.include_router(pdd_mock_router)
 
