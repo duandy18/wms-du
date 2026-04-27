@@ -3,6 +3,11 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
+from app.platform_order_ingestion.taobao import service_ingest as taobao_service_ingest
+from app.platform_order_ingestion.taobao.service_ingest import (
+    TaobaoOrderIngestPageResult,
+    TaobaoOrderIngestRowResult,
+)
 from app.platform_order_ingestion.jd import service_ingest as jd_service_ingest
 from app.platform_order_ingestion.jd.service_ingest import (
     JdOrderIngestPageResult,
@@ -195,8 +200,51 @@ async def test_run_pdd_platform_order_pull_job_records_run_and_logs(client, sess
     assert len(detail["logs"]) == 4
 
 
-async def test_run_unsupported_platform_pull_job_fails_without_fake_success(client, session):
+async def test_run_taobao_platform_order_pull_job_records_run_and_logs_after_executor_registration(client, session, monkeypatch):
     await _seed_store(session, store_id=7103, platform="TAOBAO")
+
+    captured = {}
+
+    async def _fake_ingest_order_page(self, *, session, params):
+        captured["store_id"] = params.store_id
+        captured["start_time"] = params.start_time
+        captured["end_time"] = params.end_time
+        captured["status"] = params.status
+        captured["page"] = params.page
+        captured["page_size"] = params.page_size
+
+        return TaobaoOrderIngestPageResult(
+            store_id=7103,
+            store_code="store-7103",
+            page=params.page,
+            page_size=params.page_size,
+            orders_count=2,
+            success_count=1,
+            failed_count=1,
+            has_more=True,
+            start_time=params.start_time,
+            end_time=params.end_time,
+            rows=[
+                TaobaoOrderIngestRowResult(
+                    tid="TB-JOB-ORDER-001",
+                    taobao_order_id=9701,
+                    status="OK",
+                    error=None,
+                ),
+                TaobaoOrderIngestRowResult(
+                    tid="TB-JOB-ORDER-002",
+                    taobao_order_id=None,
+                    status="FAILED",
+                    error="detail_failed: boom",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(
+        taobao_service_ingest.TaobaoOrderIngestService,
+        "ingest_order_page",
+        _fake_ingest_order_page,
+    )
 
     create_resp = await client.post(
         "/oms/platform-order-ingestion/pull-jobs",
@@ -207,20 +255,54 @@ async def test_run_unsupported_platform_pull_job_fails_without_fake_success(clie
             "time_from": "2026-03-29 00:00:00",
             "time_to": "2026-03-29 23:59:59",
             "page_size": 50,
+            "request_payload": {"status": "WAIT_SELLER_SEND_GOODS"},
         },
     )
     assert create_resp.status_code == 200, create_resp.text
     job_id = create_resp.json()["data"]["id"]
 
-    run_resp = await client.post(f"/oms/platform-order-ingestion/pull-jobs/{job_id}/runs")
+    run_resp = await client.post(
+        f"/oms/platform-order-ingestion/pull-jobs/{job_id}/runs",
+        json={"page": 1},
+    )
     assert run_resp.status_code == 200, run_resp.text
 
+    assert captured == {
+        "store_id": 7103,
+        "start_time": "2026-03-29 00:00:00",
+        "end_time": "2026-03-29 23:59:59",
+        "status": "WAIT_SELLER_SEND_GOODS",
+        "page": 1,
+        "page_size": 50,
+    }
+
     data = run_resp.json()["data"]
-    assert data["job"]["status"] == "failed"
-    assert data["run"]["status"] == "failed"
-    assert data["run"]["error_message"] == "PLATFORM_PULL_JOB_NOT_IMPLEMENTED: taobao"
-    assert data["logs"][-1]["event_type"] == "page_failed"
-    assert data["logs"][-1]["level"] == "error"
+    assert data["job"]["platform"] == "taobao"
+    assert data["job"]["status"] == "partial_success"
+    assert data["job"]["cursor_page"] == 2
+
+    run = data["run"]
+    assert run["status"] == "partial_success"
+    assert run["page"] == 1
+    assert run["page_size"] == 50
+    assert run["has_more"] is True
+    assert run["orders_count"] == 2
+    assert run["success_count"] == 1
+    assert run["failed_count"] == 1
+    assert run["result_payload"]["rows"][0]["tid"] == "TB-JOB-ORDER-001"
+    assert run["result_payload"]["rows"][0]["taobao_order_id"] == 9701
+
+    logs = data["logs"]
+    assert [log["event_type"] for log in logs] == [
+        "page_started",
+        "order_ingested",
+        "order_failed",
+        "page_finished",
+    ]
+    assert logs[1]["platform_order_no"] == "TB-JOB-ORDER-001"
+    assert logs[1]["native_order_id"] == 9701
+    assert logs[1]["message"] == "taobao order ingested"
+    assert logs[2]["level"] == "error"
 
 
 async def test_run_pdd_platform_order_pull_job_pages_stops_when_no_more(client, session, monkeypatch):
