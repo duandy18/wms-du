@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.oms.platforms.pdd import service_auth as pdd_service_auth_module
-from app.oms.platforms.pdd.service_auth import (
+from app.platform_order_ingestion.pdd import service_auth as pdd_service_auth_module
+from app.platform_order_ingestion.pdd.service_auth import (
     PddAuthService,
     PddAuthServiceError,
 )
-from app.oms.platforms.pdd.settings import PddOpenConfig
+from app.platform_order_ingestion.pdd.settings import PddOpenConfig
 
 
 def _config() -> PddOpenConfig:

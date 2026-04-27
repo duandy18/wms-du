@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
-from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
+from app.platform_order_ingestion.models.store_platform_connection import StorePlatformConnection
+from app.platform_order_ingestion.models.store_platform_credential import StorePlatformCredential
 
 
 pytestmark = pytest.mark.asyncio

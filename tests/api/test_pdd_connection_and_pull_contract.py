@@ -7,9 +7,9 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-from app.oms.platforms.models.pdd_app_config import PddAppConfig
-from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
-from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
+from app.platform_order_ingestion.models.pdd_app_config import PddAppConfig
+from app.platform_order_ingestion.models.store_platform_connection import StorePlatformConnection
+from app.platform_order_ingestion.models.store_platform_credential import StorePlatformCredential
 
 
 class _TestUser:

@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.oms.platforms.pdd import service_real_pull as real_pull_module
-from app.oms.platforms.pdd.service_real_pull import (
+from app.platform_order_ingestion.pdd import service_real_pull as real_pull_module
+from app.platform_order_ingestion.pdd.service_real_pull import (
     PddRealPullParams,
     PddRealPullService,
     PddRealPullServiceError,

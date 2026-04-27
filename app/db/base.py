@@ -141,7 +141,7 @@ def init_models(
         "app.wms.outbound.models",
         "app.shipping_assist.records.models",
         "app.shipping_assist.billing.models",
-        "app.oms.platforms.models",
+        "app.platform_order_ingestion.models",
         "app.oms.fsku.models",
         "app.shipping_assist.pricing.templates.models",
         "app.shipping_assist.providers.models",

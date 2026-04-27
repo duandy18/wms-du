@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from app.oms.platforms.models.jd_order import JdOrder, JdOrderItem
-from app.oms.platforms.jd import service_ledger as jd_ledger_module
+from app.platform_order_ingestion.models.jd_order import JdOrder, JdOrderItem
+from app.platform_order_ingestion.jd import service_ledger as jd_ledger_module
 
 
 def _build_order() -> JdOrder:

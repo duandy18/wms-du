@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.oms.platforms.pdd import service_decrypt as decrypt_module
-from app.oms.platforms.pdd.service_decrypt import (
+from app.platform_order_ingestion.pdd import service_decrypt as decrypt_module
+from app.platform_order_ingestion.pdd.service_decrypt import (
     PddDecryptService,
     PddDecryptServiceError,
 )
-from app.oms.platforms.pdd.client import PddOpenClientError
+from app.platform_order_ingestion.pdd.client import PddOpenClientError
 
 
 class _Config:

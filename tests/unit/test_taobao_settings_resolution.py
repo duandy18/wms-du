@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from app.oms.platforms.models.taobao_app_config import TaobaoAppConfig
-from app.oms.platforms.taobao.errors import TaobaoTopConfigError
-from app.oms.platforms.taobao.repository import get_enabled_taobao_app_config
-from app.oms.platforms.taobao.settings import (
+from app.platform_order_ingestion.models.taobao_app_config import TaobaoAppConfig
+from app.platform_order_ingestion.taobao.errors import TaobaoTopConfigError
+from app.platform_order_ingestion.taobao.repository import get_enabled_taobao_app_config
+from app.platform_order_ingestion.taobao.settings import (
     build_taobao_callback_url_from_model,
     build_taobao_top_config_from_model,
 )

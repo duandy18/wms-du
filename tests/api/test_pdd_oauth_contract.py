@@ -5,12 +5,12 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-from app.oms.platforms.pdd import router_auth as pdd_router_auth
-from app.oms.platforms.pdd.repository import (
+from app.platform_order_ingestion.pdd import router_auth as pdd_router_auth
+from app.platform_order_ingestion.pdd.repository import (
     PddAppConfigUpsertInput,
     upsert_current_pdd_app_config,
 )
-from app.oms.platforms.pdd.service_auth import PddAuthCallbackResult, PddAuthServiceError
+from app.platform_order_ingestion.pdd.service_auth import PddAuthCallbackResult, PddAuthServiceError
 from app.oms.services import stores_helpers
 
 

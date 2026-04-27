@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.oms.platforms.models.pdd_app_config import PddAppConfig
-from app.oms.platforms.models.store_platform_connection import StorePlatformConnection
-from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
-from app.oms.platforms.pdd.service_pull import PddPullService
+from app.platform_order_ingestion.models.pdd_app_config import PddAppConfig
+from app.platform_order_ingestion.models.store_platform_connection import StorePlatformConnection
+from app.platform_order_ingestion.models.store_platform_credential import StorePlatformCredential
+from app.platform_order_ingestion.pdd.service_pull import PddPullService
 
 
 def _pdd_app_config(

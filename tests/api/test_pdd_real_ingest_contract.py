@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.oms.platforms.pdd import router_ingest as pdd_router_ingest
-from app.oms.platforms.pdd.service_ingest import (
+from app.platform_order_ingestion.pdd import router_ingest as pdd_router_ingest
+from app.platform_order_ingestion.pdd.service_ingest import (
     PddOrderIngestPageResult,
     PddOrderIngestRowResult,
 )

@@ -5,15 +5,15 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
-from app.oms.platforms.models.jd_app_config import JdAppConfig
-from app.oms.platforms.models.store_platform_credential import StorePlatformCredential
-from app.oms.platforms.jd import service_pull as jd_pull_module
-from app.oms.platforms.jd.service_order_detail import (
+from app.platform_order_ingestion.models.jd_app_config import JdAppConfig
+from app.platform_order_ingestion.models.store_platform_credential import StorePlatformCredential
+from app.platform_order_ingestion.jd import service_pull as jd_pull_module
+from app.platform_order_ingestion.jd.service_order_detail import (
     JdOrderDetail,
     JdOrderDetailItem,
 )
-from app.oms.platforms.jd.service_pull import JdPullService
-from app.oms.platforms.jd.service_real_pull import (
+from app.platform_order_ingestion.jd.service_pull import JdPullService
+from app.platform_order_ingestion.jd.service_real_pull import (
     JdOrderPageResult,
     JdOrderSummary,
 )
