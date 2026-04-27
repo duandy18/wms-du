@@ -9,13 +9,13 @@ from sqlalchemy import text
 from app.user.deps.auth import get_current_user
 from app.main import app
 from app.platform_order_ingestion.models.jd_order import JdOrder, JdOrderItem
-import app.platform_order_ingestion.jd.router_orders as jd_router_orders
 
 
 class _TestUser:
     id: int = 999
     username: str = "test-user"
     is_active: bool = True
+    permissions = ["page.platform_order_ingestion.read", "page.platform_order_ingestion.write"]
 
 
 pytestmark = pytest.mark.asyncio
@@ -83,7 +83,6 @@ async def test_get_jd_orders_returns_list_rows(client, session, monkeypatch):
     await session.commit()
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/jd/orders")
@@ -160,7 +159,6 @@ async def test_get_jd_order_detail_returns_header_and_items(client, session, mon
     await session.commit()
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get(f"/oms/jd/orders/{order.id}")
@@ -196,7 +194,6 @@ async def test_get_jd_order_detail_returns_404_when_missing(client, session, mon
     await _clear_jd_orders(session)
 
     app.dependency_overrides[get_current_user] = lambda: _TestUser()
-    monkeypatch.setattr(jd_router_orders, "check_perm", lambda db, current_user, required: None)
 
     try:
         resp = await client.get("/oms/jd/orders/999999")

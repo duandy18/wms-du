@@ -3,8 +3,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import (
+    require_platform_order_ingestion_read,
+    require_platform_order_ingestion_write,
+)
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.contracts_pull_jobs import (
     PlatformOrderPullJobCreateIn,
     PlatformOrderPullJobDetailDataOut,
@@ -107,7 +114,11 @@ def _log_out(row: PlatformOrderPullJobRunLog) -> PlatformOrderPullJobRunLogOut:
 async def create_platform_order_pull_job(
     payload: PlatformOrderPullJobCreateIn = Body(...),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderPullJobEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderPullJobService()
         job = await service.create_job(session, payload=payload)
@@ -134,7 +145,11 @@ async def list_platform_order_pull_jobs(
     limit: int = Query(default=50, gt=0, le=200),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderPullJobListEnvelopeOut:
+    require_platform_order_ingestion_read(db, current_user)
+
     service = PlatformOrderPullJobService()
     rows, total = await service.list_jobs(
         session,
@@ -163,7 +178,11 @@ async def list_platform_order_pull_jobs(
 async def get_platform_order_pull_job(
     job_id: int,
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderPullJobDetailEnvelopeOut:
+    require_platform_order_ingestion_read(db, current_user)
+
     try:
         service = PlatformOrderPullJobService()
         job, runs, logs = await service.get_job_detail(session, job_id=job_id)
@@ -189,7 +208,11 @@ async def run_platform_order_pull_job_once(
     job_id: int,
     payload: PlatformOrderPullJobRunCreateIn = Body(default_factory=PlatformOrderPullJobRunCreateIn),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderPullJobRunEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderPullJobService()
         job, run, logs = await service.run_job_once(session, job_id=job_id, page=payload.page)
@@ -221,7 +244,11 @@ async def run_platform_order_pull_job_pages(
         default_factory=PlatformOrderPullJobRunPagesCreateIn
     ),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> PlatformOrderPullJobRunPagesEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = PlatformOrderPullJobService()
         job, runs, logs, stopped_reason = await service.run_job_pages(

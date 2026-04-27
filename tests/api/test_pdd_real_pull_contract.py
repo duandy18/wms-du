@@ -15,6 +15,7 @@ class _TestUser:
     id: int = 999
     username: str = "test-user"
     is_active: bool = True
+    permissions = ["page.platform_order_ingestion.read", "page.platform_order_ingestion.write"]
 
 
 pytestmark = pytest.mark.asyncio

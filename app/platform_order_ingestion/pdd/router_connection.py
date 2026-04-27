@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_read
+from app.user.deps.auth import get_current_user
 
 from .access_repository import (
     get_connection_by_store_platform,
@@ -19,7 +23,11 @@ router = APIRouter(tags=["oms-pdd-connection"])
 async def get_store_pdd_connection(
     store_id: int,
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_read(db, current_user)
+
     """
     读取店铺 × 拼多多当前 connection 视图。
 

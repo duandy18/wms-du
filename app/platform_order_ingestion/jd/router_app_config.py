@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import (
+    require_platform_order_ingestion_read,
+    require_platform_order_ingestion_write,
+)
+from app.user.deps.auth import get_current_user
 
 from .repository import (
     JdAppConfigUpsertInput,
@@ -28,7 +35,11 @@ def _mask_secret(secret: str | None) -> str:
 @router.get("/jd/app-config/current")
 async def get_jd_app_config_current(
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_read(db, current_user)
+
     row = await get_enabled_jd_app_config(session)
     if row is None:
         return {
@@ -68,7 +79,11 @@ async def get_jd_app_config_current(
 async def put_jd_app_config_current(
     payload: dict,
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    require_platform_order_ingestion_write(db, current_user)
+
     """
     约定：
     - 若 client_secret 为空字符串，则沿用原 secret（已有记录时）

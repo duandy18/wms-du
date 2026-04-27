@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.db.deps import get_async_session as get_session
+from app.db.deps import get_db
+from app.platform_order_ingestion.permissions import require_platform_order_ingestion_write
+from app.user.deps.auth import get_current_user
 from app.platform_order_ingestion.taobao.contracts_ingest import (
     TaobaoOrderIngestDataOut,
     TaobaoOrderIngestEnvelopeOut,
@@ -29,7 +33,11 @@ async def ingest_store_taobao_orders(
     store_id: int,
     payload: TaobaoOrderIngestRequest = Body(default_factory=TaobaoOrderIngestRequest),
     session: AsyncSession = Depends(get_session),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> TaobaoOrderIngestEnvelopeOut:
+    require_platform_order_ingestion_write(db, current_user)
+
     try:
         service = TaobaoOrderIngestService()
         result = await service.ingest_order_page(
