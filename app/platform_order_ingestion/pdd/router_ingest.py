@@ -40,7 +40,7 @@ async def ingest_store_pdd_orders(
     - 不写 platform_order_lines；
     - 不解析 FSKU；
     - 不建内部 orders/order_items；
-    - 不写 pdd_order_order_mappings；
+    - 不写 PDD 内部订单映射表；
     - 不触碰 finance。
     """
 

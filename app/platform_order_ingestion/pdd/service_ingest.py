@@ -65,7 +65,7 @@ class PddOrderIngestService:
     - OMS 地址校验
     - OMS 商品映射
     - 建内部 orders
-    - 写 pdd_order_order_mappings
+    - 不写 PDD 内部订单映射表
     """
 
     def __init__(

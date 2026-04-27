@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.platform_order_ingestion.models.pdd_order import PddOrder, PddOrderItem
-from app.platform_order_ingestion.models.pdd_order_order_mapping import PddOrderOrderMapping
 from app.platform_order_ingestion.pdd.contracts import PddOrderDetail
 
 
@@ -93,7 +92,6 @@ async def get_pdd_order_with_items(
         select(PddOrder)
         .options(
             selectinload(PddOrder.items),
-            selectinload(PddOrder.order_mapping),
         )
         .where(PddOrder.id == int(pdd_order_id))
         .limit(1)
@@ -231,39 +229,3 @@ async def replace_pdd_order_items(
 
     await session.flush()
     return created
-
-
-async def get_pdd_order_mapping_by_pdd_order_id(
-    session: AsyncSession,
-    *,
-    pdd_order_id: int,
-) -> Optional[PddOrderOrderMapping]:
-    stmt = (
-        select(PddOrderOrderMapping)
-        .where(PddOrderOrderMapping.pdd_order_id == int(pdd_order_id))
-        .limit(1)
-    )
-    result = await session.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def create_pdd_order_mapping(
-    session: AsyncSession,
-    *,
-    pdd_order_id: int,
-    order_id: int,
-    mapping_source: str = "system",
-    remark: str | None = None,
-    created_by: int | None = None,
-) -> PddOrderOrderMapping:
-    obj = PddOrderOrderMapping(
-        pdd_order_id=int(pdd_order_id),
-        order_id=int(order_id),
-        mapping_source=str(mapping_source or "system"),
-        remark=remark,
-        created_by=created_by,
-        updated_by=created_by,
-    )
-    session.add(obj)
-    await session.flush()
-    return obj

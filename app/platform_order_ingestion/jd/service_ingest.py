@@ -63,7 +63,7 @@ class JdOrderIngestService:
     不负责：
     - OMS 地址校验；
     - OMS 商品映射；
-    - 写 platform_order_lines；
+    - 不写 platform_order_lines；
     - 建内部 orders/order_items；
     - 触碰 finance。
     """
