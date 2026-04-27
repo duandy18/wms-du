@@ -20,6 +20,7 @@ from app.platform_order_ingestion.pdd.router_pull import router as pdd_pull_rout
 from app.platform_order_ingestion.taobao.router_app_config import router as taobao_app_config_router
 from app.platform_order_ingestion.taobao.router_auth import router as taobao_auth_router
 from app.platform_order_ingestion.taobao.router_connection import router as taobao_connection_router
+from app.platform_order_ingestion.taobao.router_ingest import router as taobao_ingest_router
 from app.platform_order_ingestion.taobao.router_orders import router as taobao_orders_router
 from app.platform_order_ingestion.taobao.router_pull import router as taobao_pull_router
 
@@ -32,6 +33,7 @@ router.include_router(taobao_app_config_router)
 router.include_router(taobao_auth_router)
 router.include_router(taobao_connection_router)
 router.include_router(taobao_pull_router)
+router.include_router(taobao_ingest_router)
 router.include_router(taobao_orders_router)
 
 router.include_router(pdd_app_config_router)
