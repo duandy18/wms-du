@@ -6,9 +6,9 @@ import pytest
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-from app.oms.platforms.pdd import router_pull as pdd_router_pull
-from app.oms.platforms.pdd.contracts import PddOrderSummary
-from app.oms.platforms.pdd.service_pull import PddPullCheckResult
+from app.platform_order_ingestion.pdd import router_pull as pdd_router_pull
+from app.platform_order_ingestion.pdd.contracts import PddOrderSummary
+from app.platform_order_ingestion.pdd.service_pull import PddPullCheckResult
 
 
 class _TestUser:

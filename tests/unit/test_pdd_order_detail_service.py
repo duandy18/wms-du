@@ -4,12 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.oms.platforms.pdd import service_order_detail as detail_module
-from app.oms.platforms.pdd.service_order_detail import (
+from app.platform_order_ingestion.pdd import service_order_detail as detail_module
+from app.platform_order_ingestion.pdd.service_order_detail import (
     PddOrderDetailService,
     PddOrderDetailServiceError,
 )
-from app.oms.platforms.pdd.service_decrypt import PddDecryptServiceError
+from app.platform_order_ingestion.pdd.service_decrypt import PddDecryptServiceError
 
 
 @pytest.mark.asyncio

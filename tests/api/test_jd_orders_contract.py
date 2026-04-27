@@ -8,8 +8,8 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-from app.oms.platforms.models.jd_order import JdOrder, JdOrderItem
-import app.oms.platforms.jd.router_orders as jd_router_orders
+from app.platform_order_ingestion.models.jd_order import JdOrder, JdOrderItem
+import app.platform_order_ingestion.jd.router_orders as jd_router_orders
 
 
 class _TestUser:

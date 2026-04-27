@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.oms.platforms.models.pdd_app_config import PddAppConfig
-from app.oms.platforms.pdd.repository import get_enabled_pdd_app_config
-from app.oms.platforms.pdd.settings import (
+from app.platform_order_ingestion.models.pdd_app_config import PddAppConfig
+from app.platform_order_ingestion.pdd.repository import get_enabled_pdd_app_config
+from app.platform_order_ingestion.pdd.settings import (
     PddOpenConfigError,
     build_pdd_open_config_from_model,
     build_pdd_redirect_uri_from_model,

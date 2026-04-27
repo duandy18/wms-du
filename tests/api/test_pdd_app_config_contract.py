@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-import app.oms.platforms.pdd.router_app_config as pdd_router_app_config
+import app.platform_order_ingestion.pdd.router_app_config as pdd_router_app_config
 
 
 class _TestUser:

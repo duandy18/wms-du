@@ -4,13 +4,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.oms.platforms.jd import service_auth as jd_service_auth_module
-from app.oms.platforms.jd.service_auth import (
+from app.platform_order_ingestion.jd import service_auth as jd_service_auth_module
+from app.platform_order_ingestion.jd.service_auth import (
     JdAuthCallbackResult,
     JdAuthService,
     JdAuthServiceError,
 )
-from app.oms.platforms.jd.settings import JdJosConfig
+from app.platform_order_ingestion.jd.settings import JdJosConfig
 
 
 def _config() -> JdJosConfig:

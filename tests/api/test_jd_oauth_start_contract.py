@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from app.oms.platforms.jd.repository import (
+from app.platform_order_ingestion.jd.repository import (
     JdAppConfigUpsertInput,
     upsert_current_jd_app_config,
 )

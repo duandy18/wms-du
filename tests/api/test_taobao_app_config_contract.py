@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.user.deps.auth import get_current_user
 from app.main import app
-import app.oms.platforms.taobao.router_app_config as taobao_router_app_config
+import app.platform_order_ingestion.taobao.router_app_config as taobao_router_app_config
 
 
 class _TestUser:
