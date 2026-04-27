@@ -35,6 +35,8 @@ class OrderSalesStoreRow(BaseModel):
 
 class OrderSalesItemRow(BaseModel):
     item_id: int
+    item_sku: str | None = None
+    item_name: str | None = None
     sku_id: str | None = None
     title: str | None = None
     qty_sold: int
@@ -61,7 +63,13 @@ class OrderSalesLineRow(BaseModel):
     receiver_city: str | None = None
     receiver_district: str | None = None
 
+    warehouse_id: int | None = None
+    warehouse_name: str | None = None
+    warehouse_source: str
+
     item_id: int
+    item_sku: str | None = None
+    item_name: str | None = None
     sku_id: str | None = None
     title: str | None = None
 

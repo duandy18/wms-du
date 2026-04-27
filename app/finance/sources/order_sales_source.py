@@ -258,11 +258,15 @@ class OrderSalesSource:
             f"""
             SELECT
               f.item_id,
+              MAX(i.sku) AS item_sku,
+              MAX(i.name) AS item_name,
               MAX(f.sku_id) AS sku_id,
               MAX(f.title) AS title,
               COALESCE(SUM(f.qty_sold), 0) AS qty_sold,
               COALESCE(SUM(f.line_amount), 0) AS revenue
               FROM finance_order_sales_lines f
+              LEFT JOIN items i
+                ON i.id = f.item_id
              WHERE {self._base_where("f")}
              GROUP BY f.item_id
              HAVING COALESCE(SUM(f.qty_sold), 0) > 0
@@ -274,6 +278,8 @@ class OrderSalesSource:
         return [
             {
                 "item_id": int(row["item_id"]),
+                "item_sku": row["item_sku"],
+                "item_name": row["item_name"],
                 "sku_id": row["sku_id"],
                 "title": row["title"],
                 "qty_sold": int(row["qty_sold"] or 0),
@@ -311,7 +317,20 @@ class OrderSalesSource:
               f.receiver_province,
               f.receiver_city,
               f.receiver_district,
+              CASE
+                WHEN ofl.actual_warehouse_id IS NOT NULL THEN ofl.actual_warehouse_id
+                WHEN ofl.planned_warehouse_id IS NOT NULL THEN ofl.planned_warehouse_id
+                ELSE NULL
+              END AS warehouse_id,
+              COALESCE(wha.name, whp.name) AS warehouse_name,
+              CASE
+                WHEN ofl.actual_warehouse_id IS NOT NULL THEN 'actual'
+                WHEN ofl.planned_warehouse_id IS NOT NULL THEN 'planned'
+                ELSE 'none'
+              END AS warehouse_source,
               f.item_id,
+              i.sku AS item_sku,
+              i.name AS item_name,
               f.sku_id,
               f.title,
               f.qty_sold,
@@ -321,6 +340,14 @@ class OrderSalesSource:
               f.order_amount,
               f.pay_amount
               FROM finance_order_sales_lines f
+              LEFT JOIN order_fulfillment ofl
+                ON ofl.order_id = f.order_id
+              LEFT JOIN warehouses whp
+                ON whp.id = ofl.planned_warehouse_id
+              LEFT JOIN warehouses wha
+                ON wha.id = ofl.actual_warehouse_id
+              LEFT JOIN items i
+                ON i.id = f.item_id
              WHERE {self._base_where("f")}
              ORDER BY f.order_created_at DESC, f.id DESC
              LIMIT :limit OFFSET :offset
@@ -344,7 +371,12 @@ class OrderSalesSource:
                 "receiver_province": row["receiver_province"],
                 "receiver_city": row["receiver_city"],
                 "receiver_district": row["receiver_district"],
+                "warehouse_id": int(row["warehouse_id"]) if row["warehouse_id"] is not None else None,
+                "warehouse_name": row["warehouse_name"],
+                "warehouse_source": str(row["warehouse_source"]),
                 "item_id": int(row["item_id"]),
+                "item_sku": row["item_sku"],
+                "item_name": row["item_name"],
                 "sku_id": row["sku_id"],
                 "title": row["title"],
                 "qty_sold": int(row["qty_sold"] or 0),
