@@ -1,6 +1,8 @@
 # Module split: platform order ingestion owns platform app config, store auth, connection checks, native pull/ingest, and native order ledgers.
 from fastapi import APIRouter
 
+from app.platform_order_ingestion.router_pull_jobs import router as platform_order_pull_jobs_router
+
 from app.platform_order_ingestion.jd.router_app_config import router as jd_app_config_router
 from app.platform_order_ingestion.jd.router_auth import router as jd_auth_router
 from app.platform_order_ingestion.jd.router_connection import router as jd_connection_router
@@ -20,6 +22,8 @@ from app.platform_order_ingestion.taobao.router_orders import router as taobao_o
 from app.platform_order_ingestion.taobao.router_pull import router as taobao_pull_router
 
 router = APIRouter(tags=["platform-order-ingestion"])
+
+router.include_router(platform_order_pull_jobs_router)
 
 router.include_router(taobao_app_config_router)
 router.include_router(taobao_auth_router)

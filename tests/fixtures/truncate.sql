@@ -17,6 +17,11 @@
 -- - tests 清库不再触碰 shipping_provider_surcharges 旧表。
 
 TRUNCATE TABLE
+  -- platform order ingestion jobs
+  platform_order_pull_job_run_logs,
+  platform_order_pull_job_runs,
+  platform_order_pull_jobs,
+
   -- finance facts
   finance_order_sales_lines,
   finance_shipping_cost_lines,
