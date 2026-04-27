@@ -91,7 +91,7 @@ class PddOrderIngestService:
                 session,
                 store_id=store_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise PddOrderIngestServiceError(
                 f"failed to load pdd store_code by store_id={store_id}: {exc}"
             ) from exc
@@ -163,7 +163,6 @@ class PddOrderIngestService:
             pdd_order: PddOrder = await upsert_pdd_order(
                 session,
                 store_id=store_id,
-                store_code=store_code,
                 summary_raw_payload=summary.raw_order,
                 detail=detail,
                 order_status=summary.order_status,
@@ -190,7 +189,7 @@ class PddOrderIngestService:
                 status="FAILED",
                 error=f"detail_failed: {exc}",
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return PddOrderIngestRowResult(
                 order_sn=order_sn,
                 pdd_order_id=None,
