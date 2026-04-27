@@ -134,6 +134,66 @@ async def _seed_finance_order_sales_line(db_session) -> str:
         {"order_id": order_id},
     )
 
+    warehouse_row = (
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO warehouses (
+                  name,
+                  code,
+                  active
+                )
+                VALUES (
+                  :name,
+                  :code,
+                  TRUE
+                )
+                ON CONFLICT (code)
+                DO UPDATE SET
+                  name = EXCLUDED.name
+                RETURNING id
+                """
+            ),
+            {
+                "name": "FIN-订单销售测试仓库",
+                "code": f"FIN-WH-{uuid4().hex[:8]}",
+            },
+        )
+    ).mappings().one()
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO order_fulfillment (
+              order_id,
+              planned_warehouse_id,
+              actual_warehouse_id,
+              fulfillment_status,
+              blocked_reasons,
+              updated_at
+            )
+            VALUES (
+              :order_id,
+              :warehouse_id,
+              NULL,
+              'SERVICE_ASSIGNED',
+              NULL,
+              now()
+            )
+            ON CONFLICT (order_id)
+            DO UPDATE SET
+              planned_warehouse_id = EXCLUDED.planned_warehouse_id,
+              actual_warehouse_id = EXCLUDED.actual_warehouse_id,
+              fulfillment_status = EXCLUDED.fulfillment_status,
+              updated_at = now()
+            """
+        ),
+        {
+            "order_id": order_id,
+            "warehouse_id": int(warehouse_row["id"]),
+        },
+    )
+
     await db_session.execute(
         text(
             """
@@ -238,6 +298,13 @@ async def test_finance_order_sales_contract(client):
     assert isinstance(body["by_store"], list)
     assert isinstance(body["by_item"], list)
     assert isinstance(body["items"], list)
+    if body["items"]:
+        first = body["items"][0]
+        assert "warehouse_id" in first
+        assert "warehouse_name" in first
+        assert "warehouse_source" in first
+        assert "item_sku" in first
+        assert "item_name" in first
     assert isinstance(body["total"], int)
     assert isinstance(body["limit"], int)
     assert isinstance(body["offset"], int)
@@ -269,7 +336,12 @@ async def test_finance_order_sales_reads_physical_sales_lines(client, session):
     assert item["receiver_province"] == "浙江省"
     assert item["receiver_city"] == "杭州市"
     assert item["receiver_district"] == "西湖区"
+    assert item["warehouse_id"] is not None
+    assert item["warehouse_name"] == "FIN-订单销售测试仓库"
+    assert item["warehouse_source"] == "planned"
     assert item["item_id"] == 1
+    assert item["item_sku"]
+    assert item["item_name"]
     assert item["sku_id"] == "FIN-SKU-1"
     assert item["title"] == "订单销售测试商品"
     assert item["qty_sold"] == 2
