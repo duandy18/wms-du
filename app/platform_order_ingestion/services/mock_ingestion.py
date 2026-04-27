@@ -25,7 +25,7 @@ from app.platform_order_ingestion.taobao.service_order_detail import TaobaoOrder
 from app.platform_order_ingestion.taobao.service_real_pull import TaobaoOrderSummary
 
 Platform = Literal["pdd", "jd", "taobao"]
-Scenario = Literal["normal", "address_missing", "item_abnormal", "mixed"]
+Scenario = Literal["normal", "address_missing", "item_abnormal", "combo", "mixed"]
 
 
 class PlatformOrderIngestionMockServiceError(Exception):
@@ -797,11 +797,44 @@ class PlatformOrderIngestionMockService:
             scenario=scenario,
         )
 
+    def _build_combo_components(
+        self,
+        *,
+        platform: str,
+        index: int,
+        offset: int,
+    ) -> list[dict]:
+        base = f"{platform.upper()}-COMP-{index + 1}-{offset + 1}"
+        return [
+            {
+                "component_sku": f"{base}-A",
+                "component_name": f"组合成分A-{index + 1}-{offset + 1}",
+                "qty_per_bundle": 1,
+            },
+            {
+                "component_sku": f"{base}-B",
+                "component_name": f"组合成分B-{index + 1}-{offset + 1}",
+                "qty_per_bundle": 2,
+            },
+        ]
+
     def _build_pdd_items(self, *, scenario: str, index: int) -> list[PddOrderDetailItem]:
         rows: list[PddOrderDetailItem] = []
         for offset in range(2):
-            goods_price = 1299 + index * 10 + offset * 100
-            outer_id: str | None = f"OUT-PDD-{index + 1}-{offset + 1}"
+            is_combo = scenario == "combo"
+            goods_price = 3999 + index * 50 + offset * 300 if is_combo else 1299 + index * 10 + offset * 100
+            outer_id: str | None = (
+                f"COMBO-PDD-{index + 1}-{offset + 1}"
+                if is_combo
+                else f"OUT-PDD-{index + 1}-{offset + 1}"
+            )
+            goods_count = 1 if is_combo else offset + 1
+            goods_name = (
+                f"拼多多组合装{index + 1}-{offset + 1}"
+                if is_combo
+                else f"拼多多测试商品{index + 1}-{offset + 1}"
+            )
+
             if scenario == "item_abnormal" and offset == 0:
                 goods_price = None
                 outer_id = None
@@ -812,17 +845,25 @@ class PlatformOrderIngestionMockService:
                 "goods_id": f"PDD-G-{index + 1}-{offset + 1}",
                 "sku_id": f"PDD-SKU-{index + 1}-{offset + 1}",
                 "outer_id": outer_id,
-                "goods_name": f"拼多多测试商品{index + 1}-{offset + 1}",
-                "goods_count": offset + 1,
+                "goods_name": goods_name,
+                "goods_count": goods_count,
                 "goods_price": goods_price,
             }
+            if is_combo:
+                raw_item["mock_line_type"] = "combo"
+                raw_item["combo_components"] = self._build_combo_components(
+                    platform="pdd",
+                    index=index,
+                    offset=offset,
+                )
+
             rows.append(
                 PddOrderDetailItem(
                     goods_id=raw_item["goods_id"],
                     goods_name=raw_item["goods_name"],
                     sku_id=raw_item["sku_id"],
                     outer_id=outer_id,
-                    goods_count=offset + 1,
+                    goods_count=goods_count,
                     goods_price=goods_price,
                     raw_item=raw_item,
                 )
@@ -832,8 +873,24 @@ class PlatformOrderIngestionMockService:
     def _build_jd_items(self, *, scenario: str, index: int) -> list[JdOrderDetailItem]:
         rows: list[JdOrderDetailItem] = []
         for offset in range(2):
-            item_price: str | None = str(Decimal("19.90") + Decimal(index) + Decimal(offset))
-            outer_sku_id: str | None = f"OUT-JD-{index + 1}-{offset + 1}"
+            is_combo = scenario == "combo"
+            item_price: str | None = (
+                str(Decimal("69.90") + Decimal(index) + Decimal(offset))
+                if is_combo
+                else str(Decimal("19.90") + Decimal(index) + Decimal(offset))
+            )
+            outer_sku_id: str | None = (
+                f"COMBO-JD-{index + 1}-{offset + 1}"
+                if is_combo
+                else f"OUT-JD-{index + 1}-{offset + 1}"
+            )
+            item_total = 1 if is_combo else offset + 1
+            item_name = (
+                f"京东组合装{index + 1}-{offset + 1}"
+                if is_combo
+                else f"京东测试商品{index + 1}-{offset + 1}"
+            )
+
             if scenario == "item_abnormal" and offset == 0:
                 item_price = None
                 outer_sku_id = None
@@ -844,19 +901,27 @@ class PlatformOrderIngestionMockService:
                 "sku_id": f"JD-SKU-{index + 1}-{offset + 1}",
                 "outer_sku_id": outer_sku_id,
                 "ware_id": f"JD-WARE-{index + 1}-{offset + 1}",
-                "item_name": f"京东测试商品{index + 1}-{offset + 1}",
-                "item_total": offset + 1,
+                "item_name": item_name,
+                "item_total": item_total,
                 "item_price": item_price,
             }
+            if is_combo:
+                raw_item["mock_line_type"] = "combo"
+                raw_item["combo_components"] = self._build_combo_components(
+                    platform="jd",
+                    index=index,
+                    offset=offset,
+                )
+
             rows.append(
                 JdOrderDetailItem(
                     sku_id=raw_item["sku_id"],
                     outer_sku_id=outer_sku_id,
                     ware_id=raw_item["ware_id"],
                     item_name=raw_item["item_name"],
-                    item_total=offset + 1,
+                    item_total=item_total,
                     item_price=item_price,
-                    sku_name=f"规格{offset + 1}",
+                    sku_name="组合装" if is_combo else f"规格{offset + 1}",
                     gift_point=0,
                     raw_item=raw_item,
                 )
@@ -872,8 +937,29 @@ class PlatformOrderIngestionMockService:
     ) -> list[TaobaoOrderDetailItem]:
         rows: list[TaobaoOrderDetailItem] = []
         for offset in range(2):
-            price: str | None = str(Decimal("29.90") + Decimal(index) + Decimal(offset))
-            outer_sku_id: str | None = f"OUT-TB-SKU-{index + 1}-{offset + 1}"
+            is_combo = scenario == "combo"
+            price: str | None = (
+                str(Decimal("89.90") + Decimal(index) + Decimal(offset))
+                if is_combo
+                else str(Decimal("29.90") + Decimal(index) + Decimal(offset))
+            )
+            outer_iid = (
+                f"COMBO-TB-ITEM-{index + 1}-{offset + 1}"
+                if is_combo
+                else f"OUT-TB-ITEM-{index + 1}-{offset + 1}"
+            )
+            outer_sku_id: str | None = (
+                f"COMBO-TB-SKU-{index + 1}-{offset + 1}"
+                if is_combo
+                else f"OUT-TB-SKU-{index + 1}-{offset + 1}"
+            )
+            num = 1 if is_combo else offset + 1
+            title = (
+                f"淘宝组合装{index + 1}-{offset + 1}"
+                if is_combo
+                else f"淘宝测试商品{index + 1}-{offset + 1}"
+            )
+
             if scenario == "item_abnormal" and offset == 0:
                 price = None
                 outer_sku_id = None
@@ -885,15 +971,23 @@ class PlatformOrderIngestionMockService:
                 "oid": oid,
                 "num_iid": f"TB-NUMIID-{index + 1}-{offset + 1}",
                 "sku_id": f"TB-SKU-{index + 1}-{offset + 1}",
-                "outer_iid": f"OUT-TB-ITEM-{index + 1}-{offset + 1}",
+                "outer_iid": outer_iid,
                 "outer_sku_id": outer_sku_id,
-                "title": f"淘宝测试商品{index + 1}-{offset + 1}",
+                "title": title,
                 "price": price,
-                "num": offset + 1,
+                "num": num,
                 "payment": price,
                 "total_fee": price,
-                "sku_properties_name": f"颜色:测试{offset + 1}",
+                "sku_properties_name": "组合装" if is_combo else f"颜色:测试{offset + 1}",
             }
+            if is_combo:
+                raw_item["mock_line_type"] = "combo"
+                raw_item["combo_components"] = self._build_combo_components(
+                    platform="taobao",
+                    index=index,
+                    offset=offset,
+                )
+
             rows.append(
                 TaobaoOrderDetailItem(
                     oid=oid,
@@ -903,7 +997,7 @@ class PlatformOrderIngestionMockService:
                     outer_sku_id=outer_sku_id,
                     title=raw_item["title"],
                     price=price,
-                    num=offset + 1,
+                    num=num,
                     payment=price,
                     total_fee=price,
                     sku_properties_name=raw_item["sku_properties_name"],
@@ -920,7 +1014,7 @@ class PlatformOrderIngestionMockService:
     def _resolve_row_scenario(self, *, scenario: str, index: int) -> str:
         if scenario != "mixed":
             return scenario
-        return ["normal", "address_missing", "item_abnormal"][index % 3]
+        return ["normal", "address_missing", "item_abnormal", "combo"][index % 4]
 
     def _validate_store_id(self, store_id: int) -> int:
         store_id_int = int(store_id)

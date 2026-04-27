@@ -83,19 +83,20 @@ async def test_unified_mock_ingests_native_orders(client, session, platform, sto
         json={
             "platform": platform,
             "scenario": "mixed",
-            "count": 3,
+            "count": 4,
         },
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert data["platform"] == platform
     assert data["store_id"] == store_id
-    assert data["count"] == 3
-    assert len(data["rows"]) == 3
+    assert data["count"] == 4
+    assert len(data["rows"]) == 4
     assert {row["scenario"] for row in data["rows"]} == {
         "normal",
         "address_missing",
         "item_abnormal",
+        "combo",
     }
     assert all(row["native_order_id"] for row in data["rows"])
 
@@ -107,7 +108,7 @@ async def test_unified_mock_ingests_native_orders(client, session, platform, sto
             text(f"SELECT count(*) FROM {orders_table} WHERE id IN ({native_order_ids_sql})")
         )
     ).scalar_one()
-    assert int(orders_count) == 3
+    assert int(orders_count) == 4
 
     items_count = (
         await session.execute(
@@ -121,7 +122,22 @@ async def test_unified_mock_ingests_native_orders(client, session, platform, sto
             )
         )
     ).scalar_one()
-    assert int(items_count) == 6
+    assert int(items_count) == 8
+
+    combo_items_count = (
+        await session.execute(
+            text(
+                f"""
+                SELECT count(*)
+                  FROM {items_table} i
+                  JOIN {orders_table} o ON o.id = i.{order_fk}
+                 WHERE o.id IN ({native_order_ids_sql})
+                   AND coalesce(jsonb_exists(i.raw_item_payload, 'combo_components'), false)
+                """
+            )
+        )
+    ).scalar_one()
+    assert int(combo_items_count) >= 1
 
 
 async def test_unified_mock_rejects_store_platform_mismatch(client, session):
