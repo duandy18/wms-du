@@ -24,7 +24,7 @@ class PageRegistry(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "domain_code IN ('finance', 'oms', 'pms', 'procurement', 'wms', 'shipping_assist', 'admin', 'inbound')",
+            "domain_code IN ('finance', 'oms', 'pms', 'procurement', 'wms', 'shipping_assist', 'admin', 'inbound', 'platform_order_ingestion')",
             name="ck_page_registry_domain_code",
         ),
         CheckConstraint(
@@ -104,6 +104,14 @@ class PageRegistry(Base):
         lazy="selectin",
     )
 
+    route_prefixes = relationship(
+        "PageRoutePrefix",
+        back_populates="page",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
     # 权限引用
     read_permission = relationship(
         "Permission",
@@ -115,16 +123,3 @@ class PageRegistry(Base):
         foreign_keys=[write_permission_id],
         lazy="joined",
     )
-
-    # route_prefix 映射
-    route_prefixes = relationship(
-        "PageRoutePrefix",
-        back_populates="page",
-        lazy="selectin",
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<PageRegistry code={self.code!r} level={self.level} "
-            f"parent_code={self.parent_code!r} domain={self.domain_code!r}>"
-        )
