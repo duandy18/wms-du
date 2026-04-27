@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, List, Optional
+from typing import List
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
@@ -13,8 +13,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    from .pdd_order_order_mapping import PddOrderOrderMapping
 
 
 class PddOrder(Base):
@@ -189,13 +187,6 @@ class PddOrder(Base):
         cascade="all, delete-orphan",
     )
 
-    order_mapping: Mapped[Optional["PddOrderOrderMapping"]] = relationship(
-        "PddOrderOrderMapping",
-        back_populates="pdd_order",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-        uselist=False,
-    )
 
     def __repr__(self) -> str:
         return (

@@ -80,7 +80,7 @@ class TaobaoPullService:
 
     不负责：
     - 写 taobao_orders / taobao_order_items；
-    - 写 platform_order_lines；
+    - 不写 platform_order_lines；
     - FSKU / SKU 映射；
     - 内部订单创建。
     """
