@@ -113,7 +113,8 @@ def test_admin_can_save_user_permission_matrix(client: TestClient) -> None:
     user_id = created["id"]
 
     page_codes = _get_matrix_page_codes(client, headers)
-    assert {"admin", "wms", "oms", "shipping_assist", "finance", "pms"} <= set(page_codes)
+    assert {"admin", "wms", "platform_order_ingestion", "shipping_assist", "finance", "pms"} <= set(page_codes)
+    assert "oms" not in set(page_codes)
 
     pages = _build_empty_pages(page_codes)
     pages["wms"] = {"read": False, "write": True}
@@ -137,8 +138,8 @@ def test_admin_can_save_user_permission_matrix(client: TestClient) -> None:
     assert saved["pages"]["wms"]["read"] is True
     assert saved["pages"]["admin"]["read"] is True
     assert saved["pages"]["admin"]["write"] is False
-    assert saved["pages"]["oms"]["read"] is False
-    assert saved["pages"]["oms"]["write"] is False
+    assert saved["pages"]["platform_order_ingestion"]["read"] is False
+    assert saved["pages"]["platform_order_ingestion"]["write"] is False
 
     matrix_resp = client.get("/admin/users/permission-matrix", headers=headers)
     assert matrix_resp.status_code == 200, matrix_resp.text
