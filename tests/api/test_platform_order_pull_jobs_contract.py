@@ -3,6 +3,11 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
+from app.platform_order_ingestion.jd import service_ingest as jd_service_ingest
+from app.platform_order_ingestion.jd.service_ingest import (
+    JdOrderIngestPageResult,
+    JdOrderIngestRowResult,
+)
 from app.platform_order_ingestion.pdd import service_ingest as pdd_service_ingest
 from app.platform_order_ingestion.pdd.service_ingest import (
     PddOrderIngestPageResult,
@@ -349,8 +354,51 @@ async def test_run_pdd_platform_order_pull_job_pages_respects_max_pages(client, 
     assert data["job"]["cursor_page"] == 3
 
 
-async def test_pull_job_service_keeps_unsupported_platform_explicit_after_executor_split(client, session):
+async def test_run_jd_platform_order_pull_job_records_run_and_logs_after_executor_registration(client, session, monkeypatch):
     await _seed_store(session, store_id=7106, platform="JD")
+
+    captured = {}
+
+    async def _fake_ingest_order_page(self, *, session, params):
+        captured["store_id"] = params.store_id
+        captured["start_time"] = params.start_time
+        captured["end_time"] = params.end_time
+        captured["order_state"] = params.order_state
+        captured["page"] = params.page
+        captured["page_size"] = params.page_size
+
+        return JdOrderIngestPageResult(
+            store_id=7106,
+            store_code="store-7106",
+            page=params.page,
+            page_size=params.page_size,
+            orders_count=2,
+            success_count=1,
+            failed_count=1,
+            has_more=True,
+            start_time=params.start_time,
+            end_time=params.end_time,
+            rows=[
+                JdOrderIngestRowResult(
+                    order_id="JD-JOB-ORDER-001",
+                    jd_order_id=9601,
+                    status="OK",
+                    error=None,
+                ),
+                JdOrderIngestRowResult(
+                    order_id="JD-JOB-ORDER-002",
+                    jd_order_id=None,
+                    status="FAILED",
+                    error="detail_failed: boom",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(
+        jd_service_ingest.JdOrderIngestService,
+        "ingest_order_page",
+        _fake_ingest_order_page,
+    )
 
     create_resp = await client.post(
         "/oms/platform-order-ingestion/pull-jobs",
@@ -361,17 +409,51 @@ async def test_pull_job_service_keeps_unsupported_platform_explicit_after_execut
             "time_from": "2026-03-29 00:00:00",
             "time_to": "2026-03-29 23:59:59",
             "page_size": 20,
+            "request_payload": {"order_state": "WAIT_SELLER_STOCK_OUT"},
         },
     )
     assert create_resp.status_code == 200, create_resp.text
     job_id = create_resp.json()["data"]["id"]
 
-    run_resp = await client.post(f"/oms/platform-order-ingestion/pull-jobs/{job_id}/runs")
+    run_resp = await client.post(
+        f"/oms/platform-order-ingestion/pull-jobs/{job_id}/runs",
+        json={"page": 1},
+    )
     assert run_resp.status_code == 200, run_resp.text
+
+    assert captured == {
+        "store_id": 7106,
+        "start_time": "2026-03-29 00:00:00",
+        "end_time": "2026-03-29 23:59:59",
+        "order_state": "WAIT_SELLER_STOCK_OUT",
+        "page": 1,
+        "page_size": 20,
+    }
 
     data = run_resp.json()["data"]
     assert data["job"]["platform"] == "jd"
-    assert data["job"]["status"] == "failed"
-    assert data["run"]["status"] == "failed"
-    assert data["run"]["error_message"] == "PLATFORM_PULL_JOB_NOT_IMPLEMENTED: jd"
-    assert data["logs"][-1]["event_type"] == "page_failed"
+    assert data["job"]["status"] == "partial_success"
+    assert data["job"]["cursor_page"] == 2
+
+    run = data["run"]
+    assert run["status"] == "partial_success"
+    assert run["page"] == 1
+    assert run["page_size"] == 20
+    assert run["has_more"] is True
+    assert run["orders_count"] == 2
+    assert run["success_count"] == 1
+    assert run["failed_count"] == 1
+    assert run["result_payload"]["rows"][0]["order_id"] == "JD-JOB-ORDER-001"
+    assert run["result_payload"]["rows"][0]["jd_order_id"] == 9601
+
+    logs = data["logs"]
+    assert [log["event_type"] for log in logs] == [
+        "page_started",
+        "order_ingested",
+        "order_failed",
+        "page_finished",
+    ]
+    assert logs[1]["platform_order_no"] == "JD-JOB-ORDER-001"
+    assert logs[1]["native_order_id"] == 9601
+    assert logs[1]["message"] == "jd order ingested"
+    assert logs[2]["level"] == "error"

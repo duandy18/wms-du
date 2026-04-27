@@ -202,7 +202,7 @@ class PlatformOrderPullJobService:
                     event_type="order_ingested",
                     platform_order_no=row.platform_order_no,
                     native_order_id=row.native_order_id,
-                    message="pdd order ingested",
+                    message=f"{result.platform} order ingested",
                     payload={"status": row.status},
                 )
             else:
