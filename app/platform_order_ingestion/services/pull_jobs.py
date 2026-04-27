@@ -12,11 +12,9 @@ from app.platform_order_ingestion.models.pull_job import (
     PlatformOrderPullJobRun,
     PlatformOrderPullJobRunLog,
 )
-from app.platform_order_ingestion.pdd.service_ingest import (
-    PddOrderIngestPageResult,
-    PddOrderIngestService,
+from app.platform_order_ingestion.services.pull_job_executor_registry import (
+    get_pull_job_executor,
 )
-from app.platform_order_ingestion.pdd.service_real_pull import PddRealPullParams
 from app.platform_order_ingestion.repos.pull_jobs import (
     create_pull_job,
     create_pull_job_run,
@@ -135,7 +133,8 @@ class PlatformOrderPullJobService:
             payload=request_payload,
         )
 
-        if job.platform != "pdd":
+        executor = get_pull_job_executor(job.platform)
+        if executor is None:
             message = f"PLATFORM_PULL_JOB_NOT_IMPLEMENTED: {job.platform}"
             await create_pull_job_run_log(
                 session,
@@ -162,7 +161,7 @@ class PlatformOrderPullJobService:
             return job, run, logs
 
         try:
-            result = await self._run_pdd_job_page(
+            result = await executor.run_page(
                 session=session,
                 job=job,
                 page=run_page,
@@ -201,8 +200,8 @@ class PlatformOrderPullJobService:
                     run_id=run.id,
                     level="info",
                     event_type="order_ingested",
-                    platform_order_no=row.order_sn,
-                    native_order_id=row.pdd_order_id,
+                    platform_order_no=row.platform_order_no,
+                    native_order_id=row.native_order_id,
                     message="pdd order ingested",
                     payload={"status": row.status},
                 )
@@ -213,8 +212,8 @@ class PlatformOrderPullJobService:
                     run_id=run.id,
                     level="error",
                     event_type="order_failed",
-                    platform_order_no=row.order_sn,
-                    native_order_id=row.pdd_order_id,
+                    platform_order_no=row.platform_order_no,
+                    native_order_id=row.native_order_id,
                     message=row.error,
                     payload={"status": row.status, "error": row.error},
                 )
@@ -224,28 +223,7 @@ class PlatformOrderPullJobService:
             success_count=result.success_count,
             failed_count=result.failed_count,
         )
-        result_payload = {
-            "platform": "pdd",
-            "store_id": result.store_id,
-            "store_code": result.store_code,
-            "page": result.page,
-            "page_size": result.page_size,
-            "orders_count": result.orders_count,
-            "success_count": result.success_count,
-            "failed_count": result.failed_count,
-            "has_more": result.has_more,
-            "start_confirm_at": result.start_confirm_at,
-            "end_confirm_at": result.end_confirm_at,
-            "rows": [
-                {
-                    "order_sn": row.order_sn,
-                    "pdd_order_id": row.pdd_order_id,
-                    "status": row.status,
-                    "error": row.error,
-                }
-                for row in result.rows
-            ],
-        }
+        result_payload = result.result_payload
 
         await create_pull_job_run_log(
             session,
@@ -314,26 +292,6 @@ class PlatformOrderPullJobService:
             raise PlatformOrderPullJobServiceError(f"platform order pull job not found: {job_id}")
 
         return job, runs, logs, stopped_reason
-
-    async def _run_pdd_job_page(
-        self,
-        *,
-        session: AsyncSession,
-        job: PlatformOrderPullJob,
-        page: int,
-    ) -> PddOrderIngestPageResult:
-        service = PddOrderIngestService()
-        return await service.ingest_order_page(
-            session=session,
-            params=PddRealPullParams(
-                store_id=int(job.store_id),
-                start_confirm_at=self._format_platform_dt(job.time_from),
-                end_confirm_at=self._format_platform_dt(job.time_to),
-                order_status=int(job.order_status or 1),
-                page=int(page),
-                page_size=int(job.page_size),
-            ),
-        )
 
     def _resolve_run_status(
         self,

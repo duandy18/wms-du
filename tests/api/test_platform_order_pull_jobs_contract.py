@@ -347,3 +347,31 @@ async def test_run_pdd_platform_order_pull_job_pages_respects_max_pages(client, 
     assert [run["page"] for run in data["runs"]] == [1, 2]
     assert all(run["has_more"] is True for run in data["runs"])
     assert data["job"]["cursor_page"] == 3
+
+
+async def test_pull_job_service_keeps_unsupported_platform_explicit_after_executor_split(client, session):
+    await _seed_store(session, store_id=7106, platform="JD")
+
+    create_resp = await client.post(
+        "/oms/platform-order-ingestion/pull-jobs",
+        json={
+            "platform": "jd",
+            "store_id": 7106,
+            "job_type": "manual",
+            "time_from": "2026-03-29 00:00:00",
+            "time_to": "2026-03-29 23:59:59",
+            "page_size": 20,
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    job_id = create_resp.json()["data"]["id"]
+
+    run_resp = await client.post(f"/oms/platform-order-ingestion/pull-jobs/{job_id}/runs")
+    assert run_resp.status_code == 200, run_resp.text
+
+    data = run_resp.json()["data"]
+    assert data["job"]["platform"] == "jd"
+    assert data["job"]["status"] == "failed"
+    assert data["run"]["status"] == "failed"
+    assert data["run"]["error_message"] == "PLATFORM_PULL_JOB_NOT_IMPLEMENTED: jd"
+    assert data["logs"][-1]["event_type"] == "page_failed"
