@@ -22,7 +22,7 @@ WMS-DU backend service for WMS / OMS / TMS / PMS.
 
 ---
 
-## Frontend (wms-fe)
+## Frontend (wms-web)
 
 本仓库包含前端子工程（Vite + React + MSW）：
 - 开发启动：`pnpm dev`
