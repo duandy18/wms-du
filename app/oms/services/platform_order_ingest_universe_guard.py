@@ -68,36 +68,42 @@ async def enforce_no_test_items_in_non_test_store(
     if is_test_store(store_code):
         return
 
-    if not item_ids:
+    normalized_item_ids = sorted({int(x) for x in item_ids if x is not None})
+    if not normalized_item_ids:
         return
 
     ts = ItemTestSetService(session)
     try:
-        await ts.assert_items_not_in_test_set(item_ids=item_ids, set_code="DEFAULT")
+        await ts.assert_items_not_in_test_set(item_ids=normalized_item_ids, set_code="DEFAULT")
     except ItemTestSetService.NotFound as e:
         raise HTTPException(
             status_code=500,
             detail=make_problem(
                 status_code=500,
                 error_code="internal_error",
-                message=f"测试集合不可用：{e.message}",
-                context={"store_code": str(store_code), "test_store_code": str(tid), "set_code": "DEFAULT", "source": source},
+                message=f"测试集合不可用：{str(e)}",
+                context={
+                    "store_code": str(store_code),
+                    "test_store_code": str(tid),
+                    "set_code": "DEFAULT",
+                    "source": source,
+                },
             ),
-        )
-    except ItemTestSetService.Conflict as e:
+        ) from e
+    except ItemTestSetService.InTestSet as e:
         raise HTTPException(
             status_code=409,
             detail=make_problem(
                 status_code=409,
                 error_code="conflict",
-                message=e.message,
+                message=f"测试商品不能进入非测试店铺：{str(e)}",
                 context={
                     "store_code": str(store_code),
                     "test_store_code": str(tid),
                     "store_id": int(store_id) if store_id is not None else None,
-                    "set_code": e.set_code,
-                    "out_of_set_item_ids": e.out_of_set_item_ids,
+                    "set_code": "DEFAULT",
+                    "test_item_ids": normalized_item_ids,
                     "source": source,
                 },
             ),
-        )
+        ) from e

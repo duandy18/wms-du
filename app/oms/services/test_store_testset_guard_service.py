@@ -43,21 +43,28 @@ class TestShopTestSetGuardService:
             # ✅ 兼容合同：允许绑定“无 components”的 published FSKU
             return
 
-        is_test = await self.test_store.is_test_store(platform=str(platform), store_code=str(store_code), code="DEFAULT")
+        is_test = await self.test_store.is_test_store(
+            platform=str(platform),
+            store_code=str(store_code),
+            code="DEFAULT",
+        )
         if is_test:
             # ✅ TEST store 不强制 all-in；order-sim 等调试入口会做更严格兜底
             return
 
         # ✅ 非 TEST store：禁止 Test Set items 进入
         try:
-            await self.ts.assert_items_not_in_test_set(item_ids=comp_item_ids, set_code=set_code)
+            await self.ts.assert_items_not_in_test_set(
+                item_ids=comp_item_ids,
+                set_code=set_code,
+            )
         except ItemTestSetService.NotFound as e:
             raise HTTPException(
                 status_code=500,
                 detail=make_problem(
                     status_code=500,
                     error_code="internal_error",
-                    message=f"测试集合不可用：{e.message}",
+                    message=f"测试集合不可用：{str(e)}",
                     context={
                         "path": path,
                         "method": method,
@@ -68,24 +75,23 @@ class TestShopTestSetGuardService:
                         "fsku_id": int(fsku_id),
                     },
                 ),
-            )
-        except ItemTestSetService.Conflict as e:
-            # e.out_of_set_item_ids 这里代表“命中 Test Set 的 item_ids”（即禁止进入的测试商品）
+            ) from e
+        except ItemTestSetService.InTestSet as e:
             raise HTTPException(
                 status_code=409,
                 detail=make_problem(
                     status_code=409,
                     error_code="conflict",
-                    message=e.message,
+                    message=f"测试商品不能绑定到非测试店铺：{str(e)}",
                     context={
                         "path": path,
                         "method": method,
                         "platform": str(platform),
                         "store_id": int(store_id) if store_id is not None else None,
                         "store_code": str(store_code),
-                        "set_code": e.set_code,
+                        "set_code": str(set_code),
                         "fsku_id": int(fsku_id),
-                        "out_of_set_item_ids": e.out_of_set_item_ids,
+                        "component_item_ids": [int(x) for x in comp_item_ids],
                     },
                 ),
-            )
+            ) from e
