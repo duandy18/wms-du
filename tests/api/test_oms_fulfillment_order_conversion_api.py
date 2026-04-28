@@ -286,7 +286,7 @@ async def test_pdd_fulfillment_order_conversion_creates_oms_order(
               updated_at
             )
             VALUES (
-              'pdd',
+              'PDD',
               :store_code,
               :merchant_code,
               :fsku_id,
@@ -312,7 +312,7 @@ async def test_pdd_fulfillment_order_conversion_creates_oms_order(
 
     data = resp.json()
     assert data["ok"] is True
-    assert data["platform"] == "pdd"
+    assert data["platform"] == "PDD"
     assert data["mirror_id"] == mirror_id
     assert data["store_id"] == store_id
     assert data["store_code"] == store_code

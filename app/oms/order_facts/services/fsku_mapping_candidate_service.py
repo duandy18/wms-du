@@ -5,6 +5,7 @@ from typing import Any, Mapping
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.oms.services.platform_order_resolve_utils import norm_platform
 from app.oms.order_facts.contracts.fsku_mapping_candidate import (
     FskuMappingCandidateListDataOut,
     FskuMappingCandidateOut,
@@ -91,12 +92,13 @@ async def list_fsku_mapping_candidates(
     limit: int,
     offset: int,
 ) -> FskuMappingCandidateListDataOut:
-    plat = (platform or "").strip().lower()
-    mirror_table, line_table = _tables(plat)
+    table_platform = (platform or "").strip().lower()
+    binding_platform = norm_platform(platform)
+    mirror_table, line_table = _tables(table_platform)
 
     clauses: list[str] = ["1 = 1"]
     params: dict[str, Any] = {
-        "platform": plat,
+        "platform": binding_platform,
         "limit": int(limit),
         "offset": int(offset),
     }
@@ -180,7 +182,7 @@ async def list_fsku_mapping_candidates(
     ).mappings().all()
 
     return FskuMappingCandidateListDataOut(
-        items=[_candidate_out(plat, row) for row in rows],
+        items=[_candidate_out(binding_platform, row) for row in rows],
         total=int(count_row["total"]),
         limit=int(limit),
         offset=int(offset),

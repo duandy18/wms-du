@@ -11,6 +11,7 @@ from app.oms.order_facts.contracts.fulfillment_conversion import (
     FulfillmentOrderConversionOut,
 )
 from app.oms.services.platform_order_ingest_flow import PlatformOrderIngestFlow
+from app.oms.services.platform_order_resolve_utils import norm_platform
 
 
 _PLATFORM_TABLES = {
@@ -151,6 +152,7 @@ async def _load_line_component_rows(
     mirror_id: int,
 ) -> list[dict[str, Any]]:
     _mirror_table, line_table = _tables(platform)
+    binding_platform = norm_platform(platform)
 
     rows = (
         await session.execute(
@@ -197,7 +199,7 @@ async def _load_line_component_rows(
                 ORDER BY l.id ASC, c.id ASC
                 """
             ),
-            {"platform": platform, "mirror_id": int(mirror_id)},
+            {"platform": binding_platform, "mirror_id": int(mirror_id)},
         )
     ).mappings().all()
 
@@ -289,9 +291,10 @@ async def convert_platform_order_mirror_to_fulfillment_order(
     platform: str,
     mirror_id: int,
 ) -> FulfillmentOrderConversionOut:
-    plat = (platform or "").strip().lower()
-    header = await _load_header(session, platform=plat, mirror_id=int(mirror_id))
-    rows = await _load_line_component_rows(session, platform=plat, mirror_id=int(mirror_id))
+    table_platform = (platform or "").strip().lower()
+    business_platform = norm_platform(platform)
+    header = await _load_header(session, platform=table_platform, mirror_id=int(mirror_id))
+    rows = await _load_line_component_rows(session, platform=table_platform, mirror_id=int(mirror_id))
 
     item_qty_map, resolved, lines_count = _build_item_qty_map(rows)
 
@@ -304,7 +307,7 @@ async def convert_platform_order_mirror_to_fulfillment_order(
     buyer_name = address.get("receiver_name")
     buyer_phone = address.get("receiver_phone")
 
-    trace = new_trace(f"oms:{plat}:fulfillment-order-conversion")
+    trace = new_trace(f"oms:{table_platform}:fulfillment-order-conversion")
 
     items_payload = await PlatformOrderIngestFlow.build_items_payload_from_item_qty_map(
         session,
@@ -321,7 +324,7 @@ async def convert_platform_order_mirror_to_fulfillment_order(
     try:
         out = await PlatformOrderIngestFlow.run_tail_from_items_payload(
             session,
-            platform=plat,
+            platform=business_platform,
             store_code=store_code,
             store_id=store_id,
             ext_order_no=ext_order_no,
@@ -352,10 +355,10 @@ async def convert_platform_order_mirror_to_fulfillment_order(
 
     return FulfillmentOrderConversionOut(
         ok=True,
-        platform=plat,
+        platform=business_platform,
         mirror_id=int(mirror_id),
         order_id=int(out["id"]) if out.get("id") is not None else None,
-        ref=str(out.get("ref") or f"ORD:{plat}:{store_code}:{ext_order_no}"),
+        ref=str(out.get("ref") or f"ORD:{business_platform}:{store_code}:{ext_order_no}"),
         status=str(out.get("status") or "OK"),
         store_id=store_id,
         store_code=store_code,
