@@ -228,3 +228,121 @@ async def test_import_from_collector_maps_upstream_error_to_502(
     )
     assert resp.status_code == 502, resp.text
     assert "collector unavailable" in resp.text
+
+
+async def test_pdd_sync_from_collector_imports_listed_orders(
+    client,
+    session,
+    monkeypatch,
+) -> None:
+    await _clear_mirrors(session)
+
+    suffix = uuid4().hex[:8]
+    store_code = f"PDD-SYNC-{suffix}"
+    await _ensure_store(session, platform="pdd", store_code=store_code)
+
+    async def fake_fetch_collector_export_orders(*, platform: str, limit: int, offset: int) -> list[dict[str, Any]]:
+        assert platform == "pdd"
+        assert limit == 2
+        assert offset == 0
+        return [
+            {"collector_order_id": 990101},
+            {"collector_order_id": 990102},
+        ]
+
+    async def fake_fetch_collector_export_order(*, platform: str, collector_order_id: int) -> dict[str, Any]:
+        assert platform == "pdd"
+        return _collector_payload(
+            platform="pdd",
+            collector_order_id=collector_order_id,
+            collector_store_code=store_code,
+            platform_order_no=f"PDD-SYNC-ORDER-{suffix}-{collector_order_id}",
+            merchant_sku=f"PDD-FSKU-SYNC-{collector_order_id}",
+        )
+
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_orders",
+        fake_fetch_collector_export_orders,
+    )
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_order",
+        fake_fetch_collector_export_order,
+    )
+
+    resp = await client.post(
+        "/oms/pdd/platform-order-mirrors/sync-from-collector",
+        json={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["platform"] == "pdd"
+    assert body["fetched_count"] == 2
+    assert body["imported_count"] == 2
+    assert body["failed_count"] == 0
+    assert len(body["items"]) == 2
+    assert body["errors"] == []
+
+    listing = await client.get("/oms/pdd/platform-order-mirrors")
+    assert listing.status_code == 200, listing.text
+    ids = {int(row["collector_order_id"]) for row in listing.json()["data"]}
+    assert {990101, 990102}.issubset(ids)
+
+
+async def test_sync_from_collector_keeps_importing_when_one_order_fails(
+    client,
+    session,
+    monkeypatch,
+) -> None:
+    await _clear_mirrors(session)
+
+    suffix = uuid4().hex[:8]
+    store_code = f"PDD-SYNC-PARTIAL-{suffix}"
+    await _ensure_store(session, platform="pdd", store_code=store_code)
+
+    async def fake_fetch_collector_export_orders(*, platform: str, limit: int, offset: int) -> list[dict[str, Any]]:
+        assert platform == "pdd"
+        return [
+            {"collector_order_id": 990201},
+            {"collector_order_id": 990202},
+        ]
+
+    async def fake_fetch_collector_export_order(*, platform: str, collector_order_id: int) -> dict[str, Any]:
+        if collector_order_id == 990202:
+            raise CollectorExportNotFound("collector export order not found")
+        return _collector_payload(
+            platform="pdd",
+            collector_order_id=collector_order_id,
+            collector_store_code=store_code,
+            platform_order_no=f"PDD-SYNC-PARTIAL-ORDER-{suffix}-{collector_order_id}",
+            merchant_sku=f"PDD-FSKU-SYNC-PARTIAL-{collector_order_id}",
+        )
+
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_orders",
+        fake_fetch_collector_export_orders,
+    )
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_order",
+        fake_fetch_collector_export_order,
+    )
+
+    resp = await client.post(
+        "/oms/pdd/platform-order-mirrors/sync-from-collector",
+        json={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["fetched_count"] == 2
+    assert body["imported_count"] == 1
+    assert body["failed_count"] == 1
+    assert body["items"][0]["collector_order_id"] == 990201
+    assert body["errors"][0]["collector_order_id"] == 990202
+    assert body["errors"][0]["error_code"] == "CollectorExportNotFound"

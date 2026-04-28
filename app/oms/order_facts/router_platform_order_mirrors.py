@@ -7,6 +7,8 @@ from app.db.deps import get_async_session
 from app.oms.order_facts.contracts.collector_import import (
     ImportPlatformOrderMirrorFromCollectorIn,
     ImportPlatformOrderMirrorFromCollectorOut,
+    SyncPlatformOrderMirrorsFromCollectorIn,
+    SyncPlatformOrderMirrorsFromCollectorOut,
 )
 from app.oms.order_facts.contracts.platform_order_mirror import (
     PlatformOrderMirrorEnvelopeOut,
@@ -20,6 +22,7 @@ from app.oms.order_facts.services.collector_export_client import (
 )
 from app.oms.order_facts.services.collector_import_service import (
     import_platform_order_mirror_from_collector,
+    sync_platform_order_mirrors_from_collector,
 )
 from app.oms.order_facts.services.platform_order_mirror_service import (
     get_platform_order_mirror_detail,
@@ -81,6 +84,28 @@ def _register_platform_routes(platform: str) -> None:
             collector_order_id=int(payload.collector_order_id),
             mirror_id=int(data.id),
         )
+
+    @router.post(
+        f"/{platform}/platform-order-mirrors/sync-from-collector",
+        response_model=SyncPlatformOrderMirrorsFromCollectorOut,
+    )
+    async def sync_platform_order_mirrors_from_collector_route(
+        payload: SyncPlatformOrderMirrorsFromCollectorIn = Body(...),
+        session: AsyncSession = Depends(get_async_session),
+    ) -> SyncPlatformOrderMirrorsFromCollectorOut:
+        try:
+            return await sync_platform_order_mirrors_from_collector(
+                session,
+                platform=platform,
+                limit=payload.limit,
+                offset=payload.offset,
+            )
+        except CollectorExportUpstreamError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except CollectorExportError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get(
         f"/{platform}/platform-order-mirrors",
