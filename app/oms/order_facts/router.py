@@ -1,8 +1,7 @@
-# Module split: OMS order facts own native-to-platform_order_lines bridges and fact-level order flows.
 from fastapi import APIRouter
 
-from app.oms.order_facts.pdd.router_fact_bridge import router as pdd_fact_bridge_router
 
-router = APIRouter(tags=["oms-order-facts"])
+router = APIRouter()
 
-router.include_router(pdd_fact_bridge_router)
+# Collector 分离后，OMS 不再保留旧平台采集事实桥接。
+# 后续 Collector -> OMS 导入合同落地后，再在本模块下挂接新的平台订单镜像 / 履约订单转化路由。
