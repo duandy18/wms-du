@@ -1,5 +1,5 @@
 # ops/compose/docker-compose.dev.yml
-# 本地开发栈（复用宿主机 wms-du-db@5433）
+# 本地开发栈（复用宿主机 wms-api-db@5433）
 # 固化端口映射由 ops/compose/.env 管理：
 #   API:     ${API_HOST_PORT:-8001} → 容器 8000
 #   Redis:   ${REDIS_HOST_PORT:-6379}

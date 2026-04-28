@@ -21,7 +21,7 @@ def _connect_args_for(url_str: str) -> dict[str, Any]:
     if backend.startswith("postgresql"):
         return {
             "server_settings": {
-                "application_name": "wms-du-ci",
+                "application_name": "wms-api-ci",
                 # "jit": "off",
             }
         }

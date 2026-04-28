@@ -2,7 +2,7 @@
 services:
   db:
     image: postgres:14-alpine
-    container_name: wms-du-db
+    container_name: wms-api-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: wms
