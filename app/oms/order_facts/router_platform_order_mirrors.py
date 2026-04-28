@@ -4,10 +4,22 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.deps import get_async_session
+from app.oms.order_facts.contracts.collector_import import (
+    ImportPlatformOrderMirrorFromCollectorIn,
+    ImportPlatformOrderMirrorFromCollectorOut,
+)
 from app.oms.order_facts.contracts.platform_order_mirror import (
     PlatformOrderMirrorEnvelopeOut,
     PlatformOrderMirrorImportIn,
     PlatformOrderMirrorListOut,
+)
+from app.oms.order_facts.services.collector_export_client import (
+    CollectorExportError,
+    CollectorExportNotFound,
+    CollectorExportUpstreamError,
+)
+from app.oms.order_facts.services.collector_import_service import (
+    import_platform_order_mirror_from_collector,
 )
 from app.oms.order_facts.services.platform_order_mirror_service import (
     get_platform_order_mirror_detail,
@@ -38,6 +50,37 @@ def _register_platform_routes(platform: str) -> None:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         return PlatformOrderMirrorEnvelopeOut(ok=True, data=data)
+
+    @router.post(
+        f"/{platform}/platform-order-mirrors/import-from-collector",
+        response_model=ImportPlatformOrderMirrorFromCollectorOut,
+    )
+    async def import_platform_order_mirror_from_collector_route(
+        payload: ImportPlatformOrderMirrorFromCollectorIn = Body(...),
+        session: AsyncSession = Depends(get_async_session),
+    ) -> ImportPlatformOrderMirrorFromCollectorOut:
+        try:
+            data = await import_platform_order_mirror_from_collector(
+                session,
+                platform=platform,
+                collector_order_id=payload.collector_order_id,
+            )
+        except CollectorExportNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CollectorExportUpstreamError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except CollectorExportError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        return ImportPlatformOrderMirrorFromCollectorOut(
+            ok=True,
+            imported=True,
+            platform=platform,
+            collector_order_id=int(payload.collector_order_id),
+            mirror_id=int(data.id),
+        )
 
     @router.get(
         f"/{platform}/platform-order-mirrors",
