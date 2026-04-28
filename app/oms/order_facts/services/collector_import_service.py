@@ -4,12 +4,21 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.oms.order_facts.contracts.collector_import import (
+    SyncPlatformOrderMirrorErrorOut,
+    SyncPlatformOrderMirrorItemOut,
+    SyncPlatformOrderMirrorsFromCollectorOut,
+)
 from app.oms.order_facts.contracts.platform_order_mirror import (
     PlatformOrderMirrorImportIn,
     PlatformOrderMirrorLineImportIn,
     PlatformOrderMirrorOut,
 )
-from app.oms.order_facts.services.collector_export_client import fetch_collector_export_order
+from app.oms.order_facts.services.collector_export_client import (
+    CollectorExportError,
+    fetch_collector_export_order,
+    fetch_collector_export_orders,
+)
 from app.oms.order_facts.services.platform_order_mirror_service import upsert_platform_order_mirror
 
 
@@ -64,13 +73,20 @@ def _payload_from_collector(data: dict[str, Any]) -> PlatformOrderMirrorImportIn
     )
 
 
+def _norm_platform(platform: str) -> str:
+    plat = (platform or "").strip().lower()
+    if plat not in {"pdd", "taobao", "jd"}:
+        raise ValueError(f"unsupported platform: {platform!r}")
+    return plat
+
+
 async def import_platform_order_mirror_from_collector(
     session: AsyncSession,
     *,
     platform: str,
     collector_order_id: int,
 ) -> PlatformOrderMirrorOut:
-    plat = (platform or "").strip().lower()
+    plat = _norm_platform(platform)
     data = await fetch_collector_export_order(
         platform=plat,
         collector_order_id=int(collector_order_id),
@@ -84,4 +100,69 @@ async def import_platform_order_mirror_from_collector(
         session,
         platform=plat,
         payload=payload,
+    )
+
+
+async def sync_platform_order_mirrors_from_collector(
+    session: AsyncSession,
+    *,
+    platform: str,
+    limit: int,
+    offset: int,
+) -> SyncPlatformOrderMirrorsFromCollectorOut:
+    plat = _norm_platform(platform)
+    fetched_rows = await fetch_collector_export_orders(
+        platform=plat,
+        limit=int(limit),
+        offset=int(offset),
+    )
+
+    items: list[SyncPlatformOrderMirrorItemOut] = []
+    errors: list[SyncPlatformOrderMirrorErrorOut] = []
+
+    for row in fetched_rows:
+        raw_order_id = row.get("collector_order_id")
+        try:
+            collector_order_id = int(raw_order_id)
+            mirror = await import_platform_order_mirror_from_collector(
+                session,
+                platform=plat,
+                collector_order_id=collector_order_id,
+            )
+            items.append(
+                SyncPlatformOrderMirrorItemOut(
+                    collector_order_id=collector_order_id,
+                    mirror_id=int(mirror.id),
+                    imported=True,
+                )
+            )
+        except CollectorExportError as exc:
+            await session.rollback()
+            errors.append(
+                SyncPlatformOrderMirrorErrorOut(
+                    collector_order_id=int(raw_order_id) if raw_order_id is not None else None,
+                    error_code=exc.__class__.__name__,
+                    message=str(exc),
+                )
+            )
+        except Exception as exc:
+            await session.rollback()
+            errors.append(
+                SyncPlatformOrderMirrorErrorOut(
+                    collector_order_id=int(raw_order_id) if raw_order_id is not None else None,
+                    error_code=exc.__class__.__name__,
+                    message=str(exc),
+                )
+            )
+
+    return SyncPlatformOrderMirrorsFromCollectorOut(
+        ok=True,
+        platform=plat,
+        limit=int(limit),
+        offset=int(offset),
+        fetched_count=len(fetched_rows),
+        imported_count=len(items),
+        failed_count=len(errors),
+        items=items,
+        errors=errors,
     )
