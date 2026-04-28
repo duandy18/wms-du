@@ -32,7 +32,7 @@ async def _ensure_store(session, *, platform: str, store_code: str) -> int:
                   active
                 )
                 VALUES (
-                  :platform,
+                  upper(:platform),
                   :store_code,
                   :store_name,
                   true
@@ -193,7 +193,7 @@ async def test_pdd_fsku_mapping_candidates_return_binding_status(client, session
               updated_at
             )
             VALUES (
-              'pdd',
+              'PDD',
               :store_code,
               :merchant_code,
               :fsku_id,
@@ -275,7 +275,7 @@ async def test_pdd_fsku_mapping_candidates_can_filter_only_unbound(client, sessi
               updated_at
             )
             VALUES (
-              'pdd',
+              'PDD',
               :store_code,
               :merchant_code,
               :fsku_id,
