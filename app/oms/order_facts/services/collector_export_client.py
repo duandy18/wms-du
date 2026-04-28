@@ -86,11 +86,22 @@ async def fetch_collector_export_orders(
     platform: str,
     limit: int,
     offset: int,
+    since: str | None = None,
+    until: str | None = None,
 ) -> list[dict[str, Any]]:
     plat = _norm_platform(platform)
+    params: dict[str, Any] = {
+        "limit": int(limit),
+        "offset": int(offset),
+    }
+    if since:
+        params["since"] = since
+    if until:
+        params["until"] = until
+
     body = await _collector_get_json(
         path=f"/collector/export/{plat}/orders",
-        params={"limit": int(limit), "offset": int(offset)},
+        params=params,
     )
 
     data = body.get("data")
