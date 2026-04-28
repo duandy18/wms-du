@@ -241,10 +241,19 @@ async def test_pdd_sync_from_collector_imports_listed_orders(
     store_code = f"PDD-SYNC-{suffix}"
     await _ensure_store(session, platform="pdd", store_code=store_code)
 
-    async def fake_fetch_collector_export_orders(*, platform: str, limit: int, offset: int) -> list[dict[str, Any]]:
+    async def fake_fetch_collector_export_orders(
+        *,
+        platform: str,
+        limit: int,
+        offset: int,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
         assert platform == "pdd"
         assert limit == 2
         assert offset == 0
+        assert since is None
+        assert until is None
         return [
             {"collector_order_id": 990101},
             {"collector_order_id": 990102},
@@ -303,8 +312,17 @@ async def test_sync_from_collector_keeps_importing_when_one_order_fails(
     store_code = f"PDD-SYNC-PARTIAL-{suffix}"
     await _ensure_store(session, platform="pdd", store_code=store_code)
 
-    async def fake_fetch_collector_export_orders(*, platform: str, limit: int, offset: int) -> list[dict[str, Any]]:
+    async def fake_fetch_collector_export_orders(
+        *,
+        platform: str,
+        limit: int,
+        offset: int,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
         assert platform == "pdd"
+        assert since is None
+        assert until is None
         return [
             {"collector_order_id": 990201},
             {"collector_order_id": 990202},
@@ -346,3 +364,72 @@ async def test_sync_from_collector_keeps_importing_when_one_order_fails(
     assert body["items"][0]["collector_order_id"] == 990201
     assert body["errors"][0]["collector_order_id"] == 990202
     assert body["errors"][0]["error_code"] == "CollectorExportNotFound"
+
+
+async def test_sync_from_collector_forwards_since_until_to_collector_export(
+    client,
+    session,
+    monkeypatch,
+) -> None:
+    await _clear_mirrors(session)
+
+    suffix = uuid4().hex[:8]
+    store_code = f"PDD-SYNC-WINDOW-{suffix}"
+    await _ensure_store(session, platform="pdd", store_code=store_code)
+
+    async def fake_fetch_collector_export_orders(
+        *,
+        platform: str,
+        limit: int,
+        offset: int,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        assert platform == "pdd"
+        assert limit == 5
+        assert offset == 0
+        assert since == "2026-04-28T00:00:00+08:00"
+        assert until == "2026-04-29T00:00:00+08:00"
+        return [{"collector_order_id": 990301}]
+
+    async def fake_fetch_collector_export_order(*, platform: str, collector_order_id: int) -> dict[str, Any]:
+        assert platform == "pdd"
+        return _collector_payload(
+            platform="pdd",
+            collector_order_id=collector_order_id,
+            collector_store_code=store_code,
+            platform_order_no=f"PDD-SYNC-WINDOW-ORDER-{suffix}-{collector_order_id}",
+            merchant_sku=f"PDD-FSKU-SYNC-WINDOW-{collector_order_id}",
+        )
+
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_orders",
+        fake_fetch_collector_export_orders,
+    )
+    monkeypatch.setattr(
+        collector_import_service,
+        "fetch_collector_export_order",
+        fake_fetch_collector_export_order,
+    )
+
+    resp = await client.post(
+        "/oms/pdd/platform-order-mirrors/sync-from-collector",
+        json={
+            "limit": 5,
+            "since": "2026-04-28T00:00:00+08:00",
+            "until": "2026-04-29T00:00:00+08:00",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["platform"] == "pdd"
+    assert body["limit"] == 5
+    assert body["offset"] == 0
+    assert body["since"] == "2026-04-28T00:00:00+08:00"
+    assert body["until"] == "2026-04-29T00:00:00+08:00"
+    assert body["fetched_count"] == 1
+    assert body["imported_count"] == 1
+    assert body["failed_count"] == 0

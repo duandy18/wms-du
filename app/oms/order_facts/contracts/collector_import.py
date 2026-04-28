@@ -18,6 +18,8 @@ class ImportPlatformOrderMirrorFromCollectorOut(BaseModel):
 class SyncPlatformOrderMirrorsFromCollectorIn(BaseModel):
     limit: int = Field(50, ge=1, le=1000)
     offset: int = Field(0, ge=0)
+    since: str | None = Field(None, description="Inclusive lower bound for Collector Export source update time.")
+    until: str | None = Field(None, description="Exclusive upper bound for Collector Export source update time.")
 
 
 class SyncPlatformOrderMirrorItemOut(BaseModel):
@@ -37,6 +39,8 @@ class SyncPlatformOrderMirrorsFromCollectorOut(BaseModel):
     platform: str
     limit: int
     offset: int
+    since: str | None = None
+    until: str | None = None
     fetched_count: int
     imported_count: int
     failed_count: int

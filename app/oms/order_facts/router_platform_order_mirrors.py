@@ -99,6 +99,8 @@ def _register_platform_routes(platform: str) -> None:
                 platform=platform,
                 limit=payload.limit,
                 offset=payload.offset,
+                since=payload.since,
+                until=payload.until,
             )
         except CollectorExportUpstreamError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc

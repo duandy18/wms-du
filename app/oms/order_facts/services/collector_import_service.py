@@ -109,12 +109,16 @@ async def sync_platform_order_mirrors_from_collector(
     platform: str,
     limit: int,
     offset: int,
+    since: str | None = None,
+    until: str | None = None,
 ) -> SyncPlatformOrderMirrorsFromCollectorOut:
     plat = _norm_platform(platform)
     fetched_rows = await fetch_collector_export_orders(
         platform=plat,
         limit=int(limit),
         offset=int(offset),
+        since=since,
+        until=until,
     )
 
     items: list[SyncPlatformOrderMirrorItemOut] = []
@@ -160,6 +164,8 @@ async def sync_platform_order_mirrors_from_collector(
         platform=plat,
         limit=int(limit),
         offset=int(offset),
+        since=since,
+        until=until,
         fetched_count=len(fetched_rows),
         imported_count=len(items),
         failed_count=len(errors),
