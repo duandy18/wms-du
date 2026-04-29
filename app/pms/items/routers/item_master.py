@@ -120,6 +120,28 @@ def disable_pms_brand(brand_id: int, db: Session = Depends(get_db)):
     return obj
 
 
+@router.post("/pms/brands/{brand_id}/lock", response_model=PmsBrandOut)
+def lock_pms_brand(brand_id: int, db: Session = Depends(get_db)):
+    obj = db.get(PmsBrand, int(brand_id))
+    if obj is None:
+        raise _not_found("品牌不存在")
+    obj.is_locked = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/brands/{brand_id}/unlock", response_model=PmsBrandOut)
+def unlock_pms_brand(brand_id: int, db: Session = Depends(get_db)):
+    obj = db.get(PmsBrand, int(brand_id))
+    if obj is None:
+        raise _not_found("品牌不存在")
+    obj.is_locked = False
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @router.get("/pms/categories", response_model=ListOut[PmsCategoryOut])
 def list_pms_categories(
     product_kind: str | None = Query(None),
