@@ -9,10 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.pms.items.models.item import Item
+from app.pms.items.models.item_master import PmsBrand, PmsBusinessCategory
 from app.pms.items.models.item_sku_code import ItemSkuCode
 from app.pms.sku_coding.models.sku_coding import (
-    SkuBusinessCategory,
-    SkuCodeBrand,
     SkuCodeTemplate,
     SkuCodeTerm,
     SkuCodeTermGroup,
@@ -78,14 +77,14 @@ class SkuCodingService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _get_brand(self, brand_id: int) -> SkuCodeBrand:
-        obj = self.db.get(SkuCodeBrand, int(brand_id))
+    def _get_brand(self, brand_id: int) -> PmsBrand:
+        obj = self.db.get(PmsBrand, int(brand_id))
         if obj is None or not bool(obj.is_active):
             raise ValueError("品牌不存在或已停用")
         return obj
 
-    def _get_category(self, category_id: int, *, product_kind: str) -> SkuBusinessCategory:
-        obj = self.db.get(SkuBusinessCategory, int(category_id))
+    def _get_category(self, category_id: int, *, product_kind: str) -> PmsBusinessCategory:
+        obj = self.db.get(PmsBusinessCategory, int(category_id))
         if obj is None or not bool(obj.is_active):
             raise ValueError("内部分类不存在或已停用")
         if obj.product_kind != product_kind:
@@ -209,8 +208,8 @@ class SkuCodingService:
             self.db.execute(
                 select(Item)
                 .where(
-                    (Item.brand == brand.name_cn)
-                    | (Item.category == category.category_name)
+                    (Item.brand_id == int(brand.id))
+                    | (Item.category_id == int(category.id))
                     | (Item.sku == sku)
                     | (Item.id.in_(matched_code_item_ids))
                 )
@@ -234,6 +233,8 @@ class SkuCodingService:
                     "sku": str(item.sku),
                     "name": str(item.name),
                     "spec": item.spec,
+                    "brand_id": item.brand_id,
+                    "category_id": item.category_id,
                     "brand": item.brand,
                     "category": item.category,
                 }

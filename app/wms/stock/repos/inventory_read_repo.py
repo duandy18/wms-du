@@ -107,8 +107,8 @@ async def query_inventory_rows(
             i.name AS item_name,
             i.sku AS item_code,
             i.spec AS spec,
-            i.brand AS brand,
-            i.category AS category,
+            b.name_cn AS brand,
+            c.category_name AS category,
             s.warehouse_id,
             w.name AS warehouse_name,
             l.lot_code AS lot_code,
@@ -128,6 +128,10 @@ async def query_inventory_rows(
         FROM stocks_lot AS s
         JOIN items AS i
           ON i.id = s.item_id
+        LEFT JOIN pms_brands AS b
+          ON b.id = i.brand_id
+        LEFT JOIN pms_business_categories AS c
+          ON c.id = i.category_id
         JOIN warehouses AS w
           ON w.id = s.warehouse_id
         LEFT JOIN lots AS l
@@ -182,6 +186,10 @@ async def query_inventory_detail_rows(
         FROM stocks_lot AS s
         JOIN items AS i
           ON i.id = s.item_id
+        LEFT JOIN pms_brands AS b
+          ON b.id = i.brand_id
+        LEFT JOIN pms_business_categories AS c
+          ON c.id = i.category_id
         JOIN warehouses AS w
           ON w.id = s.warehouse_id
         LEFT JOIN lots AS l

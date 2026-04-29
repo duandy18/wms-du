@@ -55,6 +55,68 @@ ON CONFLICT (platform, code)
 DO UPDATE SET store_code = EXCLUDED.store_code, store_id = EXCLUDED.store_id;
 
 -- ===== suppliers (minimal) =====
+
+-- ===== pms master data brands / categories =====
+INSERT INTO pms_brands (
+  id,
+  name_cn,
+  code,
+  is_active,
+  is_locked,
+  sort_order,
+  remark,
+  created_at,
+  updated_at
+)
+VALUES
+  (1, 'BRAND-A', 'BRANDA', TRUE, FALSE, 10, 'base seed brand A', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  (2, 'BRAND-B', 'BRANDB', TRUE, FALSE, 20, 'base seed brand B', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (id) DO UPDATE SET
+  name_cn = EXCLUDED.name_cn,
+  code = EXCLUDED.code,
+  is_active = EXCLUDED.is_active,
+  updated_at = CURRENT_TIMESTAMP;
+
+SELECT setval(
+  pg_get_serial_sequence('pms_brands', 'id'),
+  GREATEST((SELECT COALESCE(MAX(id), 1) FROM pms_brands), 1),
+  TRUE
+);
+
+INSERT INTO pms_business_categories (
+  id,
+  parent_id,
+  level,
+  product_kind,
+  category_name,
+  category_code,
+  path_code,
+  is_leaf,
+  is_active,
+  is_locked,
+  sort_order,
+  remark,
+  created_at,
+  updated_at
+)
+VALUES
+  (1, NULL, 1, 'OTHER', 'CATEGORY-A', 'CATA', 'CATA', TRUE, TRUE, FALSE, 10, 'base seed category A', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  (2, NULL, 1, 'OTHER', 'CATEGORY-B', 'CATB', 'CATB', TRUE, TRUE, FALSE, 20, 'base seed category B', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (id) DO UPDATE SET
+  category_name = EXCLUDED.category_name,
+  category_code = EXCLUDED.category_code,
+  path_code = EXCLUDED.path_code,
+  product_kind = EXCLUDED.product_kind,
+  is_leaf = EXCLUDED.is_leaf,
+  is_active = EXCLUDED.is_active,
+  updated_at = CURRENT_TIMESTAMP;
+
+SELECT setval(
+  pg_get_serial_sequence('pms_business_categories', 'id'),
+  GREATEST((SELECT COALESCE(MAX(id), 1) FROM pms_business_categories), 1),
+  TRUE
+);
+
 INSERT INTO suppliers (id, name, code, active)
 VALUES
   (1, 'UT-SUP-1', 'UT-SUP-1', true),
@@ -196,22 +258,37 @@ ON CONFLICT (warehouse_id, shipping_provider_id) DO UPDATE SET
 -- ===== items =====
 INSERT INTO items (
   id, sku, name,
+  brand_id, category_id,
   lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled
 )
 VALUES
   (1,    'SKU-0001', 'UT-ITEM-1',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true),
   (3001, 'SKU-3001', 'SOFT-PICK-1',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true),
   (3002, 'SKU-3002', 'SOFT-PICK-2',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true),
   (3003, 'SKU-3003', 'SOFT-PICK-BASE',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true),
   (4001, 'SKU-4001', 'OUTBOUND-MERGE',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true),
   (4002, 'SKU-4002', 'PURCHASE-BASE-1',
+   1, 1,
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  sku = EXCLUDED.sku,
+  name = EXCLUDED.name,
+  brand_id = EXCLUDED.brand_id,
+  category_id = EXCLUDED.category_id,
+  lot_source_policy = EXCLUDED.lot_source_policy,
+  expiry_policy = EXCLUDED.expiry_policy,
+  derivation_allowed = EXCLUDED.derivation_allowed,
+  uom_governance_enabled = EXCLUDED.uom_governance_enabled;
 
 
 -- ===== item_sku_codes (SKU governance truth) =====

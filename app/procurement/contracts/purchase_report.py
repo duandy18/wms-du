@@ -35,8 +35,8 @@ class ItemPurchaseReportItem(_Base):
 
     # 保留后端返回能力，前端底表是否展示由页面决定
     barcode: str | None = Field(default=None, description="主条码（来自 item_barcodes 主条码）")
-    brand: str | None = Field(default=None, description="品牌（来自 items.brand）")
-    category: str | None = Field(default=None, description="分类（来自 items.category）")
+    brand: str | None = Field(default=None, description="品牌展示投影（来自 PMS 品牌主数据）")
+    category: str | None = Field(default=None, description="内部分类展示投影（来自 PMS 内部分类主数据）")
 
     spec_text: str | None = None
 

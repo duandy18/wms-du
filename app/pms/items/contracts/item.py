@@ -37,8 +37,13 @@ class ItemBase(_Base):
     barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
     primary_barcode: Annotated[str | None, Field(default=None, max_length=64)] = None
 
-    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
-    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+    # 规范化主数据引用
+    brand_id: Annotated[int | None, Field(default=None)] = None
+    category_id: Annotated[int | None, Field(default=None)] = None
+
+    # 只读展示投影，来源于 pms_brands / pms_business_categories
+    brand: Annotated[str | None, Field(default=None, max_length=128)] = None
+    category: Annotated[str | None, Field(default=None, max_length=128)] = None
 
     enabled: bool = True
     supplier_id: Annotated[int | None, Field(default=None)] = None
@@ -73,6 +78,7 @@ class ItemCreate(_Base):
     """
     Create Item（SKU 由调用方显式输入）：
     - 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku
+    - brand/category 不再接受自由文本；请传 brand_id/category_id
     - 不接受 barcode 输入；主条码请走 /item-barcodes
     - 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）
 
@@ -89,8 +95,8 @@ class ItemCreate(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
-    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
-    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+    brand_id: int | None = None
+    category_id: int | None = None
 
     enabled: bool = True
     supplier_id: int | None = None
@@ -107,8 +113,6 @@ class ItemCreate(_Base):
         "sku",
         "name",
         "spec",
-        "brand",
-        "category",
         mode="before",
     )
     @classmethod
@@ -121,6 +125,7 @@ class ItemUpdate(_Base):
     Patch Item：
 
     - 不开放 sku 变更
+    - brand/category 不再接受自由文本；请传 brand_id/category_id
     - 不接受 barcode / has_shelf_life
     - 不接受 weight_kg；基础包装净重请改 item_uoms
     - nullable 字段支持显式传 null 清空
@@ -134,8 +139,8 @@ class ItemUpdate(_Base):
     name: Annotated[str | None, Field(default=None, max_length=128)] = None
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
-    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
-    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+    brand_id: int | None = None
+    category_id: int | None = None
 
     enabled: bool | None = None
     supplier_id: int | None = None
@@ -151,8 +156,6 @@ class ItemUpdate(_Base):
     @field_validator(
         "name",
         "spec",
-        "brand",
-        "category",
         mode="before",
     )
     @classmethod

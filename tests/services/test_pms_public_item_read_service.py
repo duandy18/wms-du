@@ -66,9 +66,11 @@ async def test_item_read_service_aget_basics_by_item_ids_returns_items_table_fie
                   i.spec,
                   i.enabled,
                   i.supplier_id,
-                  i.brand,
-                  i.category
+                  b.name_cn AS brand,
+                  c.category_name AS category
                 FROM items i
+                LEFT JOIN pms_brands b ON b.id = i.brand_id
+                LEFT JOIN pms_business_categories c ON c.id = i.category_id
                 ORDER BY i.id
                 LIMIT 5
                 """

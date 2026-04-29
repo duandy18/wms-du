@@ -307,12 +307,12 @@ async def test_my_navigation_masterdata_and_wms_warehouses_domain_codes_are_corr
     pms_root = nodes.get("pms")
     assert pms_root is not None, "pms parent should exist"
 
-    items = nodes.get("wms.masterdata.items")
-    suppliers = nodes.get("wms.masterdata.suppliers")
+    items = nodes.get("pms.items")
+    suppliers = nodes.get("pms.suppliers")
     warehouses = nodes.get("wms.warehouses")
 
-    assert items is not None, "wms.masterdata.items should exist"
-    assert suppliers is not None, "wms.masterdata.suppliers should exist"
+    assert items is not None, "pms.items should exist"
+    assert suppliers is not None, "pms.suppliers should exist"
     assert warehouses is not None, "wms.warehouses should exist"
 
     assert items["parent_code"] == "pms"
@@ -358,8 +358,8 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     route_map = _index_route_prefixes(data["route_prefixes"])
 
     pricing_page = nodes["shipping_assist.pricing.bindings"]
-    items_page = nodes["wms.masterdata.items"]
-    suppliers_page = nodes["wms.masterdata.suppliers"]
+    items_page = nodes["pms.items"]
+    suppliers_page = nodes["pms.suppliers"]
     inventory_page = nodes["wms.inventory.main"]
     warehouses_page = nodes["wms.warehouses"]
     inventory_adjustment_page = nodes["wms.inventory_adjustment.summary"]
@@ -397,8 +397,8 @@ async def test_my_navigation_route_prefix_mapping_and_effective_permissions(clie
     assert inventory_adjustment_route is not None, "/inventory-adjustment should exist in route_prefixes"
 
     assert pricing_route["page_code"] == "shipping_assist.pricing.bindings"
-    assert items_route["page_code"] == "wms.masterdata.items"
-    assert suppliers_route["page_code"] == "wms.masterdata.suppliers"
+    assert items_route["page_code"] == "pms.items"
+    assert suppliers_route["page_code"] == "pms.suppliers"
     assert inventory_route["page_code"] == "wms.inventory.main"
     assert warehouses_route["page_code"] == "wms.warehouses"
     assert inventory_adjustment_route["page_code"] == "wms.inventory_adjustment.summary"

@@ -19,6 +19,7 @@ def mount_routers(app: FastAPI) -> None:
     from app.shipping_assist.routers.geo_cn import router as geo_router
     from app.pms.items.routers.item_aggregate import router as item_aggregate_router
     from app.pms.items.routers.item_barcodes import router as item_barcodes_router
+    from app.pms.items.routers.item_master import router as item_master_router
     from app.pms.items.routers.item_sku_codes import router as item_sku_codes_router
     from app.pms.items.routers.item_uoms import router as item_uoms_router
     from app.pms.items.routers.items import router as items_router
@@ -142,6 +143,7 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(pms_public_suppliers_read_router)
     app.include_router(item_aggregate_router)
     app.include_router(items_router)
+    app.include_router(item_master_router)
     app.include_router(item_sku_codes_router)
     app.include_router(sku_coding_router)
     app.include_router(item_barcodes_router)

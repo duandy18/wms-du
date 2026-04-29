@@ -1,7 +1,10 @@
 # app/pms/sku_coding/models/__init__.py
+# SKU coding domain only owns term dictionaries and SKU templates.
+#
+# Brand / business category have moved to PMS master data:
+# - app.pms.items.models.item_master.PmsBrand
+# - app.pms.items.models.item_master.PmsBusinessCategory
 from app.pms.sku_coding.models.sku_coding import (
-    SkuBusinessCategory,
-    SkuCodeBrand,
     SkuCodeTemplate,
     SkuCodeTemplateSegment,
     SkuCodeTerm,
@@ -10,8 +13,6 @@ from app.pms.sku_coding.models.sku_coding import (
 )
 
 __all__ = [
-    "SkuCodeBrand",
-    "SkuBusinessCategory",
     "SkuCodeTermGroup",
     "SkuCodeTerm",
     "SkuCodeTermAlias",
