@@ -48,7 +48,7 @@ class PurchaseOrderLine(Base):
     )
 
     item_name: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
-    item_sku: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True, index=True)
+    item_sku: Mapped[Optional[str]] = mapped_column(sa.String(128), nullable=True, index=True)
     spec_text: Mapped[Optional[str]] = mapped_column(sa.String(255), nullable=True)
 
     purchase_uom_id_snapshot: Mapped[int] = mapped_column(

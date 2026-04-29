@@ -55,7 +55,7 @@ class Item(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    sku: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    sku: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

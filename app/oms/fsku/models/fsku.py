@@ -19,7 +19,7 @@ class Fsku(Base):
     # ✅ 业务编码（全局唯一）：
     # DB 里是唯一索引（ux_fskus_code），这里用 Index(unique=True) 与之对齐，
     # 避免 alembic-check 误判需要新增 unique constraint。
-    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    code: Mapped[str] = mapped_column(String(128), nullable=False)
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
 

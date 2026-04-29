@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class MerchantCodeBindingBindIn(BaseModel):
     platform: str = Field(..., min_length=1, max_length=32, description="平台（DEMO/PDD/TB...）")
-    store_code: str = Field(..., min_length=1, max_length=64, description="平台店铺 ID（字符串，与 platform 对齐）")
+    store_code: str = Field(..., min_length=1, max_length=128, description="平台店铺 ID（字符串，与 platform 对齐）")
     merchant_code: str = Field(..., min_length=1, max_length=128, description="商家后端规格编码（merchant_code / filled_code）")
     fsku_id: int = Field(..., ge=1, description="要绑定到的 published FSKU.id")
     reason: Optional[str] = Field(None, max_length=500, description="绑定原因（可选）")
@@ -17,18 +17,18 @@ class MerchantCodeBindingBindIn(BaseModel):
 
 class MerchantCodeBindingCloseIn(BaseModel):
     platform: str = Field(..., min_length=1, max_length=32, description="平台（DEMO/PDD/TB...）")
-    store_code: str = Field(..., min_length=1, max_length=64, description="平台店铺 ID（字符串，与 platform 对齐）")
+    store_code: str = Field(..., min_length=1, max_length=128, description="平台店铺 ID（字符串，与 platform 对齐）")
     merchant_code: str = Field(..., min_length=1, max_length=128, description="商家后端规格编码（merchant_code / filled_code）")
 
 
 class MerchantCodeBindingQueryIn(BaseModel):
     platform: Optional[str] = Field(None, min_length=1, max_length=32, description="平台（精确）")
-    store_code: Optional[str] = Field(None, min_length=1, max_length=64, description="平台店铺 ID（精确，字符串）")
+    store_code: Optional[str] = Field(None, min_length=1, max_length=128, description="平台店铺 ID（精确，字符串）")
     merchant_code: Optional[str] = Field(None, min_length=1, max_length=128, description="商家后端规格编码（模糊 contains）")
     # ✅ current_only 作为兼容字段保留，但简化模型下恒等于 true（无历史、无 effective_to）
     current_only: bool = Field(True, description="兼容字段：简化模型下恒等于 true")
     fsku_id: Optional[int] = Field(None, ge=1, description="按 fsku_id 精确过滤")
-    fsku_code: Optional[str] = Field(None, min_length=1, max_length=64, description="按 fsku.code 过滤（contains）")
+    fsku_code: Optional[str] = Field(None, min_length=1, max_length=128, description="按 fsku.code 过滤（contains）")
     limit: int = Field(50, ge=1, le=200, description="分页大小")
     offset: int = Field(0, ge=0, description="分页偏移")
 
