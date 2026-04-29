@@ -18,7 +18,6 @@ class ItemPresenter:
       * decorate_rules（requires_batch / requires_dates 等规则投影）
       * primary_barcode（主条码真相）
     - 不负责 CRUD / 事务
-    - item_test_sets / is_test 已退役，不再投影测试集合字段。
     """
 
     def __init__(self, db: Session) -> None:

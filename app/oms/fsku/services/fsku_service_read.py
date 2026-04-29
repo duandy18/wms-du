@@ -28,7 +28,6 @@ def list_fskus(
     limit: int,
     offset: int,
 ) -> FskuListOut:
-    # item_test_sets 已退役：FSKU 列表不再按测试商品集合过滤。
     where_sql = " WHERE 1=1 "
     params: dict[str, Any] = {"limit": int(limit), "offset": int(offset)}
 

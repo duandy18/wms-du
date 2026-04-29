@@ -35,9 +35,9 @@ async def assert_order_sim_all_items_in_test_set(
     store_id: int,
 ) -> None:
     """
-    item_test_sets 已退役。
+    商品集合隔离机制已退役。
 
     该函数保留为兼容入口，避免 order-sim 调用方立即大面积改名；
-    现在不再按商品测试集合做强制校验。
+    现在不再按商品集合做强制校验。
     """
     return None
