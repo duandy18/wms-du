@@ -5282,8 +5282,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror",
-        "operationId": "import_platform_order_mirror_oms_pdd_platform_order_mirrors_import_post",
+        "summary": "Pdd Import Platform Order Mirror",
+        "operationId": "pdd_import_platform_order_mirror_oms_pdd_platform_order_mirrors_import_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5324,8 +5324,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror From Collector Route",
-        "operationId": "import_platform_order_mirror_from_collector_route_oms_pdd_platform_order_mirrors_import_from_collector_post",
+        "summary": "Pdd Import Platform Order Mirror From Collector Route",
+        "operationId": "pdd_import_platform_order_mirror_from_collector_route_oms_pdd_platform_order_mirrors_import_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5366,8 +5366,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Sync Platform Order Mirrors From Collector Route",
-        "operationId": "sync_platform_order_mirrors_from_collector_route_oms_pdd_platform_order_mirrors_sync_from_collector_post",
+        "summary": "Pdd Sync Platform Order Mirrors From Collector Route",
+        "operationId": "pdd_sync_platform_order_mirrors_from_collector_route_oms_pdd_platform_order_mirrors_sync_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5408,8 +5408,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "List Platform Order Mirror Rows",
-        "operationId": "list_platform_order_mirror_rows_oms_pdd_platform_order_mirrors_get",
+        "summary": "Pdd List Platform Order Mirror Rows",
+        "operationId": "pdd_list_platform_order_mirror_rows_oms_pdd_platform_order_mirrors_get",
         "parameters": [
           {
             "name": "limit",
@@ -5465,8 +5465,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Get Platform Order Mirror Row",
-        "operationId": "get_platform_order_mirror_row_oms_pdd_platform_order_mirrors__mirror_id__get",
+        "summary": "Pdd Get Platform Order Mirror Row",
+        "operationId": "pdd_get_platform_order_mirror_row_oms_pdd_platform_order_mirrors__mirror_id__get",
         "parameters": [
           {
             "name": "mirror_id",
@@ -5509,8 +5509,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror",
-        "operationId": "import_platform_order_mirror_oms_taobao_platform_order_mirrors_import_post",
+        "summary": "Taobao Import Platform Order Mirror",
+        "operationId": "taobao_import_platform_order_mirror_oms_taobao_platform_order_mirrors_import_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5551,8 +5551,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror From Collector Route",
-        "operationId": "import_platform_order_mirror_from_collector_route_oms_taobao_platform_order_mirrors_import_from_collector_post",
+        "summary": "Taobao Import Platform Order Mirror From Collector Route",
+        "operationId": "taobao_import_platform_order_mirror_from_collector_route_oms_taobao_platform_order_mirrors_import_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5593,8 +5593,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Sync Platform Order Mirrors From Collector Route",
-        "operationId": "sync_platform_order_mirrors_from_collector_route_oms_taobao_platform_order_mirrors_sync_from_collector_post",
+        "summary": "Taobao Sync Platform Order Mirrors From Collector Route",
+        "operationId": "taobao_sync_platform_order_mirrors_from_collector_route_oms_taobao_platform_order_mirrors_sync_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5635,8 +5635,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "List Platform Order Mirror Rows",
-        "operationId": "list_platform_order_mirror_rows_oms_taobao_platform_order_mirrors_get",
+        "summary": "Taobao List Platform Order Mirror Rows",
+        "operationId": "taobao_list_platform_order_mirror_rows_oms_taobao_platform_order_mirrors_get",
         "parameters": [
           {
             "name": "limit",
@@ -5692,8 +5692,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Get Platform Order Mirror Row",
-        "operationId": "get_platform_order_mirror_row_oms_taobao_platform_order_mirrors__mirror_id__get",
+        "summary": "Taobao Get Platform Order Mirror Row",
+        "operationId": "taobao_get_platform_order_mirror_row_oms_taobao_platform_order_mirrors__mirror_id__get",
         "parameters": [
           {
             "name": "mirror_id",
@@ -5736,8 +5736,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror",
-        "operationId": "import_platform_order_mirror_oms_jd_platform_order_mirrors_import_post",
+        "summary": "Jd Import Platform Order Mirror",
+        "operationId": "jd_import_platform_order_mirror_oms_jd_platform_order_mirrors_import_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5778,8 +5778,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Import Platform Order Mirror From Collector Route",
-        "operationId": "import_platform_order_mirror_from_collector_route_oms_jd_platform_order_mirrors_import_from_collector_post",
+        "summary": "Jd Import Platform Order Mirror From Collector Route",
+        "operationId": "jd_import_platform_order_mirror_from_collector_route_oms_jd_platform_order_mirrors_import_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5820,8 +5820,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Sync Platform Order Mirrors From Collector Route",
-        "operationId": "sync_platform_order_mirrors_from_collector_route_oms_jd_platform_order_mirrors_sync_from_collector_post",
+        "summary": "Jd Sync Platform Order Mirrors From Collector Route",
+        "operationId": "jd_sync_platform_order_mirrors_from_collector_route_oms_jd_platform_order_mirrors_sync_from_collector_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5862,8 +5862,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "List Platform Order Mirror Rows",
-        "operationId": "list_platform_order_mirror_rows_oms_jd_platform_order_mirrors_get",
+        "summary": "Jd List Platform Order Mirror Rows",
+        "operationId": "jd_list_platform_order_mirror_rows_oms_jd_platform_order_mirrors_get",
         "parameters": [
           {
             "name": "limit",
@@ -5919,8 +5919,8 @@
           "OMS",
           "oms-platform-order-mirrors"
         ],
-        "summary": "Get Platform Order Mirror Row",
-        "operationId": "get_platform_order_mirror_row_oms_jd_platform_order_mirrors__mirror_id__get",
+        "summary": "Jd Get Platform Order Mirror Row",
+        "operationId": "jd_get_platform_order_mirror_row_oms_jd_platform_order_mirrors__mirror_id__get",
         "parameters": [
           {
             "name": "mirror_id",
@@ -5963,8 +5963,8 @@
           "OMS",
           "oms-fsku-mapping-candidates"
         ],
-        "summary": "List Platform Fsku Mapping Candidates",
-        "operationId": "list_platform_fsku_mapping_candidates_oms_pdd_fsku_mapping_candidates_get",
+        "summary": "Pdd List Platform Fsku Mapping Candidates",
+        "operationId": "pdd_list_platform_fsku_mapping_candidates_oms_pdd_fsku_mapping_candidates_get",
         "parameters": [
           {
             "name": "store_code",
@@ -6066,8 +6066,8 @@
           "OMS",
           "oms-fsku-mapping-candidates"
         ],
-        "summary": "List Platform Fsku Mapping Candidates",
-        "operationId": "list_platform_fsku_mapping_candidates_oms_taobao_fsku_mapping_candidates_get",
+        "summary": "Taobao List Platform Fsku Mapping Candidates",
+        "operationId": "taobao_list_platform_fsku_mapping_candidates_oms_taobao_fsku_mapping_candidates_get",
         "parameters": [
           {
             "name": "store_code",
@@ -6169,8 +6169,8 @@
           "OMS",
           "oms-fsku-mapping-candidates"
         ],
-        "summary": "List Platform Fsku Mapping Candidates",
-        "operationId": "list_platform_fsku_mapping_candidates_oms_jd_fsku_mapping_candidates_get",
+        "summary": "Jd List Platform Fsku Mapping Candidates",
+        "operationId": "jd_list_platform_fsku_mapping_candidates_oms_jd_fsku_mapping_candidates_get",
         "parameters": [
           {
             "name": "store_code",
@@ -6272,8 +6272,8 @@
           "OMS",
           "oms-fulfillment-order-conversion"
         ],
-        "summary": "Convert Platform Fulfillment Order",
-        "operationId": "convert_platform_fulfillment_order_oms_pdd_fulfillment_order_conversion_convert_post",
+        "summary": "Pdd Convert Platform Fulfillment Order",
+        "operationId": "pdd_convert_platform_fulfillment_order_oms_pdd_fulfillment_order_conversion_convert_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6314,8 +6314,8 @@
           "OMS",
           "oms-fulfillment-order-conversion"
         ],
-        "summary": "Convert Platform Fulfillment Order",
-        "operationId": "convert_platform_fulfillment_order_oms_taobao_fulfillment_order_conversion_convert_post",
+        "summary": "Taobao Convert Platform Fulfillment Order",
+        "operationId": "taobao_convert_platform_fulfillment_order_oms_taobao_fulfillment_order_conversion_convert_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6356,8 +6356,8 @@
           "OMS",
           "oms-fulfillment-order-conversion"
         ],
-        "summary": "Convert Platform Fulfillment Order",
-        "operationId": "convert_platform_fulfillment_order_oms_jd_fulfillment_order_conversion_convert_post",
+        "summary": "Jd Convert Platform Fulfillment Order",
+        "operationId": "jd_convert_platform_fulfillment_order_oms_jd_fulfillment_order_conversion_convert_post",
         "requestBody": {
           "content": {
             "application/json": {

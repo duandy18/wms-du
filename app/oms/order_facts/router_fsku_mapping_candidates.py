@@ -15,10 +15,15 @@ from app.oms.order_facts.services.fsku_mapping_candidate_service import (
 router = APIRouter(tags=["oms-fsku-mapping-candidates"])
 
 
+def _route_name(platform: str, suffix: str) -> str:
+    return f"{platform}_{suffix}"
+
+
 def _register_platform_routes(platform: str) -> None:
     @router.get(
         f"/{platform}/fsku-mapping/candidates",
         response_model=FskuMappingCandidateListOut,
+        name=_route_name(platform, "list_platform_fsku_mapping_candidates"),
     )
     async def list_platform_fsku_mapping_candidates(
         store_code: str | None = Query(None, min_length=1, max_length=128),
