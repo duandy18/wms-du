@@ -34,8 +34,8 @@ def create_item(
             sku=item_in.sku,
             name=item_in.name,
             spec=item_in.spec,
-            brand=item_in.brand,
-            category=item_in.category,
+            brand_id=item_in.brand_id,
+            category_id=item_in.category_id,
             enabled=item_in.enabled,
             supplier_id=item_in.supplier_id,
             lot_source_policy=_normalize_policy(item_in.lot_source_policy) or "SUPPLIER_ONLY",
@@ -122,10 +122,10 @@ def update_item(
             shelf_life_value_set=("shelf_life_value" in fields_set),
             shelf_life_unit=data.get("shelf_life_unit"),
             shelf_life_unit_set=("shelf_life_unit" in fields_set),
-            brand=data.get("brand"),
-            brand_set=("brand" in fields_set),
-            category=data.get("category"),
-            category_set=("category" in fields_set),
+            brand_id=data.get("brand_id"),
+            brand_id_set=("brand_id" in fields_set),
+            category_id=data.get("category_id"),
+            category_id_set=("category_id" in fields_set),
         )
     except ValueError as e:
         detail = str(e)

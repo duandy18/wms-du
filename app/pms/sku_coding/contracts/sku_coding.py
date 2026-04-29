@@ -19,98 +19,6 @@ def _trim(v: object) -> object:
     return v.strip() if isinstance(v, str) else v
 
 
-class SkuCodeBrandCreate(_Base):
-    name_cn: Annotated[str, Field(min_length=1, max_length=128)]
-    code: Annotated[str, Field(min_length=1, max_length=32)]
-    sort_order: int = 0
-    remark: Annotated[str | None, Field(default=None, max_length=500)] = None
-
-    @field_validator("name_cn", "code", "remark", mode="before")
-    @classmethod
-    def _trim_text(cls, v: object) -> object:
-        return _trim(v)
-
-
-class SkuCodeBrandUpdate(_Base):
-    name_cn: Annotated[str | None, Field(default=None, max_length=128)] = None
-    code: Annotated[str | None, Field(default=None, max_length=32)] = None
-    sort_order: int | None = None
-    remark: Annotated[str | None, Field(default=None, max_length=500)] = None
-
-    @field_validator("name_cn", "code", "remark", mode="before")
-    @classmethod
-    def _trim_text(cls, v: object) -> object:
-        return _trim(v)
-
-
-class SkuCodeBrandOut(_Base):
-    id: int
-    name_cn: str
-    code: str
-    is_active: bool
-    is_locked: bool
-    sort_order: int
-    remark: str | None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-
-class SkuBusinessCategoryCreate(_Base):
-    parent_id: int | None = None
-    level: Annotated[int, Field(ge=1, le=3)]
-    product_kind: ProductKind
-    category_name: Annotated[str, Field(min_length=1, max_length=128)]
-    category_code: Annotated[str, Field(min_length=1, max_length=32)]
-    is_leaf: bool = False
-    sort_order: int = 0
-    remark: Annotated[str | None, Field(default=None, max_length=500)] = None
-
-    @field_validator("category_name", "category_code", "remark", mode="before")
-    @classmethod
-    def _trim_text(cls, v: object) -> object:
-        return _trim(v)
-
-    @field_validator("product_kind", "category_code", mode="before")
-    @classmethod
-    def _upper_text(cls, v: object) -> object:
-        return v.strip().upper() if isinstance(v, str) else v
-
-
-class SkuBusinessCategoryUpdate(_Base):
-    category_name: Annotated[str | None, Field(default=None, max_length=128)] = None
-    category_code: Annotated[str | None, Field(default=None, max_length=32)] = None
-    is_leaf: bool | None = None
-    sort_order: int | None = None
-    remark: Annotated[str | None, Field(default=None, max_length=500)] = None
-
-    @field_validator("category_name", "category_code", "remark", mode="before")
-    @classmethod
-    def _trim_text(cls, v: object) -> object:
-        return _trim(v)
-
-    @field_validator("category_code", mode="before")
-    @classmethod
-    def _upper_text(cls, v: object) -> object:
-        return v.strip().upper() if isinstance(v, str) else v
-
-
-class SkuBusinessCategoryOut(_Base):
-    id: int
-    parent_id: int | None
-    level: int
-    product_kind: str
-    category_name: str
-    category_code: str
-    path_code: str
-    is_leaf: bool
-    is_active: bool
-    is_locked: bool
-    sort_order: int
-    remark: str | None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-
 class SkuCodeTermGroupOut(_Base):
     id: int
     product_kind: str
@@ -201,6 +109,8 @@ class SimilarItemOut(_Base):
     sku: str
     name: str
     spec: str | None
+    brand_id: int | None = None
+    category_id: int | None = None
     brand: str | None
     category: str | None
 

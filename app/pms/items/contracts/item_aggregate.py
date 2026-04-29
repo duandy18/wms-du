@@ -30,8 +30,8 @@ class AggregateItemInput(_Base):
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
-    brand: Annotated[str | None, Field(default=None, max_length=64)] = None
-    category: Annotated[str | None, Field(default=None, max_length=64)] = None
+    brand_id: int | None = None
+    category_id: int | None = None
 
     enabled: bool = True
     supplier_id: int | None = None
@@ -48,8 +48,6 @@ class AggregateItemInput(_Base):
         "sku",
         "name",
         "spec",
-        "brand",
-        "category",
         mode="before",
     )
     @classmethod
@@ -111,6 +109,18 @@ class AggregateBarcodeInput(_Base):
         return self
 
 
+class AggregateBarcodeOut(_Base):
+    id: int
+    item_id: int
+    item_uom_id: int
+    barcode: str
+    symbology: str
+    active: bool
+    is_primary: bool
+    created_at: object | None = None
+    updated_at: object | None = None
+
+
 class ItemAggregatePayload(_Base):
     item: AggregateItemInput
     uoms: list[AggregateUomInput]
@@ -119,59 +129,19 @@ class ItemAggregatePayload(_Base):
     @model_validator(mode="after")
     def _validate_shape(self) -> "ItemAggregatePayload":
         if not self.uoms:
-            raise ValueError("uoms 不能为空")
-
-        uom_keys = [str(x.uom_key) for x in self.uoms]
-        if len(set(uom_keys)) != len(uom_keys):
-            raise ValueError("uom_key 不能重复")
-
-        base_rows = [x for x in self.uoms if x.is_base]
-        if len(base_rows) != 1:
-            raise ValueError("必须且只能提供一个基础包装")
-
-        base = base_rows[0]
-        if int(base.ratio_to_base) != 1:
-            raise ValueError("基础包装的 ratio_to_base 必须为 1")
-
-        purchase_defaults = [x for x in self.uoms if x.is_purchase_default]
-        inbound_defaults = [x for x in self.uoms if x.is_inbound_default]
-        outbound_defaults = [x for x in self.uoms if x.is_outbound_default]
-
-        if len(purchase_defaults) > 1:
-            raise ValueError("采购默认包装最多只能有一个")
-        if len(inbound_defaults) > 1:
-            raise ValueError("入库默认包装最多只能有一个")
-        if len(outbound_defaults) > 1:
-            raise ValueError("出库默认包装最多只能有一个")
-
-        valid_uom_keys = set(uom_keys)
-
-        primary_barcodes = [x for x in self.barcodes if x.is_primary]
-        if len(primary_barcodes) > 1:
-            raise ValueError("主条码最多只能有一个")
-
-        for bc in self.barcodes:
-            if str(bc.bind_uom_key) not in valid_uom_keys:
-                raise ValueError(f"barcode 绑定的 uom_key 不存在: {bc.bind_uom_key}")
-
+            raise ValueError("at least one item_uom is required")
+        if sum(1 for u in self.uoms if u.is_base) != 1:
+            raise ValueError("exactly one base uom is required")
+        if sum(1 for u in self.uoms if u.is_purchase_default) != 1:
+            raise ValueError("exactly one purchase default uom is required")
+        if sum(1 for u in self.uoms if u.is_inbound_default) != 1:
+            raise ValueError("exactly one inbound default uom is required")
+        if sum(1 for u in self.uoms if u.is_outbound_default) != 1:
+            raise ValueError("exactly one outbound default uom is required")
         return self
 
 
-class AggregateBarcodeOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    item_id: int
-    item_uom_id: int
-    barcode: str
-    symbology: str
-    active: bool
-    is_primary: bool
-
-
-class ItemAggregateOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class ItemAggregateOut(_Base):
     item: ItemOut
     uoms: list[ItemUomOut]
     barcodes: list[AggregateBarcodeOut]

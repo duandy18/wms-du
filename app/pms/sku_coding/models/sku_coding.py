@@ -1,5 +1,11 @@
 # app/pms/sku_coding/models/sku_coding.py
-# SKU coding domain models: dictionaries, category tree, templates and template segments.
+# SKU coding domain models: term dictionaries, templates and template segments.
+#
+# 品牌 / 内部分类已提升到 PMS 商品主数据：
+# - pms_brands
+# - pms_business_categories
+#
+# SKU 编码域不再拥有品牌 / 分类表，只引用 PMS 主数据。
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,55 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-
-
-class SkuCodeBrand(Base):
-    __tablename__ = "sku_code_brands"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name_cn: Mapped[str] = mapped_column(String(128), nullable=False)
-    code: Mapped[str] = mapped_column(String(32), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("name_cn", name="uq_sku_code_brands_name_cn"),
-        UniqueConstraint("code", name="uq_sku_code_brands_code"),
-    )
-
-
-class SkuBusinessCategory(Base):
-    __tablename__ = "sku_business_categories"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sku_business_categories.id", ondelete="RESTRICT"), nullable=True)
-    level: Mapped[int] = mapped_column(Integer, nullable=False)
-    product_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    category_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    category_code: Mapped[str] = mapped_column(String(32), nullable=False)
-    path_code: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_leaf: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    parent: Mapped["SkuBusinessCategory | None"] = relationship("SkuBusinessCategory", remote_side=[id], lazy="joined")
-
-    __table_args__ = (
-        sa.CheckConstraint("level in (1, 2, 3)", name="ck_sku_business_categories_level"),
-        sa.CheckConstraint("product_kind in ('FOOD', 'SUPPLY')", name="ck_sku_business_categories_product_kind"),
-        UniqueConstraint("path_code", name="uq_sku_business_categories_path_code"),
-        UniqueConstraint("parent_id", "category_code", name="uq_sku_business_categories_parent_code"),
-        sa.Index("ix_sku_business_categories_parent_id", "parent_id"),
-        sa.Index("ix_sku_business_categories_product_kind", "product_kind"),
-    )
 
 
 class SkuCodeTermGroup(Base):

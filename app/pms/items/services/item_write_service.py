@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.pms.items.models.item import Item
+from app.pms.items.models.item_master import PmsBrand, PmsBusinessCategory
 from app.pms.items.repos.item_uom_repo import create_item_uom
 from app.pms.items.repos.item_write_repo import (
     add_item,
@@ -125,19 +126,33 @@ class ItemWriteService:
     - 不负责 item_uoms / item_barcodes 的聚合编排
     - 持久化动作交给 repos/item_write_repo.py
 
-    终态收口：
-    - items.uom / items.case_* / items.weight_kg 已移除
-    - 包装、单位、净重、条码属于商品聚合的其他真相源
-    - owner 聚合写接口应在更高一层 orchestrate item + item_uoms + item_barcodes
-
-    主合同语义：
-    - POST /items 必须显式传 sku
-    - 创建 item 时仍自动补最小 base item_uom
-    - 创建 item 时同步写 item_sku_codes PRIMARY，items.sku 仅作为当前主 SKU 投影
+    主数据治理终态：
+    - 旧品牌/分类自由文本列已退出写入真相
+    - brand_id/category_id 指向 PMS 品牌与内部分类主数据
+    - brand/category 只作为只读展示投影
+    - items.sku 是当前主 SKU 投影，item_sku_codes 是编码治理真相表
     """
 
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    def _validate_brand_id(self, brand_id: Optional[int]) -> Optional[int]:
+        if brand_id is None:
+            return None
+        obj = self.db.get(PmsBrand, int(brand_id))
+        if obj is None or not bool(obj.is_active):
+            raise ValueError("brand_id 不存在或已停用")
+        return int(obj.id)
+
+    def _validate_category_id(self, category_id: Optional[int]) -> Optional[int]:
+        if category_id is None:
+            return None
+        obj = self.db.get(PmsBusinessCategory, int(category_id))
+        if obj is None or not bool(obj.is_active):
+            raise ValueError("category_id 不存在或已停用")
+        if not bool(obj.is_leaf):
+            raise ValueError("category_id 必须指向叶子分类")
+        return int(obj.id)
 
     def create_item(
         self,
@@ -145,8 +160,8 @@ class ItemWriteService:
         sku: str,
         name: str,
         spec: Optional[str] = None,
-        brand: Optional[str] = None,
-        category: Optional[str] = None,
+        brand_id: Optional[int] = None,
+        category_id: Optional[int] = None,
         enabled: bool = True,
         supplier_id: Optional[int] = None,
         shelf_life_value: Optional[int] = None,
@@ -163,8 +178,8 @@ class ItemWriteService:
             raise ValueError("name is required")
 
         spec_val = _norm_text_or_none(spec)
-        brand_val = _norm_text_or_none(brand)
-        category_val = _norm_text_or_none(category)
+        brand_id_val = self._validate_brand_id(brand_id)
+        category_id_val = self._validate_category_id(category_id)
 
         lot_policy = _norm_policy_str(lot_source_policy) or "SUPPLIER_ONLY"
         if lot_policy not in _ALLOWED_LOT_SOURCE_POLICIES:
@@ -196,8 +211,8 @@ class ItemWriteService:
             spec=spec_val,
             enabled=bool(enabled),
             supplier_id=supplier_id,
-            brand=brand_val,
-            category=category_val,
+            brand_id=brand_id_val,
+            category_id=category_id_val,
             lot_source_policy=lot_policy,
             expiry_policy=exp_policy,
             derivation_allowed=deriv_allowed,
@@ -216,7 +231,6 @@ class ItemWriteService:
                 remark="created with item",
             )
 
-            # 维持当前主合同语义：创建 item 时自动补最小 base item_uom
             create_item_uom(
                 self.db,
                 item_id=int(obj.id),
@@ -267,10 +281,10 @@ class ItemWriteService:
         shelf_life_value_set: bool = False,
         shelf_life_unit: Optional[str] = None,
         shelf_life_unit_set: bool = False,
-        brand: Optional[str] = None,
-        category: Optional[str] = None,
-        brand_set: bool = False,
-        category_set: bool = False,
+        brand_id: Optional[int] = None,
+        category_id: Optional[int] = None,
+        brand_id_set: bool = False,
+        category_id_set: bool = False,
         lot_source_policy: Optional[str] = None,
         lot_source_policy_set: bool = False,
         expiry_policy: Optional[str] = None,
@@ -307,6 +321,14 @@ class ItemWriteService:
             obj.supplier_id = supplier_id
             changed = True
 
+        if brand_id_set:
+            obj.brand_id = self._validate_brand_id(brand_id)
+            changed = True
+
+        if category_id_set:
+            obj.category_id = self._validate_category_id(category_id)
+            changed = True
+
         if lot_source_policy_set:
             obj.lot_source_policy = _validate_lot_source_policy(lot_source_policy)
             changed = True
@@ -331,14 +353,6 @@ class ItemWriteService:
             if uom_governance_enabled is None:
                 raise ValueError("uom_governance_enabled 不能为空")
             obj.uom_governance_enabled = bool(uom_governance_enabled)
-            changed = True
-
-        if brand_set:
-            obj.brand = _norm_text_or_none(brand)
-            changed = True
-
-        if category_set:
-            obj.category = _norm_text_or_none(category)
             changed = True
 
         if expiry_policy_set or shelf_life_value_set or shelf_life_unit_set:

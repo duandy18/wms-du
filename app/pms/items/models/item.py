@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.oms.orders.models.order import Order  # noqa: F401
 from app.oms.orders.models.order_item import OrderItem  # noqa: F401
+from app.pms.items.models.item_master import ItemAttributeValue, PmsBrand, PmsBusinessCategory  # noqa: F401
 from app.pms.items.models.item_sku_code import ItemSkuCode  # noqa: F401
 from app.pms.items.models.item_uom import ItemUOM  # noqa: F401
 from app.pms.suppliers.models.supplier import Supplier  # noqa: F401
@@ -18,6 +19,7 @@ from app.pms.suppliers.models.supplier import Supplier  # noqa: F401
 if TYPE_CHECKING:
     from app.oms.orders.models.order import Order
     from app.oms.orders.models.order_item import OrderItem
+    from app.pms.items.models.item_master import ItemAttributeValue, PmsBrand, PmsBusinessCategory
     from app.pms.items.models.item_sku_code import ItemSkuCode
     from app.pms.items.models.item_uom import ItemUOM
     from app.pms.suppliers.models.supplier import Supplier
@@ -37,6 +39,14 @@ class Item(Base):
     """
     Item 主数据模型 —— 对齐 public.items
 
+    主数据治理原则：
+    - item_id 是商品内部身份真相
+    - items.sku 是当前主 SKU 投影
+    - item_sku_codes 是商品编码治理真相表
+    - brand/category 不再是自由文本写入真相
+    - brand_id/category_id 指向 PMS 品牌和内部分类主数据
+    - brand/category 仅保留为运行时只读展示投影
+
     Phase M 关键变化（规则上移，禁止隐式推断）：
     - expiry_policy 是有效期规则真相源（NONE / REQUIRED）
     - lot_source_policy / derivation_allowed / uom_governance_enabled 为执行层只读策略开关
@@ -51,11 +61,6 @@ class Item(Base):
     Phase M-6（item weight cutover）：
     - items.weight_kg 已物理删除
     - 运行时 weight_kg = base item_uom.net_weight_kg
-
-    SKU governance：
-    - item_id 是商品内部身份真相
-    - items.sku 是当前主 SKU 投影
-    - item_sku_codes 是商品编码治理真相表
     """
 
     __tablename__ = "items"
@@ -84,8 +89,18 @@ class Item(Base):
         server_default=text("true"),
     )
 
-    brand: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    brand_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("pms_brands.id", name="fk_items_brand", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    category_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("pms_business_categories.id", name="fk_items_category", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
 
     lot_source_policy: Mapped[LotSourcePolicy] = mapped_column(
         Enum(LotSourcePolicy, name="lot_source_policy", native_enum=True),
@@ -107,7 +122,14 @@ class Item(Base):
         nullable=True,
         index=True,
     )
+
     supplier: Mapped[Optional["Supplier"]] = relationship("Supplier", lazy="joined")
+    brand_ref: Mapped[Optional["PmsBrand"]] = relationship("PmsBrand", back_populates="items", lazy="joined")
+    category_ref: Mapped[Optional["PmsBusinessCategory"]] = relationship(
+        "PmsBusinessCategory",
+        back_populates="items",
+        lazy="joined",
+    )
 
     uoms: Mapped[List["ItemUOM"]] = relationship(
         "ItemUOM",
@@ -123,6 +145,21 @@ class Item(Base):
         order_by=lambda: (ItemSkuCode.is_primary.desc(), ItemSkuCode.id.asc()),
         cascade="all, delete-orphan",
     )
+
+    attribute_values: Mapped[List["ItemAttributeValue"]] = relationship(
+        "ItemAttributeValue",
+        back_populates="item",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def brand(self) -> Optional[str]:
+        return self.brand_ref.name_cn if self.brand_ref is not None else None
+
+    @property
+    def category(self) -> Optional[str]:
+        return self.category_ref.category_name if self.category_ref is not None else None
 
     @property
     def unit(self) -> str:
@@ -199,6 +236,6 @@ class Item(Base):
     def __repr__(self) -> str:
         return (
             f"<Item id={self.id} sku={self.sku!r} name={self.name!r} "
-            f"brand={self.brand!r} category={self.category!r} "
+            f"brand_id={self.brand_id!r} category_id={self.category_id!r} "
             f"expiry_policy={self.expiry_policy}>"
         )

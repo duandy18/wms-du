@@ -10078,6 +10078,1039 @@
         }
       }
     },
+    "/pms/brands": {
+      "get": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "List Pms Brands",
+        "operationId": "list_pms_brands_pms_brands_get",
+        "parameters": [
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_PmsBrandOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Create Pms Brand",
+        "operationId": "create_pms_brand_pms_brands_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PmsBrandCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsBrandOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/brands/{brand_id}": {
+      "patch": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Update Pms Brand",
+        "operationId": "update_pms_brand_pms_brands__brand_id__patch",
+        "parameters": [
+          {
+            "name": "brand_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Brand Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PmsBrandUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsBrandOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/brands/{brand_id}/enable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Enable Pms Brand",
+        "operationId": "enable_pms_brand_pms_brands__brand_id__enable_post",
+        "parameters": [
+          {
+            "name": "brand_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Brand Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsBrandOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/brands/{brand_id}/disable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Disable Pms Brand",
+        "operationId": "disable_pms_brand_pms_brands__brand_id__disable_post",
+        "parameters": [
+          {
+            "name": "brand_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Brand Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsBrandOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/categories": {
+      "get": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "List Pms Categories",
+        "operationId": "list_pms_categories_pms_categories_get",
+        "parameters": [
+          {
+            "name": "product_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Product Kind"
+            }
+          },
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_PmsCategoryOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Create Pms Category",
+        "operationId": "create_pms_category_pms_categories_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PmsCategoryCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsCategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/categories/{category_id}": {
+      "patch": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Update Pms Category",
+        "operationId": "update_pms_category_pms_categories__category_id__patch",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PmsCategoryUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsCategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/categories/{category_id}/enable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Enable Pms Category",
+        "operationId": "enable_pms_category_pms_categories__category_id__enable_post",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsCategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/categories/{category_id}/disable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Disable Pms Category",
+        "operationId": "disable_pms_category_pms_categories__category_id__disable_post",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PmsCategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-defs": {
+      "get": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "List Item Attribute Defs",
+        "operationId": "list_item_attribute_defs_pms_item_attribute_defs_get",
+        "parameters": [
+          {
+            "name": "product_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Product Kind"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category Id"
+            }
+          },
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_ItemAttributeDefOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Create Item Attribute Def",
+        "operationId": "create_item_attribute_def_pms_item_attribute_defs_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAttributeDefCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeDefOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-defs/{attribute_def_id}": {
+      "patch": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Update Item Attribute Def",
+        "operationId": "update_item_attribute_def_pms_item_attribute_defs__attribute_def_id__patch",
+        "parameters": [
+          {
+            "name": "attribute_def_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attribute Def Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAttributeDefUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeDefOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-defs/{attribute_def_id}/enable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Enable Item Attribute Def",
+        "operationId": "enable_item_attribute_def_pms_item_attribute_defs__attribute_def_id__enable_post",
+        "parameters": [
+          {
+            "name": "attribute_def_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attribute Def Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeDefOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-defs/{attribute_def_id}/disable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Disable Item Attribute Def",
+        "operationId": "disable_item_attribute_def_pms_item_attribute_defs__attribute_def_id__disable_post",
+        "parameters": [
+          {
+            "name": "attribute_def_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attribute Def Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeDefOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-defs/{attribute_def_id}/options": {
+      "get": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "List Item Attribute Options",
+        "operationId": "list_item_attribute_options_pms_item_attribute_defs__attribute_def_id__options_get",
+        "parameters": [
+          {
+            "name": "attribute_def_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attribute Def Id"
+            }
+          },
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_ItemAttributeOptionOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Create Item Attribute Option",
+        "operationId": "create_item_attribute_option_pms_item_attribute_defs__attribute_def_id__options_post",
+        "parameters": [
+          {
+            "name": "attribute_def_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attribute Def Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAttributeOptionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeOptionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-options/{option_id}": {
+      "patch": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Update Item Attribute Option",
+        "operationId": "update_item_attribute_option_pms_item_attribute_options__option_id__patch",
+        "parameters": [
+          {
+            "name": "option_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Option Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAttributeOptionUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeOptionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-options/{option_id}/enable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Enable Item Attribute Option",
+        "operationId": "enable_item_attribute_option_pms_item_attribute_options__option_id__enable_post",
+        "parameters": [
+          {
+            "name": "option_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Option Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeOptionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pms/item-attribute-options/{option_id}/disable": {
+      "post": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Disable Item Attribute Option",
+        "operationId": "disable_item_attribute_option_pms_item_attribute_options__option_id__disable_post",
+        "parameters": [
+          {
+            "name": "option_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Option Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemAttributeOptionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{item_id}/attributes": {
+      "get": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "List Item Attribute Values",
+        "operationId": "list_item_attribute_values_items__item_id__attributes_get",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_ItemAttributeValueOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "pms-master-data"
+        ],
+        "summary": "Replace Item Attribute Values",
+        "operationId": "replace_item_attribute_values_items__item_id__attributes_put",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAttributeValuesReplaceIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOut_ItemAttributeValueOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items/{item_id}/sku-codes": {
       "get": {
         "tags": [
@@ -10311,458 +11344,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ItemSkuCodeOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/brands": {
-      "get": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "List Brands",
-        "operationId": "list_brands_pms_sku_coding_brands_get",
-        "parameters": [
-          {
-            "name": "active_only",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Active Only"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListOut_SkuCodeBrandOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Create Brand",
-        "operationId": "create_brand_pms_sku_coding_brands_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkuCodeBrandCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuCodeBrandOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/brands/{brand_id}": {
-      "patch": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Update Brand",
-        "operationId": "update_brand_pms_sku_coding_brands__brand_id__patch",
-        "parameters": [
-          {
-            "name": "brand_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Brand Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkuCodeBrandUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuCodeBrandOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/brands/{brand_id}/enable": {
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Enable Brand",
-        "operationId": "enable_brand_pms_sku_coding_brands__brand_id__enable_post",
-        "parameters": [
-          {
-            "name": "brand_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Brand Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuCodeBrandOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/brands/{brand_id}/disable": {
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Disable Brand",
-        "operationId": "disable_brand_pms_sku_coding_brands__brand_id__disable_post",
-        "parameters": [
-          {
-            "name": "brand_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Brand Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuCodeBrandOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/business-categories": {
-      "get": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "List Business Categories",
-        "operationId": "list_business_categories_pms_sku_coding_business_categories_get",
-        "parameters": [
-          {
-            "name": "product_kind",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Product Kind"
-            }
-          },
-          {
-            "name": "active_only",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Active Only"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListOut_SkuBusinessCategoryOut_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Create Business Category",
-        "operationId": "create_business_category_pms_sku_coding_business_categories_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkuBusinessCategoryCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuBusinessCategoryOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/business-categories/{category_id}": {
-      "patch": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Update Business Category",
-        "operationId": "update_business_category_pms_sku_coding_business_categories__category_id__patch",
-        "parameters": [
-          {
-            "name": "category_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Category Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkuBusinessCategoryUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuBusinessCategoryOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/business-categories/{category_id}/enable": {
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Enable Business Category",
-        "operationId": "enable_business_category_pms_sku_coding_business_categories__category_id__enable_post",
-        "parameters": [
-          {
-            "name": "category_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Category Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuBusinessCategoryOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/pms/sku-coding/business-categories/{category_id}/disable": {
-      "post": {
-        "tags": [
-          "pms-sku-coding"
-        ],
-        "summary": "Disable Business Category",
-        "operationId": "disable_business_category_pms_sku_coding_business_categories__category_id__disable_post",
-        "parameters": [
-          {
-            "name": "category_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Category Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkuBusinessCategoryOut"
                 }
               }
             }
@@ -19229,8 +19810,27 @@
           "is_primary": {
             "type": "boolean",
             "title": "Is Primary"
+          },
+          "created_at": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "id",
@@ -19269,29 +19869,27 @@
             ],
             "title": "Spec"
           },
-          "brand": {
+          "brand_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Brand"
+            "title": "Brand Id"
           },
-          "category": {
+          "category_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Category"
+            "title": "Category Id"
           },
           "enabled": {
             "type": "boolean",
@@ -27495,6 +28093,7 @@
             "title": "Barcodes"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "item",
@@ -27531,6 +28130,669 @@
           "barcodes"
         ],
         "title": "ItemAggregatePayload"
+      },
+      "ItemAttributeDefCreate": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Code"
+          },
+          "name_cn": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name Cn"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name En"
+          },
+          "product_kind": {
+            "type": "string",
+            "enum": [
+              "FOOD",
+              "SUPPLY",
+              "OTHER",
+              "COMMON"
+            ],
+            "title": "Product Kind"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "value_type": {
+            "type": "string",
+            "enum": [
+              "TEXT",
+              "NUMBER",
+              "OPTION",
+              "BOOL"
+            ],
+            "title": "Value Type"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "is_required": {
+            "type": "boolean",
+            "title": "Is Required",
+            "default": false
+          },
+          "is_searchable": {
+            "type": "boolean",
+            "title": "Is Searchable",
+            "default": false
+          },
+          "is_filterable": {
+            "type": "boolean",
+            "title": "Is Filterable",
+            "default": false
+          },
+          "is_sku_segment": {
+            "type": "boolean",
+            "title": "Is Sku Segment",
+            "default": false
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name_cn",
+          "product_kind",
+          "value_type"
+        ],
+        "title": "ItemAttributeDefCreate"
+      },
+      "ItemAttributeDefOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name_cn": {
+            "type": "string",
+            "title": "Name Cn"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name En"
+          },
+          "product_kind": {
+            "type": "string",
+            "title": "Product Kind"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "value_type": {
+            "type": "string",
+            "title": "Value Type"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "is_required": {
+            "type": "boolean",
+            "title": "Is Required"
+          },
+          "is_searchable": {
+            "type": "boolean",
+            "title": "Is Searchable"
+          },
+          "is_filterable": {
+            "type": "boolean",
+            "title": "Is Filterable"
+          },
+          "is_sku_segment": {
+            "type": "boolean",
+            "title": "Is Sku Segment"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name_cn",
+          "product_kind",
+          "value_type",
+          "is_required",
+          "is_searchable",
+          "is_filterable",
+          "is_sku_segment",
+          "is_active",
+          "sort_order"
+        ],
+        "title": "ItemAttributeDefOut"
+      },
+      "ItemAttributeDefUpdate": {
+        "properties": {
+          "name_cn": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Cn"
+          },
+          "name_en": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name En"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "is_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Required"
+          },
+          "is_searchable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Searchable"
+          },
+          "is_filterable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Filterable"
+          },
+          "is_sku_segment": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Sku Segment"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "title": "ItemAttributeDefUpdate"
+      },
+      "ItemAttributeOptionCreate": {
+        "properties": {
+          "option_code": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Option Code"
+          },
+          "option_name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Option Name"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "option_code",
+          "option_name"
+        ],
+        "title": "ItemAttributeOptionCreate"
+      },
+      "ItemAttributeOptionOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "attribute_def_id": {
+            "type": "integer",
+            "title": "Attribute Def Id"
+          },
+          "option_code": {
+            "type": "string",
+            "title": "Option Code"
+          },
+          "option_name": {
+            "type": "string",
+            "title": "Option Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "attribute_def_id",
+          "option_code",
+          "option_name",
+          "is_active",
+          "sort_order"
+        ],
+        "title": "ItemAttributeOptionOut"
+      },
+      "ItemAttributeOptionUpdate": {
+        "properties": {
+          "option_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Name"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "type": "object",
+        "title": "ItemAttributeOptionUpdate"
+      },
+      "ItemAttributeValueIn": {
+        "properties": {
+          "attribute_def_id": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Attribute Def Id"
+          },
+          "value_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Text"
+          },
+          "value_number": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Number"
+          },
+          "value_bool": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Bool"
+          },
+          "value_option_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attribute_def_id"
+        ],
+        "title": "ItemAttributeValueIn"
+      },
+      "ItemAttributeValueOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "attribute_def_id": {
+            "type": "integer",
+            "title": "Attribute Def Id"
+          },
+          "value_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Text"
+          },
+          "value_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Number"
+          },
+          "value_bool": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Bool"
+          },
+          "value_option_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Id"
+          },
+          "value_option_code_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Code Snapshot"
+          },
+          "value_unit_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Unit Snapshot"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_id",
+          "attribute_def_id"
+        ],
+        "title": "ItemAttributeValueOut"
+      },
+      "ItemAttributeValuesReplaceIn": {
+        "properties": {
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/ItemAttributeValueIn"
+            },
+            "type": "array",
+            "title": "Values"
+          }
+        },
+        "type": "object",
+        "title": "ItemAttributeValuesReplaceIn"
       },
       "ItemBarcodeCompositeRow": {
         "properties": {
@@ -27864,29 +29126,27 @@
             ],
             "title": "Spec"
           },
-          "brand": {
+          "brand_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Brand"
+            "title": "Brand Id"
           },
-          "category": {
+          "category_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Category"
+            "title": "Category Id"
           },
           "enabled": {
             "type": "boolean",
@@ -27993,7 +29253,7 @@
           "name"
         ],
         "title": "ItemCreate",
-        "description": "Create Item（SKU 由调用方显式输入）：\n- 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku\n- 不接受 barcode 输入；主条码请走 /item-barcodes\n- 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）\n\nPhase M-3：\n- items.case_ratio/case_uom 已删除；包装单位请走 item_uoms"
+        "description": "Create Item（SKU 由调用方显式输入）：\n- 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku\n- brand/category 不再接受自由文本；请传 brand_id/category_id\n- 不接受 barcode 输入；主条码请走 /item-barcodes\n- 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）\n\nPhase M-3：\n- items.case_ratio/case_uom 已删除；包装单位请走 item_uoms"
       },
       "ItemOut": {
         "properties": {
@@ -28045,11 +29305,33 @@
             ],
             "title": "Primary Barcode"
           },
+          "brand_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
           "brand": {
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 64
+                "maxLength": 128
               },
               {
                 "type": "null"
@@ -28061,7 +29343,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 64
+                "maxLength": 128
               },
               {
                 "type": "null"
@@ -28286,7 +29568,7 @@
               }
             ],
             "title": "Brand",
-            "description": "品牌（来自 items.brand）"
+            "description": "品牌展示投影（来自 PMS 品牌主数据）"
           },
           "category": {
             "anyOf": [
@@ -28298,7 +29580,7 @@
               }
             ],
             "title": "Category",
-            "description": "分类（来自 items.category）"
+            "description": "内部分类展示投影（来自 PMS 内部分类主数据）"
           },
           "spec_text": {
             "anyOf": [
@@ -29059,29 +30341,27 @@
             ],
             "title": "Spec"
           },
-          "brand": {
+          "brand_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Brand"
+            "title": "Brand Id"
           },
-          "category": {
+          "category_id": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 64
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Category"
+            "title": "Category Id"
           },
           "enabled": {
             "anyOf": [
@@ -29190,7 +30470,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ItemUpdate",
-        "description": "Patch Item：\n\n- 不开放 sku 变更\n- 不接受 barcode / has_shelf_life\n- 不接受 weight_kg；基础包装净重请改 item_uoms\n- nullable 字段支持显式传 null 清空"
+        "description": "Patch Item：\n\n- 不开放 sku 变更\n- brand/category 不再接受自由文本；请传 brand_id/category_id\n- 不接受 barcode / has_shelf_life\n- 不接受 weight_kg；基础包装净重请改 item_uoms\n- nullable 字段支持显式传 null 清空"
       },
       "LedgerDateViolationRow": {
         "properties": {
@@ -29781,7 +31061,7 @@
         ],
         "title": "LedgerSummary"
       },
-      "ListOut_SkuBusinessCategoryOut_": {
+      "ListOut_ItemAttributeDefOut_": {
         "properties": {
           "ok": {
             "type": "boolean",
@@ -29790,7 +31070,7 @@
           },
           "data": {
             "items": {
-              "$ref": "#/components/schemas/SkuBusinessCategoryOut"
+              "$ref": "#/components/schemas/ItemAttributeDefOut"
             },
             "type": "array",
             "title": "Data"
@@ -29800,9 +31080,9 @@
         "required": [
           "data"
         ],
-        "title": "ListOut[SkuBusinessCategoryOut]"
+        "title": "ListOut[ItemAttributeDefOut]"
       },
-      "ListOut_SkuCodeBrandOut_": {
+      "ListOut_ItemAttributeOptionOut_": {
         "properties": {
           "ok": {
             "type": "boolean",
@@ -29811,7 +31091,7 @@
           },
           "data": {
             "items": {
-              "$ref": "#/components/schemas/SkuCodeBrandOut"
+              "$ref": "#/components/schemas/ItemAttributeOptionOut"
             },
             "type": "array",
             "title": "Data"
@@ -29821,7 +31101,70 @@
         "required": [
           "data"
         ],
-        "title": "ListOut[SkuCodeBrandOut]"
+        "title": "ListOut[ItemAttributeOptionOut]"
+      },
+      "ListOut_ItemAttributeValueOut_": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ItemAttributeValueOut"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListOut[ItemAttributeValueOut]"
+      },
+      "ListOut_PmsBrandOut_": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PmsBrandOut"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListOut[PmsBrandOut]"
+      },
+      "ListOut_PmsCategoryOut_": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PmsCategoryOut"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ListOut[PmsCategoryOut]"
       },
       "ListOut_SkuCodeTermGroupOut_": {
         "properties": {
@@ -36086,6 +37429,412 @@
           "expanded_items"
         ],
         "title": "PlatformOrderResolvePreviewResolvedLineOut"
+      },
+      "PmsBrandCreate": {
+        "properties": {
+          "name_cn": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name Cn"
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Code"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name_cn",
+          "code"
+        ],
+        "title": "PmsBrandCreate"
+      },
+      "PmsBrandOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name_cn": {
+            "type": "string",
+            "title": "Name Cn"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "is_locked": {
+            "type": "boolean",
+            "title": "Is Locked"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name_cn",
+          "code",
+          "is_active",
+          "is_locked",
+          "sort_order"
+        ],
+        "title": "PmsBrandOut"
+      },
+      "PmsBrandUpdate": {
+        "properties": {
+          "name_cn": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Cn"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "title": "PmsBrandUpdate"
+      },
+      "PmsCategoryCreate": {
+        "properties": {
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "level": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Level"
+          },
+          "product_kind": {
+            "type": "string",
+            "enum": [
+              "FOOD",
+              "SUPPLY",
+              "OTHER"
+            ],
+            "title": "Product Kind"
+          },
+          "category_name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Category Name"
+          },
+          "category_code": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Category Code"
+          },
+          "is_leaf": {
+            "type": "boolean",
+            "title": "Is Leaf",
+            "default": false
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "product_kind",
+          "category_name",
+          "category_code"
+        ],
+        "title": "PmsCategoryCreate"
+      },
+      "PmsCategoryOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "level": {
+            "type": "integer",
+            "title": "Level"
+          },
+          "product_kind": {
+            "type": "string",
+            "title": "Product Kind"
+          },
+          "category_name": {
+            "type": "string",
+            "title": "Category Name"
+          },
+          "category_code": {
+            "type": "string",
+            "title": "Category Code"
+          },
+          "path_code": {
+            "type": "string",
+            "title": "Path Code"
+          },
+          "is_leaf": {
+            "type": "boolean",
+            "title": "Is Leaf"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "is_locked": {
+            "type": "boolean",
+            "title": "Is Locked"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "parent_id",
+          "level",
+          "product_kind",
+          "category_name",
+          "category_code",
+          "path_code",
+          "is_leaf",
+          "is_active",
+          "is_locked",
+          "sort_order"
+        ],
+        "title": "PmsCategoryOut"
+      },
+      "PmsCategoryUpdate": {
+        "properties": {
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Code"
+          },
+          "is_leaf": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Leaf"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          }
+        },
+        "type": "object",
+        "title": "PmsCategoryUpdate"
       },
       "PricingListResponse": {
         "properties": {
@@ -43359,6 +45108,28 @@
             ],
             "title": "Spec"
           },
+          "brand_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
           "brand": {
             "anyOf": [
               {
@@ -43392,413 +45163,6 @@
           "category"
         ],
         "title": "SimilarItemOut"
-      },
-      "SkuBusinessCategoryCreate": {
-        "properties": {
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          },
-          "level": {
-            "type": "integer",
-            "maximum": 3.0,
-            "minimum": 1.0,
-            "title": "Level"
-          },
-          "product_kind": {
-            "type": "string",
-            "enum": [
-              "FOOD",
-              "SUPPLY"
-            ],
-            "title": "Product Kind"
-          },
-          "category_name": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Category Name"
-          },
-          "category_code": {
-            "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Category Code"
-          },
-          "is_leaf": {
-            "type": "boolean",
-            "title": "Is Leaf",
-            "default": false
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order",
-            "default": 0
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          }
-        },
-        "type": "object",
-        "required": [
-          "level",
-          "product_kind",
-          "category_name",
-          "category_code"
-        ],
-        "title": "SkuBusinessCategoryCreate"
-      },
-      "SkuBusinessCategoryOut": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          },
-          "level": {
-            "type": "integer",
-            "title": "Level"
-          },
-          "product_kind": {
-            "type": "string",
-            "title": "Product Kind"
-          },
-          "category_name": {
-            "type": "string",
-            "title": "Category Name"
-          },
-          "category_code": {
-            "type": "string",
-            "title": "Category Code"
-          },
-          "path_code": {
-            "type": "string",
-            "title": "Path Code"
-          },
-          "is_leaf": {
-            "type": "boolean",
-            "title": "Is Leaf"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
-          "is_locked": {
-            "type": "boolean",
-            "title": "Is Locked"
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order"
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "parent_id",
-          "level",
-          "product_kind",
-          "category_name",
-          "category_code",
-          "path_code",
-          "is_leaf",
-          "is_active",
-          "is_locked",
-          "sort_order",
-          "remark"
-        ],
-        "title": "SkuBusinessCategoryOut"
-      },
-      "SkuBusinessCategoryUpdate": {
-        "properties": {
-          "category_name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 128
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Name"
-          },
-          "category_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Code"
-          },
-          "is_leaf": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Leaf"
-          },
-          "sort_order": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sort Order"
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          }
-        },
-        "type": "object",
-        "title": "SkuBusinessCategoryUpdate"
-      },
-      "SkuCodeBrandCreate": {
-        "properties": {
-          "name_cn": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Name Cn"
-          },
-          "code": {
-            "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Code"
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order",
-            "default": 0
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name_cn",
-          "code"
-        ],
-        "title": "SkuCodeBrandCreate"
-      },
-      "SkuCodeBrandOut": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "name_cn": {
-            "type": "string",
-            "title": "Name Cn"
-          },
-          "code": {
-            "type": "string",
-            "title": "Code"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
-          "is_locked": {
-            "type": "boolean",
-            "title": "Is Locked"
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order"
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name_cn",
-          "code",
-          "is_active",
-          "is_locked",
-          "sort_order",
-          "remark"
-        ],
-        "title": "SkuCodeBrandOut"
-      },
-      "SkuCodeBrandUpdate": {
-        "properties": {
-          "name_cn": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 128
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name Cn"
-          },
-          "code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
-          },
-          "sort_order": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sort Order"
-          },
-          "remark": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remark"
-          }
-        },
-        "type": "object",
-        "title": "SkuCodeBrandUpdate"
       },
       "SkuCodeTermCreate": {
         "properties": {

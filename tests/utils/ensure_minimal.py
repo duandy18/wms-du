@@ -88,10 +88,12 @@ async def ensure_item(
             """
             INSERT INTO items (
               id, sku, name,
-              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled
+              brand_id, category_id, lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled
             )
             VALUES (
               :id, :sku, :name,
+              1,
+              1,
               CAST(:lot_source_policy AS lot_source_policy),
               CAST(:expiry_policy AS expiry_policy),
               TRUE,
@@ -100,6 +102,8 @@ async def ensure_item(
             ON CONFLICT (id) DO UPDATE
                SET sku = EXCLUDED.sku,
                    name = EXCLUDED.name,
+                   brand_id = EXCLUDED.brand_id,
+                   category_id = EXCLUDED.category_id,
                    lot_source_policy = CASE
                      WHEN EXCLUDED.expiry_policy = 'REQUIRED'::expiry_policy
                        THEN 'SUPPLIER_ONLY'::lot_source_policy

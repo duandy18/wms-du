@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.pms.items.models.item import Item
+from app.pms.items.models.item_master import PmsBrand, PmsBusinessCategory
 from app.pms.items.contracts.item_aggregate import (
     AggregateBarcodeInput,
     AggregateItemInput,
@@ -99,8 +100,6 @@ def _resolve_item_fields(item_in: AggregateItemInput) -> dict[str, object]:
         raise ValueError("name is required")
 
     spec_val = _norm_text_or_none(item_in.spec)
-    brand_val = _norm_text_or_none(item_in.brand)
-    category_val = _norm_text_or_none(item_in.category)
 
     lot_policy = _norm_policy_str(item_in.lot_source_policy) or "SUPPLIER_ONLY"
     if lot_policy not in _ALLOWED_LOT_SOURCE_POLICIES:
@@ -130,8 +129,8 @@ def _resolve_item_fields(item_in: AggregateItemInput) -> dict[str, object]:
         "sku": sku_val,
         "name": name_val,
         "spec": spec_val,
-        "brand": brand_val,
-        "category": category_val,
+        "brand_id": item_in.brand_id,
+        "category_id": item_in.category_id,
         "enabled": bool(item_in.enabled),
         "supplier_id": item_in.supplier_id,
         "lot_source_policy": lot_policy,
@@ -151,7 +150,9 @@ class ItemOwnerAggregateService:
     - 事务边界在 service
     - 前端不再自己 orchestrate 多接口写入
 
-    终态语义：
+    主数据治理终态：
+    - brand/category 自由文本退出写入合同
+    - brand_id/category_id 是规范化主数据引用
     - create / replace 都要求提交完整商品聚合
     - POST /items/aggregate：完整创建
     - PUT /items/{id}/aggregate：严格 full replace
@@ -160,6 +161,30 @@ class ItemOwnerAggregateService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self._present = ItemPresenter(db)
+
+    def _validate_brand_id(self, brand_id: Optional[int]) -> Optional[int]:
+        if brand_id is None:
+            return None
+        obj = self.db.get(PmsBrand, int(brand_id))
+        if obj is None or not bool(obj.is_active):
+            raise ValueError("brand_id 不存在或已停用")
+        return int(obj.id)
+
+    def _validate_category_id(self, category_id: Optional[int]) -> Optional[int]:
+        if category_id is None:
+            return None
+        obj = self.db.get(PmsBusinessCategory, int(category_id))
+        if obj is None or not bool(obj.is_active):
+            raise ValueError("category_id 不存在或已停用")
+        if not bool(obj.is_leaf):
+            raise ValueError("category_id 必须指向叶子分类")
+        return int(obj.id)
+
+    def _validate_master_refs(self, item_fields: dict[str, object]) -> tuple[Optional[int], Optional[int]]:
+        return (
+            self._validate_brand_id(item_fields["brand_id"]),
+            self._validate_category_id(item_fields["category_id"]),
+        )
 
     def get_aggregate(self, *, item_id: int) -> ItemAggregateOut:
         record = get_item_aggregate_record(
@@ -176,11 +201,25 @@ class ItemOwnerAggregateService:
         return ItemAggregateOut(
             item=presented,
             uoms=record.uoms,
-            barcodes=record.barcodes,
+            barcodes=[
+                {
+                    "id": int(x.id),
+                    "item_id": int(x.item_id),
+                    "item_uom_id": int(x.item_uom_id),
+                    "barcode": str(x.barcode),
+                    "symbology": str(x.symbology),
+                    "active": bool(x.active),
+                    "is_primary": bool(x.is_primary),
+                    "created_at": getattr(x, "created_at", None),
+                    "updated_at": getattr(x, "updated_at", None),
+                }
+                for x in record.barcodes
+            ],
         )
 
     def create_aggregate(self, *, payload: ItemAggregatePayload) -> ItemAggregateOut:
         item_fields = _resolve_item_fields(payload.item)
+        brand_id, category_id = self._validate_master_refs(item_fields)
 
         obj = Item(
             sku=str(item_fields["sku"]),
@@ -188,8 +227,8 @@ class ItemOwnerAggregateService:
             spec=item_fields["spec"],
             enabled=bool(item_fields["enabled"]),
             supplier_id=item_fields["supplier_id"],
-            brand=item_fields["brand"],
-            category=item_fields["category"],
+            brand_id=brand_id,
+            category_id=category_id,
             lot_source_policy=str(item_fields["lot_source_policy"]),
             expiry_policy=str(item_fields["expiry_policy"]),
             derivation_allowed=bool(item_fields["derivation_allowed"]),
@@ -249,6 +288,7 @@ class ItemOwnerAggregateService:
             raise ValueError("Item not found")
 
         item_fields = _resolve_item_fields(payload.item)
+        brand_id, category_id = self._validate_master_refs(item_fields)
 
         if str(item_fields["sku"]) != str(obj.sku):
             raise ValueError("sku cannot be changed")
@@ -257,8 +297,8 @@ class ItemOwnerAggregateService:
         obj.spec = item_fields["spec"]
         obj.enabled = bool(item_fields["enabled"])
         obj.supplier_id = item_fields["supplier_id"]
-        obj.brand = item_fields["brand"]
-        obj.category = item_fields["category"]
+        obj.brand_id = brand_id
+        obj.category_id = category_id
         obj.lot_source_policy = str(item_fields["lot_source_policy"])
         obj.expiry_policy = str(item_fields["expiry_policy"])
         obj.derivation_allowed = bool(item_fields["derivation_allowed"])
@@ -309,7 +349,6 @@ class ItemOwnerAggregateService:
         existing_by_id = {int(x.id): x for x in existing_uoms}
         keep_ids: set[int] = set()
 
-        # 先清默认位，避免 partial unique index 冲突
         for u in existing_uoms:
             u.is_base = False
             u.is_purchase_default = False
