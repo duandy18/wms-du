@@ -65,7 +65,7 @@ class OutboundEventLine(Base):
     )
 
     item_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    item_sku_snapshot: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    item_sku_snapshot: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     item_spec_snapshot: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     remark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 

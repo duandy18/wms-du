@@ -37,7 +37,7 @@ class InboundEventLineOut(_Base):
 
     item_id: Annotated[int, Field(ge=1, description="商品 ID")]
     item_name: Annotated[str | None, Field(default=None, max_length=255, description="商品名称（展示字段）")]
-    item_sku: Annotated[str | None, Field(default=None, max_length=64, description="商品 SKU（展示字段）")]
+    item_sku: Annotated[str | None, Field(default=None, max_length=128, description="商品 SKU（展示字段）")]
 
     actual_uom_id: Annotated[int, Field(ge=1, description="实际包装单位 ID")]
     actual_uom_name: Annotated[str | None, Field(default=None, max_length=64, description="实际包装单位名称（展示字段）")]

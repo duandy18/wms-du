@@ -29,7 +29,7 @@ def _is_required_expiry_policy(v: object) -> bool:
 
 
 class ItemBase(_Base):
-    sku: Annotated[str, Field(min_length=1, max_length=64)]
+    sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
@@ -85,7 +85,7 @@ class ItemCreate(_Base):
         populate_by_name=True,
     )
 
-    sku: Annotated[str, Field(min_length=1, max_length=64)]
+    sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 

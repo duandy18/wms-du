@@ -49,12 +49,12 @@ def _row_out(*, b: MerchantCodeFskuBinding, f: Fsku, store: Store) -> MerchantCo
 )
 async def list_merchant_code_bindings(
     platform: str | None = Query(None, min_length=1, max_length=32),
-    store_code: str | None = Query(None, min_length=1, max_length=64),
+    store_code: str | None = Query(None, min_length=1, max_length=128),
     merchant_code: str | None = Query(None, min_length=1, max_length=128),
     # ✅ 兼容字段：简化模型下无历史，无 effective_to；该参数忽略
     current_only: bool = Query(True),
     fsku_id: int | None = Query(None, ge=1),
-    fsku_code: str | None = Query(None, min_length=1, max_length=64),
+    fsku_code: str | None = Query(None, min_length=1, max_length=128),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),

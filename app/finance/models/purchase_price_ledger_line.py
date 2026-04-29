@@ -44,7 +44,7 @@ class FinancePurchasePriceLedgerLine(Base):
     line_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
     item_id: Mapped[int] = mapped_column(sa.Integer, nullable=False)
-    item_sku: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    item_sku: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
     item_name: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     spec_text: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
 

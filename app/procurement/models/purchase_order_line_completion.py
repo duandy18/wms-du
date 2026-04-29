@@ -72,7 +72,7 @@ class PurchaseOrderLineCompletion(Base):
 
     item_id: Mapped[int] = mapped_column(Integer, nullable=False)
     item_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    item_sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    item_sku: Mapped[str | None] = mapped_column(String(128), nullable=True)
     spec_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     purchase_uom_id_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)

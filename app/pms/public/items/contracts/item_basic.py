@@ -29,7 +29,7 @@ class ItemBasic(_Base):
     """
 
     id: Annotated[int, Field(gt=0)]
-    sku: Annotated[str, Field(min_length=1, max_length=64)]
+    sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
