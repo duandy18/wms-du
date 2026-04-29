@@ -19,23 +19,6 @@ def get_detail(db: Session, fsku_id: int) -> FskuDetailOut | None:
     return to_detail(obj, comps)
 
 
-def _is_test_store(db: Session, store_id: int) -> bool:
-    v = db.execute(
-        text(
-            """
-            SELECT EXISTS (
-              SELECT 1
-                FROM platform_test_stores pts
-               WHERE pts.store_id = :sid
-                 AND pts.code = 'DEFAULT'
-            ) AS is_test
-            """
-        ),
-        {"sid": int(store_id)},
-    ).scalar()
-    return bool(v or False)
-
-
 def list_fskus(
     db: Session,
     *,
@@ -45,25 +28,9 @@ def list_fskus(
     limit: int,
     offset: int,
 ) -> FskuListOut:
-    is_test_store = False
-    if store_id is not None:
-        is_test_store = _is_test_store(db, int(store_id))
-
-    # --- WHERE 片段（同口径复用）---
+    # item_test_sets 已退役：FSKU 列表不再按测试商品集合过滤。
     where_sql = " WHERE 1=1 "
     params: dict[str, Any] = {"limit": int(limit), "offset": int(offset)}
-
-    # PROD 店铺：过滤测试 FSKU（命中 DEFAULT test set）
-    if store_id is not None and not is_test_store:
-        where_sql += """
-        AND NOT EXISTS (
-          SELECT 1
-            FROM fsku_components c2
-            JOIN item_test_set_items tsi ON tsi.item_id = c2.item_id
-            JOIN item_test_sets ts ON ts.id = tsi.set_id AND ts.code = 'DEFAULT'
-           WHERE c2.fsku_id = f.id
-        )
-        """
 
     if query:
         params["q"] = f"%{query.strip()}%"
@@ -73,7 +40,6 @@ def list_fskus(
         params["status"] = status
         where_sql += " AND f.status = :status "
 
-    # --- total（与 items 同口径）---
     count_sql = (
         """
         SELECT COUNT(*) FROM (
@@ -88,7 +54,6 @@ def list_fskus(
     )
     total = int(db.execute(text(count_sql), params).scalar() or 0)
 
-    # --- list ---
     list_sql = (
         """
         SELECT

@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.pms.items.models.item import Item
 from app.pms.items.services.item_presenter import ItemPresenter
 from app.pms.items.services.item_query_service import ItemQueryService
-from app.pms.items.services.item_test_set_service import ItemTestSetService
 from app.pms.items.services.item_write_service import ItemWriteService
 
 
@@ -16,7 +15,7 @@ class ItemService:
     """
     门面（Facade）：
 
-    - 内部按功能拆分到：Query / Write / Presenter / TestSet
+    - 内部按功能拆分到：Query / Write / Presenter
     - 主合同写入语义通过 ItemWriteService 统一收口
     - create_item_by_id 历史修复通道已退役，不再保留内部兼容入口
 
@@ -33,6 +32,9 @@ class ItemService:
     SKU coding：
     - 主合同 POST /items 不再自动生成 SKU
     - items.sku 必须由调用方显式输入，通常来自 SKU 编码页生成候选后人工确认
+
+    Test set：
+    - item_test_sets / item_test_set_items / is_test 已退役。
     """
 
     def __init__(self, db: Session) -> None:
@@ -40,41 +42,6 @@ class ItemService:
         self._query = ItemQueryService(db)
         self._write = ItemWriteService(db)
         self._present = ItemPresenter(db)
-        self._test_sets = ItemTestSetService(db)
-
-    def enable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
-        obj = self.db.get(Item, int(item_id))
-        if obj is None:
-            raise ValueError("Item not found")
-
-        try:
-            self._test_sets.enable(item_id=int(item_id), set_code=set_code)
-            self.db.commit()
-        except Exception as e:
-            self.db.rollback()
-            raise ValueError(f"DB error: {e}") from e
-
-        self.db.refresh(obj)
-        out = self._present.present_item(item=obj)
-        assert out is not None
-        return out
-
-    def disable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
-        obj = self.db.get(Item, int(item_id))
-        if obj is None:
-            raise ValueError("Item not found")
-
-        try:
-            self._test_sets.disable(item_id=int(item_id), set_code=set_code)
-            self.db.commit()
-        except Exception as e:
-            self.db.rollback()
-            raise ValueError(f"DB error: {e}") from e
-
-        self.db.refresh(obj)
-        out = self._present.present_item(item=obj)
-        assert out is not None
-        return out
 
     def create_item(
         self,

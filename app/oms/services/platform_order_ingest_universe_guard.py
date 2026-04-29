@@ -4,11 +4,7 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping, Optional, Sequence
 
-from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.problem import make_problem
-from app.pms.items.services.item_test_set_service import ItemTestSetService
 
 
 def _get_test_store_code() -> str | None:
@@ -55,55 +51,9 @@ async def enforce_no_test_items_in_non_test_store(
     source: str,
 ) -> None:
     """
-    宇宙边界兜底（不污染 resolver）：
+    item_test_sets 已退役。
 
-    当 TEST_STORE_ID 设置后：
-      - 非 TEST store：禁止出现 DEFAULT Test Set items
-      - TEST store：不在这里强制“必须全是测试商品”（那条更偏 dev/order-sim 入口约束）
+    历史上这里用于“测试商品不能进入非测试店铺”的商品级隔离。
+    现在只保留 platform_test_stores 作为测试店铺识别，不再按商品集合阻断。
     """
-    tid = _get_test_store_code()
-    if tid is None:
-        return
-
-    if is_test_store(store_code):
-        return
-
-    normalized_item_ids = sorted({int(x) for x in item_ids if x is not None})
-    if not normalized_item_ids:
-        return
-
-    ts = ItemTestSetService(session)
-    try:
-        await ts.assert_items_not_in_test_set(item_ids=normalized_item_ids, set_code="DEFAULT")
-    except ItemTestSetService.NotFound as e:
-        raise HTTPException(
-            status_code=500,
-            detail=make_problem(
-                status_code=500,
-                error_code="internal_error",
-                message=f"测试集合不可用：{str(e)}",
-                context={
-                    "store_code": str(store_code),
-                    "test_store_code": str(tid),
-                    "set_code": "DEFAULT",
-                    "source": source,
-                },
-            ),
-        ) from e
-    except ItemTestSetService.InTestSet as e:
-        raise HTTPException(
-            status_code=409,
-            detail=make_problem(
-                status_code=409,
-                error_code="conflict",
-                message=f"测试商品不能进入非测试店铺：{str(e)}",
-                context={
-                    "store_code": str(store_code),
-                    "test_store_code": str(tid),
-                    "store_id": int(store_id) if store_id is not None else None,
-                    "set_code": "DEFAULT",
-                    "test_item_ids": normalized_item_ids,
-                    "source": source,
-                },
-            ),
-        ) from e
+    return None
