@@ -83,11 +83,12 @@ def test_static_openapi_pms_item_write_contract_matches_runtime_boundary() -> No
 
 def test_runtime_openapi_pms_item_create_requires_manual_sku_and_update_keeps_sku_closed() -> None:
     """
-    SKU 编码终态合同：
+    SKU 编码治理合同：
 
     - ItemCreate 必须显式输入 sku；
     - ItemUpdate 仍然不开放 sku 变更；
-    - sku 的最终真相仍是 items.sku，不再由 POST /items 自动生成。
+    - items.sku 是当前主 SKU 投影；
+    - item_sku_codes 是商品编码治理真相表。
     """
     spec = app.openapi()
 
@@ -101,3 +102,25 @@ def test_runtime_openapi_pms_item_create_requires_manual_sku_and_update_keeps_sk
     assert "sku" in create_props
     assert "sku" in create_required
     assert "sku" not in update_props
+
+
+def test_runtime_openapi_exposes_item_sku_codes_owner_governance_routes() -> None:
+    """
+    SKU 多编码治理入口必须是独立 owner surface，
+    不能通过 PATCH /items/{id} 偷开 sku 变更。
+    """
+    spec = app.openapi()
+    paths = spec.get("paths") or {}
+
+    assert "/items/{item_id}/sku-codes" in paths
+    assert "get" in paths["/items/{item_id}/sku-codes"]
+    assert "post" in paths["/items/{item_id}/sku-codes"]
+
+    assert "/items/{item_id}/sku-codes/{code_id}/disable" in paths
+    assert "post" in paths["/items/{item_id}/sku-codes/{code_id}/disable"]
+
+    assert "/items/{item_id}/sku-codes/{code_id}/enable" in paths
+    assert "post" in paths["/items/{item_id}/sku-codes/{code_id}/enable"]
+
+    assert "/items/{item_id}/sku-codes/change-primary" in paths
+    assert "post" in paths["/items/{item_id}/sku-codes/change-primary"]

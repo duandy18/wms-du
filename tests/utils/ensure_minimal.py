@@ -132,6 +132,64 @@ async def ensure_item(
     )
 
 
+    sku_code = str(sku).strip().upper()
+    await session.execute(
+        text(
+            """
+            UPDATE item_sku_codes
+               SET code_type = 'ALIAS',
+                   is_primary = FALSE,
+                   is_active = TRUE,
+                   effective_to = COALESCE(effective_to, CURRENT_TIMESTAMP),
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE item_id = :id
+               AND is_primary = TRUE
+               AND code <> :sku
+            """
+        ),
+        {"id": int(id), "sku": sku_code},
+    )
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO item_sku_codes (
+              item_id,
+              code,
+              code_type,
+              is_primary,
+              is_active,
+              effective_from,
+              effective_to,
+              remark,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              :id,
+              :sku,
+              'PRIMARY',
+              TRUE,
+              TRUE,
+              CURRENT_TIMESTAMP,
+              NULL,
+              'tests ensure_item primary sku',
+              CURRENT_TIMESTAMP,
+              CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (code) DO UPDATE SET
+              code_type = 'PRIMARY',
+              is_primary = TRUE,
+              is_active = TRUE,
+              effective_to = NULL,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE item_sku_codes.item_id = EXCLUDED.item_id
+            """
+        ),
+        {"id": int(id), "sku": sku_code},
+    )
+
+
 def _norm_lot_key(code_raw: str) -> str:
     # tests baseline normalize: trim + lower (DB unique key is text; service uses upper, but tests just need stable key)
     return str(code_raw).strip().lower()

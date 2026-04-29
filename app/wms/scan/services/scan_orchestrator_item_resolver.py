@@ -72,13 +72,23 @@ async def resolve_item_id_from_barcode(
 
 
 async def resolve_item_id_from_sku(session: AsyncSession, sku: str) -> Optional[int]:
-    s = (sku or "").strip()
+    s = (sku or "").strip().upper()
     if not s:
         return None
 
     try:
         row = await session.execute(
-            SA("SELECT id FROM items WHERE sku = :s LIMIT 1"),
+            SA(
+                """
+                SELECT i.id
+                  FROM item_sku_codes c
+                  JOIN items i ON i.id = c.item_id
+                 WHERE lower(c.code) = lower(:s)
+                   AND c.is_active = TRUE
+                 ORDER BY c.is_primary DESC, c.id ASC
+                 LIMIT 1
+                """
+            ),
             {"s": s},
         )
         item_id = row.scalar_one_or_none()

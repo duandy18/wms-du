@@ -8,6 +8,18 @@ from sqlalchemy.orm import Session
 
 from app.pms.items.models.item import Item
 from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_sku_code import ItemSkuCode
+
+
+def _active_sku_code_match_exists(*, q_like: str):
+    return (
+        select(ItemSkuCode.id)
+        .where(ItemSkuCode.item_id == Item.id)
+        .where(ItemSkuCode.is_active.is_(True))
+        .where(func.lower(ItemSkuCode.code).like(q_like))
+        .limit(1)
+        .exists()
+    )
 
 
 def get_items(
@@ -42,6 +54,7 @@ def get_items(
 
         conds = [
             func.lower(Item.sku).like(q_like),
+            _active_sku_code_match_exists(q_like=q_like),
             func.lower(Item.name).like(q_like),
             cast(Item.id, String).like(q_like),
             func.lower(func.coalesce(primary_barcode_expr, "")).like(q_like),
@@ -80,7 +93,22 @@ def get_item_by_id(db: Session, id: int) -> Optional[Item]:
 
 
 def get_item_by_sku(db: Session, sku: str) -> Optional[Item]:
-    s = (sku or "").strip()
+    s = (sku or "").strip().upper()
     if not s:
         return None
-    return db.execute(select(Item).where(Item.sku == s)).scalar_one_or_none()
+
+    row = (
+        db.execute(
+            select(ItemSkuCode)
+            .where(func.lower(ItemSkuCode.code) == s.lower())
+            .where(ItemSkuCode.is_active.is_(True))
+            .order_by(ItemSkuCode.is_primary.desc(), ItemSkuCode.id.asc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        return db.get(Item, int(row.item_id))
+
+    return None

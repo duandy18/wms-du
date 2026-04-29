@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.pms.items.models.item import Item
 from app.pms.items.models.item_barcode import ItemBarcode
+from app.pms.items.models.item_sku_code import ItemSkuCode
 from app.pms.items.repos.item_repo import get_item_by_id as repo_get_item_by_id
 from app.pms.items.repos.item_repo import get_item_by_sku as repo_get_item_by_sku
 from app.pms.items.repos.item_repo import get_items as repo_get_items
@@ -158,7 +159,8 @@ class ItemReadService:
         """
         面向跨域报表/台账的最小异步搜索能力：
         - 匹配 item.name
-        - 匹配 item.sku
+        - 匹配 item.sku 当前主投影
+        - 匹配 active item_sku_codes
         - 匹配 active barcode
         返回 item_id 列表，不暴露 ORM。
         """
@@ -178,6 +180,16 @@ class ItemReadService:
             .limit(1)
             .exists()
         )
+        sku_code_exists = (
+            select(ItemSkuCode.id)
+            .where(
+                ItemSkuCode.item_id == Item.id,
+                ItemSkuCode.is_active.is_(True),
+                ItemSkuCode.code.ilike(like_kw),
+            )
+            .limit(1)
+            .exists()
+        )
 
         stmt = (
             select(Item.id)
@@ -185,6 +197,7 @@ class ItemReadService:
                 or_(
                     Item.name.ilike(like_kw),
                     Item.sku.ilike(like_kw),
+                    sku_code_exists,
                     barcode_exists,
                 )
             )

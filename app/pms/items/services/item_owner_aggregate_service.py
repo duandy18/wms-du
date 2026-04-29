@@ -46,6 +46,7 @@ from app.pms.items.repos.item_write_repo import (
     rollback as repo_rollback,
 )
 from app.pms.items.services.item_presenter import ItemPresenter
+from app.pms.items.services.item_sku_code_service import ItemSkuCodeService
 
 
 _ALLOWED_LOT_SOURCE_POLICIES = {"INTERNAL_ONLY", "SUPPLIER_ONLY"}
@@ -202,6 +203,12 @@ class ItemOwnerAggregateService:
         try:
             repo_flush(self.db)
 
+            ItemSkuCodeService(self.db).create_primary_code_in_current_tx(
+                item_id=int(obj.id),
+                code=str(item_fields["sku"]),
+                remark="created with item aggregate",
+            )
+
             uom_key_to_id, _keep_uom_ids = self._upsert_uoms(
                 item_id=int(obj.id),
                 payload_uoms=list(payload.uoms),
@@ -222,8 +229,10 @@ class ItemOwnerAggregateService:
             if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
                 raise ValueError("SKU duplicate") from e
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
-        except ValueError:
+        except ValueError as e:
             repo_rollback(self.db)
+            if str(e) == "SKU code duplicate":
+                raise ValueError("SKU duplicate") from e
             raise
 
         refresh_item(self.db, obj)

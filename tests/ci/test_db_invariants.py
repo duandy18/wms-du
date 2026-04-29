@@ -150,3 +150,89 @@ async def test_ledger_row_consistent_with_stock_slot(session: AsyncSession):
     assert int(r["l_item"]) == int(r["s_item"]) == int(item_id)
     assert int(r["l_lot"]) == int(r["s_lot"]) == int(lot_id)
     assert str(r["l_code"]) == str(r["s_code"]) == str(lot_code)
+
+
+@pytest.mark.asyncio
+async def test_item_sku_codes_primary_invariant(session: AsyncSession):
+    """
+    SKU 多编码治理 invariant：
+
+    - 每个 item 必须且只能有一个 PRIMARY code；
+    - PRIMARY code 必须 active；
+    - PRIMARY code 不允许 effective_to；
+    - PRIMARY code 必须等于 items.sku 当前主投影；
+    - code 统一按大写治理，不允许 lower(code) 维度重复。
+    """
+    await ensure_item(
+        session,
+        id=99902,
+        sku="SKU-99902",
+        name="Item-99902",
+        expiry_required=False,
+    )
+    await session.commit()
+
+    missing_or_duplicate_primary = await session.execute(
+        text(
+            """
+            SELECT i.id, COUNT(c.id) AS primary_count
+              FROM items i
+              LEFT JOIN item_sku_codes c
+                ON c.item_id = i.id
+               AND c.is_primary = TRUE
+             GROUP BY i.id
+            HAVING COUNT(c.id) <> 1
+            ORDER BY i.id
+            """
+        )
+    )
+    bad_primary_count = missing_or_duplicate_primary.mappings().all()
+    assert bad_primary_count == []
+
+    inactive_or_closed_primary = await session.execute(
+        text(
+            """
+            SELECT id, item_id, code, is_active, effective_to
+              FROM item_sku_codes
+             WHERE is_primary = TRUE
+               AND (
+                 is_active IS DISTINCT FROM TRUE
+                 OR effective_to IS NOT NULL
+                 OR code_type <> 'PRIMARY'
+               )
+             ORDER BY item_id, id
+            """
+        )
+    )
+    bad_primary_rows = inactive_or_closed_primary.mappings().all()
+    assert bad_primary_rows == []
+
+    projection_mismatch = await session.execute(
+        text(
+            """
+            SELECT i.id, i.sku, c.code
+              FROM items i
+              JOIN item_sku_codes c
+                ON c.item_id = i.id
+               AND c.is_primary = TRUE
+             WHERE c.code <> upper(trim(i.sku))
+             ORDER BY i.id
+            """
+        )
+    )
+    mismatches = projection_mismatch.mappings().all()
+    assert mismatches == []
+
+    case_duplicates = await session.execute(
+        text(
+            """
+            SELECT lower(code) AS norm_code, COUNT(*) AS cnt
+              FROM item_sku_codes
+             GROUP BY lower(code)
+            HAVING COUNT(*) > 1
+             ORDER BY lower(code)
+            """
+        )
+    )
+    duplicate_rows = case_duplicates.mappings().all()
+    assert duplicate_rows == []
