@@ -15,7 +15,6 @@ _FORBIDDEN_ITEM_WRITE_FIELDS = {
     "net_weight_kg",
     "uom",
     "unit",
-    "sku",
     "has_shelf_life",
 }
 
@@ -80,3 +79,25 @@ def test_static_openapi_pms_item_write_contract_matches_runtime_boundary() -> No
         assert _OWNER_OUTPUT_COMPAT_FIELDS <= item_out_props, (
             f"{path}:ItemOut must keep owner compat output fields during this governance phase"
         )
+
+
+def test_runtime_openapi_pms_item_create_requires_manual_sku_and_update_keeps_sku_closed() -> None:
+    """
+    SKU 编码终态合同：
+
+    - ItemCreate 必须显式输入 sku；
+    - ItemUpdate 仍然不开放 sku 变更；
+    - sku 的最终真相仍是 items.sku，不再由 POST /items 自动生成。
+    """
+    spec = app.openapi()
+
+    create_schema = spec["components"]["schemas"]["ItemCreate"]
+    update_schema = spec["components"]["schemas"]["ItemUpdate"]
+
+    create_props = create_schema.get("properties") or {}
+    update_props = update_schema.get("properties") or {}
+    create_required = set(create_schema.get("required") or [])
+
+    assert "sku" in create_props
+    assert "sku" in create_required
+    assert "sku" not in update_props

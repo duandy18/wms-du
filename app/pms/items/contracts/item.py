@@ -28,10 +28,6 @@ def _is_required_expiry_policy(v: object) -> bool:
     return str(v or "").upper() == "REQUIRED"
 
 
-class NextSkuOut(_Base):
-    sku: str
-
-
 class ItemBase(_Base):
     sku: Annotated[str, Field(min_length=1, max_length=64)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
@@ -75,8 +71,8 @@ class ItemBase(_Base):
 
 class ItemCreate(_Base):
     """
-    Create Item（统一由后端生成 SKU）：
-    - 不接受 sku 输入
+    Create Item（SKU 由调用方显式输入）：
+    - 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku
     - 不接受 barcode 输入；主条码请走 /item-barcodes
     - 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）
 
@@ -89,6 +85,7 @@ class ItemCreate(_Base):
         populate_by_name=True,
     )
 
+    sku: Annotated[str, Field(min_length=1, max_length=64)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
@@ -107,6 +104,7 @@ class ItemCreate(_Base):
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
 
     @field_validator(
+        "sku",
         "name",
         "spec",
         "brand",
@@ -189,7 +187,6 @@ class ItemOut(ItemBase):
 
 
 __all__ = [
-    "NextSkuOut",
     "ItemBase",
     "ItemCreate",
     "ItemUpdate",

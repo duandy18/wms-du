@@ -1,6 +1,7 @@
 # app/pms/items/services/item_write_service.py
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -16,12 +17,12 @@ from app.pms.items.repos.item_write_repo import (
     refresh_item,
     rollback as repo_rollback,
 )
-from app.pms.items.services.item_sku import next_sku
 
 
 _ALLOWED_LOT_SOURCE_POLICIES = {"INTERNAL_ONLY", "SUPPLIER_ONLY"}
 _ALLOWED_EXPIRY_POLICIES = {"NONE", "REQUIRED"}
 _ALLOWED_SHELF_LIFE_UNITS = {"DAY", "WEEK", "MONTH", "YEAR"}
+_SKU_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,63}$")
 
 
 def _norm_policy_str(v: Optional[str]) -> Optional[str]:
@@ -36,6 +37,17 @@ def _norm_text_or_none(v: Optional[str]) -> Optional[str]:
         return None
     s = str(v).strip()
     return s or None
+
+
+def _validate_sku(v: str) -> str:
+    s = str(v or "").strip().upper()
+    if not s:
+        raise ValueError("sku 不能为空")
+    if len(s) > 64:
+        raise ValueError("sku 长度不能超过 64")
+    if not _SKU_PATTERN.fullmatch(s):
+        raise ValueError("invalid sku")
+    return s
 
 
 def _norm_shelf_life_unit(v: Optional[str]) -> Optional[str]:
@@ -117,20 +129,18 @@ class ItemWriteService:
     - 包装、单位、净重、条码属于商品聚合的其他真相源
     - owner 聚合写接口应在更高一层 orchestrate item + item_uoms + item_barcodes
 
-    兼容保留：
-    - 主合同 `POST /items` 创建 item 时，仍自动补最小 base item_uom
-    - 这是当前 items 主合同与既有测试/调用链约定的一部分
+    主合同语义：
+    - POST /items 必须显式传 sku
+    - 创建 item 时仍自动补最小 base item_uom
     """
 
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def next_sku(self) -> str:
-        return next_sku(self.db)
-
     def create_item(
         self,
         *,
+        sku: str,
         name: str,
         spec: Optional[str] = None,
         brand: Optional[str] = None,
@@ -144,6 +154,8 @@ class ItemWriteService:
         derivation_allowed: Optional[bool] = None,
         uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
+        sku_val = _validate_sku(sku)
+
         name_val = _norm_text_or_none(name)
         if not name_val:
             raise ValueError("name is required")
@@ -151,8 +163,6 @@ class ItemWriteService:
         spec_val = _norm_text_or_none(spec)
         brand_val = _norm_text_or_none(brand)
         category_val = _norm_text_or_none(category)
-
-        sku_val = self.next_sku()
 
         lot_policy = _norm_policy_str(lot_source_policy) or "SUPPLIER_ONLY"
         if lot_policy not in _ALLOWED_LOT_SOURCE_POLICIES:

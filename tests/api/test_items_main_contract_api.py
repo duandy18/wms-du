@@ -10,6 +10,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def _sku(prefix: str = "UT-SKU") -> str:
+    return f"{prefix}-{uuid4().hex[:8].upper()}"
+
+
 async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     r = await client.post("/users/login", json={"username": "admin", "password": "admin123"})
     assert r.status_code == 200, r.text
@@ -23,6 +27,7 @@ async def _create_item(
     **overrides: Any,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
+        "sku": _sku(),
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "spec": "SPEC-A",
         "brand": "BRAND-A",
@@ -45,10 +50,82 @@ async def _create_item(
 
 
 @pytest.mark.asyncio
+async def test_items_create_requires_manual_sku(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    payload = {
+        "name": f"UT-ITEM-{uuid4().hex[:8]}",
+        "spec": "SPEC-A",
+        "brand": "BRAND-A",
+        "category": "CATEGORY-A",
+        "enabled": True,
+        "supplier_id": 1,
+        "lot_source_policy": "SUPPLIER_ONLY",
+        "expiry_policy": "NONE",
+        "derivation_allowed": True,
+        "uom_governance_enabled": False,
+    }
+
+    r = await client.post("/items", json=payload, headers=headers)
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_items_create_persists_manual_sku_and_normalizes_uppercase(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+    sku = _sku("manual-sku")
+
+    data = await _create_item(
+        client,
+        headers,
+        sku=sku.lower(),
+        expiry_policy="NONE",
+        shelf_life_value=None,
+        shelf_life_unit=None,
+    )
+
+    assert data["sku"] == sku.upper()
+
+
+@pytest.mark.asyncio
+async def test_items_create_rejects_duplicate_manual_sku(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+    sku = _sku("DUP-SKU")
+
+    first = await _create_item(
+        client,
+        headers,
+        sku=sku,
+        expiry_policy="NONE",
+        shelf_life_value=None,
+        shelf_life_unit=None,
+    )
+    assert first["sku"] == sku
+
+    payload = {
+        "sku": sku,
+        "name": f"UT-ITEM-{uuid4().hex[:8]}",
+        "spec": "SPEC-B",
+        "brand": "BRAND-B",
+        "category": "CATEGORY-B",
+        "enabled": True,
+        "supplier_id": 1,
+        "lot_source_policy": "SUPPLIER_ONLY",
+        "expiry_policy": "NONE",
+        "derivation_allowed": True,
+        "uom_governance_enabled": False,
+    }
+
+    r = await client.post("/items", json=payload, headers=headers)
+    assert r.status_code == 409, r.text
+
+
+@pytest.mark.asyncio
 async def test_items_create_rejects_barcode_field(client: httpx.AsyncClient) -> None:
     headers = await _login_admin_headers(client)
 
     payload = {
+        "sku": _sku(),
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "barcode": "6900000000012",
     }
@@ -61,6 +138,7 @@ async def test_items_create_rejects_has_shelf_life_field(client: httpx.AsyncClie
     headers = await _login_admin_headers(client)
 
     payload = {
+        "sku": _sku(),
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "has_shelf_life": True,
     }
@@ -73,6 +151,7 @@ async def test_items_create_rejects_weight_kg_field(client: httpx.AsyncClient) -
     headers = await _login_admin_headers(client)
 
     payload = {
+        "sku": _sku(),
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "weight_kg": 1.25,
     }
@@ -102,6 +181,7 @@ async def test_items_create_rejects_zero_shelf_life_value(client: httpx.AsyncCli
     headers = await _login_admin_headers(client)
 
     payload = {
+        "sku": _sku(),
         "name": f"UT-ITEM-{uuid4().hex[:8]}",
         "expiry_policy": "REQUIRED",
         "shelf_life_value": 0,

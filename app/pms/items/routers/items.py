@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.pms.items.contracts.item import ItemCreate, ItemOut, ItemUpdate, NextSkuOut
+from app.pms.items.contracts.item import ItemCreate, ItemOut, ItemUpdate
 from app.pms.items.services.item_service import ItemService
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -24,11 +24,6 @@ def _normalize_policy(v: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
-@router.post("/sku/next", response_model=NextSkuOut)
-def next_sku(item_service: ItemService = Depends(get_item_service)):
-    return NextSkuOut(sku=item_service.next_sku())
-
-
 @router.post("", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
 def create_item(
     item_in: ItemCreate,
@@ -36,6 +31,7 @@ def create_item(
 ):
     try:
         return item_service.create_item(
+            sku=item_in.sku,
             name=item_in.name,
             spec=item_in.spec,
             brand=item_in.brand,

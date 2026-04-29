@@ -29,6 +29,10 @@ class ItemService:
     Phase M-6：
     - items.weight_kg 不再作为写入真相源
     - PMS 主合同的净重读写转移到 base item_uom.net_weight_kg
+
+    SKU coding：
+    - 主合同 POST /items 不再自动生成 SKU
+    - items.sku 必须由调用方显式输入，通常来自 SKU 编码页生成候选后人工确认
     """
 
     def __init__(self, db: Session) -> None:
@@ -37,9 +41,6 @@ class ItemService:
         self._write = ItemWriteService(db)
         self._present = ItemPresenter(db)
         self._test_sets = ItemTestSetService(db)
-
-    def next_sku(self) -> str:
-        return self._write.next_sku()
 
     def enable_item_test_flag(self, *, item_id: int, set_code: str = "DEFAULT") -> Item:
         obj = self.db.get(Item, int(item_id))
@@ -78,6 +79,7 @@ class ItemService:
     def create_item(
         self,
         *,
+        sku: str,
         name: str,
         spec: Optional[str] = None,
         brand: Optional[str] = None,
@@ -92,6 +94,7 @@ class ItemService:
         uom_governance_enabled: Optional[bool] = None,
     ) -> Item:
         obj = self._write.create_item(
+            sku=sku,
             name=name,
             spec=spec,
             brand=brand,
