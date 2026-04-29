@@ -229,6 +229,28 @@ def disable_pms_category(category_id: int, db: Session = Depends(get_db)):
     return obj
 
 
+@router.post("/pms/categories/{category_id}/lock", response_model=PmsCategoryOut)
+def lock_pms_category(category_id: int, db: Session = Depends(get_db)):
+    obj = db.get(PmsBusinessCategory, int(category_id))
+    if obj is None:
+        raise _not_found("内部分类不存在")
+    obj.is_locked = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/categories/{category_id}/unlock", response_model=PmsCategoryOut)
+def unlock_pms_category(category_id: int, db: Session = Depends(get_db)):
+    obj = db.get(PmsBusinessCategory, int(category_id))
+    if obj is None:
+        raise _not_found("内部分类不存在")
+    obj.is_locked = False
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @router.get("/pms/item-attribute-defs", response_model=ListOut[ItemAttributeDefOut])
 def list_item_attribute_defs(
     product_kind: str | None = Query(None),

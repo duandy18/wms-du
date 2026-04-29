@@ -109,6 +109,32 @@ async def test_pms_brand_and_category_owner_contract(client: httpx.AsyncClient) 
     assert r_category_patch.json()["path_code"] == f"CATX{sfx}"
 
 
+    r_category_lock = await client.post(f"/pms/categories/{category['id']}/lock", headers=headers)
+    assert r_category_lock.status_code == 200, r_category_lock.text
+    assert r_category_lock.json()["is_locked"] is True
+
+    r_category_locked_patch = await client.patch(
+        f"/pms/categories/{category['id']}",
+        json={"category_code": f"CATLOCK{sfx}"},
+        headers=headers,
+    )
+    assert r_category_locked_patch.status_code == 409, r_category_locked_patch.text
+    assert "category_code" in r_category_locked_patch.text
+
+    r_category_unlock = await client.post(f"/pms/categories/{category['id']}/unlock", headers=headers)
+    assert r_category_unlock.status_code == 200, r_category_unlock.text
+    assert r_category_unlock.json()["is_locked"] is False
+
+    r_category_unlock_patch = await client.patch(
+        f"/pms/categories/{category['id']}",
+        json={"category_code": f"CATU{sfx}"},
+        headers=headers,
+    )
+    assert r_category_unlock_patch.status_code == 200, r_category_unlock_patch.text
+    assert r_category_unlock_patch.json()["category_code"] == f"CATU{sfx}"
+    assert r_category_unlock_patch.json()["path_code"] == f"CATU{sfx}"
+
+
 @pytest.mark.asyncio
 async def test_pms_attribute_template_options_and_item_values_contract(client: httpx.AsyncClient) -> None:
     headers = await _headers(client)
