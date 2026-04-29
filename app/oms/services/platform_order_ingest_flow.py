@@ -175,7 +175,7 @@ class PlatformOrderIngestFlow:
 
         item_ids = sorted(item_qty_map.keys())
 
-        # ✅ 宇宙边界兜底：非 TEST 商铺禁止出现测试商品（DEFAULT Test Set）
+        # ✅ 宇宙边界兜底：仅保留测试店铺识别，不再做商品集合隔离
         await enforce_no_test_items_in_non_test_store(
             session,
             store_code=sid,
@@ -273,7 +273,7 @@ class PlatformOrderIngestFlow:
 
         store_id_out = int(store_id) if store_id is not None else None
 
-        # ✅ 宇宙边界兜底：tail/replay/confirm-create 也不能把测试商品写进非 TEST 商铺
+        # ✅ 宇宙边界兜底：仅保留测试店铺识别，不再做商品集合隔离
         item_ids = extract_item_ids_from_items_payload(items_payload)
         await enforce_no_test_items_in_non_test_store(
             session,

@@ -203,7 +203,7 @@ def register(router: APIRouter) -> None:
             )
 
         else:
-            # platform_test_stores 仅用于测试店铺识别；商品测试集合已退役
+            # platform_test_stores 仅用于测试店铺识别；商品集合隔离已退役
             await session.execute(
                 text(
                     """

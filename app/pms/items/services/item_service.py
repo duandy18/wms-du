@@ -33,8 +33,6 @@ class ItemService:
     - 主合同 POST /items 不再自动生成 SKU
     - items.sku 必须由调用方显式输入，通常来自 SKU 编码页生成候选后人工确认
 
-    Test set：
-    - item_test_sets / item_test_set_items / is_test 已退役。
     """
 
     def __init__(self, db: Session) -> None:

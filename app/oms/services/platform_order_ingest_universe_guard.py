@@ -51,9 +51,9 @@ async def enforce_no_test_items_in_non_test_store(
     source: str,
 ) -> None:
     """
-    item_test_sets 已退役。
+    商品集合隔离机制已退役。
 
-    历史上这里用于“测试商品不能进入非测试店铺”的商品级隔离。
+    历史上这里用于商品级隔离。
     现在只保留 platform_test_stores 作为测试店铺识别，不再按商品集合阻断。
     """
     return None
