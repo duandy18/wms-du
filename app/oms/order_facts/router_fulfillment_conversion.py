@@ -18,10 +18,15 @@ from app.oms.order_facts.services.fulfillment_conversion_service import (
 router = APIRouter(tags=["oms-fulfillment-order-conversion"])
 
 
+def _route_name(platform: str, suffix: str) -> str:
+    return f"{platform}_{suffix}"
+
+
 def _register_platform_routes(platform: str) -> None:
     @router.post(
         f"/{platform}/fulfillment-order-conversion/convert",
         response_model=FulfillmentOrderConversionOut,
+        name=_route_name(platform, "convert_platform_fulfillment_order"),
     )
     async def convert_platform_fulfillment_order(
         payload: FulfillmentOrderConversionIn = Body(...),

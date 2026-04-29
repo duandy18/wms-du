@@ -34,10 +34,15 @@ from app.oms.order_facts.services.platform_order_mirror_service import (
 router = APIRouter(tags=["oms-platform-order-mirrors"])
 
 
+def _route_name(platform: str, suffix: str) -> str:
+    return f"{platform}_{suffix}"
+
+
 def _register_platform_routes(platform: str) -> None:
     @router.post(
         f"/{platform}/platform-order-mirrors/import",
         response_model=PlatformOrderMirrorEnvelopeOut,
+        name=_route_name(platform, "import_platform_order_mirror"),
     )
     async def import_platform_order_mirror(
         payload: PlatformOrderMirrorImportIn = Body(...),
@@ -57,6 +62,7 @@ def _register_platform_routes(platform: str) -> None:
     @router.post(
         f"/{platform}/platform-order-mirrors/import-from-collector",
         response_model=ImportPlatformOrderMirrorFromCollectorOut,
+        name=_route_name(platform, "import_platform_order_mirror_from_collector_route"),
     )
     async def import_platform_order_mirror_from_collector_route(
         payload: ImportPlatformOrderMirrorFromCollectorIn = Body(...),
@@ -88,6 +94,7 @@ def _register_platform_routes(platform: str) -> None:
     @router.post(
         f"/{platform}/platform-order-mirrors/sync-from-collector",
         response_model=SyncPlatformOrderMirrorsFromCollectorOut,
+        name=_route_name(platform, "sync_platform_order_mirrors_from_collector_route"),
     )
     async def sync_platform_order_mirrors_from_collector_route(
         payload: SyncPlatformOrderMirrorsFromCollectorIn = Body(...),
@@ -112,6 +119,7 @@ def _register_platform_routes(platform: str) -> None:
     @router.get(
         f"/{platform}/platform-order-mirrors",
         response_model=PlatformOrderMirrorListOut,
+        name=_route_name(platform, "list_platform_order_mirror_rows"),
     )
     async def list_platform_order_mirror_rows(
         limit: int = Query(200, ge=1, le=1000),
@@ -129,6 +137,7 @@ def _register_platform_routes(platform: str) -> None:
     @router.get(
         f"/{platform}/platform-order-mirrors/{{mirror_id}}",
         response_model=PlatformOrderMirrorEnvelopeOut,
+        name=_route_name(platform, "get_platform_order_mirror_row"),
     )
     async def get_platform_order_mirror_row(
         mirror_id: int = Path(..., ge=1),
