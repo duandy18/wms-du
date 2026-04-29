@@ -263,3 +263,116 @@ async def test_sku_coding_supply_generate_contract(client: httpx.AsyncClient) ->
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["sku"] == f"SKU-{brand_code}-{category_code}-{model_code}-2L-{color_code}"
+
+
+@pytest.mark.asyncio
+async def test_sku_coding_dictionary_update_and_toggle_contract(client: httpx.AsyncClient) -> None:
+    headers = await _headers(client)
+    sfx = _suffix()
+
+    brand = await _create_brand(client, headers, name_cn=f"品牌编辑-UT-{sfx}", code=f"BR{sfx}")
+
+    r_brand_patch = await client.patch(
+        f"/pms/sku-coding/brands/{brand['id']}",
+        json={
+            "name_cn": f"品牌编辑后-UT-{sfx}",
+            "code": f"BRX{sfx}",
+            "sort_order": 77,
+            "remark": "updated brand",
+        },
+        headers=headers,
+    )
+    assert r_brand_patch.status_code == 200, r_brand_patch.text
+    brand_updated = r_brand_patch.json()
+    assert brand_updated["name_cn"] == f"品牌编辑后-UT-{sfx}"
+    assert brand_updated["code"] == f"BRX{sfx}"
+    assert brand_updated["sort_order"] == 77
+    assert brand_updated["remark"] == "updated brand"
+
+    r_brand_disable = await client.post(f"/pms/sku-coding/brands/{brand['id']}/disable", headers=headers)
+    assert r_brand_disable.status_code == 200, r_brand_disable.text
+    assert r_brand_disable.json()["is_active"] is False
+
+    r_brand_enable = await client.post(f"/pms/sku-coding/brands/{brand['id']}/enable", headers=headers)
+    assert r_brand_enable.status_code == 200, r_brand_enable.text
+    assert r_brand_enable.json()["is_active"] is True
+
+    category = await _create_category(
+        client,
+        headers,
+        parent_id=None,
+        level=1,
+        product_kind="FOOD",
+        category_name=f"分类编辑-UT-{sfx}",
+        category_code=f"CAT{sfx}",
+        is_leaf=False,
+    )
+
+    r_category_patch = await client.patch(
+        f"/pms/sku-coding/business-categories/{category['id']}",
+        json={
+            "category_name": f"分类编辑后-UT-{sfx}",
+            "category_code": f"CATX{sfx}",
+            "is_leaf": True,
+            "sort_order": 88,
+            "remark": "updated category",
+        },
+        headers=headers,
+    )
+    assert r_category_patch.status_code == 200, r_category_patch.text
+    category_updated = r_category_patch.json()
+    assert category_updated["category_name"] == f"分类编辑后-UT-{sfx}"
+    assert category_updated["category_code"] == f"CATX{sfx}"
+    assert category_updated["path_code"] == f"CATX{sfx}"
+    assert category_updated["is_leaf"] is True
+    assert category_updated["sort_order"] == 88
+    assert category_updated["remark"] == "updated category"
+
+    r_category_disable = await client.post(
+        f"/pms/sku-coding/business-categories/{category['id']}/disable",
+        headers=headers,
+    )
+    assert r_category_disable.status_code == 200, r_category_disable.text
+    assert r_category_disable.json()["is_active"] is False
+
+    r_category_enable = await client.post(
+        f"/pms/sku-coding/business-categories/{category['id']}/enable",
+        headers=headers,
+    )
+    assert r_category_enable.status_code == 200, r_category_enable.text
+    assert r_category_enable.json()["is_active"] is True
+
+    flavor_gid = await _group_id(client, headers, product_kind="FOOD", group_code="FLAVOR")
+    term = await _create_term(
+        client,
+        headers,
+        group_id=flavor_gid,
+        name_cn=f"口味编辑-UT-{sfx}",
+        code=f"FLV{sfx}",
+        sort_order=10,
+    )
+
+    r_term_patch = await client.patch(
+        f"/pms/sku-coding/terms/{term['id']}",
+        json={
+            "name_cn": f"口味编辑后-UT-{sfx}",
+            "code": f"FLVX{sfx}",
+            "sort_order": 99,
+            "remark": "updated term",
+        },
+        headers=headers,
+    )
+    assert r_term_patch.status_code == 200, r_term_patch.text
+    term_updated = r_term_patch.json()
+    assert term_updated["name_cn"] == f"口味编辑后-UT-{sfx}"
+    assert term_updated["code"] == f"FLVX{sfx}"
+    assert term_updated["sort_order"] == 99
+    assert term_updated["remark"] == "updated term"
+
+    r_term_disable = await client.post(f"/pms/sku-coding/terms/{term['id']}/disable", headers=headers)
+    assert r_term_disable.status_code == 200, r_term_disable.text
+    assert r_term_disable.json()["is_active"] is False
+
+    r_term_enable = await client.post(f"/pms/sku-coding/terms/{term['id']}/enable", headers=headers)
+    assert r_term_enable.status_code == 200, r_term_enable.text
+    assert r_term_enable.json()["is_active"] is True

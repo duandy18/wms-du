@@ -183,6 +183,28 @@ def update_business_category(category_id: int, payload: SkuBusinessCategoryUpdat
     return obj
 
 
+@router.post("/business-categories/{category_id}/enable", response_model=SkuBusinessCategoryOut)
+def enable_business_category(category_id: int, db: Session = Depends(get_db)):
+    obj = db.get(SkuBusinessCategory, int(category_id))
+    if obj is None:
+        raise _not_found("内部分类不存在")
+    obj.is_active = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/business-categories/{category_id}/disable", response_model=SkuBusinessCategoryOut)
+def disable_business_category(category_id: int, db: Session = Depends(get_db)):
+    obj = db.get(SkuBusinessCategory, int(category_id))
+    if obj is None:
+        raise _not_found("内部分类不存在")
+    obj.is_active = False
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @router.get("/term-groups", response_model=ListOut[SkuCodeTermGroupOut])
 def list_term_groups(
     product_kind: str | None = Query(None),
