@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -14,10 +15,18 @@ async def _login_admin_headers(client: httpx.AsyncClient) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_payload() -> Dict[str, Any]:
+def _suffix() -> str:
+    return uuid4().hex[:8].upper()
+
+
+def _create_payload(*, suffix: str | None = None, sku: str | None = None) -> Dict[str, Any]:
+    sfx = suffix or _suffix()
+    sku_value = sku or f"UT-AGG-SKU-{sfx}"
+
     return {
         "item": {
-            "name": "UT-AGG-ITEM",
+            "sku": sku_value,
+            "name": f"UT-AGG-ITEM-{sfx}",
             "spec": "500g",
             "brand": "BRAND-A",
             "category": "CATEGORY-A",
@@ -59,7 +68,7 @@ def _create_payload() -> Dict[str, Any]:
         "barcodes": [
             {
                 "id": None,
-                "barcode": "UT-AGG-ITEM-BC-BASE",
+                "barcode": f"UT-AGG-BC-BASE-{sfx}",
                 "symbology": "CUSTOM",
                 "active": True,
                 "is_primary": True,
@@ -67,7 +76,7 @@ def _create_payload() -> Dict[str, Any]:
             },
             {
                 "id": None,
-                "barcode": "UT-AGG-ITEM-BC-BOX",
+                "barcode": f"UT-AGG-BC-BOX-{sfx}",
                 "symbology": "CUSTOM",
                 "active": True,
                 "is_primary": False,
@@ -80,8 +89,9 @@ def _create_payload() -> Dict[str, Any]:
 @pytest.mark.asyncio
 async def test_create_and_get_item_aggregate(client: httpx.AsyncClient) -> None:
     headers = await _login_admin_headers(client)
+    suffix = _suffix()
 
-    payload = _create_payload()
+    payload = _create_payload(suffix=suffix)
 
     r = await client.post("/items/aggregate", json=payload, headers=headers)
     assert r.status_code == 201, r.text
@@ -93,7 +103,8 @@ async def test_create_and_get_item_aggregate(client: httpx.AsyncClient) -> None:
     uoms = body["uoms"]
     barcodes = body["barcodes"]
 
-    assert item["name"] == "UT-AGG-ITEM"
+    assert item["sku"] == f"UT-AGG-SKU-{suffix}"
+    assert item["name"] == f"UT-AGG-ITEM-{suffix}"
     assert item["brand"] == "BRAND-A"
     assert item["category"] == "CATEGORY-A"
     assert item["supplier_id"] == 1
@@ -114,7 +125,7 @@ async def test_create_and_get_item_aggregate(client: httpx.AsyncClient) -> None:
     assert isinstance(barcodes, list)
     assert len(barcodes) == 2
     primary = next(x for x in barcodes if x["is_primary"] is True)
-    assert primary["barcode"] == "UT-AGG-ITEM-BC-BASE"
+    assert primary["barcode"] == f"UT-AGG-BC-BASE-{suffix}"
     assert int(primary["item_uom_id"]) == int(base["id"])
 
     item_id = int(item["id"])
@@ -124,9 +135,33 @@ async def test_create_and_get_item_aggregate(client: httpx.AsyncClient) -> None:
     got = r_get.json()
 
     assert got["item"]["id"] == item_id
+    assert got["item"]["sku"] == f"UT-AGG-SKU-{suffix}"
     assert len(got["uoms"]) == 2
     assert len(got["barcodes"]) == 2
 
+
+@pytest.mark.asyncio
+async def test_create_item_aggregate_requires_manual_sku(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+
+    payload = _create_payload()
+    del payload["item"]["sku"]
+
+    r = await client.post("/items/aggregate", json=payload, headers=headers)
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_create_item_aggregate_rejects_duplicate_manual_sku(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+    suffix = _suffix()
+    sku = f"UT-AGG-DUP-{suffix}"
+
+    r1 = await client.post("/items/aggregate", json=_create_payload(suffix=f"{suffix}A", sku=sku), headers=headers)
+    assert r1.status_code == 201, r1.text
+
+    r2 = await client.post("/items/aggregate", json=_create_payload(suffix=f"{suffix}B", sku=sku), headers=headers)
+    assert r2.status_code == 409, r2.text
 
 
 @pytest.mark.asyncio
@@ -134,19 +169,22 @@ async def test_replace_item_aggregate_can_drop_purchase_uom_and_purchase_barcode
     client: httpx.AsyncClient,
 ) -> None:
     headers = await _login_admin_headers(client)
+    suffix = _suffix()
 
-    create_payload = _create_payload()
+    create_payload = _create_payload(suffix=suffix)
     r_create = await client.post("/items/aggregate", json=create_payload, headers=headers)
     assert r_create.status_code == 201, r_create.text
     created = r_create.json()
 
     item_id = int(created["item"]["id"])
+    item_sku = str(created["item"]["sku"])
     base_uom = next(x for x in created["uoms"] if x["is_base"] is True)
     primary_barcode = next(x for x in created["barcodes"] if x["is_primary"] is True)
 
     replace_payload = {
         "item": {
-            "name": "UT-AGG-ITEM-V2",
+            "sku": item_sku,
+            "name": f"UT-AGG-ITEM-V2-{suffix}",
             "spec": "750g",
             "brand": "BRAND-B",
             "category": "CATEGORY-B",
@@ -176,7 +214,7 @@ async def test_replace_item_aggregate_can_drop_purchase_uom_and_purchase_barcode
         "barcodes": [
             {
                 "id": int(primary_barcode["id"]),
-                "barcode": "UT-AGG-ITEM-BC-BASE-V2",
+                "barcode": f"UT-AGG-BC-BASE-V2-{suffix}",
                 "symbology": "CUSTOM",
                 "active": True,
                 "is_primary": True,
@@ -189,7 +227,8 @@ async def test_replace_item_aggregate_can_drop_purchase_uom_and_purchase_barcode
     assert r_put.status_code == 200, r_put.text
 
     body = r_put.json()
-    assert body["item"]["name"] == "UT-AGG-ITEM-V2"
+    assert body["item"]["sku"] == item_sku
+    assert body["item"]["name"] == f"UT-AGG-ITEM-V2-{suffix}"
     assert body["item"]["brand"] == "BRAND-B"
     assert body["item"]["category"] == "CATEGORY-B"
     assert body["item"]["derivation_allowed"] is False
@@ -201,7 +240,7 @@ async def test_replace_item_aggregate_can_drop_purchase_uom_and_purchase_barcode
 
     assert len(body["barcodes"]) == 1
     only_barcode = body["barcodes"][0]
-    assert only_barcode["barcode"] == "UT-AGG-ITEM-BC-BASE-V2"
+    assert only_barcode["barcode"] == f"UT-AGG-BC-BASE-V2-{suffix}"
     assert only_barcode["is_primary"] is True
     assert int(only_barcode["item_uom_id"]) == int(only_uom["id"])
 
@@ -209,6 +248,25 @@ async def test_replace_item_aggregate_can_drop_purchase_uom_and_purchase_barcode
     assert r_get.status_code == 200, r_get.text
     got = r_get.json()
 
-    assert got["item"]["name"] == "UT-AGG-ITEM-V2"
+    assert got["item"]["sku"] == item_sku
+    assert got["item"]["name"] == f"UT-AGG-ITEM-V2-{suffix}"
     assert len(got["uoms"]) == 1
     assert len(got["barcodes"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_item_aggregate_rejects_sku_change(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+    suffix = _suffix()
+
+    create_payload = _create_payload(suffix=suffix)
+    r_create = await client.post("/items/aggregate", json=create_payload, headers=headers)
+    assert r_create.status_code == 201, r_create.text
+    created = r_create.json()
+
+    item_id = int(created["item"]["id"])
+    payload = _create_payload(suffix=f"{suffix}X", sku=f"UT-AGG-CHANGED-{suffix}")
+
+    r_put = await client.put(f"/items/{item_id}/aggregate", json=payload, headers=headers)
+    assert r_put.status_code == 400, r_put.text
+    assert "sku cannot be changed" in r_put.text

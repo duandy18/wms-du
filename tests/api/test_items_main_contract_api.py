@@ -71,6 +71,23 @@ async def test_items_create_requires_manual_sku(client: httpx.AsyncClient) -> No
 
 
 @pytest.mark.asyncio
+async def test_items_create_accepts_128_char_manual_sku(client: httpx.AsyncClient) -> None:
+    headers = await _login_admin_headers(client)
+    sku = "S" + ("A" * 127)
+
+    data = await _create_item(
+        client,
+        headers,
+        sku=sku,
+        expiry_policy="NONE",
+        shelf_life_value=None,
+        shelf_life_unit=None,
+    )
+
+    assert data["sku"] == sku
+
+
+@pytest.mark.asyncio
 async def test_items_create_persists_manual_sku_and_normalizes_uppercase(client: httpx.AsyncClient) -> None:
     headers = await _login_admin_headers(client)
     sku = _sku("manual-sku")

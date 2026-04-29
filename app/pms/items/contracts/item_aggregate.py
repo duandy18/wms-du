@@ -26,6 +26,7 @@ def _norm_text(v: object) -> object:
 
 
 class AggregateItemInput(_Base):
+    sku: Annotated[str, Field(min_length=1, max_length=128)]
     name: Annotated[str, Field(min_length=1, max_length=128)]
     spec: Annotated[str | None, Field(default=None, max_length=128)] = None
 
@@ -44,6 +45,7 @@ class AggregateItemInput(_Base):
     shelf_life_unit: Annotated[ShelfLifeUnit | None, Field(default=None)] = None
 
     @field_validator(
+        "sku",
         "name",
         "spec",
         "brand",

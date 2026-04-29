@@ -22,7 +22,7 @@ from app.pms.items.repos.item_write_repo import (
 _ALLOWED_LOT_SOURCE_POLICIES = {"INTERNAL_ONLY", "SUPPLIER_ONLY"}
 _ALLOWED_EXPIRY_POLICIES = {"NONE", "REQUIRED"}
 _ALLOWED_SHELF_LIFE_UNITS = {"DAY", "WEEK", "MONTH", "YEAR"}
-_SKU_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,63}$")
+_SKU_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,127}$")
 
 
 def _norm_policy_str(v: Optional[str]) -> Optional[str]:
@@ -43,8 +43,8 @@ def _validate_sku(v: str) -> str:
     s = str(v or "").strip().upper()
     if not s:
         raise ValueError("sku 不能为空")
-    if len(s) > 64:
-        raise ValueError("sku 长度不能超过 64")
+    if len(s) > 128:
+        raise ValueError("sku 长度不能超过 128")
     if not _SKU_PATTERN.fullmatch(s):
         raise ValueError("invalid sku")
     return s
