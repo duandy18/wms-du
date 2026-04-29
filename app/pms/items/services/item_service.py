@@ -30,7 +30,7 @@ class ItemService:
     - PMS 主合同的净重读写转移到 base item_uom.net_weight_kg
 
     SKU coding：
-    - 主合同 POST /items 不再自动生成 SKU
+    - 主合同 POST /items 必须显式传 sku
     - items.sku 必须由调用方显式输入，通常来自 SKU 编码页生成候选后人工确认
 
     """
