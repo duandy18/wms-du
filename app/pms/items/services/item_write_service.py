@@ -17,6 +17,7 @@ from app.pms.items.repos.item_write_repo import (
     refresh_item,
     rollback as repo_rollback,
 )
+from app.pms.items.services.item_sku_code_service import ItemSkuCodeService
 
 
 _ALLOWED_LOT_SOURCE_POLICIES = {"INTERNAL_ONLY", "SUPPLIER_ONLY"}
@@ -132,6 +133,7 @@ class ItemWriteService:
     主合同语义：
     - POST /items 必须显式传 sku
     - 创建 item 时仍自动补最小 base item_uom
+    - 创建 item 时同步写 item_sku_codes PRIMARY，items.sku 仅作为当前主 SKU 投影
     """
 
     def __init__(self, db: Session) -> None:
@@ -208,6 +210,12 @@ class ItemWriteService:
         try:
             repo_flush(self.db)
 
+            ItemSkuCodeService(self.db).create_primary_code_in_current_tx(
+                item_id=int(obj.id),
+                code=sku_val,
+                remark="created with item",
+            )
+
             # 维持当前主合同语义：创建 item 时自动补最小 base item_uom
             create_item_uom(
                 self.db,
@@ -227,9 +235,18 @@ class ItemWriteService:
         except IntegrityError as e:
             repo_rollback(self.db)
             raw = str(getattr(e, "orig", e)).lower()
-            if "items_sku_key" in raw or ("unique" in raw and "sku" in raw):
+            if (
+                "items_sku_key" in raw
+                or "uq_item_sku_codes_code" in raw
+                or ("unique" in raw and "sku" in raw)
+            ):
                 raise ValueError("SKU duplicate") from e
             raise ValueError(f"DB integrity error: {getattr(e, 'orig', e)}") from e
+        except ValueError as e:
+            repo_rollback(self.db)
+            if str(e) == "SKU code duplicate":
+                raise ValueError("SKU duplicate") from e
+            raise
 
         refresh_item(self.db, obj)
         return obj

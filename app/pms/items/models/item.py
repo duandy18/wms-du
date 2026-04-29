@@ -11,14 +11,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.oms.orders.models.order import Order  # noqa: F401
 from app.oms.orders.models.order_item import OrderItem  # noqa: F401
+from app.pms.items.models.item_sku_code import ItemSkuCode  # noqa: F401
 from app.pms.items.models.item_uom import ItemUOM  # noqa: F401
 from app.pms.suppliers.models.supplier import Supplier  # noqa: F401
 
 if TYPE_CHECKING:
     from app.oms.orders.models.order import Order
     from app.oms.orders.models.order_item import OrderItem
-    from app.pms.suppliers.models.supplier import Supplier
+    from app.pms.items.models.item_sku_code import ItemSkuCode
     from app.pms.items.models.item_uom import ItemUOM
+    from app.pms.suppliers.models.supplier import Supplier
 
 
 class LotSourcePolicy(str, enum.Enum):
@@ -49,6 +51,11 @@ class Item(Base):
     Phase M-6（item weight cutover）：
     - items.weight_kg 已物理删除
     - 运行时 weight_kg = base item_uom.net_weight_kg
+
+    SKU governance：
+    - item_id 是商品内部身份真相
+    - items.sku 是当前主 SKU 投影
+    - item_sku_codes 是商品编码治理真相表
     """
 
     __tablename__ = "items"
@@ -107,6 +114,14 @@ class Item(Base):
         back_populates="item",
         lazy="selectin",
         order_by="ItemUOM.id.asc()",
+    )
+
+    sku_codes: Mapped[List["ItemSkuCode"]] = relationship(
+        "ItemSkuCode",
+        back_populates="item",
+        lazy="selectin",
+        order_by=lambda: (ItemSkuCode.is_primary.desc(), ItemSkuCode.id.asc()),
+        cascade="all, delete-orphan",
     )
 
     @property

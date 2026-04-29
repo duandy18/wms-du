@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.pms.items.models.item import Item
+from app.pms.items.models.item_sku_code import ItemSkuCode
 from app.pms.sku_coding.models.sku_coding import (
     SkuBusinessCategory,
     SkuCodeBrand,
@@ -202,11 +203,17 @@ class SkuCodingService:
 
         sku = str(template.separator).join([p for p in parts if p])
 
-        exists = self.db.execute(select(Item.id).where(Item.sku == sku).limit(1)).first() is not None
+        matched_code_item_ids = select(ItemSkuCode.item_id).where(ItemSkuCode.code == sku)
+        exists = self.db.execute(select(ItemSkuCode.id).where(ItemSkuCode.code == sku).limit(1)).first() is not None
         similar_rows = (
             self.db.execute(
                 select(Item)
-                .where((Item.brand == brand.name_cn) | (Item.category == category.category_name) | (Item.sku == sku))
+                .where(
+                    (Item.brand == brand.name_cn)
+                    | (Item.category == category.category_name)
+                    | (Item.sku == sku)
+                    | (Item.id.in_(matched_code_item_ids))
+                )
                 .order_by(Item.id.desc())
                 .limit(10)
             )

@@ -213,6 +213,52 @@ VALUES
    'SUPPLIER_ONLY'::lot_source_policy, 'NONE'::expiry_policy, true, true)
 ON CONFLICT (id) DO NOTHING;
 
+
+-- ===== item_sku_codes (SKU governance truth) =====
+UPDATE item_sku_codes c
+   SET code_type = 'ALIAS',
+       is_primary = false,
+       is_active = true,
+       effective_to = COALESCE(c.effective_to, CURRENT_TIMESTAMP),
+       updated_at = CURRENT_TIMESTAMP
+  FROM items i
+ WHERE c.item_id = i.id
+   AND c.is_primary = true
+   AND c.code <> upper(trim(i.sku));
+
+INSERT INTO item_sku_codes (
+  item_id,
+  code,
+  code_type,
+  is_primary,
+  is_active,
+  effective_from,
+  effective_to,
+  remark,
+  created_at,
+  updated_at
+)
+SELECT
+  i.id,
+  upper(trim(i.sku)),
+  'PRIMARY',
+  true,
+  true,
+  COALESCE(i.created_at, CURRENT_TIMESTAMP),
+  NULL,
+  'base seed primary sku',
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+FROM items i
+WHERE trim(i.sku) <> ''
+ON CONFLICT (code) DO UPDATE SET
+  code_type = 'PRIMARY',
+  is_primary = true,
+  is_active = true,
+  effective_to = NULL,
+  updated_at = CURRENT_TIMESTAMP
+WHERE item_sku_codes.item_id = EXCLUDED.item_id;
+
 -- ===== item_uoms (unit truth source) =====
 INSERT INTO item_uoms (
   item_id, uom, ratio_to_base, display_name,
