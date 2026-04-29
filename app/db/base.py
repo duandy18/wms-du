@@ -104,6 +104,7 @@ def init_models(
     explicit_chain = [
         "app.pms.suppliers.models.supplier",
         "app.pms.suppliers.models.supplier_contact",
+        "app.pms.sku_coding.models.sku_coding",
         "app.pms.items.models.item",
         "app.pms.items.models.item_uom",
         "app.pms.items.models.item_barcode",
@@ -135,6 +136,7 @@ def init_models(
         "app.procurement.models",
         "app.finance.models",
         "app.pms.items.models",
+        "app.pms.sku_coding.models",
         "app.pms.suppliers.models",
         "app.wms.inventory_adjustment.return_inbound.models",
         "app.wms.inventory_adjustment.count.models",
