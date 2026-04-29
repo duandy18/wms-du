@@ -50,6 +50,32 @@ async def test_pms_brand_and_category_owner_contract(client: httpx.AsyncClient) 
     assert r_enable.status_code == 200, r_enable.text
     assert r_enable.json()["is_active"] is True
 
+
+    # ===== lock / unlock =====
+    r_lock = await client.post(f"/pms/brands/{brand['id']}/lock", headers=headers)
+    assert r_lock.status_code == 200, r_lock.text
+    assert r_lock.json()["is_locked"] is True
+
+    # locked 后禁止改 code
+    r_locked_patch = await client.patch(
+        f"/pms/brands/{brand['id']}",
+        json={"code": f"BRLOCK{sfx}"},
+        headers=headers,
+    )
+    assert r_locked_patch.status_code == 409, r_locked_patch.text
+
+    r_unlock = await client.post(f"/pms/brands/{brand['id']}/unlock", headers=headers)
+    assert r_unlock.status_code == 200, r_unlock.text
+    assert r_unlock.json()["is_locked"] is False
+
+    # 解锁后允许改 code
+    r_unlock_patch = await client.patch(
+        f"/pms/brands/{brand['id']}",
+        json={"code": f"BRU{sfx}"},
+        headers=headers,
+    )
+    assert r_unlock_patch.status_code == 200, r_unlock_patch.text
+
     r_category = await client.post(
         "/pms/categories",
         json={
