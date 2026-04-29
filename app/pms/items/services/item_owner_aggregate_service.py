@@ -1,6 +1,7 @@
 # app/pms/items/services/item_owner_aggregate_service.py
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -45,12 +46,12 @@ from app.pms.items.repos.item_write_repo import (
     rollback as repo_rollback,
 )
 from app.pms.items.services.item_presenter import ItemPresenter
-from app.pms.items.services.item_sku import next_sku
 
 
 _ALLOWED_LOT_SOURCE_POLICIES = {"INTERNAL_ONLY", "SUPPLIER_ONLY"}
 _ALLOWED_EXPIRY_POLICIES = {"NONE", "REQUIRED"}
 _ALLOWED_SHELF_LIFE_UNITS = {"DAY", "WEEK", "MONTH", "YEAR"}
+_SKU_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,127}$")
 
 
 def _norm_policy_str(v: Optional[str]) -> Optional[str]:
@@ -67,6 +68,17 @@ def _norm_text_or_none(v: Optional[str]) -> Optional[str]:
     return s or None
 
 
+def _validate_sku(v: object) -> str:
+    s = str(v or "").strip().upper()
+    if not s:
+        raise ValueError("sku 不能为空")
+    if len(s) > 128:
+        raise ValueError("sku 长度不能超过 128")
+    if not _SKU_PATTERN.fullmatch(s):
+        raise ValueError("invalid sku")
+    return s
+
+
 def _norm_shelf_life_unit(v: Optional[str]) -> Optional[str]:
     if v is None:
         return None
@@ -79,6 +91,8 @@ def _norm_shelf_life_unit(v: Optional[str]) -> Optional[str]:
 
 
 def _resolve_item_fields(item_in: AggregateItemInput) -> dict[str, object]:
+    sku_val = _validate_sku(item_in.sku)
+
     name_val = _norm_text_or_none(item_in.name)
     if not name_val:
         raise ValueError("name is required")
@@ -112,6 +126,7 @@ def _resolve_item_fields(item_in: AggregateItemInput) -> dict[str, object]:
             raise ValueError("shelf_life_value and shelf_life_unit must be both set or both null")
 
     return {
+        "sku": sku_val,
         "name": name_val,
         "spec": spec_val,
         "brand": brand_val,
@@ -166,9 +181,8 @@ class ItemOwnerAggregateService:
     def create_aggregate(self, *, payload: ItemAggregatePayload) -> ItemAggregateOut:
         item_fields = _resolve_item_fields(payload.item)
 
-        sku_val = next_sku(self.db)
         obj = Item(
-            sku=sku_val,
+            sku=str(item_fields["sku"]),
             name=str(item_fields["name"]),
             spec=item_fields["spec"],
             enabled=bool(item_fields["enabled"]),
@@ -226,6 +240,9 @@ class ItemOwnerAggregateService:
             raise ValueError("Item not found")
 
         item_fields = _resolve_item_fields(payload.item)
+
+        if str(item_fields["sku"]) != str(obj.sku):
+            raise ValueError("sku cannot be changed")
 
         obj.name = str(item_fields["name"])
         obj.spec = item_fields["spec"]
