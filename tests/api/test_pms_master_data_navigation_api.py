@@ -59,7 +59,7 @@ async def test_pms_master_data_page_tree_and_routes(client: httpx.AsyncClient) -
 
     assert nodes["pms.items"]["name"] == "商品列表"
     assert nodes["pms.brands"]["name"] == "品牌管理"
-    assert nodes["pms.categories"]["name"] == "内部分类"
+    assert nodes["pms.categories"]["name"] == "商品分类编码"
     assert nodes["pms.item_attributes"]["name"] == "属性模板"
     assert nodes["pms.item_uoms"]["name"] == "包装单位"
     assert nodes["pms.suppliers"]["name"] == "供应商管理"
