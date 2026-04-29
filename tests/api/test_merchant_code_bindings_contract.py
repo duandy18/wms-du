@@ -136,64 +136,6 @@ async def test_bind_contract_success_or_problem(client):
 
 
 @pytest.mark.anyio
-async def test_bind_returns_conflict_when_test_set_guard_blocks_non_test_store(client, monkeypatch):
-    from app.oms.services import test_store_testset_guard_service as guard_module
-
-    async def fake_load_component_item_ids(_session, *, fsku_id: int) -> list[int]:
-        assert int(fsku_id) == 1
-        return [1]
-
-    class FakePlatformTestStoreService:
-        def __init__(self, _session):
-            pass
-
-        async def is_test_store(self, *, platform: str, store_code: str, code: str = "DEFAULT") -> bool:
-            assert platform == "DEMO"
-            assert store_code == "NON-TEST-STORE"
-            assert code == "DEFAULT"
-            return False
-
-    class FakeItemTestSetService:
-        class NotFound(ValueError):
-            pass
-
-        class InTestSet(ValueError):
-            pass
-
-        def __init__(self, _session):
-            pass
-
-        async def assert_items_not_in_test_set(self, *, item_ids: list[int], set_code: str = "DEFAULT") -> None:
-            assert item_ids == [1]
-            assert set_code == "DEFAULT"
-            raise self.InTestSet("items in test_set[DEFAULT]: [1]")
-
-    monkeypatch.setattr(guard_module, "load_component_item_ids", fake_load_component_item_ids)
-    monkeypatch.setattr(guard_module, "PlatformTestStoreService", FakePlatformTestStoreService)
-    monkeypatch.setattr(guard_module, "ItemTestSetService", FakeItemTestSetService)
-
-    headers = await _auth_headers(client)
-    payload = {
-        "platform": "DEMO",
-        "store_code": "NON-TEST-STORE",
-        "merchant_code": "UT-MC-GUARD-BLOCKED-001",
-        "fsku_id": 1,
-        "reason": "UT: guard should return conflict",
-    }
-
-    resp = await client.post("/oms/merchant-code-bindings/bind", json=payload, headers=headers)
-
-    assert resp.status_code == 409, resp.text
-    problem = resp.json()
-    _assert_problem_shape(problem)
-    assert problem["error_code"] == "conflict"
-    assert "测试商品不能绑定到非测试店铺" in str(problem["message"])
-    assert problem["context"]["platform"] == "DEMO"
-    assert problem["context"]["store_code"] == "NON-TEST-STORE"
-    assert problem["context"]["component_item_ids"] == [1]
-
-
-@pytest.mark.anyio
 async def test_retire_is_blocked_when_fsku_is_referenced_by_merchant_code_binding(client):
     """
     护栏契约：被 merchant_code_fsku_bindings 引用的 published FSKU，不允许 retire。

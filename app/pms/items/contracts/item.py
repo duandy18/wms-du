@@ -176,8 +176,6 @@ class ItemOut(ItemBase):
     requires_batch: bool = True
     requires_dates: bool = True
 
-    is_test: bool = False
-
     @model_validator(mode="after")
     def _derive_require_flags(self) -> "ItemOut":
         req = _is_required_expiry_policy(self.expiry_policy)
