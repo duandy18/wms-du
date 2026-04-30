@@ -406,8 +406,32 @@ def update_item_attribute_option(option_id: int, payload: ItemAttributeOptionUpd
     if obj is None:
         raise _not_found("属性选项不存在")
     data = payload.model_dump(exclude_unset=True)
+    if obj.is_locked and data:
+        raise HTTPException(status_code=409, detail="属性选项已锁定，不能修改 option_name 或 sort_order")
     for k, v in data.items():
         setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/item-attribute-options/{option_id}/lock", response_model=ItemAttributeOptionOut)
+def lock_item_attribute_option(option_id: int, db: Session = Depends(get_db)):
+    obj = db.get(ItemAttributeOption, int(option_id))
+    if obj is None:
+        raise _not_found("属性选项不存在")
+    obj.is_locked = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/item-attribute-options/{option_id}/unlock", response_model=ItemAttributeOptionOut)
+def unlock_item_attribute_option(option_id: int, db: Session = Depends(get_db)):
+    obj = db.get(ItemAttributeOption, int(option_id))
+    if obj is None:
+        raise _not_found("属性选项不存在")
+    obj.is_locked = False
     db.commit()
     db.refresh(obj)
     return obj

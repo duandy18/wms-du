@@ -219,6 +219,32 @@ async def test_pms_attribute_template_options_and_item_values_contract(client: h
     assert r_option.status_code == 201, r_option.text
     option = r_option.json()
     assert option["option_code"] == f"WHT{sfx}"
+    assert option["is_locked"] is False
+
+    r_option_lock = await client.post(f"/pms/item-attribute-options/{option['id']}/lock", headers=headers)
+    assert r_option_lock.status_code == 200, r_option_lock.text
+    assert r_option_lock.json()["is_locked"] is True
+
+    r_option_locked_patch = await client.patch(
+        f"/pms/item-attribute-options/{option['id']}",
+        json={"option_name": "锁定后不允许修改", "sort_order": 20},
+        headers=headers,
+    )
+    assert r_option_locked_patch.status_code == 409, r_option_locked_patch.text
+
+    r_option_unlock = await client.post(f"/pms/item-attribute-options/{option['id']}/unlock", headers=headers)
+    assert r_option_unlock.status_code == 200, r_option_unlock.text
+    assert r_option_unlock.json()["is_locked"] is False
+
+    r_option_patch = await client.patch(
+        f"/pms/item-attribute-options/{option['id']}",
+        json={"option_name": f"白色更新-{sfx}", "sort_order": 11},
+        headers=headers,
+    )
+    assert r_option_patch.status_code == 200, r_option_patch.text
+    assert r_option_patch.json()["option_name"] == f"白色更新-{sfx}"
+    assert r_option_patch.json()["sort_order"] == 11
+    option = r_option_patch.json()
 
     r_item = await client.post(
         "/items",
