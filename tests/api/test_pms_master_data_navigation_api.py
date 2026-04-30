@@ -64,18 +64,15 @@ async def test_pms_master_data_page_tree_and_routes(client: httpx.AsyncClient) -
     assert nodes["pms.item_uoms"]["name"] == "包装单位"
     assert nodes["pms.suppliers"]["name"] == "供应商管理"
 
-    assert [x["code"] for x in nodes["pms.sku_coding"]["children"]] == [
-        "pms.sku_coding.generator",
-        "pms.sku_coding.dictionaries",
-    ]
+    assert nodes["pms.sku_coding"]["name"] == "SKU 编码"
+    assert [x["code"] for x in nodes["pms.sku_coding"].get("children", [])] == []
 
     expected_routes = {
         "/items": "pms.items",
         "/pms/brands": "pms.brands",
         "/pms/categories": "pms.categories",
         "/pms/item-attribute-defs": "pms.item_attributes",
-        "/items/sku-coding/generator": "pms.sku_coding.generator",
-        "/items/sku-coding/dictionaries": "pms.sku_coding.dictionaries",
+        "/items/sku-coding": "pms.sku_coding",
         "/item-barcodes": "pms.item_barcodes",
         "/item-uoms": "pms.item_uoms",
         "/suppliers": "pms.suppliers",
