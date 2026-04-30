@@ -28817,9 +28817,13 @@
       },
       "ItemBarcodeCompositeRow": {
         "properties": {
-          "barcode_id": {
-            "type": "integer",
-            "title": "Barcode Id"
+          "sku": {
+            "type": "string",
+            "title": "Sku"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name"
           },
           "item_id": {
             "type": "integer",
@@ -28828,14 +28832,6 @@
           "item_uom_id": {
             "type": "integer",
             "title": "Item Uom Id"
-          },
-          "sku": {
-            "type": "string",
-            "title": "Sku"
-          },
-          "item_name": {
-            "type": "string",
-            "title": "Item Name"
           },
           "uom": {
             "type": "string",
@@ -28883,6 +28879,10 @@
             "type": "boolean",
             "title": "Is Outbound Default"
           },
+          "barcode_id": {
+            "type": "integer",
+            "title": "Barcode Id"
+          },
           "barcode": {
             "type": "string",
             "title": "Barcode"
@@ -28907,11 +28907,10 @@
         },
         "type": "object",
         "required": [
-          "barcode_id",
-          "item_id",
-          "item_uom_id",
           "sku",
           "item_name",
+          "item_id",
+          "item_uom_id",
           "uom",
           "display_name",
           "ratio_to_base",
@@ -28920,6 +28919,7 @@
           "is_purchase_default",
           "is_inbound_default",
           "is_outbound_default",
+          "barcode_id",
           "barcode",
           "symbology",
           "is_primary",
@@ -28927,7 +28927,7 @@
           "updated_at"
         ],
         "title": "ItemBarcodeCompositeRow",
-        "description": "商品条码页 owner 复合只读行：\n- 一行 = 一个商品 + 一个单位 + 一条码\n- 页面用它直接渲染，不再让前端分别请求 /item-barcodes 与 /item-uoms 后自行 join"
+        "description": "商品条码页 owner 复合只读行：\n- 继承 item_uoms owner 复合读模型，包装字段以 item_uoms 合同为唯一来源\n- 当前接口只返回已绑定条码的行，因此条码字段在这里收紧为必填"
       },
       "ItemBarcodeCreate": {
         "properties": {
