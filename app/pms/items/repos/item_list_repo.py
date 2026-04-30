@@ -331,20 +331,42 @@ def list_item_list_attribute_mappings(
                   d.is_sku_segment,
                   d.sort_order::int AS sort_order,
 
-                  v.value_text,
-                  v.value_number::float8 AS value_number,
-                  v.value_bool,
-                  v.value_option_id::int AS value_option_id,
-                  v.value_option_code_snapshot,
-                  o.option_name AS value_option_name,
-                  v.value_unit_snapshot,
-                  v.updated_at
+                  MAX(v.value_text) AS value_text,
+                  MAX(v.value_number)::float8 AS value_number,
+                  BOOL_OR(v.value_bool) FILTER (WHERE v.value_bool IS NOT NULL) AS value_bool,
+
+                  COALESCE(
+                    ARRAY_REMOVE(ARRAY_AGG(v.value_option_id::int ORDER BY o.sort_order, o.id), NULL),
+                    ARRAY[]::int[]
+                  ) AS value_option_ids,
+                  COALESCE(
+                    ARRAY_REMOVE(ARRAY_AGG(v.value_option_code_snapshot ORDER BY o.sort_order, o.id), NULL),
+                    ARRAY[]::varchar[]
+                  ) AS value_option_code_snapshots,
+                  COALESCE(
+                    ARRAY_REMOVE(ARRAY_AGG(o.option_name ORDER BY o.sort_order, o.id), NULL),
+                    ARRAY[]::varchar[]
+                  ) AS value_option_names,
+
+                  MAX(v.value_unit_snapshot) AS value_unit_snapshot,
+                  MAX(v.updated_at) AS updated_at
                 FROM item_attribute_values v
                 JOIN item_attribute_defs d
                   ON d.id = v.attribute_def_id
                 LEFT JOIN item_attribute_options o
                   ON o.id = v.value_option_id
                 WHERE v.item_id = :item_id
+                GROUP BY
+                  d.id,
+                  d.code,
+                  d.name_cn,
+                  d.value_type,
+                  d.selection_mode,
+                  d.unit,
+                  d.is_item_required,
+                  d.is_sku_required,
+                  d.is_sku_segment,
+                  d.sort_order
                 ORDER BY
                   d.sort_order ASC,
                   d.id ASC

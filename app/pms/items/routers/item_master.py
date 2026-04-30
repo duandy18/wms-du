@@ -459,17 +459,53 @@ def disable_item_attribute_option(option_id: int, db: Session = Depends(get_db))
     return obj
 
 
+def _list_item_attribute_value_out(db: Session, item_id: int) -> list[ItemAttributeValueOut]:
+    rows = (
+        db.execute(
+            select(ItemAttributeValue)
+            .where(ItemAttributeValue.item_id == int(item_id))
+            .order_by(
+                ItemAttributeValue.attribute_def_id.asc(),
+                ItemAttributeValue.value_option_id.asc().nullsfirst(),
+                ItemAttributeValue.id.asc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    grouped: dict[int, dict] = {}
+
+    for row in rows:
+        key = int(row.attribute_def_id)
+        current = grouped.get(key)
+        if current is None:
+            current = {
+                "id": int(row.id),
+                "item_id": int(row.item_id),
+                "attribute_def_id": key,
+                "value_text": row.value_text,
+                "value_number": float(row.value_number) if row.value_number is not None else None,
+                "value_bool": row.value_bool,
+                "value_option_ids": [],
+                "value_option_code_snapshots": [],
+                "value_unit_snapshot": row.value_unit_snapshot,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            grouped[key] = current
+
+        if row.value_option_id is not None:
+            current["value_option_ids"].append(int(row.value_option_id))
+            if row.value_option_code_snapshot:
+                current["value_option_code_snapshots"].append(str(row.value_option_code_snapshot))
+
+    return [ItemAttributeValueOut.model_validate(x) for x in grouped.values()]
+
+
 @router.get("/items/{item_id}/attributes", response_model=ListOut[ItemAttributeValueOut])
 def list_item_attribute_values(item_id: int, db: Session = Depends(get_db)):
-    item = db.get(Item, int(item_id))
-    if item is None:
-        raise _not_found("商品不存在")
-    stmt = (
-        select(ItemAttributeValue)
-        .where(ItemAttributeValue.item_id == int(item_id))
-        .order_by(ItemAttributeValue.attribute_def_id.asc())
-    )
-    return {"ok": True, "data": list(db.execute(stmt).scalars().all())}
+    return {"ok": True, "data": _list_item_attribute_value_out(db, int(item_id))}
 
 
 @router.put("/items/{item_id}/attributes", response_model=ListOut[ItemAttributeValueOut])
@@ -480,59 +516,91 @@ def replace_item_attribute_values(
 ):
     item = db.get(Item, int(item_id))
     if item is None:
-        raise _not_found("商品不存在")
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    seen_defs: set[int] = set()
 
     db.query(ItemAttributeValue).filter(ItemAttributeValue.item_id == int(item_id)).delete()
 
-    rows: list[ItemAttributeValue] = []
     for incoming in payload.values:
         attr = db.get(ItemAttributeDef, int(incoming.attribute_def_id))
         if attr is None or not bool(attr.is_active):
             raise _bad_request(f"属性模板不存在或已停用：{incoming.attribute_def_id}")
 
-        option_code_snapshot = None
-        unit_snapshot = attr.unit
+        attr_id = int(attr.id)
+        if attr_id in seen_defs:
+            raise _bad_request(f"同一属性不能重复提交：{attr.code}")
+        seen_defs.add(attr_id)
 
-        option_id = incoming.value_option_id
+        option_ids = incoming.value_option_ids or []
+
         if attr.value_type == "OPTION":
-            if option_id is None:
-                raise _bad_request(f"OPTION 属性必须提交 value_option_id：{attr.code}")
-            opt = db.get(ItemAttributeOption, int(option_id))
-            if opt is None or int(opt.attribute_def_id) != int(attr.id) or not bool(opt.is_active):
-                raise _bad_request(f"属性选项不存在、已停用或不属于当前模板：{attr.code}")
-            option_code_snapshot = opt.option_code
-        elif option_id is not None:
-            raise _bad_request(f"非 OPTION 属性不能提交 value_option_id：{attr.code}")
+            if incoming.value_text is not None or incoming.value_number is not None or incoming.value_bool is not None:
+                raise _bad_request(f"OPTION 属性只能提交 value_option_ids：{attr.code}")
+
+            if not option_ids:
+                raise _bad_request(f"OPTION 属性必须提交 value_option_ids：{attr.code}")
+
+            if attr.selection_mode == "SINGLE" and len(option_ids) > 1:
+                raise _bad_request(f"SINGLE 属性最多只能选择一个选项：{attr.code}")
+
+            for option_id in option_ids:
+                opt = db.get(ItemAttributeOption, int(option_id))
+                if opt is None or int(opt.attribute_def_id) != attr_id or not bool(opt.is_active):
+                    raise _bad_request(f"属性选项不存在、已停用或不属于当前属性：{attr.code}")
+
+                db.add(
+                    ItemAttributeValue(
+                        item_id=int(item_id),
+                        attribute_def_id=attr_id,
+                        value_text=None,
+                        value_number=None,
+                        value_bool=None,
+                        value_option_id=int(opt.id),
+                        value_option_code_snapshot=str(opt.option_code),
+                        value_unit_snapshot=attr.unit,
+                    )
+                )
+
+            continue
+
+        if option_ids:
+            raise _bad_request(f"非 OPTION 属性不能提交 value_option_ids：{attr.code}")
+
+        value_text = incoming.value_text
+        value_number = incoming.value_number
+        value_bool = incoming.value_bool
 
         if attr.value_type == "TEXT":
-            if incoming.value_text is None or not str(incoming.value_text).strip():
-                if attr.is_item_required:
-                    raise _bad_request(f"必填文本属性不能为空：{attr.code}")
+            if value_text is None:
+                raise _bad_request(f"TEXT 属性必须提交 value_text：{attr.code}")
+            value_number = None
+            value_bool = None
         elif attr.value_type == "NUMBER":
-            if incoming.value_number is None and attr.is_item_required:
-                raise _bad_request(f"必填数值属性不能为空：{attr.code}")
+            if value_number is None:
+                raise _bad_request(f"NUMBER 属性必须提交 value_number：{attr.code}")
+            value_text = None
+            value_bool = None
         elif attr.value_type == "BOOL":
-            if incoming.value_bool is None and attr.is_item_required:
-                raise _bad_request(f"必填布尔属性不能为空：{attr.code}")
+            if value_bool is None:
+                raise _bad_request(f"BOOL 属性必须提交 value_bool：{attr.code}")
+            value_text = None
+            value_number = None
+        else:
+            raise _bad_request(f"不支持的属性类型：{attr.value_type}")
 
-        row = ItemAttributeValue(
-            item_id=int(item_id),
-            attribute_def_id=int(attr.id),
-            value_text=(str(incoming.value_text).strip() if incoming.value_text is not None else None),
-            value_number=incoming.value_number,
-            value_bool=incoming.value_bool,
-            value_option_id=option_id,
-            value_option_code_snapshot=option_code_snapshot,
-            value_unit_snapshot=unit_snapshot,
+        db.add(
+            ItemAttributeValue(
+                item_id=int(item_id),
+                attribute_def_id=attr_id,
+                value_text=value_text,
+                value_number=value_number,
+                value_bool=value_bool,
+                value_option_id=None,
+                value_option_code_snapshot=None,
+                value_unit_snapshot=attr.unit,
+            )
         )
-        db.add(row)
-        rows.append(row)
 
     db.commit()
-
-    stmt = (
-        select(ItemAttributeValue)
-        .where(ItemAttributeValue.item_id == int(item_id))
-        .order_by(ItemAttributeValue.attribute_def_id.asc())
-    )
-    return {"ok": True, "data": list(db.execute(stmt).scalars().all())}
+    return {"ok": True, "data": _list_item_attribute_value_out(db, int(item_id))}

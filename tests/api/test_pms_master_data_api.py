@@ -270,7 +270,7 @@ async def test_pms_attribute_template_options_and_item_values_contract(client: h
 
     r_values = await client.put(
         f"/items/{item_id}/attributes",
-        json={"values": [{"attribute_def_id": int(attr["id"]), "value_option_id": int(option["id"])}]},
+        json={"values": [{"attribute_def_id": int(attr["id"]), "value_option_ids": [int(option["id"])]}]},
         headers=headers,
     )
     assert r_values.status_code == 200, r_values.text
@@ -278,9 +278,9 @@ async def test_pms_attribute_template_options_and_item_values_contract(client: h
     assert len(values) == 1
     assert values[0]["item_id"] == item_id
     assert values[0]["attribute_def_id"] == int(attr["id"])
-    assert values[0]["value_option_id"] == int(option["id"])
-    assert values[0]["value_option_code_snapshot"] == f"WHT{sfx}"
+    assert values[0]["value_option_ids"] == [int(option["id"])]
+    assert values[0]["value_option_code_snapshots"] == [f"WHT{sfx}"]
 
     r_get = await client.get(f"/items/{item_id}/attributes", headers=headers)
     assert r_get.status_code == 200, r_get.text
-    assert r_get.json()["data"][0]["value_option_code_snapshot"] == f"WHT{sfx}"
+    assert r_get.json()["data"][0]["value_option_code_snapshots"] == [f"WHT{sfx}"]

@@ -132,9 +132,9 @@ def _assert_detail_contract(data: dict[str, Any]) -> None:
             "value_text",
             "value_number",
             "value_bool",
-            "value_option_id",
-            "value_option_code_snapshot",
-            "value_option_name",
+            "value_option_ids",
+            "value_option_code_snapshots",
+            "value_option_names",
             "value_unit_snapshot",
             "updated_at",
         } <= set(attr.keys()), attr
