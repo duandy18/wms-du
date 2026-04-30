@@ -18,7 +18,6 @@ from app.pms.items.contracts.item_uom import (
 from app.pms.items.repos.item_uom_repo import (
     create_item_uom,
     delete_item_uom,
-    find_other_base_item_uom,
     get_item_uom_by_id,
     has_barcode_refs_for_item_uom,
     has_po_line_refs_for_item_uom,
@@ -194,6 +193,24 @@ def delete_item_uom_route(
             detail="基础包装不能删除",
         )
 
+    if bool(obj.is_purchase_default):
+        raise HTTPException(
+            status_code=409,
+            detail="当前包装是采购默认包装，不能直接删除；请先显式调整采购默认包装",
+        )
+
+    if bool(obj.is_inbound_default):
+        raise HTTPException(
+            status_code=409,
+            detail="当前包装是入库默认包装，不能直接删除；请先显式调整入库默认包装",
+        )
+
+    if bool(obj.is_outbound_default):
+        raise HTTPException(
+            status_code=409,
+            detail="当前包装是出库默认包装，不能直接删除；请先显式调整出库默认包装",
+        )
+
     if has_barcode_refs_for_item_uom(
         db,
         item_id=int(obj.item_id),
@@ -215,29 +232,6 @@ def delete_item_uom_route(
             status_code=409,
             detail="当前包装已被收货记录引用，不能删除",
         )
-
-    need_fallback_default = bool(
-        obj.is_purchase_default or obj.is_inbound_default or obj.is_outbound_default
-    )
-
-    if need_fallback_default:
-        base = find_other_base_item_uom(
-            db,
-            item_id=int(obj.item_id),
-            exclude_id=int(obj.id),
-        )
-        if base is None:
-            raise HTTPException(
-                status_code=409,
-                detail="缺少基础包装，无法安全删除当前包装",
-            )
-
-        if obj.is_purchase_default:
-            base.is_purchase_default = True
-        if obj.is_inbound_default:
-            base.is_inbound_default = True
-        if obj.is_outbound_default:
-            base.is_outbound_default = True
 
     delete_item_uom(db, obj)
     db.commit()
