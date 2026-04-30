@@ -36,6 +36,10 @@ async def _require_supplier_snapshot_via_pms(
     返回：
     - supplier_id
     - supplier_name（用于 PO 快照）
+
+    采购写入合同：
+    - 新建 / 更新采购单只能使用 active=true 的供应商
+    - 历史采购单读取继续依赖 purchase_orders.supplier_id + supplier_name 快照，不受供应商停用影响
     """
     if supplier_id is None:
         raise ValueError("supplier_id 不能为空：采购单必须绑定供应商")
@@ -49,6 +53,9 @@ async def _require_supplier_snapshot_via_pms(
     if supplier is None:
         raise ValueError(f"supplier_id 不存在：未找到供应商（supplier_id={sid}）")
 
+    if not bool(supplier.active):
+        raise ValueError(f"supplier_id 已停用：不能用于新建或更新采购单（supplier_id={sid}）")
+
     return int(supplier.id), str(supplier.name).strip()
 
 
@@ -57,7 +64,6 @@ def _trim_or_none(v: Any) -> Optional[str]:
         return None
     s = str(v).strip()
     return s or None
-
 
 
 def _require_qty_input_from_raw(raw: Dict[str, Any]) -> int:
