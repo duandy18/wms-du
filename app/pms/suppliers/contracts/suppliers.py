@@ -39,3 +39,23 @@ class SupplierUpdateIn(BaseModel):
     code: Optional[str] = None
     website: Optional[str] = None
     active: Optional[bool] = None
+
+
+class SupplierContactCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[EmailStr] = Field(None, max_length=255)
+    wechat: Optional[str] = Field(None, max_length=64)
+    role: str = Field(default="other", max_length=32)
+    is_primary: bool = False
+    active: bool = True
+
+
+class SupplierContactUpdateIn(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[EmailStr] = Field(None, max_length=255)
+    wechat: Optional[str] = Field(None, max_length=64)
+    role: Optional[str] = Field(None, max_length=32)
+    is_primary: Optional[bool] = None
+    active: Optional[bool] = None

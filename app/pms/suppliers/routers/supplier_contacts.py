@@ -4,12 +4,15 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.user.deps.auth import get_current_user
 from app.db.deps import get_db
-from app.pms.suppliers.contracts.suppliers import SupplierContactOut
+from app.pms.suppliers.contracts.suppliers import (
+    SupplierContactCreateIn,
+    SupplierContactOut,
+    SupplierContactUpdateIn,
+)
 from app.pms.suppliers.repos.supplier_contact_repo import (
     clear_primary_contacts as repo_clear_primary_contacts,
 )
@@ -31,26 +34,6 @@ from app.pms.suppliers.repos.supplier_contact_repo import (
 from app.pms.suppliers.helpers.suppliers import check_perm
 
 router = APIRouter(tags=["supplier-contacts"])
-
-
-class SupplierContactCreateIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    phone: Optional[str] = Field(None, max_length=50)
-    email: Optional[EmailStr] = Field(None, max_length=255)
-    wechat: Optional[str] = Field(None, max_length=64)
-    role: str = Field(default="other", max_length=32)
-    is_primary: bool = False
-    active: bool = True
-
-
-class SupplierContactUpdateIn(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    phone: Optional[str] = Field(None, max_length=50)
-    email: Optional[EmailStr] = Field(None, max_length=255)
-    wechat: Optional[str] = Field(None, max_length=64)
-    role: Optional[str] = Field(None, max_length=32)
-    is_primary: Optional[bool] = None
-    active: Optional[bool] = None
 
 
 def _to_out(c) -> SupplierContactOut:
