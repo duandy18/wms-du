@@ -47,3 +47,82 @@ class ItemListRowOut(BaseModel):
     attribute_count: int = Field(default=0, ge=0)
 
     updated_at: Optional[datetime] = None
+
+
+class ItemListUomOut(BaseModel):
+    id: int
+    item_id: int
+    uom: str
+    display_name: Optional[str] = None
+    ratio_to_base: int = Field(ge=1)
+    net_weight_kg: Optional[float] = Field(default=None, ge=0)
+    is_base: bool
+    is_purchase_default: bool
+    is_inbound_default: bool
+    is_outbound_default: bool
+    updated_at: Optional[datetime] = None
+
+
+class ItemListBarcodeOut(BaseModel):
+    id: int
+    item_id: int
+    item_uom_id: int
+    uom: Optional[str] = None
+    display_name: Optional[str] = None
+    barcode: str
+    symbology: str
+    active: bool
+    is_primary: bool
+    updated_at: Optional[datetime] = None
+
+
+class ItemListSkuCodeOut(BaseModel):
+    id: int
+    item_id: int
+    code: str
+    code_type: str
+    is_primary: bool
+    is_active: bool
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
+    remark: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class ItemListAttributeOut(BaseModel):
+    attribute_def_id: int
+    code: str
+    name_cn: str
+    value_type: str
+    selection_mode: str
+    unit: Optional[str] = None
+    is_item_required: bool
+    is_sku_required: bool
+    is_sku_segment: bool
+    sort_order: int
+
+    value_text: Optional[str] = None
+    value_number: Optional[float] = None
+    value_bool: Optional[bool] = None
+    value_option_id: Optional[int] = None
+    value_option_code_snapshot: Optional[str] = None
+    value_option_name: Optional[str] = None
+    value_unit_snapshot: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class ItemListDetailOut(BaseModel):
+    """
+    PMS 商品列表详情读模型。
+
+    定位：
+    - 只读展示合同
+    - 给商品列表页“详情展开”使用
+    - row 复用 ItemListRowOut，确保列表摘要与详情头部一致
+    """
+
+    row: ItemListRowOut
+    uoms: list[ItemListUomOut]
+    barcodes: list[ItemListBarcodeOut]
+    sku_codes: list[ItemListSkuCodeOut]
+    attributes: list[ItemListAttributeOut]

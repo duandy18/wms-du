@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
-from app.pms.items.contracts.item_list import ItemListRowOut
+from app.pms.items.contracts.item_list import ItemListDetailOut, ItemListRowOut
 from app.pms.items.services.item_list_service import ItemListReadService
 
 router = APIRouter(prefix="/items", tags=["items-list"])
@@ -31,3 +31,14 @@ def list_item_rows(
         q=q,
         limit=limit,
     )
+
+
+@router.get("/{item_id}/list-detail", response_model=ItemListDetailOut)
+def get_item_list_detail(
+    item_id: int,
+    service: ItemListReadService = Depends(get_item_list_read_service),
+) -> ItemListDetailOut:
+    detail = service.get_detail(item_id=int(item_id))
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return detail
