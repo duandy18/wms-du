@@ -9897,6 +9897,48 @@
         }
       }
     },
+    "/items/{item_id}/list-detail": {
+      "get": {
+        "tags": [
+          "items-list"
+        ],
+        "summary": "Get Item List Detail",
+        "operationId": "get_item_list_detail_items__item_id__list_detail_get",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemListDetailOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items": {
       "post": {
         "tags": [
@@ -29402,6 +29444,281 @@
         "title": "ItemCreate",
         "description": "Create Item（SKU 由调用方显式输入）：\n- 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku\n- brand/category 不再接受自由文本；请传 brand_id/category_id\n- 不接受 barcode 输入；主条码请走 /item-barcodes\n- 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）\n\nPhase M-3：\n- items.case_ratio/case_uom 已删除；包装单位请走 item_uoms"
       },
+      "ItemListAttributeOut": {
+        "properties": {
+          "attribute_def_id": {
+            "type": "integer",
+            "title": "Attribute Def Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name_cn": {
+            "type": "string",
+            "title": "Name Cn"
+          },
+          "value_type": {
+            "type": "string",
+            "title": "Value Type"
+          },
+          "selection_mode": {
+            "type": "string",
+            "title": "Selection Mode"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "is_item_required": {
+            "type": "boolean",
+            "title": "Is Item Required"
+          },
+          "is_sku_required": {
+            "type": "boolean",
+            "title": "Is Sku Required"
+          },
+          "is_sku_segment": {
+            "type": "boolean",
+            "title": "Is Sku Segment"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          },
+          "value_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Text"
+          },
+          "value_number": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Number"
+          },
+          "value_bool": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Bool"
+          },
+          "value_option_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Id"
+          },
+          "value_option_code_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Code Snapshot"
+          },
+          "value_option_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Option Name"
+          },
+          "value_unit_snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Unit Snapshot"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attribute_def_id",
+          "code",
+          "name_cn",
+          "value_type",
+          "selection_mode",
+          "is_item_required",
+          "is_sku_required",
+          "is_sku_segment",
+          "sort_order"
+        ],
+        "title": "ItemListAttributeOut"
+      },
+      "ItemListBarcodeOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "item_uom_id": {
+            "type": "integer",
+            "title": "Item Uom Id"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "barcode": {
+            "type": "string",
+            "title": "Barcode"
+          },
+          "symbology": {
+            "type": "string",
+            "title": "Symbology"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "is_primary": {
+            "type": "boolean",
+            "title": "Is Primary"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_id",
+          "item_uom_id",
+          "barcode",
+          "symbology",
+          "active",
+          "is_primary"
+        ],
+        "title": "ItemListBarcodeOut"
+      },
+      "ItemListDetailOut": {
+        "properties": {
+          "row": {
+            "$ref": "#/components/schemas/ItemListRowOut"
+          },
+          "uoms": {
+            "items": {
+              "$ref": "#/components/schemas/ItemListUomOut"
+            },
+            "type": "array",
+            "title": "Uoms"
+          },
+          "barcodes": {
+            "items": {
+              "$ref": "#/components/schemas/ItemListBarcodeOut"
+            },
+            "type": "array",
+            "title": "Barcodes"
+          },
+          "sku_codes": {
+            "items": {
+              "$ref": "#/components/schemas/ItemListSkuCodeOut"
+            },
+            "type": "array",
+            "title": "Sku Codes"
+          },
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/ItemListAttributeOut"
+            },
+            "type": "array",
+            "title": "Attributes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row",
+          "uoms",
+          "barcodes",
+          "sku_codes",
+          "attributes"
+        ],
+        "title": "ItemListDetailOut",
+        "description": "PMS 商品列表详情读模型。\n\n定位：\n- 只读展示合同\n- 给商品列表页“详情展开”使用\n- row 复用 ItemListRowOut，确保列表摘要与详情头部一致"
+      },
       "ItemListRowOut": {
         "properties": {
           "item_id": {
@@ -29600,6 +29917,175 @@
         ],
         "title": "ItemListRowOut",
         "description": "PMS 商品列表页专用 owner 读模型。\n\n定位：\n- 一行 = 一个商品的完整列表摘要\n- 只服务商品主数据总览页\n- 不承载写入语义\n- 不让前端再自行拼 item_uoms / item_barcodes / item_sku_codes / item_attribute_values"
+      },
+      "ItemListSkuCodeOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "code_type": {
+            "type": "string",
+            "title": "Code Type"
+          },
+          "is_primary": {
+            "type": "boolean",
+            "title": "Is Primary"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From"
+          },
+          "effective_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective To"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_id",
+          "code",
+          "code_type",
+          "is_primary",
+          "is_active"
+        ],
+        "title": "ItemListSkuCodeOut"
+      },
+      "ItemListUomOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "ratio_to_base": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Ratio To Base"
+          },
+          "net_weight_kg": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Weight Kg"
+          },
+          "is_base": {
+            "type": "boolean",
+            "title": "Is Base"
+          },
+          "is_purchase_default": {
+            "type": "boolean",
+            "title": "Is Purchase Default"
+          },
+          "is_inbound_default": {
+            "type": "boolean",
+            "title": "Is Inbound Default"
+          },
+          "is_outbound_default": {
+            "type": "boolean",
+            "title": "Is Outbound Default"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_id",
+          "uom",
+          "ratio_to_base",
+          "is_base",
+          "is_purchase_default",
+          "is_inbound_default",
+          "is_outbound_default"
+        ],
+        "title": "ItemListUomOut"
       },
       "ItemOut": {
         "properties": {
