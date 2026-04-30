@@ -46,28 +46,33 @@ async def _create_category(
     )
 
 
-async def _group_id(client: httpx.AsyncClient, headers: dict[str, str], *, product_kind: str, group_code: str) -> int:
-    r = await client.get(f"/pms/sku-coding/term-groups?product_kind={product_kind}", headers=headers)
+
+
+async def _attribute_def_id(client: httpx.AsyncClient, headers: dict[str, str], *, product_kind: str, code: str) -> int:
+    r = await client.get(
+        f"/pms/item-attribute-defs?product_kind={product_kind}&active_only=true",
+        headers=headers,
+    )
     assert r.status_code == 200, r.text
     rows = r.json()["data"]
     for row in rows:
-        if row["group_code"] == group_code:
+        if row["code"] == code:
             return int(row["id"])
-    raise AssertionError(f"group not found: {product_kind}/{group_code}")
+    raise AssertionError(f"attribute def not found: {product_kind}/{code}")
 
 
-async def _create_term(
+async def _create_attribute_option(
     client: httpx.AsyncClient,
     headers: dict[str, str],
     *,
-    group_id: int,
-    name_cn: str,
-    code: str,
+    attribute_def_id: int,
+    option_name: str,
+    option_code: str,
     sort_order: int,
 ) -> dict:
     r = await client.post(
-        "/pms/sku-coding/terms",
-        json={"group_id": group_id, "name_cn": name_cn, "code": code, "sort_order": sort_order},
+        f"/pms/item-attribute-defs/{attribute_def_id}/options",
+        json={"option_code": option_code, "option_name": option_name, "sort_order": sort_order},
         headers=headers,
     )
     assert r.status_code == 201, r.text
@@ -119,40 +124,40 @@ async def test_sku_coding_food_generate_contract(client: httpx.AsyncClient) -> N
         is_leaf=True,
     )
 
-    life_stage_gid = await _group_id(client, headers, product_kind="FOOD", group_code="LIFE_STAGE")
-    process_gid = await _group_id(client, headers, product_kind="FOOD", group_code="PROCESS")
-    flavor_gid = await _group_id(client, headers, product_kind="FOOD", group_code="FLAVOR")
+    life_stage_def_id = await _attribute_def_id(client, headers, product_kind="FOOD", code="LIFE_STAGE")
+    process_def_id = await _attribute_def_id(client, headers, product_kind="FOOD", code="PROCESS")
+    flavor_def_id = await _attribute_def_id(client, headers, product_kind="FOOD", code="FLAVOR")
 
-    als = await _create_term(
+    als = await _create_attribute_option(
         client,
         headers,
-        group_id=life_stage_gid,
-        name_cn=f"全期-UT-{sfx}",
-        code=life_stage_code,
+        attribute_def_id=life_stage_def_id,
+        option_name=f"全期-UT-{sfx}",
+        option_code=life_stage_code,
         sort_order=10,
     )
-    fm = await _create_term(
+    fm = await _create_attribute_option(
         client,
         headers,
-        group_id=process_gid,
-        name_cn=f"鲜肉-UT-{sfx}",
-        code=process_code,
+        attribute_def_id=process_def_id,
+        option_name=f"鲜肉-UT-{sfx}",
+        option_code=process_code,
         sort_order=10,
     )
-    chkn = await _create_term(
+    chkn = await _create_attribute_option(
         client,
         headers,
-        group_id=flavor_gid,
-        name_cn=f"鸡肉-UT-{sfx}",
-        code=chicken_code,
+        attribute_def_id=flavor_def_id,
+        option_name=f"鸡肉-UT-{sfx}",
+        option_code=chicken_code,
         sort_order=10,
     )
-    slmn = await _create_term(
+    slmn = await _create_attribute_option(
         client,
         headers,
-        group_id=flavor_gid,
-        name_cn=f"三文鱼-UT-{sfx}",
-        code=salmon_code,
+        attribute_def_id=flavor_def_id,
+        option_name=f"三文鱼-UT-{sfx}",
+        option_code=salmon_code,
         sort_order=20,
     )
 
@@ -162,7 +167,7 @@ async def test_sku_coding_food_generate_contract(client: httpx.AsyncClient) -> N
             "product_kind": "FOOD",
             "brand_id": int(brand["id"]),
             "category_id": int(leaf["id"]),
-            "term_ids": {
+            "attribute_option_ids": {
                 "LIFE_STAGE": [int(als["id"])],
                 "PROCESS": [int(fm["id"])],
                 "FLAVOR": [int(slmn["id"]), int(chkn["id"])],
@@ -223,22 +228,22 @@ async def test_sku_coding_supply_generate_contract(client: httpx.AsyncClient) ->
         is_leaf=True,
     )
 
-    model_gid = await _group_id(client, headers, product_kind="SUPPLY", group_code="MODEL")
-    color_gid = await _group_id(client, headers, product_kind="SUPPLY", group_code="COLOR")
-    pro = await _create_term(
+    model_def_id = await _attribute_def_id(client, headers, product_kind="SUPPLY", code="MODEL")
+    color_def_id = await _attribute_def_id(client, headers, product_kind="SUPPLY", code="COLOR")
+    pro = await _create_attribute_option(
         client,
         headers,
-        group_id=model_gid,
-        name_cn=f"PRO-UT-{sfx}",
-        code=model_code,
+        attribute_def_id=model_def_id,
+        option_name=f"PRO-UT-{sfx}",
+        option_code=model_code,
         sort_order=10,
     )
-    wht = await _create_term(
+    wht = await _create_attribute_option(
         client,
         headers,
-        group_id=color_gid,
-        name_cn=f"白色-UT-{sfx}",
-        code=color_code,
+        attribute_def_id=color_def_id,
+        option_name=f"白色-UT-{sfx}",
+        option_code=color_code,
         sort_order=10,
     )
 
@@ -248,7 +253,7 @@ async def test_sku_coding_supply_generate_contract(client: httpx.AsyncClient) ->
             "product_kind": "SUPPLY",
             "brand_id": int(brand["id"]),
             "category_id": int(leaf["id"]),
-            "term_ids": {
+            "attribute_option_ids": {
                 "MODEL": [int(pro["id"])],
                 "COLOR": [int(wht["id"])],
             },
@@ -261,42 +266,21 @@ async def test_sku_coding_supply_generate_contract(client: httpx.AsyncClient) ->
     assert data["sku"] == f"SKU-{brand_code}-{category_code}-{model_code}-2L-{color_code}"
 
 
+
+
 @pytest.mark.asyncio
-async def test_sku_coding_dictionary_update_and_toggle_contract(client: httpx.AsyncClient) -> None:
+async def test_sku_coding_legacy_dictionary_routes_are_retired(client: httpx.AsyncClient) -> None:
     headers = await _headers(client)
-    sfx = _suffix()
 
-    flavor_gid = await _group_id(client, headers, product_kind="FOOD", group_code="FLAVOR")
-    term = await _create_term(
-        client,
-        headers,
-        group_id=flavor_gid,
-        name_cn=f"口味编辑-UT-{sfx}",
-        code=f"FLV{sfx}",
-        sort_order=10,
-    )
+    r_groups = await client.get("/pms/sku-coding/term-groups", headers=headers)
+    assert r_groups.status_code == 404, r_groups.text
 
-    r_term_patch = await client.patch(
-        f"/pms/sku-coding/terms/{term['id']}",
-        json={
-            "name_cn": f"口味编辑后-UT-{sfx}",
-            "code": f"FLVX{sfx}",
-            "sort_order": 99,
-            "remark": "updated term",
-        },
+    r_terms = await client.get("/pms/sku-coding/terms", headers=headers)
+    assert r_terms.status_code == 404, r_terms.text
+
+    r_create = await client.post(
+        "/pms/sku-coding/terms",
+        json={"group_id": 1, "name_cn": "旧字典", "code": "OLD"},
         headers=headers,
     )
-    assert r_term_patch.status_code == 200, r_term_patch.text
-    term_updated = r_term_patch.json()
-    assert term_updated["name_cn"] == f"口味编辑后-UT-{sfx}"
-    assert term_updated["code"] == f"FLVX{sfx}"
-    assert term_updated["sort_order"] == 99
-    assert term_updated["remark"] == "updated term"
-
-    r_term_disable = await client.post(f"/pms/sku-coding/terms/{term['id']}/disable", headers=headers)
-    assert r_term_disable.status_code == 200, r_term_disable.text
-    assert r_term_disable.json()["is_active"] is False
-
-    r_term_enable = await client.post(f"/pms/sku-coding/terms/{term['id']}/enable", headers=headers)
-    assert r_term_enable.status_code == 200, r_term_enable.text
-    assert r_term_enable.json()["is_active"] is True
+    assert r_create.status_code == 404, r_create.text
