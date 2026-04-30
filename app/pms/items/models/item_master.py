@@ -151,6 +151,7 @@ class ItemAttributeOption(Base):
     option_code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     option_name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"))
+    is_locked: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
     sort_order: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

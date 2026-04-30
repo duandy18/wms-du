@@ -233,6 +233,7 @@ class ItemAttributeOptionOut(_Base):
     option_code: str
     option_name: str
     is_active: bool
+    is_locked: bool
     sort_order: int
     created_at: datetime | None = None
     updated_at: datetime | None = None
