@@ -169,10 +169,11 @@ async def test_pms_attribute_template_options_and_item_values_contract(client: h
             "code": f"COLOR_{sfx}",
             "name_cn": "颜色",
             "product_kind": "OTHER",
-            "category_id": category_id,
             "value_type": "OPTION",
-            "is_required": True,
-            "is_filterable": True,
+            "selection_mode": "SINGLE",
+            "is_item_required": True,
+            "is_sku_required": True,
+            "is_sku_segment": True,
             "sort_order": 10,
         },
         headers=headers,
@@ -181,6 +182,34 @@ async def test_pms_attribute_template_options_and_item_values_contract(client: h
     attr = r_attr.json()
     assert attr["code"] == f"COLOR_{sfx}"
     assert attr["value_type"] == "OPTION"
+    assert attr["selection_mode"] == "SINGLE"
+    assert attr["is_item_required"] is True
+    assert attr["is_sku_required"] is True
+    assert attr["is_sku_segment"] is True
+    assert attr["is_locked"] is False
+
+    r_attr_lock = await client.post(f"/pms/item-attribute-defs/{attr['id']}/lock", headers=headers)
+    assert r_attr_lock.status_code == 200, r_attr_lock.text
+    assert r_attr_lock.json()["is_locked"] is True
+
+    r_attr_locked_patch = await client.patch(
+        f"/pms/item-attribute-defs/{attr['id']}",
+        json={"selection_mode": "MULTI"},
+        headers=headers,
+    )
+    assert r_attr_locked_patch.status_code == 409, r_attr_locked_patch.text
+
+    r_attr_unlock = await client.post(f"/pms/item-attribute-defs/{attr['id']}/unlock", headers=headers)
+    assert r_attr_unlock.status_code == 200, r_attr_unlock.text
+    assert r_attr_unlock.json()["is_locked"] is False
+
+    r_attr_patch = await client.patch(
+        f"/pms/item-attribute-defs/{attr['id']}",
+        json={"selection_mode": "MULTI"},
+        headers=headers,
+    )
+    assert r_attr_patch.status_code == 200, r_attr_patch.text
+    assert r_attr_patch.json()["selection_mode"] == "MULTI"
 
     r_option = await client.post(
         f"/pms/item-attribute-defs/{attr['id']}/options",

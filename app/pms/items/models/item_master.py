@@ -74,11 +74,6 @@ class PmsBusinessCategory(Base):
         lazy="joined",
     )
     items: Mapped[list["Item"]] = relationship("Item", back_populates="category_ref", lazy="selectin")
-    attribute_defs: Mapped[list["ItemAttributeDef"]] = relationship(
-        "ItemAttributeDef",
-        back_populates="category",
-        lazy="selectin",
-    )
 
     __table_args__ = (
         sa.CheckConstraint("level in (1, 2, 3)", name="ck_pms_business_categories_level"),
@@ -101,18 +96,14 @@ class ItemAttributeDef(Base):
     name_cn: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     name_en: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
     product_kind: Mapped[str] = mapped_column(sa.String(16), nullable=False)
-    category_id: Mapped[int | None] = mapped_column(
-        sa.Integer,
-        sa.ForeignKey("pms_business_categories.id", name="fk_item_attribute_defs_category", ondelete="RESTRICT"),
-        nullable=True,
-    )
     value_type: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    selection_mode: Mapped[str] = mapped_column(sa.String(16), nullable=False, server_default=sa.text("'SINGLE'"))
     unit: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
-    is_required: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
-    is_searchable: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
-    is_filterable: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
+    is_item_required: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
+    is_sku_required: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
     is_sku_segment: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"))
+    is_locked: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
     sort_order: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     remark: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -123,11 +114,6 @@ class ItemAttributeDef(Base):
         onupdate=func.now(),
     )
 
-    category: Mapped[PmsBusinessCategory | None] = relationship(
-        "PmsBusinessCategory",
-        back_populates="attribute_defs",
-        lazy="joined",
-    )
     options: Mapped[list["ItemAttributeOption"]] = relationship(
         "ItemAttributeOption",
         back_populates="attribute_def",
@@ -144,8 +130,11 @@ class ItemAttributeDef(Base):
             "value_type in ('TEXT', 'NUMBER', 'OPTION', 'BOOL')",
             name="ck_item_attribute_defs_value_type",
         ),
-        sa.UniqueConstraint("category_id", "code", name="uq_item_attribute_defs_category_code"),
-        sa.Index("ix_item_attribute_defs_category_id", "category_id"),
+        sa.CheckConstraint(
+            "selection_mode in ('SINGLE', 'MULTI')",
+            name="ck_item_attribute_defs_selection_mode",
+        ),
+        sa.UniqueConstraint("product_kind", "code", name="uq_item_attribute_defs_product_kind_code"),
         sa.Index("ix_item_attribute_defs_product_kind", "product_kind"),
     )
 

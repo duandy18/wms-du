@@ -254,7 +254,6 @@ def unlock_pms_category(category_id: int, db: Session = Depends(get_db)):
 @router.get("/pms/item-attribute-defs", response_model=ListOut[ItemAttributeDefOut])
 def list_item_attribute_defs(
     product_kind: str | None = Query(None),
-    category_id: int | None = Query(None, ge=1),
     active_only: bool = Query(False),
     db: Session = Depends(get_db),
 ):
@@ -265,8 +264,6 @@ def list_item_attribute_defs(
     )
     if product_kind:
         stmt = stmt.where(ItemAttributeDef.product_kind == product_kind.strip().upper())
-    if category_id is not None:
-        stmt = stmt.where(ItemAttributeDef.category_id == int(category_id))
     if active_only:
         stmt = stmt.where(ItemAttributeDef.is_active.is_(True))
     return {"ok": True, "data": list(db.execute(stmt).scalars().all())}
@@ -274,22 +271,16 @@ def list_item_attribute_defs(
 
 @router.post("/pms/item-attribute-defs", response_model=ItemAttributeDefOut, status_code=status.HTTP_201_CREATED)
 def create_item_attribute_def(payload: ItemAttributeDefCreate, db: Session = Depends(get_db)):
-    if payload.category_id is not None:
-        cat = db.get(PmsBusinessCategory, int(payload.category_id))
-        if cat is None:
-            raise _bad_request("内部分类不存在")
-
     obj = ItemAttributeDef(
         code=payload.code.upper(),
         name_cn=payload.name_cn,
         name_en=payload.name_en,
         product_kind=payload.product_kind,
-        category_id=payload.category_id,
         value_type=payload.value_type,
+        selection_mode=payload.selection_mode,
         unit=payload.unit,
-        is_required=bool(payload.is_required),
-        is_searchable=bool(payload.is_searchable),
-        is_filterable=bool(payload.is_filterable),
+        is_item_required=bool(payload.is_item_required),
+        is_sku_required=bool(payload.is_sku_required),
         is_sku_segment=bool(payload.is_sku_segment),
         sort_order=int(payload.sort_order),
         remark=payload.remark,
@@ -310,6 +301,10 @@ def update_item_attribute_def(attribute_def_id: int, payload: ItemAttributeDefUp
     if obj is None:
         raise _not_found("属性模板不存在")
     data = payload.model_dump(exclude_unset=True)
+    if "selection_mode" in data and obj.is_locked:
+        raise HTTPException(status_code=409, detail="属性模板已锁定，不能修改 selection_mode")
+    if "selection_mode" in data and obj.value_type != "OPTION" and data["selection_mode"] != "SINGLE":
+        raise _bad_request("非 OPTION 属性只允许 selection_mode=SINGLE")
     for k, v in data.items():
         setattr(obj, k, v)
     db.commit()
@@ -334,6 +329,28 @@ def disable_item_attribute_def(attribute_def_id: int, db: Session = Depends(get_
     if obj is None:
         raise _not_found("属性模板不存在")
     obj.is_active = False
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/item-attribute-defs/{attribute_def_id}/lock", response_model=ItemAttributeDefOut)
+def lock_item_attribute_def(attribute_def_id: int, db: Session = Depends(get_db)):
+    obj = db.get(ItemAttributeDef, int(attribute_def_id))
+    if obj is None:
+        raise _not_found("属性模板不存在")
+    obj.is_locked = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/pms/item-attribute-defs/{attribute_def_id}/unlock", response_model=ItemAttributeDefOut)
+def unlock_item_attribute_def(attribute_def_id: int, db: Session = Depends(get_db)):
+    obj = db.get(ItemAttributeDef, int(attribute_def_id))
+    if obj is None:
+        raise _not_found("属性模板不存在")
+    obj.is_locked = False
     db.commit()
     db.refresh(obj)
     return obj
@@ -465,13 +482,13 @@ def replace_item_attribute_values(
 
         if attr.value_type == "TEXT":
             if incoming.value_text is None or not str(incoming.value_text).strip():
-                if attr.is_required:
+                if attr.is_item_required:
                     raise _bad_request(f"必填文本属性不能为空：{attr.code}")
         elif attr.value_type == "NUMBER":
-            if incoming.value_number is None and attr.is_required:
+            if incoming.value_number is None and attr.is_item_required:
                 raise _bad_request(f"必填数值属性不能为空：{attr.code}")
         elif attr.value_type == "BOOL":
-            if incoming.value_bool is None and attr.is_required:
+            if incoming.value_bool is None and attr.is_item_required:
                 raise _bad_request(f"必填布尔属性不能为空：{attr.code}")
 
         row = ItemAttributeValue(

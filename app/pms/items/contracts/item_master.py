@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ProductKind = Literal["FOOD", "SUPPLY", "OTHER"]
 AttributeProductKind = Literal["FOOD", "SUPPLY", "OTHER", "COMMON"]
 AttributeValueType = Literal["TEXT", "NUMBER", "OPTION", "BOOL"]
+AttributeSelectionMode = Literal["SINGLE", "MULTI"]
 
 
 class _Base(BaseModel):
@@ -132,12 +133,11 @@ class ItemAttributeDefCreate(_Base):
     name_cn: Annotated[str, Field(min_length=1, max_length=128)]
     name_en: Annotated[str | None, Field(default=None, max_length=128)] = None
     product_kind: AttributeProductKind
-    category_id: int | None = None
     value_type: AttributeValueType
+    selection_mode: AttributeSelectionMode = "SINGLE"
     unit: Annotated[str | None, Field(default=None, max_length=16)] = None
-    is_required: bool = False
-    is_searchable: bool = False
-    is_filterable: bool = False
+    is_item_required: bool = False
+    is_sku_required: bool = False
     is_sku_segment: bool = False
     sort_order: int = 0
     remark: Annotated[str | None, Field(default=None, max_length=500)] = None
@@ -147,19 +147,25 @@ class ItemAttributeDefCreate(_Base):
     def _trim_text(cls, v: object) -> object:
         return _trim(v)
 
-    @field_validator("code", "product_kind", "value_type", mode="before")
+    @field_validator("code", "product_kind", "value_type", "selection_mode", mode="before")
     @classmethod
     def _upper_text(cls, v: object) -> object:
         return _upper(v)
+
+    @model_validator(mode="after")
+    def _selection_mode_matches_value_type(self) -> "ItemAttributeDefCreate":
+        if self.value_type != "OPTION" and self.selection_mode != "SINGLE":
+            raise ValueError("非 OPTION 属性只允许 selection_mode=SINGLE")
+        return self
 
 
 class ItemAttributeDefUpdate(_Base):
     name_cn: Annotated[str | None, Field(default=None, max_length=128)] = None
     name_en: Annotated[str | None, Field(default=None, max_length=128)] = None
+    selection_mode: AttributeSelectionMode | None = None
     unit: Annotated[str | None, Field(default=None, max_length=16)] = None
-    is_required: bool | None = None
-    is_searchable: bool | None = None
-    is_filterable: bool | None = None
+    is_item_required: bool | None = None
+    is_sku_required: bool | None = None
     is_sku_segment: bool | None = None
     sort_order: int | None = None
     remark: Annotated[str | None, Field(default=None, max_length=500)] = None
@@ -169,6 +175,11 @@ class ItemAttributeDefUpdate(_Base):
     def _trim_text(cls, v: object) -> object:
         return _trim(v)
 
+    @field_validator("selection_mode", mode="before")
+    @classmethod
+    def _upper_selection_mode(cls, v: object) -> object:
+        return _upper(v)
+
 
 class ItemAttributeDefOut(_Base):
     id: int
@@ -176,14 +187,14 @@ class ItemAttributeDefOut(_Base):
     name_cn: str
     name_en: str | None = None
     product_kind: str
-    category_id: int | None = None
     value_type: str
+    selection_mode: str
     unit: str | None = None
-    is_required: bool
-    is_searchable: bool
-    is_filterable: bool
+    is_item_required: bool
+    is_sku_required: bool
     is_sku_segment: bool
     is_active: bool
+    is_locked: bool
     sort_order: int
     remark: str | None = None
     created_at: datetime | None = None
