@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -242,35 +241,38 @@ class ItemAttributeOptionOut(_Base):
 class ItemAttributeValueIn(_Base):
     attribute_def_id: Annotated[int, Field(ge=1)]
     value_text: str | None = None
-    value_number: Decimal | None = None
+    value_number: float | None = None
     value_bool: bool | None = None
-    value_option_id: int | None = None
+    value_option_ids: list[Annotated[int, Field(ge=1)]] | None = None
 
     @model_validator(mode="after")
     def _one_value(self) -> "ItemAttributeValueIn":
-        filled = [
-            self.value_text is not None and str(self.value_text).strip() != "",
+        option_ids = self.value_option_ids or []
+        flags = [
+            self.value_text is not None,
             self.value_number is not None,
             self.value_bool is not None,
-            self.value_option_id is not None,
+            len(option_ids) > 0,
         ]
-        if sum(1 for x in filled if x) > 1:
-            raise ValueError("每个属性值只能提交一种 value_*")
+        if sum(1 for x in flags if x) != 1:
+            raise ValueError("必须且只能提交一种属性值")
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("value_option_ids 不能重复")
         return self
 
 
 class ItemAttributeValueOut(_Base):
-    id: int
+    id: int | None = None
     item_id: int
     attribute_def_id: int
     value_text: str | None = None
-    value_number: Decimal | None = None
+    value_number: float | None = None
     value_bool: bool | None = None
-    value_option_id: int | None = None
-    value_option_code_snapshot: str | None = None
+    value_option_ids: list[int] = Field(default_factory=list)
+    value_option_code_snapshots: list[str] = Field(default_factory=list)
     value_unit_snapshot: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class ItemAttributeValuesReplaceIn(_Base):

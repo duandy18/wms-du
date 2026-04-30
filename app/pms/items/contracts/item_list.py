@@ -104,9 +104,9 @@ class ItemListAttributeOut(BaseModel):
     value_text: Optional[str] = None
     value_number: Optional[float] = None
     value_bool: Optional[bool] = None
-    value_option_id: Optional[int] = None
-    value_option_code_snapshot: Optional[str] = None
-    value_option_name: Optional[str] = None
+    value_option_ids: list[int] = Field(default_factory=list)
+    value_option_code_snapshots: list[str] = Field(default_factory=list)
+    value_option_names: list[str] = Field(default_factory=list)
     value_unit_snapshot: Optional[str] = None
     updated_at: Optional[datetime] = None
 

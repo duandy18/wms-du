@@ -206,7 +206,21 @@ class ItemAttributeValue(Base):
     option: Mapped[ItemAttributeOption | None] = relationship("ItemAttributeOption", lazy="joined")
 
     __table_args__ = (
-        sa.UniqueConstraint("item_id", "attribute_def_id", name="uq_item_attribute_values_item_def"),
+        sa.Index(
+            "uq_item_attribute_values_item_def_scalar",
+            "item_id",
+            "attribute_def_id",
+            unique=True,
+            postgresql_where=sa.text("value_option_id IS NULL"),
+        ),
+        sa.Index(
+            "uq_item_attribute_values_item_def_option",
+            "item_id",
+            "attribute_def_id",
+            "value_option_id",
+            unique=True,
+            postgresql_where=sa.text("value_option_id IS NOT NULL"),
+        ),
         sa.Index("ix_item_attribute_values_item_id", "item_id"),
         sa.Index("ix_item_attribute_values_def_id", "attribute_def_id"),
     )

@@ -28796,10 +28796,6 @@
                 "type": "number"
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
                 "type": "null"
               }
             ],
@@ -28816,16 +28812,20 @@
             ],
             "title": "Value Bool"
           },
-          "value_option_id": {
+          "value_option_ids": {
             "anyOf": [
               {
-                "type": "integer"
+                "items": {
+                  "type": "integer",
+                  "minimum": 1.0
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Value Option Id"
+            "title": "Value Option Ids"
           }
         },
         "type": "object",
@@ -28837,7 +28837,14 @@
       "ItemAttributeValueOut": {
         "properties": {
           "id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Id"
           },
           "item_id": {
@@ -28862,8 +28869,7 @@
           "value_number": {
             "anyOf": [
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -28882,27 +28888,19 @@
             ],
             "title": "Value Bool"
           },
-          "value_option_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Option Id"
+          "value_option_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Value Option Ids"
           },
-          "value_option_code_snapshot": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Option Code Snapshot"
+          "value_option_code_snapshots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Value Option Code Snapshots"
           },
           "value_unit_snapshot": {
             "anyOf": [
@@ -28918,8 +28916,7 @@
           "created_at": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "date-time"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -28930,8 +28927,7 @@
           "updated_at": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "date-time"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -28942,7 +28938,6 @@
         },
         "type": "object",
         "required": [
-          "id",
           "item_id",
           "attribute_def_id"
         ],
@@ -29526,38 +29521,26 @@
             ],
             "title": "Value Bool"
           },
-          "value_option_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Option Id"
+          "value_option_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Value Option Ids"
           },
-          "value_option_code_snapshot": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Option Code Snapshot"
+          "value_option_code_snapshots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Value Option Code Snapshots"
           },
-          "value_option_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Option Name"
+          "value_option_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Value Option Names"
           },
           "value_unit_snapshot": {
             "anyOf": [
