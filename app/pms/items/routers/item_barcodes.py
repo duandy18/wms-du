@@ -102,8 +102,11 @@ class ItemBarcodeCompositeRow(BaseModel):
     uom: str
     display_name: Optional[str]
     ratio_to_base: int
+    net_weight_kg: Optional[float]
     is_base: bool
     is_purchase_default: bool
+    is_inbound_default: bool
+    is_outbound_default: bool
 
     barcode: str
     symbology: str
@@ -191,8 +194,11 @@ def list_barcode_rows_for_item(
             uom=str(uom.uom),
             display_name=str(uom.display_name).strip() if uom.display_name is not None else None,
             ratio_to_base=int(uom.ratio_to_base),
+            net_weight_kg=float(uom.net_weight_kg) if uom.net_weight_kg is not None else None,
             is_base=bool(uom.is_base),
             is_purchase_default=bool(uom.is_purchase_default),
+            is_inbound_default=bool(uom.is_inbound_default),
+            is_outbound_default=bool(uom.is_outbound_default),
             barcode=str(bc.barcode),
             symbology=str(bc.symbology),
             is_primary=bool(bc.is_primary),
