@@ -1,7 +1,6 @@
 # app/pms/items/routers/item_barcodes.py
 from __future__ import annotations
 
-from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
+from app.pms.items.contracts.item_uom import ItemUomBarcodeRowOut
 from app.pms.items.repos.item_barcode_repo import (
     clear_primary_flags_for_item,
     create_item_barcode,
@@ -85,34 +85,18 @@ class ItemBarcodeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ItemBarcodeCompositeRow(BaseModel):
+class ItemBarcodeCompositeRow(ItemUomBarcodeRowOut):
     """
     商品条码页 owner 复合只读行：
-    - 一行 = 一个商品 + 一个单位 + 一条码
-    - 页面用它直接渲染，不再让前端分别请求 /item-barcodes 与 /item-uoms 后自行 join
+    - 继承 item_uoms owner 复合读模型，包装字段以 item_uoms 合同为唯一来源
+    - 当前接口只返回已绑定条码的行，因此条码字段在这里收紧为必填
     """
 
     barcode_id: int
-    item_id: int
-    item_uom_id: int
-
-    sku: str
-    item_name: str
-
-    uom: str
-    display_name: Optional[str]
-    ratio_to_base: int
-    net_weight_kg: Optional[float]
-    is_base: bool
-    is_purchase_default: bool
-    is_inbound_default: bool
-    is_outbound_default: bool
-
     barcode: str
     symbology: str
     is_primary: bool
     active: bool
-    updated_at: datetime
 
 
 @router.post("", response_model=ItemBarcodeOut, status_code=status.HTTP_201_CREATED)
