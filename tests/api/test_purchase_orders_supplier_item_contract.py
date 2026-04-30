@@ -1,7 +1,8 @@
 # tests/api/test_purchase_orders_supplier_item_contract.py
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 import pytest
 import httpx
@@ -67,6 +68,106 @@ async def _pick_any_uom_id(session: AsyncSession, *, item_id: int) -> int:
     got2 = r2.scalar_one_or_none()
     assert got2 is not None, {"msg": "item has no item_uoms", "item_id": int(item_id)}
     return int(got2)
+
+
+async def _insert_supplier(
+    session: AsyncSession,
+    *,
+    active: bool,
+    name_prefix: str,
+) -> Tuple[int, str]:
+    suffix = uuid4().hex[:10].upper()
+    code = f"{name_prefix}-{suffix}".upper()
+    name = f"{name_prefix}-{suffix}"
+
+    await session.execute(
+        text(
+            """
+            SELECT setval(
+              pg_get_serial_sequence('suppliers', 'id'),
+              COALESCE((SELECT MAX(id) FROM suppliers), 0) + 1,
+              false
+            )
+            """
+        )
+    )
+
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO suppliers(name, code, active)
+            VALUES (:name, :code, :active)
+            RETURNING id, name
+            """
+        ),
+        {
+            "name": name,
+            "code": code,
+            "active": bool(active),
+        },
+    )
+    got = row.mappings().one()
+    return int(got["id"]), str(got["name"])
+
+
+async def _insert_item_for_supplier(
+    session: AsyncSession,
+    *,
+    supplier_id: int,
+    sku_prefix: str,
+) -> int:
+    sku = f"{sku_prefix}-{uuid4().hex[:10]}".upper()
+    name = f"UT-{sku}"
+
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO items(
+              name, sku, enabled, supplier_id,
+              lot_source_policy, expiry_policy, derivation_allowed, uom_governance_enabled,
+              shelf_life_value, shelf_life_unit
+            )
+            VALUES(
+              :name, :sku, TRUE, :supplier_id,
+              'INTERNAL_ONLY'::lot_source_policy, 'NONE'::expiry_policy, TRUE, TRUE,
+              NULL, NULL
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "name": name,
+            "sku": sku,
+            "supplier_id": int(supplier_id),
+        },
+    )
+    item_id = int(row.scalar_one())
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO item_uoms(
+              item_id, uom, ratio_to_base, display_name,
+              is_base, is_purchase_default, is_inbound_default, is_outbound_default
+            )
+            VALUES(
+              :item_id, 'PCS', 1, 'PCS',
+              TRUE, TRUE, TRUE, TRUE
+            )
+            ON CONFLICT ON CONSTRAINT uq_item_uoms_item_uom
+            DO UPDATE SET
+              ratio_to_base = EXCLUDED.ratio_to_base,
+              display_name = EXCLUDED.display_name,
+              is_base = EXCLUDED.is_base,
+              is_purchase_default = EXCLUDED.is_purchase_default,
+              is_inbound_default = EXCLUDED.is_inbound_default,
+              is_outbound_default = EXCLUDED.is_outbound_default
+            """
+        ),
+        {"item_id": int(item_id)},
+    )
+
+    return int(item_id)
 
 
 def _assert_po_head_contract(data: Dict[str, Any]) -> None:
@@ -165,6 +266,108 @@ async def test_create_po_rejects_item_supplier_mismatch(client: httpx.AsyncClien
     assert r.status_code == 400, r.text
     p = as_problem(r.json())
     assert "不属于当前供应商" in (p.get("message") or "")
+
+
+@pytest.mark.asyncio
+async def test_create_po_rejects_inactive_supplier(
+    client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    """
+    合同：新建采购单只能使用 active=true 的供应商。
+    停用供应商即使存在，也不能用于新建 PO。
+    """
+    headers = await _login_admin_headers(client)
+
+    supplier_id, _supplier_name = await _insert_supplier(
+        session,
+        active=False,
+        name_prefix="UT-INACTIVE-SUP",
+    )
+    item_id = await _insert_item_for_supplier(
+        session,
+        supplier_id=supplier_id,
+        sku_prefix="UT-INACTIVE-ITEM",
+    )
+    await session.commit()
+
+    uom_id = await _pick_any_uom_id(session, item_id=item_id)
+
+    payload = {
+        "warehouse_id": 1,
+        "supplier_id": int(supplier_id),
+        "purchaser": "UT",
+        "purchase_time": "2026-01-14T10:00:00Z",
+        "lines": [{"line_no": 1, "item_id": int(item_id), "uom_id": int(uom_id), "qty_input": 1}],
+    }
+
+    r = await client.post("/purchase-orders/", json=payload, headers=headers)
+    assert r.status_code == 400, r.text
+    p = as_problem(r.json())
+    assert "已停用" in (p.get("message") or "")
+
+
+@pytest.mark.asyncio
+async def test_update_po_rejects_inactive_supplier(
+    client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    """
+    合同：更新采购单时，如果切换供应商，也只能使用 active=true 的供应商。
+    已存在历史 PO 的读取不受影响；这里仅约束写入。
+    """
+    headers = await _login_admin_headers(client)
+
+    s1_items = await _get_items(client, headers, "?supplier_id=1&enabled=true")
+    assert len(s1_items) >= 1
+    active_item_id = int(s1_items[0]["id"])
+    active_uom_id = await _pick_any_uom_id(session, item_id=active_item_id)
+
+    create_payload = {
+        "warehouse_id": 1,
+        "supplier_id": 1,
+        "purchaser": "UT",
+        "purchase_time": "2026-01-14T10:00:00Z",
+        "lines": [{"line_no": 1, "item_id": active_item_id, "uom_id": int(active_uom_id), "qty_input": 1}],
+    }
+    created_resp = await client.post("/purchase-orders/", json=create_payload, headers=headers)
+    assert created_resp.status_code == 200, created_resp.text
+    created = created_resp.json()
+    po_id = int(created["id"])
+
+    inactive_supplier_id, _supplier_name = await _insert_supplier(
+        session,
+        active=False,
+        name_prefix="UT-INACTIVE-UPD-SUP",
+    )
+    inactive_item_id = await _insert_item_for_supplier(
+        session,
+        supplier_id=inactive_supplier_id,
+        sku_prefix="UT-INACTIVE-UPD-ITEM",
+    )
+    await session.commit()
+
+    inactive_uom_id = await _pick_any_uom_id(session, item_id=inactive_item_id)
+
+    update_payload = {
+        "warehouse_id": 1,
+        "supplier_id": int(inactive_supplier_id),
+        "purchaser": "UT-UPDATED",
+        "purchase_time": "2026-01-15T10:00:00Z",
+        "lines": [
+            {
+                "line_no": 1,
+                "item_id": int(inactive_item_id),
+                "uom_id": int(inactive_uom_id),
+                "qty_input": 1,
+            }
+        ],
+    }
+
+    r = await client.put(f"/purchase-orders/{po_id}", json=update_payload, headers=headers)
+    assert r.status_code == 400, r.text
+    p = as_problem(r.json())
+    assert "已停用" in (p.get("message") or "")
 
 
 @pytest.mark.asyncio
