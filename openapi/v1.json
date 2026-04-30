@@ -9793,6 +9793,110 @@
         }
       }
     },
+    "/items/list-rows": {
+      "get": {
+        "tags": [
+          "items-list"
+        ],
+        "summary": "List Item Rows",
+        "operationId": "list_item_rows_items_list_rows_get",
+        "parameters": [
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "true=有效商品；false=无效商品；不传=全部",
+              "title": "Enabled"
+            },
+            "description": "true=有效商品；false=无效商品；不传=全部"
+          },
+          {
+            "name": "supplier_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按供应商过滤",
+              "title": "Supplier Id"
+            },
+            "description": "按供应商过滤"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "关键词搜索 SKU / 名称 / 规格 / 品牌 / 分类 / 供应商 / 主条码",
+              "title": "Q"
+            },
+            "description": "关键词搜索 SKU / 名称 / 规格 / 品牌 / 分类 / 供应商 / 主条码"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ItemListRowOut"
+                  },
+                  "title": "Response List Item Rows Items List Rows Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items": {
       "post": {
         "tags": [
@@ -29297,6 +29401,205 @@
         ],
         "title": "ItemCreate",
         "description": "Create Item（SKU 由调用方显式输入）：\n- 必须传 sku；SKU 编码页只负责生成候选 SKU，最终由商品创建合同写入 items.sku\n- brand/category 不再接受自由文本；请传 brand_id/category_id\n- 不接受 barcode 输入；主条码请走 /item-barcodes\n- 不接受 weight_kg 输入；基础包装净重请走 item_uoms（base uom）\n\nPhase M-3：\n- items.case_ratio/case_uom 已删除；包装单位请走 item_uoms"
+      },
+      "ItemListRowOut": {
+        "properties": {
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "sku": {
+            "type": "string",
+            "title": "Sku"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "supplier_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Name"
+          },
+          "primary_barcode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Barcode"
+          },
+          "base_uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Uom"
+          },
+          "base_net_weight_kg": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Net Weight Kg"
+          },
+          "purchase_uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Uom"
+          },
+          "purchase_ratio_to_base": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Ratio To Base"
+          },
+          "lot_source_policy": {
+            "type": "string",
+            "title": "Lot Source Policy"
+          },
+          "expiry_policy": {
+            "type": "string",
+            "title": "Expiry Policy"
+          },
+          "shelf_life_value": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shelf Life Value"
+          },
+          "shelf_life_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shelf Life Unit"
+          },
+          "uom_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Uom Count",
+            "default": 0
+          },
+          "barcode_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Barcode Count",
+            "default": 0
+          },
+          "sku_code_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sku Code Count",
+            "default": 0
+          },
+          "attribute_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attribute Count",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_id",
+          "sku",
+          "name",
+          "enabled",
+          "lot_source_policy",
+          "expiry_policy"
+        ],
+        "title": "ItemListRowOut",
+        "description": "PMS 商品列表页专用 owner 读模型。\n\n定位：\n- 一行 = 一个商品的完整列表摘要\n- 只服务商品主数据总览页\n- 不承载写入语义\n- 不让前端再自行拼 item_uoms / item_barcodes / item_sku_codes / item_attribute_values"
       },
       "ItemOut": {
         "properties": {
