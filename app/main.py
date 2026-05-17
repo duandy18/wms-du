@@ -25,7 +25,7 @@ PYTEST_RUNNING = os.getenv("PYTEST_RUNNING") == "1"
 DUMP_ROUTES = (os.getenv("WMS_DUMP_ROUTES") == "1") and IS_DEV_ENV and (not PYTEST_RUNNING)
 
 app = FastAPI(
-    title="WMS-DU",
+    title="wms-api",
     version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -69,7 +69,7 @@ if DUMP_ROUTES:
 
 @app.get("/")
 async def root() -> Dict[str, Any]:
-    return {"name": "WMS-DU", "version": "1.1.0"}
+    return {"name": "wms-api", "version": "1.1.0"}
 
 
 @app.get("/ping")

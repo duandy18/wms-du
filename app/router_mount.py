@@ -52,6 +52,7 @@ def mount_routers(app: FastAPI) -> None:
     from app.wms.ledger.routers.stock_ledger import router as stock_ledger_router
     from app.user.routers.user import router as user_router
     from app.wms.warehouses.routers.warehouses import router as warehouses_router
+    from app.wms.system.read_v1.routers import router as wms_system_read_v1_router
 
 
     from app.oms.router import router as oms_router
@@ -114,6 +115,7 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(pms_router)
 
     app.include_router(warehouses_router)
+    app.include_router(wms_system_read_v1_router)
 
     # PMS 相关：
     # - PMS export 读面先挂，避免与 owner /items/{id} 类路由冲突
