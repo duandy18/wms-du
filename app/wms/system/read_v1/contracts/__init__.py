@@ -14,6 +14,11 @@ from app.wms.system.read_v1.contracts.service_capabilities import (
     WmsSystemServiceCapabilityOut,
     WmsSystemServiceCapabilityRouteOut,
 )
+from app.wms.system.read_v1.contracts.service_dependencies import (
+    WmsSystemServiceDependenciesOut,
+    WmsSystemServiceDependencyEndpointOut,
+    WmsSystemServiceDependencyOut,
+)
 
 __all__ = [
     "WmsSystemAppManifestBuildInfoOut",
@@ -23,4 +28,7 @@ __all__ = [
     "WmsSystemServiceCapabilitiesOut",
     "WmsSystemServiceCapabilityOut",
     "WmsSystemServiceCapabilityRouteOut",
+    "WmsSystemServiceDependenciesOut",
+    "WmsSystemServiceDependencyEndpointOut",
+    "WmsSystemServiceDependencyOut",
 ]
