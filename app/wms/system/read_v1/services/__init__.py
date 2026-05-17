@@ -13,12 +13,18 @@ from app.wms.system.read_v1.services.page_catalog_service import (
 from app.wms.system.read_v1.services.service_capability_service import (
     WmsServiceCapabilityReadService,
 )
+from app.wms.system.read_v1.services.service_dependencies_service import (
+    WMS_SERVICE_CLIENT_CODE,
+    build_wms_service_dependencies,
+)
 
 __all__ = [
     "WMS_APP_CODE",
     "WMS_APP_NAME",
     "WMS_APP_VERSION",
+    "WMS_SERVICE_CLIENT_CODE",
     "WmsPageCatalogService",
     "WmsServiceCapabilityReadService",
     "build_wms_app_manifest",
+    "build_wms_service_dependencies",
 ]

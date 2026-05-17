@@ -8,10 +8,14 @@ from app.wms.system.read_v1.routers.page_catalog import router as page_catalog_r
 from app.wms.system.read_v1.routers.service_capabilities import (
     router as service_capabilities_router,
 )
+from app.wms.system.read_v1.routers.service_dependencies import (
+    router as service_dependencies_router,
+)
 
 router = APIRouter()
 router.include_router(app_manifest_router)
 router.include_router(page_catalog_router)
 router.include_router(service_capabilities_router)
+router.include_router(service_dependencies_router)
 
 __all__ = ["router"]
