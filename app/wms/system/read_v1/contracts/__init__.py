@@ -5,6 +5,14 @@ from app.wms.system.read_v1.contracts.app_manifest import (
     WmsSystemAppManifestBuildInfoOut,
     WmsSystemAppManifestOut,
 )
+from app.wms.system.read_v1.contracts.iam_snapshot import (
+    WmsSystemIamSnapshotOut,
+    WmsSystemIamSnapshotPageOut,
+    WmsSystemIamSnapshotPermissionOut,
+    WmsSystemIamSnapshotRoutePrefixOut,
+    WmsSystemIamSnapshotUserOut,
+    WmsSystemIamSnapshotUserPermissionOut,
+)
 from app.wms.system.read_v1.contracts.page_catalog import (
     WmsSystemPageCatalogOut,
     WmsSystemPageCatalogPageOut,
@@ -23,6 +31,12 @@ from app.wms.system.read_v1.contracts.service_dependencies import (
 __all__ = [
     "WmsSystemAppManifestBuildInfoOut",
     "WmsSystemAppManifestOut",
+    "WmsSystemIamSnapshotOut",
+    "WmsSystemIamSnapshotPageOut",
+    "WmsSystemIamSnapshotPermissionOut",
+    "WmsSystemIamSnapshotRoutePrefixOut",
+    "WmsSystemIamSnapshotUserOut",
+    "WmsSystemIamSnapshotUserPermissionOut",
     "WmsSystemPageCatalogOut",
     "WmsSystemPageCatalogPageOut",
     "WmsSystemServiceCapabilitiesOut",
