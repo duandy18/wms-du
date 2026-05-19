@@ -28,7 +28,7 @@ class UserPermissionMatrixService:
     范围：
     - 只做 matrix 读取
     - 不负责保存
-    - 不改动现有 /admin/users 列表与直配权限接口
+    - 仅保留 /admin/users 只读列表与权限矩阵只读展示
     """
 
     def __init__(self, db: Session) -> None:
