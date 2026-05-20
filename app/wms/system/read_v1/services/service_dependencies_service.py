@@ -35,41 +35,95 @@ class ServiceDependency:
     endpoints: tuple[ServiceDependencyEndpoint, ...]
 
 
+PMS_PROJECTION_SOURCE_MODULES = (
+    "app.integrations.pms.projection_sync",
+    "scripts.pms.sync_projection",
+)
+
 WMS_SERVICE_DEPENDENCIES: tuple[ServiceDependency, ...] = (
     ServiceDependency(
-        dependency_code="wms.depends_on.pms.projection_feed",
-        dependency_name="PMS projection feed",
+        dependency_code="wms.depends_on.pms.items_projection_feed",
+        dependency_name="PMS item projection feed",
         target_app_code="pms",
-        target_capability_code="pms.read.projection_feed",
-        description="WMS 同步 PMS 当前态只读投影，用于商品、供应商、包装单位、SKU 编码与条码查询。",
+        target_capability_code="pms.read.items",
+        description="WMS 同步 PMS 商品投影，用于仓储侧商品当前态只读查询。",
         is_required=True,
         is_active=True,
         required_config_keys=("PMS_API_BASE_URL",),
-        source_modules=(
-            "app.integrations.pms.projection_sync",
-            "scripts.pms.sync_projection",
-        ),
+        source_modules=PMS_PROJECTION_SOURCE_MODULES,
         endpoints=(
             ServiceDependencyEndpoint(
                 http_method="GET",
                 path="/pms/read/v1/projection-feed/items",
                 purpose="同步 PMS 商品投影。",
             ),
+        ),
+    ),
+    ServiceDependency(
+        dependency_code="wms.depends_on.pms.suppliers_projection_feed",
+        dependency_name="PMS supplier projection feed",
+        target_app_code="pms",
+        target_capability_code="pms.read.suppliers",
+        description="WMS 同步 PMS 供应商投影，用于仓储侧供应商当前态只读查询。",
+        is_required=True,
+        is_active=True,
+        required_config_keys=("PMS_API_BASE_URL",),
+        source_modules=PMS_PROJECTION_SOURCE_MODULES,
+        endpoints=(
             ServiceDependencyEndpoint(
                 http_method="GET",
                 path="/pms/read/v1/projection-feed/suppliers",
                 purpose="同步 PMS 供应商投影。",
             ),
+        ),
+    ),
+    ServiceDependency(
+        dependency_code="wms.depends_on.pms.uoms_projection_feed",
+        dependency_name="PMS UOM projection feed",
+        target_app_code="pms",
+        target_capability_code="pms.read.uoms",
+        description="WMS 同步 PMS 包装单位投影，用于仓储侧包装单位当前态只读查询。",
+        is_required=True,
+        is_active=True,
+        required_config_keys=("PMS_API_BASE_URL",),
+        source_modules=PMS_PROJECTION_SOURCE_MODULES,
+        endpoints=(
             ServiceDependencyEndpoint(
                 http_method="GET",
                 path="/pms/read/v1/projection-feed/uoms",
                 purpose="同步 PMS 包装单位投影。",
             ),
+        ),
+    ),
+    ServiceDependency(
+        dependency_code="wms.depends_on.pms.sku_codes_projection_feed",
+        dependency_name="PMS SKU code projection feed",
+        target_app_code="pms",
+        target_capability_code="pms.read.sku_codes",
+        description="WMS 同步 PMS SKU 编码投影，用于仓储侧 SKU 编码当前态只读查询。",
+        is_required=True,
+        is_active=True,
+        required_config_keys=("PMS_API_BASE_URL",),
+        source_modules=PMS_PROJECTION_SOURCE_MODULES,
+        endpoints=(
             ServiceDependencyEndpoint(
                 http_method="GET",
                 path="/pms/read/v1/projection-feed/sku-codes",
                 purpose="同步 PMS SKU 编码投影。",
             ),
+        ),
+    ),
+    ServiceDependency(
+        dependency_code="wms.depends_on.pms.barcodes_projection_feed",
+        dependency_name="PMS barcode projection feed",
+        target_app_code="pms",
+        target_capability_code="pms.read.barcodes",
+        description="WMS 同步 PMS 条码投影，用于仓储侧条码当前态只读查询。",
+        is_required=True,
+        is_active=True,
+        required_config_keys=("PMS_API_BASE_URL",),
+        source_modules=PMS_PROJECTION_SOURCE_MODULES,
+        endpoints=(
             ServiceDependencyEndpoint(
                 http_method="GET",
                 path="/pms/read/v1/projection-feed/barcodes",
