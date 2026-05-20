@@ -5,9 +5,13 @@ import logging
 import os
 from typing import Any, Dict, List
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from app.db.session import get_db
 from app.http_problem_handlers import register_exception_handlers
 from app.router_mount import mount_routers
 
@@ -79,4 +83,14 @@ async def ping() -> Dict[str, Any]:
 
 @app.get("/healthz")
 async def healthz() -> Dict[str, Any]:
+    return {"status": "ok"}
+
+
+@app.get("/health/db")
+def health_db(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="database_unavailable") from exc
+
     return {"status": "ok"}
