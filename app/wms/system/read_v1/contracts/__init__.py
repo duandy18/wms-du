@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 from app.wms.system.read_v1.contracts.app_manifest import (
-    WmsSystemAppManifestBuildInfoOut,
+    WmsSystemAppInfoOut,
     WmsSystemAppManifestOut,
+    WmsSystemBuildInfoOut,
+    WmsSystemDeploymentOut,
+    WmsSystemEndpointDescriptorOut,
+    WmsSystemSecurityPolicyOut,
+    WmsSystemServiceIdentityOut,
 )
 from app.wms.system.read_v1.contracts.page_catalog import (
     WmsSystemPageCatalogOut,
@@ -21,14 +26,19 @@ from app.wms.system.read_v1.contracts.service_dependencies import (
 )
 
 __all__ = [
-    "WmsSystemAppManifestBuildInfoOut",
+    "WmsSystemAppInfoOut",
     "WmsSystemAppManifestOut",
+    "WmsSystemBuildInfoOut",
+    "WmsSystemDeploymentOut",
+    "WmsSystemEndpointDescriptorOut",
     "WmsSystemPageCatalogOut",
     "WmsSystemPageCatalogPageOut",
+    "WmsSystemSecurityPolicyOut",
     "WmsSystemServiceCapabilitiesOut",
     "WmsSystemServiceCapabilityOut",
     "WmsSystemServiceCapabilityRouteOut",
     "WmsSystemServiceDependenciesOut",
     "WmsSystemServiceDependencyEndpointOut",
     "WmsSystemServiceDependencyOut",
+    "WmsSystemServiceIdentityOut",
 ]
