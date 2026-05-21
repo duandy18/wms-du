@@ -8,7 +8,6 @@ def mount_routers(app: FastAPI) -> None:
     # ---------------------------------------------------------------------------
     # routers imports
     # ---------------------------------------------------------------------------
-    from app.admin.router import router as admin_router
     from app.wms.inventory_adjustment.count.routers.count import router as count_router
     from app.wms.inventory_adjustment.count.routers.count_docs import router as count_docs_router
     from app.wms.inventory_adjustment.count.routers.stock_inventory_recount import router as stock_inventory_recount_router
@@ -138,7 +137,6 @@ def mount_routers(app: FastAPI) -> None:
     app.include_router(orders_sla_stats_router)
 
     app.include_router(user_router)
-    app.include_router(admin_router)
 
     app.include_router(ledger_reconcile_v2_router)
     app.include_router(snapshot_v3_router)

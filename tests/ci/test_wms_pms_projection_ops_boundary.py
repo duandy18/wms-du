@@ -51,7 +51,9 @@ def test_pms_projection_router_uses_pms_permissions_and_business_prefix() -> Non
 
 
 def test_pms_projection_router_is_not_mounted_under_admin() -> None:
-    admin_text = (ROOT / "app/admin/router.py").read_text(encoding="utf-8")
+    admin_router_path = ROOT / "app/admin/router.py"
+    assert not admin_router_path.exists()
+    admin_text = ""
     pms_text = (ROOT / "app/pms/router.py").read_text(encoding="utf-8")
     mount_text = (ROOT / "app/router_mount.py").read_text(encoding="utf-8")
 
