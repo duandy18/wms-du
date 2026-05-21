@@ -80,3 +80,28 @@ async def test_projection_backed_fake_pms_read_client_reads_uoms(
     outbound_default = await client.get_outbound_default_or_base_uom(item_id=992002)
     assert outbound_default is not None
     assert outbound_default.id == 992012
+
+@pytest.mark.asyncio
+async def test_projection_backed_fake_pms_read_client_reads_report_meta(
+    session: AsyncSession,
+) -> None:
+    await seed_pms_projection_item_with_base_uom(
+        session,
+        item_id=992003,
+        item_uom_id=992013,
+        sku_code_id=992023,
+        sku="UT-PMS-FAKE-992003",
+        name="UT PMS Fake Item 992003",
+        expiry_policy="NONE",
+    )
+    await session.commit()
+
+    client = ProjectionBackedFakePmsReadClient(session)
+
+    meta = await client.get_report_meta_by_item_ids(item_ids=[992003])
+    assert sorted(meta) == [992003]
+    assert meta[992003].sku == "UT-PMS-FAKE-992003"
+    assert meta[992003].name == "UT PMS Fake Item 992003"
+
+    matched_ids = await client.search_report_item_ids_by_keyword(keyword="992003")
+    assert matched_ids == [992003]

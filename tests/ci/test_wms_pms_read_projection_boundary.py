@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from pathlib import Path
 
 from app.db.base import Base, init_models
 
@@ -108,9 +108,9 @@ def _rel(path: Path) -> str:
 
 
 def test_db_base_loads_wms_pms_projection_models() -> None:
-    text = (ROOT / "app" / "db" / "base.py").read_text(encoding="utf-8")
+    text_value = (ROOT / "app" / "db" / "base.py").read_text(encoding="utf-8")
 
-    assert '"app.integrations.pms.projection_models"' in text
+    assert '"app.integrations.pms.projection_models"' in text_value
 
 
 def test_wms_pms_projection_tables_are_registered_in_metadata() -> None:
@@ -135,18 +135,22 @@ def test_wms_pms_projection_tables_do_not_point_to_pms_owner_tables() -> None:
         assert list(table.foreign_keys) == []
 
 
-def test_wms_pms_projection_models_have_no_relationships_or_foreign_keys() -> None:
-    text = (ROOT / "app/integrations/pms/projection_models.py").read_text(encoding="utf-8")
+def test_wms_pms_projection_data_tables_have_no_relationships_or_foreign_keys() -> None:
+    init_models(force=True)
 
-    assert "ForeignKey(" not in text
-    assert "relationship(" not in text
+    for table_name in PROJECTION_COLUMNS:
+        table = Base.metadata.tables[table_name]
+        assert list(table.foreign_keys) == []
+
+    text_value = (ROOT / "app/integrations/pms/projection_models.py").read_text(encoding="utf-8")
+    assert "relationship(" not in text_value
 
 
 def test_wms_pms_projection_contracts_do_not_import_owner_or_db_runtime() -> None:
-    text = (ROOT / "app/integrations/pms/projection_contracts.py").read_text(encoding="utf-8")
+    text_value = (ROOT / "app/integrations/pms/projection_contracts.py").read_text(encoding="utf-8")
 
-    assert "app.pms" not in text
-    assert "sqlalchemy" not in text
+    assert "app.pms" not in text_value
+    assert "sqlalchemy" not in text_value
 
 
 def test_business_domains_do_not_write_wms_pms_projection_tables() -> None:
