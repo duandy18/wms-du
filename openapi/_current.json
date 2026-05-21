@@ -6198,56 +6198,6 @@
         }
       }
     },
-    "/system/read/v1/iam-snapshot": {
-      "get": {
-        "tags": [
-          "system-read-v1"
-        ],
-        "summary": "Get WMS IAM snapshot",
-        "description": "Return WMS users, user permissions, and page permission catalog for ERP projection sync.\n\nBoundary:\n- Only ERP service client should be granted this capability.\n- This endpoint is read-only.\n- This endpoint never exposes password_hash, tokens, or secrets.\n- This endpoint does not write WMS permissions.\n- This endpoint does not migrate permission execution to ERP.",
-        "operationId": "get_wms_iam_snapshot_system_read_v1_iam_snapshot_get",
-        "parameters": [
-          {
-            "name": "X-Service-Client",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Service-Client"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WmsSystemIamSnapshotOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/system/write/v1/service-permissions/apply": {
       "post": {
         "tags": [
@@ -6363,6 +6313,185 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WmsSystemServicePermissionVerifyOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/write/v1/iam/apply": {
+      "post": {
+        "tags": [
+          "system-write-v1"
+        ],
+        "summary": "Apply WMS IAM desired state",
+        "description": "Apply WMS local user IAM runtime projection from ERP.\n\nBoundary:\n- Only X-Service-Client: erp-service may call this endpoint.\n- Writes only users / user_permissions.\n- Reads permissions only to validate WMS-owned permission codes.\n- Does not create unknown permissions.\n- Does not write page_registry / page_route_prefixes.",
+        "operationId": "apply_wms_iam_system_write_v1_iam_apply_post",
+        "parameters": [
+          {
+            "name": "X-Service-Client",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Client"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WmsSystemIamApplyIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WmsSystemIamApplyOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/write/v1/iam/verify": {
+      "post": {
+        "tags": [
+          "system-write-v1"
+        ],
+        "summary": "Verify WMS IAM desired state",
+        "description": "Verify WMS local user IAM runtime projection against ERP desired state.",
+        "operationId": "verify_wms_iam_system_write_v1_iam_verify_post",
+        "parameters": [
+          {
+            "name": "X-Service-Client",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Service-Client"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WmsSystemIamApplyIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WmsSystemIamVerifyOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/sso/v1/exchange": {
+      "post": {
+        "tags": [
+          "system-sso-v1"
+        ],
+        "summary": "Exchange Wms Sso Authorization Code",
+        "operationId": "exchange_wms_sso_authorization_code_system_sso_v1_exchange_post",
+        "parameters": [
+          {
+            "name": "ERP_SSO_BINDING",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Erp Sso Binding"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WmsSsoExchangeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WmsSsoExchangeOut"
                 }
               }
             }
@@ -8531,6 +8660,7 @@
           "admin-users"
         ],
         "summary": "Get User Permission Matrix",
+        "description": "Read-only WMS local IAM runtime projection.\n\nERP is the IAM owner. WMS keeps local users / user_permissions only for\nruntime permission execution and diagnostic visibility.",
         "operationId": "get_user_permission_matrix_admin_users_permission_matrix_get",
         "responses": {
           "200": {
@@ -8551,64 +8681,6 @@
         ]
       }
     },
-    "/admin/users/{user_id}/permission-matrix": {
-      "put": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Update User Permission Matrix",
-        "operationId": "update_user_permission_matrix_admin_users__user_id__permission_matrix_put",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "User Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserPermissionMatrixUpdateIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PermissionMatrixRowOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/admin/users": {
       "get": {
         "tags": [
@@ -8616,6 +8688,7 @@
           "admin-users"
         ],
         "summary": "List Users",
+        "description": "Read-only WMS local users runtime projection.\n\nUser creation, status changes, password reset, deletion, and permission\nassignment are managed by ERP and applied through /system/write/v1/iam.",
         "operationId": "list_users_admin_users_get",
         "responses": {
           "200": {
@@ -8638,211 +8711,6 @@
             "OAuth2PasswordBearer": []
           }
         ]
-      },
-      "post": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Create User",
-        "operationId": "create_user_admin_users_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserCreateMulti"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/admin/users/{user_id}": {
-      "patch": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Update User",
-        "operationId": "update_user_admin_users__user_id__patch",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "User Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserUpdateMulti"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/users/{user_id}/delete": {
-      "post": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Delete User",
-        "operationId": "delete_user_admin_users__user_id__delete_post",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "User Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/users/{user_id}/reset-password": {
-      "post": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Reset Password",
-        "operationId": "reset_password_admin_users__user_id__reset_password_post",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "User Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PasswordResetIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/stock/ledger/reconcile-v2/summary": {
@@ -10098,6 +9966,26 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/db": {
+      "get": {
+        "summary": "Health Db",
+        "operationId": "health_db_health_db_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Db Health Db Get"
                 }
               }
             }
@@ -22344,22 +22232,6 @@
         ],
         "title": "OutboundSummaryRowOut"
       },
-      "PagePermissionCellIn": {
-        "properties": {
-          "read": {
-            "type": "boolean",
-            "title": "Read",
-            "default": false
-          },
-          "write": {
-            "type": "boolean",
-            "title": "Write",
-            "default": false
-          }
-        },
-        "type": "object",
-        "title": "PagePermissionCellIn"
-      },
       "PagePermissionCellOut": {
         "properties": {
           "read": {
@@ -22393,11 +22265,6 @@
           "new_password"
         ],
         "title": "PasswordChangeIn"
-      },
-      "PasswordResetIn": {
-        "properties": {},
-        "type": "object",
-        "title": "PasswordResetIn"
       },
       "PermissionMatrixPageOut": {
         "properties": {
@@ -27448,64 +27315,6 @@
         ],
         "title": "Token"
       },
-      "UserCreateMulti": {
-        "properties": {
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "password": {
-            "type": "string",
-            "title": "Password"
-          },
-          "permission_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Permission Ids"
-          },
-          "full_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Name"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          }
-        },
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
-        "title": "UserCreateMulti"
-      },
       "UserLogin": {
         "properties": {
           "username": {
@@ -27611,76 +27420,6 @@
         },
         "type": "object",
         "title": "UserPermissionMatrixOut"
-      },
-      "UserPermissionMatrixUpdateIn": {
-        "properties": {
-          "page_codes": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Page Codes"
-          },
-          "pages": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PagePermissionCellIn"
-            },
-            "type": "object",
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "title": "UserPermissionMatrixUpdateIn"
-      },
-      "UserUpdateMulti": {
-        "properties": {
-          "full_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Name"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "is_active": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Active"
-          }
-        },
-        "type": "object",
-        "title": "UserUpdateMulti"
       },
       "ValidationError": {
         "properties": {
@@ -28252,17 +27991,176 @@
         "title": "WmsReadWarehouseOut",
         "description": "WMS warehouse read-v1 contract for cross-system consumers.\n\nBoundary:\n- WMS owns warehouse master data.\n- Cross-system consumers only receive stable read fields.\n- This contract intentionally does not expose management fields."
       },
-      "WmsSystemAppManifestBuildInfoOut": {
+      "WmsSsoExchangeIn": {
         "properties": {
-          "environment": {
+          "code": {
             "type": "string",
+            "maxLength": 256,
             "minLength": 1,
-            "title": "Environment"
+            "title": "Code"
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "state"
+        ],
+        "title": "WmsSsoExchangeIn"
+      },
+      "WmsSsoExchangeOut": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          },
+          "redirect_path": {
+            "type": "string",
+            "title": "Redirect Path",
+            "default": "/"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "access_token",
+          "expires_in"
+        ],
+        "title": "WmsSsoExchangeOut"
+      },
+      "WmsSystemAppInfoOut": {
+        "properties": {
+          "app_code": {
+            "type": "string",
+            "const": "wms",
+            "title": "App Code"
+          },
+          "app_name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "App Name"
+          },
+          "app_type": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Type"
+          },
+          "owner_domain": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Owner Domain"
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Status"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Description"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "app_code",
+          "app_name",
+          "app_type",
+          "owner_domain",
+          "status",
+          "description"
+        ],
+        "title": "WmsSystemAppInfoOut"
+      },
+      "WmsSystemAppManifestOut": {
+        "properties": {
+          "manifest_contract_version": {
+            "type": "string",
+            "const": "2.0",
+            "title": "Manifest Contract Version"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "app": {
+            "$ref": "#/components/schemas/WmsSystemAppInfoOut"
+          },
+          "deployment": {
+            "$ref": "#/components/schemas/WmsSystemDeploymentOut"
+          },
+          "service_identity": {
+            "$ref": "#/components/schemas/WmsSystemServiceIdentityOut"
+          },
+          "control_endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemEndpointDescriptorOut"
+            },
+            "type": "array",
+            "title": "Control Endpoints"
+          },
+          "write_endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemEndpointDescriptorOut"
+            },
+            "type": "array",
+            "title": "Write Endpoints"
+          },
+          "security": {
+            "$ref": "#/components/schemas/WmsSystemSecurityPolicyOut"
+          },
+          "build": {
+            "$ref": "#/components/schemas/WmsSystemBuildInfoOut"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "manifest_contract_version",
+          "generated_at",
+          "app",
+          "deployment",
+          "service_identity",
+          "security",
+          "build"
+        ],
+        "title": "WmsSystemAppManifestOut"
+      },
+      "WmsSystemBuildInfoOut": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Version"
           },
           "git_sha": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 128
               },
               {
                 "type": "null"
@@ -28270,10 +28168,23 @@
             ],
             "title": "Git Sha"
           },
+          "image_tag": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Tag"
+          },
           "build_time": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 128
               },
               {
                 "type": "null"
@@ -28285,361 +28196,308 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "environment"
+          "app_version"
         ],
-        "title": "WmsSystemAppManifestBuildInfoOut"
+        "title": "WmsSystemBuildInfoOut"
       },
-      "WmsSystemAppManifestOut": {
+      "WmsSystemDeploymentOut": {
         "properties": {
-          "app_code": {
+          "env_code": {
             "type": "string",
-            "const": "wms",
-            "title": "App Code"
-          },
-          "app_name": {
-            "type": "string",
+            "maxLength": 64,
             "minLength": 1,
-            "title": "App Name"
+            "title": "Env Code"
           },
-          "app_type": {
+          "deployment_mode": {
             "type": "string",
+            "maxLength": 64,
             "minLength": 1,
-            "title": "App Type"
+            "title": "Deployment Mode"
           },
-          "status": {
+          "web_path": {
             "type": "string",
+            "maxLength": 255,
             "minLength": 1,
-            "title": "Status"
+            "title": "Web Path"
           },
-          "description": {
+          "api_path": {
             "type": "string",
+            "maxLength": 255,
             "minLength": 1,
-            "title": "Description"
+            "title": "Api Path"
           },
-          "default_web_path": {
+          "control_base_url": {
             "type": "string",
+            "maxLength": 255,
             "minLength": 1,
-            "title": "Default Web Path"
+            "title": "Control Base Url"
           },
-          "default_api_path": {
+          "internal_api_base_url": {
             "type": "string",
+            "maxLength": 255,
             "minLength": 1,
-            "title": "Default Api Path"
+            "title": "Internal Api Base Url"
           },
-          "local_web_url": {
+          "public_web_url": {
             "type": "string",
+            "maxLength": 255,
             "minLength": 1,
-            "title": "Local Web Url"
+            "title": "Public Web Url"
           },
-          "local_api_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Local Api Url"
-          },
-          "health_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Health Url"
-          },
-          "db_health_url": {
+          "public_api_base_url": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 255
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Db Health Url"
-          },
-          "openapi_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Openapi Url"
-          },
-          "page_catalog_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Page Catalog Url"
-          },
-          "service_capabilities_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Service Capabilities Url"
-          },
-          "service_dependencies_url": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Service Dependencies Url"
-          },
-          "version": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Version"
-          },
-          "build_info": {
-            "$ref": "#/components/schemas/WmsSystemAppManifestBuildInfoOut"
+            "title": "Public Api Base Url"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "app_code",
-          "app_name",
-          "app_type",
-          "status",
-          "description",
-          "default_web_path",
-          "default_api_path",
-          "local_web_url",
-          "local_api_url",
-          "health_url",
-          "openapi_url",
-          "page_catalog_url",
-          "service_capabilities_url",
-          "service_dependencies_url",
-          "version",
-          "build_info"
+          "env_code",
+          "deployment_mode",
+          "web_path",
+          "api_path",
+          "control_base_url",
+          "internal_api_base_url",
+          "public_web_url"
         ],
-        "title": "WmsSystemAppManifestOut"
+        "title": "WmsSystemDeploymentOut"
       },
-      "WmsSystemIamSnapshotOut": {
+      "WmsSystemEndpointDescriptorOut": {
         "properties": {
-          "app_code": {
+          "code": {
             "type": "string",
-            "const": "wms",
-            "title": "App Code"
-          },
-          "app_name": {
-            "type": "string",
+            "maxLength": 128,
             "minLength": 1,
-            "title": "App Name"
+            "title": "Code"
           },
-          "snapshot_at": {
+          "method": {
             "type": "string",
-            "format": "date-time",
-            "title": "Snapshot At"
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "title": "Method"
           },
+          "path": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "purpose": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Purpose"
+          },
+          "is_required": {
+            "type": "boolean",
+            "title": "Is Required",
+            "default": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "auth_policy": {
+            "type": "string",
+            "enum": [
+              "internal_control_plane",
+              "erp_service_client_required",
+              "public_health"
+            ],
+            "title": "Auth Policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "method",
+          "path",
+          "purpose",
+          "auth_policy"
+        ],
+        "title": "WmsSystemEndpointDescriptorOut"
+      },
+      "WmsSystemIamApplyIn": {
+        "properties": {
           "users": {
             "items": {
-              "$ref": "#/components/schemas/WmsSystemIamSnapshotUserOut"
+              "$ref": "#/components/schemas/WmsSystemIamUserIn"
             },
             "type": "array",
             "title": "Users"
           },
-          "permissions": {
-            "items": {
-              "$ref": "#/components/schemas/WmsSystemIamSnapshotPermissionOut"
-            },
-            "type": "array",
-            "title": "Permissions"
-          },
           "user_permissions": {
             "items": {
-              "$ref": "#/components/schemas/WmsSystemIamSnapshotUserPermissionOut"
+              "$ref": "#/components/schemas/WmsSystemIamUserPermissionIn"
             },
             "type": "array",
             "title": "User Permissions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "WmsSystemIamApplyIn"
+      },
+      "WmsSystemIamApplyOut": {
+        "properties": {
+          "app_code": {
+            "type": "string",
+            "const": "wms",
+            "title": "App Code"
           },
-          "page_registry": {
+          "verified": {
+            "type": "boolean",
+            "title": "Verified"
+          },
+          "user_count": {
+            "type": "integer",
+            "title": "User Count"
+          },
+          "desired_permission_count": {
+            "type": "integer",
+            "title": "Desired Permission Count"
+          },
+          "missing_users": {
             "items": {
-              "$ref": "#/components/schemas/WmsSystemIamSnapshotPageOut"
+              "type": "string"
             },
             "type": "array",
-            "title": "Page Registry"
+            "title": "Missing Users"
           },
-          "page_route_prefixes": {
+          "missing_permission_codes": {
             "items": {
-              "$ref": "#/components/schemas/WmsSystemIamSnapshotRoutePrefixOut"
+              "type": "string"
             },
             "type": "array",
-            "title": "Page Route Prefixes"
+            "title": "Missing Permission Codes"
+          },
+          "mismatched_users": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamUserDiffOut"
+            },
+            "type": "array",
+            "title": "Mismatched Users"
+          },
+          "missing_user_permissions": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamPermissionDiffOut"
+            },
+            "type": "array",
+            "title": "Missing User Permissions"
+          },
+          "extra_user_permissions": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamPermissionDiffOut"
+            },
+            "type": "array",
+            "title": "Extra User Permissions"
+          },
+          "applied": {
+            "type": "boolean",
+            "title": "Applied"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "app_code",
-          "app_name",
-          "snapshot_at"
+          "verified",
+          "user_count",
+          "desired_permission_count",
+          "applied"
         ],
-        "title": "WmsSystemIamSnapshotOut"
+        "title": "WmsSystemIamApplyOut"
       },
-      "WmsSystemIamSnapshotPageOut": {
+      "WmsSystemIamPermissionDiffOut": {
         "properties": {
-          "page_code": {
+          "username": {
             "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Page Code"
-          },
-          "page_name": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Page Name"
-          },
-          "parent_page_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Page Code"
-          },
-          "level": {
-            "type": "integer",
-            "maximum": 3.0,
-            "minimum": 1.0,
-            "title": "Level"
-          },
-          "domain_code": {
-            "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Domain Code"
-          },
-          "show_in_topbar": {
-            "type": "boolean",
-            "title": "Show In Topbar"
-          },
-          "show_in_sidebar": {
-            "type": "boolean",
-            "title": "Show In Sidebar"
-          },
-          "inherit_permissions": {
-            "type": "boolean",
-            "title": "Inherit Permissions"
-          },
-          "read_permission_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 128
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Read Permission Code"
-          },
-          "write_permission_code": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 128
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Write Permission Code"
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "page_code",
-          "page_name",
-          "level",
-          "domain_code",
-          "show_in_topbar",
-          "show_in_sidebar",
-          "inherit_permissions",
-          "sort_order",
-          "is_active"
-        ],
-        "title": "WmsSystemIamSnapshotPageOut"
-      },
-      "WmsSystemIamSnapshotPermissionOut": {
-        "properties": {
-          "permission_id": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Permission Id"
+            "title": "Username"
           },
           "permission_code": {
             "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
             "title": "Permission Code"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "permission_id",
+          "username",
           "permission_code"
         ],
-        "title": "WmsSystemIamSnapshotPermissionOut"
+        "title": "WmsSystemIamPermissionDiffOut"
       },
-      "WmsSystemIamSnapshotRoutePrefixOut": {
+      "WmsSystemIamUserDiffOut": {
         "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Id"
-          },
-          "page_code": {
+          "username": {
             "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Page Code"
+            "title": "Username"
           },
-          "route_prefix": {
+          "field_name": {
             "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Route Prefix"
+            "title": "Field Name"
           },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order"
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
           },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
+          "actual": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "id",
-          "page_code",
-          "route_prefix",
-          "sort_order",
-          "is_active"
+          "username",
+          "field_name",
+          "expected",
+          "actual"
         ],
-        "title": "WmsSystemIamSnapshotRoutePrefixOut"
+        "title": "WmsSystemIamUserDiffOut"
       },
-      "WmsSystemIamSnapshotUserOut": {
+      "WmsSystemIamUserIn": {
         "properties": {
-          "user_id": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "User Id"
-          },
           "username": {
             "type": "string",
             "maxLength": 64,
             "minLength": 1,
             "title": "Username"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
           },
           "full_name": {
             "anyOf": [
@@ -28676,28 +28534,27 @@
               }
             ],
             "title": "Email"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "user_id",
-          "username",
-          "is_active"
+          "username"
         ],
-        "title": "WmsSystemIamSnapshotUserOut"
+        "title": "WmsSystemIamUserIn"
       },
-      "WmsSystemIamSnapshotUserPermissionOut": {
+      "WmsSystemIamUserPermissionIn": {
         "properties": {
-          "user_id": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "User Id"
-          },
-          "permission_id": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Permission Id"
+          "username": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Username"
           },
           "permission_code": {
             "type": "string",
@@ -28705,21 +28562,84 @@
             "minLength": 1,
             "title": "Permission Code"
           },
-          "granted_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Granted At"
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "user_id",
-          "permission_id",
-          "permission_code",
-          "granted_at"
+          "username",
+          "permission_code"
         ],
-        "title": "WmsSystemIamSnapshotUserPermissionOut"
+        "title": "WmsSystemIamUserPermissionIn"
+      },
+      "WmsSystemIamVerifyOut": {
+        "properties": {
+          "app_code": {
+            "type": "string",
+            "const": "wms",
+            "title": "App Code"
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified"
+          },
+          "user_count": {
+            "type": "integer",
+            "title": "User Count"
+          },
+          "desired_permission_count": {
+            "type": "integer",
+            "title": "Desired Permission Count"
+          },
+          "missing_users": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Users"
+          },
+          "missing_permission_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Permission Codes"
+          },
+          "mismatched_users": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamUserDiffOut"
+            },
+            "type": "array",
+            "title": "Mismatched Users"
+          },
+          "missing_user_permissions": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamPermissionDiffOut"
+            },
+            "type": "array",
+            "title": "Missing User Permissions"
+          },
+          "extra_user_permissions": {
+            "items": {
+              "$ref": "#/components/schemas/WmsSystemIamPermissionDiffOut"
+            },
+            "type": "array",
+            "title": "Extra User Permissions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "app_code",
+          "verified",
+          "user_count",
+          "desired_permission_count"
+        ],
+        "title": "WmsSystemIamVerifyOut"
       },
       "WmsSystemPageCatalogOut": {
         "properties": {
@@ -28848,6 +28768,33 @@
           "sort_order"
         ],
         "title": "WmsSystemPageCatalogPageOut"
+      },
+      "WmsSystemSecurityPolicyOut": {
+        "properties": {
+          "self_description_auth_policy": {
+            "type": "string",
+            "const": "internal_control_plane",
+            "title": "Self Description Auth Policy"
+          },
+          "write_auth_policy": {
+            "type": "string",
+            "const": "erp_service_client_required",
+            "title": "Write Auth Policy"
+          },
+          "required_write_caller": {
+            "type": "string",
+            "const": "erp-service",
+            "title": "Required Write Caller"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "self_description_auth_policy",
+          "write_auth_policy",
+          "required_write_caller"
+        ],
+        "title": "WmsSystemSecurityPolicyOut"
       },
       "WmsSystemServiceCapabilitiesOut": {
         "properties": {
@@ -29157,6 +29104,27 @@
           "is_active"
         ],
         "title": "WmsSystemServiceDependencyOut"
+      },
+      "WmsSystemServiceIdentityOut": {
+        "properties": {
+          "service_client_code": {
+            "type": "string",
+            "const": "wms-service",
+            "title": "Service Client Code"
+          },
+          "service_client_header": {
+            "type": "string",
+            "const": "X-Service-Client",
+            "title": "Service Client Header"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_client_code",
+          "service_client_header"
+        ],
+        "title": "WmsSystemServiceIdentityOut"
       },
       "WmsSystemServicePermissionApplyIn": {
         "properties": {
