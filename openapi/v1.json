@@ -8653,66 +8653,6 @@
         ]
       }
     },
-    "/admin/users/permission-matrix": {
-      "get": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "Get User Permission Matrix",
-        "description": "Read-only WMS local IAM runtime projection.\n\nERP is the IAM owner. WMS keeps local users / user_permissions only for\nruntime permission execution and diagnostic visibility.",
-        "operationId": "get_user_permission_matrix_admin_users_permission_matrix_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserPermissionMatrixOut"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/admin/users": {
-      "get": {
-        "tags": [
-          "admin",
-          "admin-users"
-        ],
-        "summary": "List Users",
-        "description": "Read-only WMS local users runtime projection.\n\nUser creation, status changes, password reset, deletion, and permission\nassignment are managed by ERP and applied through /system/write/v1/iam.",
-        "operationId": "list_users_admin_users_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UserOut"
-                  },
-                  "type": "array",
-                  "title": "Response List Users Admin Users Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
     "/stock/ledger/reconcile-v2/summary": {
       "post": {
         "tags": [
@@ -22232,22 +22172,6 @@
         ],
         "title": "OutboundSummaryRowOut"
       },
-      "PagePermissionCellOut": {
-        "properties": {
-          "read": {
-            "type": "boolean",
-            "title": "Read",
-            "default": false
-          },
-          "write": {
-            "type": "boolean",
-            "title": "Write",
-            "default": false
-          }
-        },
-        "type": "object",
-        "title": "PagePermissionCellOut"
-      },
       "PasswordChangeIn": {
         "properties": {
           "old_password": {
@@ -22265,70 +22189,6 @@
           "new_password"
         ],
         "title": "PasswordChangeIn"
-      },
-      "PermissionMatrixPageOut": {
-        "properties": {
-          "page_code": {
-            "type": "string",
-            "title": "Page Code"
-          },
-          "page_name": {
-            "type": "string",
-            "title": "Page Name"
-          },
-          "sort_order": {
-            "type": "integer",
-            "title": "Sort Order",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "required": [
-          "page_code",
-          "page_name"
-        ],
-        "title": "PermissionMatrixPageOut"
-      },
-      "PermissionMatrixRowOut": {
-        "properties": {
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "full_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Name"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
-          "pages": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PagePermissionCellOut"
-            },
-            "type": "object",
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "user_id",
-          "username",
-          "is_active"
-        ],
-        "title": "PermissionMatrixRowOut"
       },
       "PmsProjectionCheckIssueOut": {
         "properties": {
@@ -27336,90 +27196,6 @@
         ],
         "title": "UserLogin",
         "description": "登录入参"
-      },
-      "UserOut": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active",
-            "default": true
-          },
-          "full_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Name"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "permissions": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Permissions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "username"
-        ],
-        "title": "UserOut",
-        "description": "对外返回的用户模型（用户直配权限版）"
-      },
-      "UserPermissionMatrixOut": {
-        "properties": {
-          "pages": {
-            "items": {
-              "$ref": "#/components/schemas/PermissionMatrixPageOut"
-            },
-            "type": "array",
-            "title": "Pages"
-          },
-          "rows": {
-            "items": {
-              "$ref": "#/components/schemas/PermissionMatrixRowOut"
-            },
-            "type": "array",
-            "title": "Rows"
-          }
-        },
-        "type": "object",
-        "title": "UserPermissionMatrixOut"
       },
       "ValidationError": {
         "properties": {
