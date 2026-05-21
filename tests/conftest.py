@@ -255,6 +255,18 @@ async def client(session: AsyncSession) -> AsyncGenerator[httpx.AsyncClient, Non
 
     app.dependency_overrides[app_get_session] = _override_get_session
 
+    from app.finance.sources import order_sales_source as finance_order_sales_source_module
+    from app.wms.ledger.helpers import stock_ledger as stock_ledger_module
+    from tests.helpers.pms_read_client_fake import projection_backed_pms_read_client_factory
+
+    pms_factory = projection_backed_pms_read_client_factory(session)
+    original_create_pms_read_client = {
+        finance_order_sales_source_module: finance_order_sales_source_module.create_pms_read_client,
+        stock_ledger_module: stock_ledger_module.create_pms_read_client,
+    }
+    for module in original_create_pms_read_client:
+        module.create_pms_read_client = pms_factory
+
     transport = httpx.ASGITransport(app=app)
     try:
         async with httpx.AsyncClient(
@@ -264,6 +276,8 @@ async def client(session: AsyncSession) -> AsyncGenerator[httpx.AsyncClient, Non
         ) as c:
             yield c
     finally:
+        for module, original in original_create_pms_read_client.items():
+            module.create_pms_read_client = original
         app.dependency_overrides.pop(app_get_session, None)
 
 

@@ -198,6 +198,76 @@ class ProjectionBackedFakePmsReadClient:
             return None
         return ItemPolicy.model_validate(dict(row))
 
+    async def search_report_item_ids_by_keyword(
+        self,
+        *,
+        keyword: str,
+        limit: int | None = None,
+    ) -> list[int]:
+        value = str(keyword or "").strip()
+        if not value:
+            return []
+
+        params: dict[str, object] = {"keyword": f"%{value}%"}
+        limit_sql = ""
+        if limit is not None:
+            params["limit"] = int(limit)
+            limit_sql = "LIMIT :limit"
+
+        rows = (
+            await self.session.execute(
+                text(
+                    f"""
+                    SELECT item_id
+                    FROM wms_pms_item_projection
+                    WHERE sku ILIKE :keyword
+                       OR name ILIKE :keyword
+                    ORDER BY item_id ASC
+                    {limit_sql}
+                    """
+                ),
+                params,
+            )
+        ).mappings().all()
+
+        return [int(row["item_id"]) for row in rows]
+
+    async def get_report_meta_by_item_ids(
+        self,
+        *,
+        item_ids: Iterable[int],
+    ) -> dict[int, object]:
+        ids = _clean_ids(item_ids)
+        if not ids:
+            return {}
+
+        rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                        item_id,
+                        sku,
+                        name,
+                        spec,
+                        enabled,
+                        supplier_id,
+                        brand,
+                        category
+                    FROM wms_pms_item_projection
+                    WHERE item_id = ANY(:item_ids)
+                    ORDER BY item_id ASC
+                    """
+                ),
+                {"item_ids": ids},
+            )
+        ).mappings().all()
+
+        return {
+            int(row["item_id"]): SimpleNamespace(**dict(row))
+            for row in rows
+        }
+
     async def get_uom(self, *, item_uom_id: int) -> PmsExportUom | None:
         rows = await self.list_uoms(item_uom_ids=[int(item_uom_id)])
         return rows[0] if rows else None
