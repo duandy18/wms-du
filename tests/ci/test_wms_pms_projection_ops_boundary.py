@@ -16,8 +16,35 @@ FORBIDDEN_OWNER_SQL_RE = re.compile(
 )
 
 
-def test_pms_projection_service_uses_projection_tables_only() -> None:
-    text = (ROOT / "app/pms/projections/services/pms_projection_service.py").read_text(encoding="utf-8")
+def test_pms_projection_module_uses_wms_directory_style() -> None:
+    base = ROOT / "app/pms/projections"
+
+    for relative in [
+        "contracts/pms_projection.py",
+        "contracts/items.py",
+        "contracts/suppliers.py",
+        "contracts/uoms.py",
+        "contracts/sku_codes.py",
+        "contracts/barcodes.py",
+        "repos/pms_projection_repo.py",
+        "services/pms_projection_service.py",
+        "routers/pms_projection.py",
+        "routers/deps.py",
+        "routers/items.py",
+        "routers/suppliers.py",
+        "routers/uoms.py",
+        "routers/sku_codes.py",
+        "routers/barcodes.py",
+    ]:
+        assert (base / relative).is_file(), relative
+
+    assert not (base / "contracts.py").exists()
+    assert not (base / "service.py").exists()
+    assert not (base / "router.py").exists()
+
+
+def test_pms_projection_repo_uses_projection_tables_only() -> None:
+    text = (ROOT / "app/pms/projections/repos/pms_projection_repo.py").read_text(encoding="utf-8")
 
     assert "wms_pms_item_projection" in text
     assert "wms_pms_supplier_projection" in text
@@ -28,26 +55,52 @@ def test_pms_projection_service_uses_projection_tables_only() -> None:
     assert FORBIDDEN_OWNER_SQL_RE.search(text) is None
 
 
+def test_pms_projection_service_is_not_sql_repo() -> None:
+    text = (ROOT / "app/pms/projections/services/pms_projection_service.py").read_text(encoding="utf-8")
+
+    assert "PmsProjectionRepo" in text
+    assert "RESOURCE_CONFIGS" not in text
+    assert "ProjectionResourceConfig" not in text
+    assert "SELECT " not in text
+    assert "INSERT INTO wms_pms_" not in text
+    assert "UPDATE wms_pms_" not in text
+    assert "DELETE FROM wms_pms_" not in text
+
+
 def test_pms_projection_router_uses_pms_permissions_and_business_prefix() -> None:
-    text = (ROOT / "app/pms/projections/routers/pms_projection.py").read_text(encoding="utf-8")
+    router_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "app/pms/projections/routers").glob("*.py"))
+    )
 
-    assert 'prefix="/projections"' in text
-    assert "page.pms.read" in text
-    assert "page.pms.write" in text
-    assert '"/projections/{resource}"' not in text
-    assert '"/projections/{resource}/sync"' not in text
-    assert '"/projections/{resource}/check"' not in text
+    assert 'prefix="/projections"' in router_text
+    assert "page.pms.read" in router_text
+    assert "page.pms.write" in router_text
 
-    assert "page.admin.read" not in text
-    assert "page.admin.write" not in text
-    assert "/admin" not in text
-    assert "/items" not in text
-    assert "/item-uoms" not in text
-    assert "/item-barcodes" not in text
-    assert "/pms/brands" not in text
-    assert "/pms/categories" not in text
-    assert "/pms/item-attribute-defs" not in text
-    assert "/connection" not in text
+    for path in [
+        '"/items"',
+        '"/items/sync"',
+        '"/items/check"',
+        '"/suppliers"',
+        '"/suppliers/sync"',
+        '"/suppliers/check"',
+        '"/uoms"',
+        '"/uoms/sync"',
+        '"/uoms/check"',
+        '"/sku-codes"',
+        '"/sku-codes/sync"',
+        '"/sku-codes/check"',
+        '"/barcodes"',
+        '"/barcodes/sync"',
+        '"/barcodes/check"',
+    ]:
+        assert path in router_text
+
+    assert "{resource}" not in router_text
+    assert "/admin" not in router_text
+    assert "page.admin.read" not in router_text
+    assert "page.admin.write" not in router_text
+    assert "/connection" not in router_text
 
 
 def test_pms_projection_router_is_not_mounted_under_admin() -> None:

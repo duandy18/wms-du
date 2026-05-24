@@ -80,9 +80,9 @@ class PmsProjectionSyncRunsOut(BaseModel):
 __all__ = [
     "PmsProjectionCheckIssueOut",
     "PmsProjectionCheckOut",
-    "PmsProjectionStatusOut",
     "PmsProjectionListOut",
     "PmsProjectionResourceStatusOut",
+    "PmsProjectionStatusOut",
     "PmsProjectionSyncOut",
     "PmsProjectionSyncRunOut",
     "PmsProjectionSyncRunsOut",
